@@ -20,6 +20,8 @@ dependencies = [
     "numpy>=1.26",
     "soundfile>=0.12",
     "mutagen>=1.47",
+    # Phase 6 artwork. Pillow reads JPEG/PNG/WebP/GIF/BMP/TIFF.
+    "pillow>=10.4",
 ]
 
 [tool.uv.sources]

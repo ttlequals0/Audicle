@@ -1,7 +1,8 @@
 """Job processing pipeline orchestrator.
 
-Phase 2 wires only the extract stage. Subsequent phases append cleanup,
-chunk, tts, audio, artwork, transcript, finalize.
+Phase 6 wires the full read-aloud chain: extract -> cleanup -> corrections
+-> chunk -> tts -> audio -> artwork -> transcript. Phase 7 appends finalize
+which inserts/updates the episodes row.
 
 Conventions enforced here:
 - Every stage writes its name to ``jobs.stage`` BEFORE doing any work, so the
@@ -24,7 +25,18 @@ from typing import Any
 
 from app.config import Settings
 from app.core import database
-from app.services import audio, chunker, corrections, extraction, jobs, llm, tts
+from app.core.paths import media_dir
+from app.services import (
+    artwork,
+    audio,
+    chunker,
+    corrections,
+    extraction,
+    jobs,
+    llm,
+    transcript,
+    tts,
+)
 from app.services import prompt as prompt_service
 from app.utils.logging import episode_id_ctx, job_id_ctx, stage_ctx
 
@@ -142,9 +154,10 @@ def _finalize_failure(
 
 
 async def _run_stages(job: jobs.Job, settings: Settings) -> None:
-    """Phase 5 pipeline: extract -> cleanup -> corrections -> chunk -> tts -> audio.
+    """Phase 6 pipeline: extract -> cleanup -> corrections -> chunk -> tts ->
+    audio -> artwork -> transcript.
 
-    Phase 6+ appends artwork, transcript, finalize.
+    Phase 7+ appends finalize (which inserts/updates the episodes row).
     """
 
     extraction_result = await _run_stage(
@@ -180,7 +193,22 @@ async def _run_stages(job: jobs.Job, settings: Settings) -> None:
         job.id,
         settings,
     )
-    _mark_done(job.id, final_stage="audio", settings=settings)
+    await _run_stage(
+        "artwork",
+        lambda: _stage_artwork(job, extraction_result.metadata, settings),
+        job.id,
+        settings,
+    )
+    vtt = await _run_stage(
+        "transcript",
+        lambda: _stage_transcript(chunks, chunk_results, settings),
+        job.id,
+        settings,
+    )
+    # vtt content lives in memory; Phase 7's finalize stage writes it to
+    # episodes.transcript_vtt alongside audio_path + artwork_path.
+    _ = vtt
+    _mark_done(job.id, final_stage="transcript", settings=settings)
 
 
 async def _run_stage(
@@ -335,10 +363,10 @@ async def _stage_audio(
     failure -- no persistent debug artifacts per build-plan.
     """
 
-    media_dir = Path(settings.DATA_DIR) / "media"
+    out_root = media_dir(settings)
     chunk_paths = [Path(r.wav_path) for r in chunk_results]
-    combined_path = media_dir / f"{job.episode_id}_combined.wav"
-    mp3_path = media_dir / f"{job.episode_id}.mp3"
+    combined_path = out_root / f"{job.episode_id}_combined.wav"
+    mp3_path = out_root / f"{job.episode_id}.mp3"
 
     try:
         audio.concat_with_padding(chunk_paths, combined_path, settings)
@@ -355,6 +383,58 @@ async def _stage_audio(
     finally:
         # Per-chunk WAVs + concatenated WAV are not persistent artifacts.
         audio.remove_quietly(combined_path, *chunk_paths)
+
+
+async def _stage_artwork(
+    job: jobs.Job,
+    metadata: dict[str, Any],
+    settings: Settings,
+) -> artwork.ArtworkResult | None:
+    """Download + process the article's og:image.
+
+    Never raises -- returns None on any documented failure so the pipeline
+    advances to transcript regardless. RSS (Phase 7) renders the feed-level
+    artwork for episodes with no per-episode JPG on disk.
+    """
+
+    result = await artwork.process_artwork(metadata, job.episode_id, media_dir(settings), settings)
+    if result is None:
+        logger.info(
+            "Artwork falling back to feed-level art",
+            extra={"event": "artwork_fallback_to_feed"},
+        )
+    return result
+
+
+async def _stage_transcript(
+    chunks: list[str],
+    chunk_results: list[tts.GenerateResult],
+    settings: Settings,
+) -> str:
+    """Render the WebVTT transcript from chunk text + per-chunk durations."""
+
+    if len(chunks) != len(chunk_results):
+        # Explicit so the failure message in jobs.error names both sides --
+        # zip(strict=True) would surface a stdlib "argument 2 is shorter"
+        # which is harder to triage from an ops dashboard.
+        raise ValueError(
+            f"transcript stage: {len(chunks)} chunks but {len(chunk_results)} "
+            f"TTS results -- pipeline state corrupted"
+        )
+    transcript_chunks = [
+        transcript.TranscriptChunk(text=text, duration_secs=res.duration_secs)
+        for text, res in zip(chunks, chunk_results, strict=False)
+    ]
+    vtt = transcript.build_vtt(transcript_chunks, settings.TTS_CHUNK_SILENCE_MS)
+    logger.info(
+        "Transcript rendered",
+        extra={
+            "event": "transcript_complete",
+            "cue_count": len(transcript_chunks),
+            "vtt_bytes": len(vtt.encode("utf-8")),
+        },
+    )
+    return vtt
 
 
 async def _stage_corrections(cleaned: str, settings: Settings) -> str:
