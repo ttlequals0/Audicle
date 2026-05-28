@@ -94,14 +94,17 @@ async def test_run_all_raises_when_any_check_fails(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Firecrawl: every endpoint candidate fails -> reachability error.
-    # LLM: succeed so the failure attribution names "firecrawl".
+    # LLM + TTS: succeed so the failure attribution names "firecrawl".
     _patch_async_client(
         monkeypatch,
         _transport(
-            httpx.ConnectError("nope"),
-            httpx.ConnectError("nope"),
-            httpx.ConnectError("nope"),
+            httpx.ConnectError("nope"),  # firecrawl /v1/health
+            httpx.ConnectError("nope"),  # firecrawl /health
+            httpx.ConnectError("nope"),  # firecrawl /
             httpx.Response(200, text='{"data": []}'),  # llm /models
+            httpx.Response(
+                200, json={"ok": True, "model_loaded": True, "reference_loaded": True}
+            ),  # tts /health
         ),
     )
     with pytest.raises(reachability.ReachabilityError, match="firecrawl"):
@@ -116,8 +119,11 @@ async def test_run_all_returns_results_when_all_pass(
         _transport(
             httpx.Response(200, text="ok"),  # firecrawl
             httpx.Response(200, text='{"data": []}'),  # llm /models
+            httpx.Response(
+                200, json={"ok": True, "model_loaded": True, "reference_loaded": True}
+            ),  # tts /health
         ),
     )
     results = await reachability.run_all(get_settings())
     assert all(r.ok for r in results)
-    assert {r.name for r in results} == {"firecrawl", "llm"}
+    assert {r.name for r in results} == {"firecrawl", "llm", "tts"}

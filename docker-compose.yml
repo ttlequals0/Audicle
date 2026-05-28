@@ -1,5 +1,4 @@
-# Phase 1 compose. tts-wrapper (Phase 4) and the public-exposure container
-# (Phase 12) get added in their respective phases.
+# Phase 4 compose. Public-exposure container (Phase 12) gets added in its phase.
 
 services:
   app:
@@ -16,13 +15,13 @@ services:
       - ./data:/data
       # Bind mounts target /app/app/* because the Dockerfile copies backend/app
       # to /app/app (so `import app` works). Operator edits on the host are
-      # reflected at the package-relative path the code reads from. reference/
-      # is mounted now so the volume exists before Phase 4 wires the TTS
-      # wrapper — operators drop voice.wav at backend/app/reference/ on the
-      # host and the container picks it up.
+      # reflected at the package-relative path the code reads from.
       - ./backend/app/prompts:/app/app/prompts
       - ./backend/app/corrections:/app/app/corrections
       - ./backend/app/reference:/app/app/reference
+    depends_on:
+      tts-wrapper:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
       interval: 30s
@@ -39,3 +38,57 @@ services:
       options:
         max-size: "50m"
         max-file: "3"
+
+  tts-wrapper:
+    # Single in-flight job; one uvicorn worker; GPU-pinned. Override
+    # dockerfile to ``Dockerfile.cpu`` for CPU-only hosts (5-10x slower).
+    image: ghcr.io/ttlequals0/audicle-tts:latest
+    build:
+      context: ./tts-wrapper
+      dockerfile: Dockerfile
+    environment:
+      - TTS_DEVICE=${TTS_DEVICE:-cuda}
+      - TTS_LANGUAGE=${TTS_LANGUAGE:-en}
+      - DATA_DIR=/data
+      - TTS_REFERENCE_PATH=/app/reference/voice.wav
+      - XTTS_TEMPERATURE=${XTTS_TEMPERATURE:-0.65}
+      - XTTS_LENGTH_PENALTY=${XTTS_LENGTH_PENALTY:-1.0}
+      - XTTS_REPETITION_PENALTY=${XTTS_REPETITION_PENALTY:-2.0}
+      - XTTS_TOP_K=${XTTS_TOP_K:-50}
+      - XTTS_TOP_P=${XTTS_TOP_P:-0.85}
+    volumes:
+      - ./data:/data
+      # Reference voice is operator-supplied; the wrapper exits non-zero at
+      # startup if voice.wav is missing or unreadable.
+      - ./backend/app/reference:/app/reference:ro
+      # ~2 GB of XTTS-v2 weights downloads on first run; cache the result.
+      - hf_cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+    # Match the app service security posture: no-new-privileges + cap_drop.
+    # The nvidia runtime grants device access via the deploy.resources block,
+    # so dropping caps here doesn't break GPU access.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+volumes:
+  hf_cache:
