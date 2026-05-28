@@ -1,2 +1,41 @@
 CLAUDE.md
 tmp/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+build/
+dist/
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+
+# Runtime data (keep the directory so the bind mount has a target on first clone)
+data/*
+!data/.gitkeep
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+podcast.db.backup-*
+
+# uv lock is kept in source control; uv cache is not
+.uv-cache/
+
+# Node (Phase 11)
+node_modules/
+frontend/dist/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

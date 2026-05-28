@@ -1,0 +1,41 @@
+# Phase 1 compose. tts-wrapper (Phase 4) and the public-exposure container
+# (Phase 12) get added in their respective phases.
+
+services:
+  app:
+    image: ghcr.io/ttlequals0/audicle:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data:/data
+      # Bind mounts target /app/app/* because the Dockerfile copies backend/app
+      # to /app/app (so `import app` works). Operator edits on the host are
+      # reflected at the package-relative path the code reads from. reference/
+      # is mounted now so the volume exists before Phase 4 wires the TTS
+      # wrapper — operators drop voice.wav at backend/app/reference/ on the
+      # host and the container picks it up.
+      - ./backend/app/prompts:/app/app/prompts
+      - ./backend/app/corrections:/app/app/corrections
+      - ./backend/app/reference:/app/app/reference
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
