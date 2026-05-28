@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import logging
 from pathlib import Path
 
+import pytest
 from app.core import database
+from app.services import jobs
 
 
 async def test_crash_recovery_resets_processing(env: Path) -> None:
@@ -31,38 +32,73 @@ async def test_crash_recovery_resets_processing(env: Path) -> None:
     assert status == "queued"
 
 
-async def test_run_returns_quickly_when_shutdown_set_after_start(env: Path, monkeypatch) -> None:
-    """Smoke-test the worker run() loop: bootstrap + crash recovery + signal
-    install + a polling iteration, then a shutdown via the asyncio event."""
+async def test_pickup_runs_pipeline_against_a_queued_job(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end inside the worker: insert a queued job, stub the extractor,
+    call _process_one, observe the job reach status=done with stage=extract."""
+
+    from app.config import get_settings
+    from app.services import extraction
+    from app.worker import _process_one
+
+    database.run_migrations(env)
+
+    # Stub the extractor so the test doesn't reach the network.
+    async def _fake_extract(url, settings):
+        return extraction.ExtractionResult(
+            markdown="# Example\n\nbody " * 200,
+            metadata={"title": "Example article"},
+        )
+
+    monkeypatch.setattr(extraction, "extract", _fake_extract)
+
+    # Insert one queued job via the helper so episode_id is computed.
+    conn = database.connect(database.db_path(env))
+    try:
+        jobs.create_job(conn, "https://example.test/article")
+    finally:
+        conn.close()
+
+    processed = await _process_one(get_settings())
+    assert processed is True
+
+    conn = database.connect(database.db_path(env))
+    try:
+        row = conn.execute(
+            "SELECT status, stage, error FROM jobs WHERE url = ?",
+            ("https://example.test/article",),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row["status"] == "done"
+    assert row["stage"] == "extract"
+    assert row["error"] is None
+
+
+async def test_pickup_returns_false_when_no_queued_jobs(env: Path) -> None:
+    from app.config import get_settings
+    from app.worker import _process_one
+
+    database.run_migrations(env)
+    assert await _process_one(get_settings()) is False
+
+
+async def test_run_exits_cleanly_when_reachability_passes_and_shutdown_set(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Smoke the worker run() loop end-to-end with reachability stubbed."""
 
     from app import worker
+    from app.services import reachability
 
-    # Speed up the poll so the test isn't sluggish.
-    monkeypatch.setattr(
-        "app.worker.get_settings",
-        lambda: _FastSettings(env),
-    )
+    async def _stub_run_all(_settings):
+        return [reachability.CheckResult(name="firecrawl", ok=True, detail="stub")]
 
-    # signal.add_signal_handler isn't allowed from non-main threads; pytest-asyncio
-    # runs us on the main thread, so this is fine on Linux.
+    monkeypatch.setattr(reachability, "run_all", _stub_run_all)
+
     task = asyncio.create_task(worker.run())
-    # Let bootstrap + crash recovery + signal install finish.
-    await asyncio.sleep(0.1)
-    # Cancel cleanly via signal-style shutdown: we can't send a real signal from
-    # inside a test reliably, so close the task. The worker checks shutdown
-    # between poll iterations.
+    await asyncio.sleep(0.2)
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task
-    # Logger should have emitted the worker_starting banner.
-    assert logging.getLogger("app.worker") is not None
-
-
-class _FastSettings:
-    """Minimal stand-in so the worker loop polls quickly."""
-
-    def __init__(self, data_dir: Path) -> None:
-        self.DATA_DIR = data_dir
-        self.LOG_LEVEL = "INFO"
-        self.LOG_FORMAT = "text"
-        self.QUEUE_POLL_INTERVAL_SECONDS = 0.05
