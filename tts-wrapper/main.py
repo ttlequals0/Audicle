@@ -33,9 +33,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 
 # Build-plan line 822: per-request inference budget. Without this a wedged
 # torch call holds the lock forever and the wrapper stops serving anything.
-_REQUEST_INFERENCE_TIMEOUT_SECONDS = float(
-    os.environ.get("TTS_REQUEST_TIMEOUT_SECONDS", "120")
-)
+_REQUEST_INFERENCE_TIMEOUT_SECONDS = float(os.environ.get("TTS_REQUEST_TIMEOUT_SECONDS", "120"))
 
 
 class GenerateRequest(BaseModel):
@@ -44,9 +42,7 @@ class GenerateRequest(BaseModel):
     # Path-safety: episode_id ends up in a filename; reject anything that
     # could escape data_dir/media. Backend uses MD5[:12] hex by default but
     # accept a slightly broader alphabet for hand-curated cases.
-    episode_id: str = Field(
-        min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.-]+$"
-    )
+    episode_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.-]+$")
     chunk_index: int = Field(ge=0, le=100000)
 
 
@@ -193,9 +189,7 @@ def create_app(
         # episode_id is already blocked by the Pydantic pattern, but the
         # belt-and-braces check guards against future regex regressions.
         if out_dir.resolve() not in wav_path.resolve().parents:
-            raise HTTPException(
-                status_code=400, detail="resolved wav_path escapes data dir"
-            )
+            raise HTTPException(status_code=400, detail="resolved wav_path escapes data dir")
         _atomic_write_bytes(wav_path, wav_bytes)
         duration = _wav_duration_seconds(wav_bytes)
 
@@ -254,9 +248,7 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
     """
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)

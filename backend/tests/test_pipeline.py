@@ -17,10 +17,73 @@ def _stub_full_chain(monkeypatch: pytest.MonkeyPatch) -> None:
         return extraction.ExtractionResult(markdown="raw " * 250, metadata={"title": "Example"})
 
     async def _fake_llm(_system, _user, _settings, **_kwargs):
-        return "cleaned narration text " * 50
+        # Provide structured prose with sentence boundaries so the chunker
+        # has somewhere to split.
+        return (
+            "This is a cleaned narration sentence with proper punctuation. "
+            "Each sentence ends with a period. "
+            "Paragraphs are separated by blank lines.\n\n"
+            "Here is another paragraph of cleaned narration text. "
+            "The chunker can split on these boundaries. "
+            "Forty more sentences follow for word-count headroom. "
+        ) * 10
+
+    from app.services import audio, tts
+
+    async def _fake_tts(text, episode_id, chunk_index, settings):
+        _ = text  # acknowledge
+        _ = settings
+        return tts.GenerateResult(
+            wav_path=f"/tmp/{episode_id}_chunk_{chunk_index}.wav",
+            duration_secs=1.0,
+            sample_rate=24000,
+        )
+
+    def _fake_concat(_paths, output_path, _settings):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"FAKE_WAV")
+        return output_path, 24000
+
+    def _fake_encode(_input_wav, output_mp3, _settings):
+        output_mp3.parent.mkdir(parents=True, exist_ok=True)
+        output_mp3.write_bytes(b"FAKE_MP3")
+        return audio.EncodeResult(mp3_path=output_mp3, duration_secs=2.5)
 
     monkeypatch.setattr(extraction, "extract", _fake_extract)
     monkeypatch.setattr(llm, "generate", _fake_llm)
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    monkeypatch.setattr(audio, "concat_with_padding", _fake_concat)
+    monkeypatch.setattr(audio, "normalize_and_encode", _fake_encode)
+
+
+def _stub_tts_and_audio(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub only the tts + audio touch points (re-used by tests that compose
+    their own llm/extract stubs)."""
+
+    from app.services import audio, tts
+
+    async def _fake_tts(text, episode_id, chunk_index, settings):
+        _ = text
+        _ = settings
+        return tts.GenerateResult(
+            wav_path=f"/tmp/{episode_id}_chunk_{chunk_index}.wav",
+            duration_secs=1.0,
+            sample_rate=24000,
+        )
+
+    def _fake_concat(_paths, output_path, _settings):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"FAKE_WAV")
+        return output_path, 24000
+
+    def _fake_encode(_input_wav, output_mp3, _settings):
+        output_mp3.parent.mkdir(parents=True, exist_ok=True)
+        output_mp3.write_bytes(b"FAKE_MP3")
+        return audio.EncodeResult(mp3_path=output_mp3, duration_secs=2.5)
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    monkeypatch.setattr(audio, "concat_with_padding", _fake_concat)
+    monkeypatch.setattr(audio, "normalize_and_encode", _fake_encode)
 
 
 def _seed_job(env: Path, url: str = "https://example.test/article") -> jobs.Job:
@@ -56,7 +119,7 @@ async def test_pipeline_marks_job_done_on_success(
 
     after = _job_after(env, job.id)
     assert after.status == "done"
-    assert after.stage == "corrections"
+    assert after.stage == "audio"
     assert after.error is None
 
 
@@ -145,10 +208,15 @@ async def test_pipeline_retries_cleanup_on_transient_llm_provider_error(
         attempts["n"] += 1
         if attempts["n"] == 1:
             raise llm.LLMProviderError("transient 502")
-        return "cleaned narration text " * 50
+        return (
+            "First sentence with punctuation. "
+            "Second sentence with punctuation. "
+            "Third sentence with punctuation. "
+        ) * 20
 
     monkeypatch.setattr(extraction, "extract", _fake_extract)
     monkeypatch.setattr(llm, "generate", _flaky_llm)
+    _stub_tts_and_audio(monkeypatch)
 
     # Speed the tenacity backoff.
     import tenacity
@@ -160,7 +228,7 @@ async def test_pipeline_retries_cleanup_on_transient_llm_provider_error(
 
     after = _job_after(env, job.id)
     assert after.status == "done"
-    assert after.stage == "corrections"
+    assert after.stage == "audio"
     assert attempts["n"] >= 2  # retried at least once
 
 
@@ -191,3 +259,61 @@ async def test_pipeline_does_not_retry_on_llm_request_error(
     assert after.status == "failed"
     assert after.stage == "cleanup"
     assert attempts["n"] == 1  # exactly one attempt
+
+
+async def test_pipeline_records_failure_when_exception_contains_curly_braces(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ffmpeg stderr / JSON bodies / sentence previews routinely contain
+    literal '{' or '}'. _finalize_failure must NOT pass these through
+    str.format (which would raise KeyError mid-finalize and leave the job
+    stuck in 'processing'). The fix uses str.replace so braces are inert."""
+
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+
+    async def _llm_with_braces(_system, _user, _settings, **_kwargs):
+        # Return short output so MIN_CLEANUP_CHARS fires AND the resulting
+        # error path embeds a brace via the cleanup stage's error string.
+        return "short {curly braced} output"
+
+    monkeypatch.setattr(llm, "generate", _llm_with_braces)
+
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+
+    after = _job_after(env, job.id)
+    # The fix must produce a recorded failure, not a stuck 'processing' job.
+    assert after.status == "failed"
+    assert after.stage == "cleanup"
+    assert "MIN_CLEANUP_CHARS" in (after.error or "")
+
+
+async def test_pipeline_audio_stage_cleans_up_intermediate_wavs(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The finally block in _stage_audio must remove the combined WAV and
+    each per-chunk WAV regardless of success or failure. Without an explicit
+    test, a future refactor could silently drop the cleanup."""
+
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+
+    # Track which paths the cleanup helper sees.
+    seen: list[Path] = []
+    real_remove = pipeline.audio.remove_quietly
+
+    def _spy_remove(*paths):
+        seen.extend(paths)
+        return real_remove(*paths)
+
+    monkeypatch.setattr(pipeline.audio, "remove_quietly", _spy_remove)
+
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+
+    after = _job_after(env, job.id)
+    assert after.status == "done"
+    # The combined wav + at least one chunk wav must have been passed in.
+    assert any(p.name.endswith("_combined.wav") for p in seen)
+    assert any(p.name.endswith("_chunk_0.wav") for p in seen)

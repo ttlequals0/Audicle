@@ -24,7 +24,7 @@ from typing import Any
 
 from app.config import Settings
 from app.core import database
-from app.services import corrections, extraction, jobs, llm
+from app.services import audio, chunker, corrections, extraction, jobs, llm, tts
 from app.services import prompt as prompt_service
 from app.utils.logging import episode_id_ctx, job_id_ctx, stage_ctx
 
@@ -122,7 +122,11 @@ def _finalize_failure(
             extra={"event": "finalize_read_failed"},
         )
 
-    error_message = error_template.format(stage=last_stage)
+    # Use ``str.replace`` instead of ``str.format`` so user-controlled
+    # exception text (ffmpeg stderr, JSON bodies, sentence previews) that
+    # contains literal ``{`` or ``}`` doesn't trigger a secondary KeyError
+    # inside the failure handler and leave the job stuck in 'processing'.
+    error_message = error_template.replace("{stage}", last_stage)
     try:
         _persist_failure(job_id, stage=last_stage, error=error_message, settings=settings)
     except Exception:
@@ -138,9 +142,9 @@ def _finalize_failure(
 
 
 async def _run_stages(job: jobs.Job, settings: Settings) -> None:
-    """Phase 3 pipeline: extract -> cleanup -> corrections.
+    """Phase 5 pipeline: extract -> cleanup -> corrections -> chunk -> tts -> audio.
 
-    Phase 4+ appends chunk, tts, audio, artwork, transcript, finalize.
+    Phase 6+ appends artwork, transcript, finalize.
     """
 
     extraction_result = await _run_stage(
@@ -152,13 +156,31 @@ async def _run_stages(job: jobs.Job, settings: Settings) -> None:
         job.id,
         settings,
     )
-    _ = await _run_stage(
+    corrected = await _run_stage(
         "corrections",
         lambda: _stage_corrections(cleaned, settings),
         job.id,
         settings,
     )
-    _mark_done(job.id, final_stage="corrections", settings=settings)
+    chunks = await _run_stage(
+        "chunk",
+        lambda: _stage_chunk(corrected, settings),
+        job.id,
+        settings,
+    )
+    chunk_results = await _run_stage(
+        "tts",
+        lambda: _stage_tts(job, chunks, settings),
+        job.id,
+        settings,
+    )
+    await _run_stage(
+        "audio",
+        lambda: _stage_audio(job, chunk_results, settings),
+        job.id,
+        settings,
+    )
+    _mark_done(job.id, final_stage="audio", settings=settings)
 
 
 async def _run_stage(
@@ -242,6 +264,97 @@ async def _stage_cleanup(markdown: str, settings: Settings) -> str:
         },
     )
     return cleaned
+
+
+async def _stage_chunk(corrected: str, settings: Settings) -> list[str]:
+    """Hybrid chunking. Raises :class:`chunker.UnsplittableSentenceError` so
+    the pipeline marks the job failed with a clear preview of the offending
+    sentence rather than silently truncating content."""
+
+    pieces = chunker.chunk(corrected, settings)
+    if not pieces:
+        raise ValueError("Chunker produced zero chunks from corrected text")
+    word_counts = [len(p.split()) for p in pieces]
+    logger.info(
+        "Chunking complete",
+        extra={
+            "event": "chunk_complete",
+            "chunk_count": len(pieces),
+            "min_words": min(word_counts),
+            "max_words": max(word_counts),
+            "total_words": sum(word_counts),
+        },
+    )
+    return pieces
+
+
+async def _stage_tts(
+    job: jobs.Job, chunks: list[str], settings: Settings
+) -> list[tts.GenerateResult]:
+    """For each chunk, POST to the wrapper with client-side retry on
+    transient failures. Returns the list of GenerateResult so the audio
+    stage can read the per-chunk WAVs."""
+
+    results: list[tts.GenerateResult] = []
+    for index, text in enumerate(chunks):
+        result = await tts.generate_chunk_with_retry(
+            text=text,
+            episode_id=job.episode_id,
+            chunk_index=index,
+            settings=settings,
+        )
+        results.append(result)
+        logger.info(
+            "Chunk synthesized",
+            extra={
+                "event": "tts_chunk_done",
+                "chunk_index": index,
+                "duration_secs": result.duration_secs,
+                "wav_path": result.wav_path,
+            },
+        )
+    logger.info(
+        "TTS complete",
+        extra={
+            "event": "tts_stage_complete",
+            "chunk_count": len(results),
+            "total_audio_secs": sum(r.duration_secs for r in results),
+        },
+    )
+    return results
+
+
+async def _stage_audio(
+    job: jobs.Job,
+    chunk_results: list[tts.GenerateResult],
+    settings: Settings,
+) -> audio.EncodeResult:
+    """Trim / concat / normalize / encode the per-chunk WAVs into an MP3.
+
+    Removes per-chunk WAVs and the concatenated WAV on both success and
+    failure -- no persistent debug artifacts per build-plan.
+    """
+
+    media_dir = Path(settings.DATA_DIR) / "media"
+    chunk_paths = [Path(r.wav_path) for r in chunk_results]
+    combined_path = media_dir / f"{job.episode_id}_combined.wav"
+    mp3_path = media_dir / f"{job.episode_id}.mp3"
+
+    try:
+        audio.concat_with_padding(chunk_paths, combined_path, settings)
+        result = audio.normalize_and_encode(combined_path, mp3_path, settings)
+        logger.info(
+            "Audio pipeline complete",
+            extra={
+                "event": "audio_complete",
+                "mp3_path": str(result.mp3_path),
+                "duration_secs": result.duration_secs,
+            },
+        )
+        return result
+    finally:
+        # Per-chunk WAVs + concatenated WAV are not persistent artifacts.
+        audio.remove_quietly(combined_path, *chunk_paths)
 
 
 async def _stage_corrections(cleaned: str, settings: Settings) -> str:

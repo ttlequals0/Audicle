@@ -142,3 +142,76 @@ async def test_reload_5xx_raises_provider_error(env: Path, monkeypatch: pytest.M
     )
     with pytest.raises(tts.TTSProviderError, match="503"):
         await tts.reload(get_settings())
+
+
+# --- generate_chunk_with_retry ---------------------------------------------
+
+
+async def test_retry_succeeds_after_transient_5xx(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """5xx then 200: retry returns the successful result, never raises."""
+
+    monkeypatch.setenv("TTS_RETRY_COUNT", "3")
+    from app.config import get_settings as gs
+
+    gs.cache_clear()
+
+    responses = iter([httpx.Response(500, text="boom"), _ok_generate()])
+
+    def handler(_request):
+        return next(responses)
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    # Strip the exponential wait so the test doesn't sleep.
+    import tenacity
+
+    monkeypatch.setattr(tenacity.wait_exponential, "__call__", lambda self, rs: 0)
+
+    result = await tts.generate_chunk_with_retry("hi", "ep", 0, gs())
+    assert result.wav_path == "/data/media/abc_chunk_0.wav"
+
+
+async def test_retry_does_not_retry_on_4xx(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """4xx is non-retryable; first attempt raises and propagates."""
+
+    monkeypatch.setenv("TTS_RETRY_COUNT", "3")
+    from app.config import get_settings as gs
+
+    gs.cache_clear()
+
+    attempts = {"n": 0}
+
+    def handler(_request):
+        attempts["n"] += 1
+        return httpx.Response(400, text="bad")
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+
+    with pytest.raises(tts.TTSRequestError, match="400"):
+        await tts.generate_chunk_with_retry("hi", "ep", 0, gs())
+    assert attempts["n"] == 1
+
+
+async def test_retry_exhausts_then_raises_provider_error(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TTS_RETRY_COUNT", "3")
+    from app.config import get_settings as gs
+
+    gs.cache_clear()
+
+    attempts = {"n": 0}
+
+    def handler(_request):
+        attempts["n"] += 1
+        return httpx.Response(500, text="still down")
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    import tenacity
+
+    monkeypatch.setattr(tenacity.wait_exponential, "__call__", lambda self, rs: 0)
+
+    with pytest.raises(tts.TTSProviderError):
+        await tts.generate_chunk_with_retry("hi", "ep", 0, gs())
+    assert attempts["n"] == 3

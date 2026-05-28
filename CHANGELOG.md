@@ -6,6 +6,51 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Added (Phase 5 - Chunking + Audio pipeline)
+
+- Pipeline now runs **extract → cleanup → corrections → chunk → tts → audio**. Final `status=done` with `stage=audio`; an MP3 lands at `/data/media/{episode_id}.mp3`. Phase 6 will append artwork + transcript + finalize.
+- `backend/app/services/chunker.py`: hybrid chunker per build-plan rules. Paragraphs first (`\n\n`); sentence boundaries via `(?<=[.!?])\s+`; comma / semicolon fallback for oversize sentences that emits a `chunk_fallback_split` WARN record so dashboards can spot a steady stream of them. `UnsplittableSentenceError` is raised with a sentence preview when no breakpoint fits — the pipeline marks the job failed with stage=chunk rather than truncating content. Targets 180 words / 1100 chars per chunk; hard max 220 words.
+- `backend/app/services/tts.py`: added `generate_chunk_with_retry` wrapping `generate_chunk` with tenacity. `TTS_RETRY_COUNT` attempts, exponential backoff, retry only `TTSProviderError` / `TTSTimeoutError`; `TTSRequestError` propagates immediately per build-plan line 829.
+- `backend/app/services/audio.py`:
+  - `trim_silence(waveform, sample_rate, settings)` — torch-based silence detection per the ebook2audiobook algorithm. `AUDIO_SILENCE_THRESHOLD` + `AUDIO_SILENCE_BUFFER_MS`. Fully silent input returns unchanged so the chunk isn't accidentally erased.
+  - `concat_with_padding(chunk_paths, output_path, settings)` — load each WAV via soundfile, trim silence, insert a `torch.zeros((1, n))` pad of `TTS_CHUNK_SILENCE_MS` between chunks, concatenate via `torch.cat`, write the combined WAV. Returns `(output_path, sample_rate)`.
+  - `normalize_and_encode(input_wav, output_mp3, settings)` — runs the full ebook2audiobook ffmpeg filter chain (`agate`, `afftdn`, `acompressor`, `loudnorm=I=-14:TP=-3:LRA=7:linear=true`, six `equalizer` bands, `highpass=63`), then encodes to MP3 via `libmp3lame` at 128k / 24000 Hz / stereo upmix (`-ac 2`). Reads final duration via mutagen.
+  - `FfmpegError` carries `returncode` + last 400 chars of stderr so operators have something useful in the job's error column.
+  - `remove_quietly(*paths)` — used by the pipeline's `finally` block to clean per-chunk WAVs + the concatenated WAV regardless of success/failure (no persistent debug artifacts).
+- `backend/app/services/pipeline.py`:
+  - `_stage_chunk` calls `chunker.chunk`, logs `chunk_complete` with `chunk_count` + `min/max/total_words`.
+  - `_stage_tts` iterates chunks, calls `tts.generate_chunk_with_retry`, emits `tts_chunk_done` per chunk and `tts_stage_complete` with `total_audio_secs`. Per-chunk durations are kept on the in-memory pipeline state for Phase 6 transcript generation.
+  - `_stage_audio` calls `concat_with_padding` + `normalize_and_encode`. Intermediate files are cleaned in a `finally` block.
+  - Final `status=done` with `stage=audio` (Phase 7's finalize will flip the final stage to "done").
+- `backend/app/config.py`: added Phase 5 tunables. Chunking: `TTS_CHUNK_TARGET_WORDS`, `TTS_CHUNK_MAX_WORDS`, `TTS_CHUNK_MAX_CHARS`, `TTS_CHUNK_SILENCE_MS`. Audio: `AUDIO_SILENCE_THRESHOLD`, `AUDIO_SILENCE_BUFFER_MS`, `LOUDNORM_TARGET_LUFS`, `LOUDNORM_TRUE_PEAK_DB`, `LOUDNORM_LRA`, `MP3_BITRATE`, `MP3_SAMPLE_RATE`, `MP3_CHANNELS`.
+- Runtime deps: `torch>=2.4` (CPU wheel via pinned `pytorch-cpu` uv source), `numpy>=1.26`, `soundfile>=0.12`, `mutagen>=1.47`. `soundfile` is used in place of `torchaudio` because torchaudio 2.11 made TorchCodec the default backend and requires a separate package; soundfile reads/writes WAVs reliably without it.
+- `Dockerfile`: added `ffmpeg` and `libsndfile1` packages so the audio stage and soundfile have the binaries they need at runtime.
+
+Tests (21 new, 152 total)
+
+- `test_chunker.py` (9): empty input, single short paragraph, paragraph-boundary split, greedy sentence packing under target/max, comma/semicolon fallback with WARN log assertion, hard abort with sentence preview when no breakpoint fits, char-cap override of word count, repeated-blank-line normalization, sentence-punctuation preservation.
+- `test_tts.py` (3 new, 12 total): retry succeeds after a transient 5xx, retry never fires on 4xx (exactly one attempt), retry exhausts on persistent 5xx and raises `TTSProviderError` with the right attempt count.
+- `test_audio.py` (9): trim removes leading/trailing silence, trim preserves fully-silent input, concat appends inter-chunk silence with sample-accurate duration, concat rejects zero chunks, concat rejects rate mismatch across chunks, `normalize_and_encode` produces a valid MP3 readable by mutagen (real ffmpeg call), ffmpeg error surfaces as `FfmpegError`, `remove_quietly` swallows missing files, WAV round-trip via stdlib `wave` module verifies header shape. Suite auto-skips when ffmpeg is absent.
+
+Container smoke verified end-to-end with a mock Firecrawl + mock OpenAI-compatible LLM + mock TTS wrapper that returns a 440 Hz tone WAV at the request's `wav_path`. Pipeline: queued → done with `stage=audio`, MP3 written to `/data/media/{episode_id}.mp3` (33 KB), mutagen-read duration 2.064s, structured logs include `chunk_complete`, `tts_stage_complete`, `audio_encode_done`, `audio_complete`, `pipeline_done`.
+
+### Code-review pass (multi-agent /simplify + /code-review for Phase 5)
+
+Findings surfaced and applied:
+
+- **`_finalize_failure` no longer crashes on curly-brace exception text**: switched from `error_template.format(stage=last_stage)` to `error_template.replace("{stage}", last_stage)`. ffmpeg stderr, JSON bodies, sentence previews, and any other user-controlled exception text can contain literal `{` or `}` — `str.format` would have raised `KeyError` mid-finalize and left the job stuck in `processing`. Replace is inert to braces.
+- **chunker `chunk_index` in `chunk_fallback_split` WARN logs is now the global running position**: thread the current output-chunk count from `chunk()` through `_chunk_paragraph` into `_pack` as `base_chunk_index`. Previously hard-coded to `len(_split_paragraphs(""))` which is structurally always 0 — every paragraph's WARN reset to 0, defeating the build-plan diagnostic.
+- **Comma/semicolon fallback preserves the original separator**: `_COMMA_OR_SEMI` now captures the separator via a regex group; `_join_pieces` rebuilds the chunk with the original `;` or `,` instead of silently rewriting semicolons to commas. XTTS-v2 prosody pauses are different for the two, so this matters for the narrator's pace.
+- **`concat_with_padding` validates channel uniformity AND builds the pad tensor with the matching channel count**: the previous `(1, pad_n)` hard-coding would crash with an opaque `torch.cat` RuntimeError on any future non-mono input; now it raises a clean `AudioError("chunk N has X channels but earlier chunk had Y")`.
+- **loudnorm `linear=true` removed**: the flag is a documented no-op without a first-pass measurement (which we don't run); ffmpeg silently fell back to dynamic single-pass loudnorm anyway. Removed so the filter chain accurately describes what's running. Two-pass measure-then-apply is a follow-up.
+- **Module docstring drift fixed**: `audio.py` now explicitly notes the soundfile-not-torchaudio deviation introduced in Phase 5 (torchaudio 2.11 made TorchCodec the default save backend; we ship soundfile instead).
+
+New tests added by the review pass (5 more, 157 total):
+
+- `test_chunker.py`: semicolon preservation in the comma fallback; chunk_index in WARN logs is the running article-wide position across multiple paragraphs.
+- `test_audio.py`: channel-mismatch between chunks surfaces as a clean `AudioError("channels")` (covers the new validation that `concat_with_padding` does alongside the existing rate-mismatch check).
+- `test_pipeline.py`: curly-brace exception text doesn't leave the job stuck in 'processing' (forces a `MIN_CLEANUP_CHARS` failure with `{curly braced}` in the error message and asserts `status=failed` is persisted); `_stage_audio` finally block actually calls `audio.remove_quietly` with the combined WAV and per-chunk WAVs (spy fixture catches regression if a future refactor drops the cleanup).
+
 ### Added (Phase 4 - TTS Wrapper)
 
 - `tts-wrapper/` — new sibling container that wraps Coqui XTTS-v2 in a FastAPI service. Endpoints per build plan:
