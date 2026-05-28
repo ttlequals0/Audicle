@@ -6,6 +6,55 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Added (Phase 3 - LLM Cleanup)
+
+- `backend/app/services/llm.py`: multi-provider client. `async generate(system, user, settings, *, temperature?, max_tokens?)` dispatches to `_call_openai_compatible` (POST `{OPENAI_BASE_URL}/chat/completions`) or `_call_anthropic` (POST `https://api.anthropic.com/v1/messages` with `x-api-key` + `anthropic-version` headers). Typed errors: `LLMTimeoutError`, `LLMProviderError` (5xx, retryable), `LLMRequestError` (4xx + malformed JSON, non-retryable). Both providers return parsed text via the established response shapes.
+- `backend/app/services/corrections.py`: single-pass alternation substitution. Whole-word matches via stricter lookarounds (`(?<![\w-])` / `(?![\w-])`) so `kubectl` doesn't match inside `kubectl-helper` AND keys ending in non-word symbols like `C++` still match next to whitespace. Case-sensitive, longest-key-first via regex alternation order, auto-escapes regex specials so operators can write `C++` or `node.js`. `validate(dictionary, max_entries)` returns a `ValidationResult` listing every failure (root-not-dict, entry-count-cap, per-key empty/length/whitespace/control-char) rather than raising. `load`/`save` round-trip the JSON file with atomic temp-and-replace.
+- `backend/app/services/prompt.py`: `load(path)` reads the file, `save(path, content, *, max_bytes)` writes atomically with a byte-length cap (not character-length, so multi-byte UTF-8 is enforced correctly). `PromptTooLargeError` surfaced separately so the API can return 413.
+- `backend/app/prompts/script.txt`: replaced the Phase 1 placeholder with a real cleanup prompt that captures the build plan's remove / replace / transform / normalize / leave-alone behavior, with explicit output-format instructions (plain text only, no preamble, blank lines between paragraphs).
+- `backend/app/services/pipeline.py`: pipeline now runs `extract` → `cleanup` → `corrections`. Final status=done with stage=corrections for Phase 3. Cleanup stage re-reads the prompt file every call so operator edits take effect on the next job without a restart. `MIN_CLEANUP_CHARS` guard mirrors the extract-stage threshold check. Corrections stage logs `entries_loaded` and `delta_chars`.
+- `backend/app/services/reachability.py`: added `check_llm(settings)`. For `openai-compatible`, probes `GET {OPENAI_BASE_URL}/models` (the well-known list-models endpoint every Ollama / vLLM / LM Studio / OpenAI-compatible server exposes). For `anthropic`, no cheap probe exists per the build plan, so the check only validates `ANTHROPIC_API_KEY` is present. Wired into `run_all` so the worker exits non-zero on first boot when the LLM is unreachable.
+- `backend/app/api/v1/prompt.py`: `GET /api/v1/prompt` returns `{prompt}`; `PUT /api/v1/prompt` accepts `{prompt}` with `extra="forbid"` and validates byte-length against `MAX_PROMPT_LENGTH_BYTES`. 413 with `{max_bytes, actual_bytes}` details on oversize, 404 when the underlying file is missing.
+- `backend/app/api/v1/corrections.py`: `GET /api/v1/corrections` returns the full dictionary; `PUT /api/v1/corrections` accepts the full dict, runs `corrections.validate`, returns 400 with a per-entry failure list, otherwise persists atomically.
+- `backend/app/api/v1/router.py`: mounts the two new routers alongside `/submit` and `/status/{job_id}`.
+- `backend/app/config.py`: added `MAX_PROMPT_LENGTH_BYTES` (default 10240) and `MAX_CORRECTIONS_ENTRIES` (default 500).
+- `.env.example`: documented both new env vars.
+
+Tests (50 new, 109 total):
+
+- `test_llm.py` (10): openai-compatible chat-completions wire format (path + Authorization + messages + temperature + max_tokens), 5xx → `LLMProviderError`, 4xx → `LLMRequestError`, ReadTimeout → `LLMTimeoutError`, non-JSON body → request error, unexpected response shape → request error; anthropic wire format (host + `x-api-key` + `anthropic-version` + system + messages), missing key surfaces clearly, non-text content block rejected, unknown provider raises.
+- `test_corrections.py` (22): whole-word with hyphen-aware boundary, case sensitivity, longest-first via alternation, auto-escape for `C++` / `node.js`, empty-dict + no-match short circuits; validator rejects non-dict root, too-many-entries, empty key, oversize key/value, leading/trailing whitespace, empty value, control characters; load/save round-trip + atomic write (no partial file on failure) + missing/empty file returns `{}` + non-object root rejected.
+- `test_prompt.py` (5): load returns contents, save round-trip, oversize raises (byte length not char length so multi-byte UTF-8 trips the cap correctly), atomic no-partial-on-failure.
+- `test_api_prompt_corrections.py` (8): GET/PUT round-trip for both endpoints with file restoration after, `extra="forbid"` rejection on prompt, 413 on oversize prompt with `{max_bytes, actual_bytes}` details, 400 on bad correction entry, 400 on entry-count exceeded.
+- `test_llm_reachability.py` (5): openai-compatible 200/network-failure/5xx paths; anthropic skips the HTTP probe and only validates the key.
+- `test_pipeline.py`/`test_worker.py` (updated): stub both `extraction.extract` and `llm.generate`, expect status=done with stage=corrections.
+
+Container smoke verified end-to-end with a mock Firecrawl + mock OpenAI-compatible server: reachability passes both checks, submit returns 201, status progresses queued → done with stage=corrections in single-digit ms, structured logs include `reachability_check` (firecrawl + llm), `stage_start`/`stage_end` for extract/cleanup/corrections, `cleanup_complete` with `input_chars`/`output_chars`, `corrections_complete` with `entries_loaded`/`delta_chars`, and `pipeline_done`. Prompt and corrections endpoints round-trip via curl.
+
+### Code-review pass (multi-agent /simplify + /code-review for Phase 3)
+
+Findings surfaced and applied:
+
+- **Cleanup stage now wraps `llm.generate` with tenacity retry** per build plan line 251 (`LLM_RETRY_COUNT` attempts, exponential backoff, retries `LLMProviderError`/`LLMTimeoutError`, never retries `LLMRequestError`). Previously the cleanup stage failed permanently on the first transient 5xx; `LLM_RETRY_COUNT` was config-defined but unused.
+- **`CleanupTooShortError` introduced** as a dedicated exception (subclasses `Exception`, not `ValueError`) so future broad `except ValueError` calls can't accidentally swallow the min-chars guard.
+- **openai-compatible `content: null` handled cleanly**: providers that emit `tool_calls` instead of text return `content=null`; the cleanup stage previously crashed with `TypeError: object of type 'NoneType' has no len()`. Now classified as `LLMRequestError` with a clear message.
+- **Anthropic multi-block responses now read correctly**: search-and-concatenate all `text` blocks instead of crashing if the first block is `thinking` or `tool_use`. Multi-text-block responses (extended thinking with citations) join their text content per Anthropic's documented usage.
+- **Anthropic response shape now also catches `AttributeError`**: a non-dict content block (string, null) used to escape the typed handler as an opaque exception.
+- **corrections.load now drops invalid entries with a WARN log**: a hand-edited file with empty keys would otherwise produce a regex like `(?<![\w-])(?:|kubectl)(?![\w-])` whose empty alternative matches at every word boundary. Sanitization mirrors the PUT validator so the bind-mount edit path is as safe as the API.
+- **api/v1/corrections request body widened from `dict[str, str]` to `dict[str, Any]`** so Pydantic doesn't short-circuit non-string values before `corrections.validate` runs. Clients now receive the typed per-key failure envelope instead of the generic "Validation failed".
+- **PromptBody now validates `min_length=1` AND rejects whitespace-only**: an admin accidentally clearing the textarea no longer silently writes an empty cleanup prompt.
+- **`PromptTooLargeError` reparented from `ValueError` to `Exception`** so a downstream broad `except ValueError` can't accidentally swallow the 413 signal.
+- **`reachability` log records renamed `stage="startup"` to `phase="startup"`** so reachability events don't collide with the pipeline-stage Loki label dimension used by every other log line.
+- **Shared `services/atomic_write.py` helper** that both `prompt.save` and `corrections.save` now delegate to. Adds a parent-directory `fsync` after `os.replace` so the rename is durable across kernel crashes (the previous implementations fsynced the file but not the directory).
+- **corrections.py module docstring updated** to reflect the lookaround boundary (which excludes hyphens) instead of the obsolete `\b` description.
+
+New tests added by the review pass (9 more, 118 total):
+
+- `test_llm.py` (3 new): Anthropic URL path + version locked (`/v1/messages`, `2023-06-01`); openai-compatible `content=null` raises typed `LLMRequestError`; Anthropic multi-block response with thinking + tool_use interleaved returns just the concatenated text blocks.
+- `test_pipeline.py` (3 new): `MIN_CLEANUP_CHARS` guard fires with `stage=cleanup` and a clear error; cleanup retries once on `LLMProviderError` and ends with `status=done`; cleanup does NOT retry on `LLMRequestError` (exactly one attempt, ends with `status=failed`).
+- `test_api_prompt_corrections.py` (3 new): blank prompt rejected (both empty and whitespace-only); byte-boundary test at exactly `MAX_PROMPT_LENGTH_BYTES` succeeds + one byte over returns 413 (guards against `>` → `>=` off-by-one); non-string value in PUT corrections surfaces as the typed failure envelope instead of the generic "Validation failed".
+- The existing persist-roundtrip tests now use a yield-style `_preserve_prompt_file` / `_preserve_corrections_file` fixture so the on-disk file is always restored in teardown, even if any assertion in the body fails. Previously a single flaky assert could leave the repo's `script.txt` or `pronunciation.json` polluted.
+
 ### Added (Phase 2 - Extraction)
 
 - Runtime deps: `httpx>=0.27`, `tenacity>=9.0`. `httpx` moved out of `[dependency-groups].dev` into runtime since the Firecrawl client and the reachability prober both use it.

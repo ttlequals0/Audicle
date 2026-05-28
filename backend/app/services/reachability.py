@@ -64,6 +64,50 @@ async def check_firecrawl(settings: Settings, *, timeout: float = 5.0) -> CheckR
     return CheckResult(name="firecrawl", ok=False, detail=last_detail)
 
 
+async def check_llm(settings: Settings, *, timeout: float = 5.0) -> CheckResult:
+    """Probe the configured LLM endpoint.
+
+    For ``openai-compatible``: GET ``OPENAI_BASE_URL/models`` -- the well-known
+    list-models endpoint, which every Ollama / vLLM / LM Studio /
+    OpenAI-compatible server exposes.
+
+    For ``anthropic``: no cheap unauthenticated probe exists, so we only
+    validate that ``ANTHROPIC_API_KEY`` is present (the build plan calls this
+    out explicitly: "Skip; Anthropic API has no cheap health check").
+    """
+
+    if settings.LLM_PROVIDER == "anthropic":
+        if not settings.ANTHROPIC_API_KEY:
+            return CheckResult(name="llm", ok=False, detail="ANTHROPIC_API_KEY is not set")
+        return CheckResult(name="llm", ok=True, detail="anthropic provider; API key present")
+
+    base = (settings.OPENAI_BASE_URL or "").rstrip("/")
+    if not base:
+        return CheckResult(name="llm", ok=False, detail="OPENAI_BASE_URL is not set")
+
+    endpoint = f"{base}/models"
+    headers = {}
+    if settings.OPENAI_API_KEY:
+        headers["Authorization"] = f"Bearer {settings.OPENAI_API_KEY}"
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        try:
+            response = await client.get(endpoint, headers=headers)
+        except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            return CheckResult(
+                name="llm",
+                ok=False,
+                detail=f"unreachable ({exc.__class__.__name__}: {exc})",
+            )
+    if response.is_success:
+        return CheckResult(name="llm", ok=True, detail=f"HTTP {response.status_code}")
+    return CheckResult(
+        name="llm",
+        ok=False,
+        detail=f"HTTP {response.status_code}: {response.text[:120]}",
+    )
+
+
 async def run_all(settings: Settings) -> list[CheckResult]:
     """Run every Phase-appropriate check.
 
@@ -73,14 +117,21 @@ async def run_all(settings: Settings) -> list[CheckResult]:
     503 instead of a refusing-to-start container).
     """
 
-    results: list[CheckResult] = [await check_firecrawl(settings)]
+    results: list[CheckResult] = [
+        await check_firecrawl(settings),
+        await check_llm(settings),
+    ]
     failed = [r for r in results if not r.ok]
     for result in results:
         logger.info(
             "Reachability check",
+            # Use `phase` instead of `stage` so reachability events don't
+            # share a Loki label with the pipeline-stage contextvar
+            # (extract/cleanup/corrections/...). Operators querying by stage
+            # see only pipeline events.
             extra={
                 "event": "reachability_check",
-                "stage": "startup",
+                "phase": "startup",
                 "check": result.name,
                 "ok": result.ok,
                 "detail": result.detail,

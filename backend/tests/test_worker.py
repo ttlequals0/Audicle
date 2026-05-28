@@ -44,14 +44,20 @@ async def test_pickup_runs_pipeline_against_a_queued_job(
 
     database.run_migrations(env)
 
-    # Stub the extractor so the test doesn't reach the network.
+    # Stub extract + LLM so the test doesn't reach the network.
     async def _fake_extract(url, settings):
         return extraction.ExtractionResult(
             markdown="# Example\n\nbody " * 200,
             metadata={"title": "Example article"},
         )
 
+    async def _fake_llm(_system, _user, _settings, **_kwargs):
+        return "cleaned narration text " * 50
+
+    from app.services import llm
+
     monkeypatch.setattr(extraction, "extract", _fake_extract)
+    monkeypatch.setattr(llm, "generate", _fake_llm)
 
     # Insert one queued job via the helper so episode_id is computed.
     conn = database.connect(database.db_path(env))
@@ -72,7 +78,7 @@ async def test_pickup_runs_pipeline_against_a_queued_job(
     finally:
         conn.close()
     assert row["status"] == "done"
-    assert row["stage"] == "extract"
+    assert row["stage"] == "corrections"
     assert row["error"] is None
 
 
