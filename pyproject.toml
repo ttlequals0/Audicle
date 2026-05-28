@@ -1,0 +1,42 @@
+[project]
+name = "audicle"
+version = "0.1.0"
+description = "Self-hosted service that turns article URLs into a Podcasting 2.0 feed."
+requires-python = ">=3.13"
+license = { text = "MIT" }
+authors = [{ name = "ttlequals0" }]
+
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+]
+
+# PEP 735 dependency groups: `uv sync --no-dev` excludes these in the runtime
+# image; `uv sync --group dev` (or the default `uv sync`) installs them for
+# local development and CI.
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",
+    "ruff>=0.7",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["backend"]
+testpaths = ["backend/tests"]
+asyncio_mode = "auto"
+addopts = "-ra -q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["E501"]

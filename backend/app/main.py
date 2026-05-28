@@ -1,0 +1,39 @@
+"""FastAPI application entry point."""
+
+from __future__ import annotations
+
+import logging
+import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+
+from app.api.health import router as health_router
+from app.config import get_settings
+from app.startup import bootstrap
+from app.version import __version__
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    settings = get_settings()
+    bootstrap(settings, process_label="web")
+    app.state.started_at = time.monotonic()
+    yield
+    logging.getLogger("app.main").info("Audicle shutting down", extra={"event": "app_stopping"})
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(
+        title="Audicle",
+        version=__version__,
+        lifespan=lifespan,
+        docs_url="/api/v1/docs",
+        openapi_url="/api/v1/openapi.json",
+    )
+    app.include_router(health_router)
+    return app
+
+
+app = create_app()
