@@ -19,11 +19,13 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
 from app.config import Settings
 from app.core import database
-from app.services import extraction, jobs
+from app.services import corrections, extraction, jobs, llm
+from app.services import prompt as prompt_service
 from app.utils.logging import episode_id_ctx, job_id_ctx, stage_ctx
 
 logger = logging.getLogger("app.services.pipeline")
@@ -136,10 +138,27 @@ def _finalize_failure(
 
 
 async def _run_stages(job: jobs.Job, settings: Settings) -> None:
-    """Phase 2 pipeline: a single extract stage."""
+    """Phase 3 pipeline: extract -> cleanup -> corrections.
 
-    await _run_stage("extract", lambda: _stage_extract(job, settings), job.id, settings)
-    _mark_done(job.id, final_stage="extract", settings=settings)
+    Phase 4+ appends chunk, tts, audio, artwork, transcript, finalize.
+    """
+
+    extraction_result = await _run_stage(
+        "extract", lambda: _stage_extract(job, settings), job.id, settings
+    )
+    cleaned = await _run_stage(
+        "cleanup",
+        lambda: _stage_cleanup(extraction_result.markdown, settings),
+        job.id,
+        settings,
+    )
+    _ = await _run_stage(
+        "corrections",
+        lambda: _stage_corrections(cleaned, settings),
+        job.id,
+        settings,
+    )
+    _mark_done(job.id, final_stage="corrections", settings=settings)
 
 
 async def _run_stage(
@@ -185,6 +204,98 @@ async def _stage_extract(job: jobs.Job, settings: Settings) -> extraction.Extrac
         },
     )
     return result
+
+
+class CleanupTooShortError(Exception):
+    """LLM cleanup output came back below ``MIN_CLEANUP_CHARS``.
+
+    Distinct from a generic ValueError so the pipeline's outer error handler
+    can classify the failure as cleanup-specific and any future broad
+    ``except ValueError`` doesn't accidentally swallow it.
+    """
+
+
+async def _stage_cleanup(markdown: str, settings: Settings) -> str:
+    """LLM cleanup with tenacity retry on transient provider failures.
+
+    Re-reads the prompt file every call so operator edits take effect on the
+    next job without a restart. Per build plan (line 251), the cleanup stage
+    wraps llm.generate with ``LLM_RETRY_COUNT`` attempts and exponential
+    backoff, retrying only :class:`llm.LLMProviderError` / :class:`llm.LLMTimeoutError`.
+    :class:`llm.LLMRequestError` (4xx, malformed response) is non-retryable.
+    """
+
+    prompt_path = _prompt_path(settings)
+    system_prompt = prompt_service.load(prompt_path)
+    cleaned = await _llm_with_retry(system_prompt, markdown, settings)
+    if len(cleaned) < settings.MIN_CLEANUP_CHARS:
+        raise CleanupTooShortError(
+            f"Cleanup output is {len(cleaned)} chars, below "
+            f"MIN_CLEANUP_CHARS={settings.MIN_CLEANUP_CHARS}"
+        )
+    logger.info(
+        "Cleanup succeeded",
+        extra={
+            "event": "cleanup_complete",
+            "input_chars": len(markdown),
+            "output_chars": len(cleaned),
+        },
+    )
+    return cleaned
+
+
+async def _stage_corrections(cleaned: str, settings: Settings) -> str:
+    """Apply the pronunciation dictionary. Re-reads the file every call."""
+
+    dictionary_path = _corrections_path(settings)
+    dictionary = corrections.load(dictionary_path)
+    result = corrections.apply(cleaned, dictionary)
+    logger.info(
+        "Corrections applied",
+        extra={
+            "event": "corrections_complete",
+            "entries_loaded": len(dictionary),
+            "delta_chars": len(result) - len(cleaned),
+        },
+    )
+    return result
+
+
+async def _llm_with_retry(system: str, user: str, settings: Settings) -> str:
+    """Call llm.generate with tenacity retry on transient errors only."""
+
+    from tenacity import (
+        AsyncRetrying,
+        RetryError,
+        retry_if_exception_type,
+        stop_after_attempt,
+        wait_exponential,
+    )
+
+    retrying = AsyncRetrying(
+        stop=stop_after_attempt(settings.LLM_RETRY_COUNT),
+        wait=wait_exponential(multiplier=1, min=1),
+        retry=retry_if_exception_type((llm.LLMProviderError, llm.LLMTimeoutError)),
+        reraise=False,
+    )
+    try:
+        async for attempt in retrying:
+            with attempt:
+                return await llm.generate(system, user, settings)
+    except RetryError as exc:
+        inner = exc.last_attempt.exception()
+        if isinstance(inner, llm.LLMError):
+            raise inner from exc
+        raise llm.LLMProviderError(f"LLM retries exhausted: {inner}") from exc
+    raise llm.LLMProviderError("LLM retry loop exited without a response")
+
+
+def _prompt_path(_settings: Settings) -> Path:
+    return Path(__file__).parent.parent / "prompts" / "script.txt"
+
+
+def _corrections_path(_settings: Settings) -> Path:
+    return Path(__file__).parent.parent / "corrections" / "pronunciation.json"
 
 
 # --- DB helpers --------------------------------------------------------------

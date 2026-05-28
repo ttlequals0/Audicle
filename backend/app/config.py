@@ -81,6 +81,10 @@ class Settings(BaseSettings):
     # CORS.
     CORS_ORIGINS: str = ""
 
+    # Cleanup prompt + pronunciation corrections.
+    MAX_PROMPT_LENGTH_BYTES: int = 10240
+    MAX_CORRECTIONS_ENTRIES: int = 500
+
     @model_validator(mode="after")
     def _validate_provider(self) -> Settings:
         if self.LLM_PROVIDER == "openai-compatible":
