@@ -1,0 +1,26 @@
+# syntax=docker/dockerfile:1.7
+
+# CPU-only variant. Same code, smaller image (no CUDA toolkit), substantially
+# slower runtime (5-10x per build plan). Set TTS_DEVICE=cpu in .env when using
+# this image.
+FROM pytorch/pytorch:2.4.0-cpu AS runtime
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    HF_HOME=/root/.cache/huggingface \
+    TTS_HOME=/root/.cache/huggingface/tts
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY pyproject.toml ./
+COPY config.py engine.py main.py ./
+RUN pip install --no-cache-dir .
+
+EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=120s \
+    CMD curl -fsS http://localhost:8000/health || exit 1
+CMD ["uvicorn", "main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--timeout-keep-alive", "300"]

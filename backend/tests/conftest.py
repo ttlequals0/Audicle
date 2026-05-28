@@ -45,6 +45,10 @@ def env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         monkeypatch.setenv(key, value)
     monkeypatch.setenv("DATA_DIR", str(data_dir))
     monkeypatch.setenv("LOG_FORMAT", "text")
+    # Reachability checks in tests must finish fast; tests that need a longer
+    # grace can override these in their own monkeypatch.
+    monkeypatch.setenv("TTS_REACHABILITY_GRACE_SECONDS", "0.5")
+    monkeypatch.setenv("TTS_REACHABILITY_PROBE_TIMEOUT", "0.5")
     get_settings.cache_clear()
     try:
         yield data_dir

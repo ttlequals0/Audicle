@@ -5,14 +5,14 @@ processing. A failure here is fatal: the process exits non-zero so the
 container restart loop surfaces the problem instead of every job failing in
 the same way mid-stage.
 
-Phase 2 only checks Firecrawl. The LLM probe lands in Phase 3 and the TTS
-wrapper probe in Phase 4 -- see the table in build-plan.md "Startup
-Reachability Checks".
+Phase 4: Firecrawl + LLM + TTS wrapper are all probed.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from dataclasses import dataclass
 
 import httpx
@@ -108,6 +108,80 @@ async def check_llm(settings: Settings, *, timeout: float = 5.0) -> CheckResult:
     )
 
 
+async def check_tts(settings: Settings) -> CheckResult:
+    """Probe the TTS wrapper's ``/health`` endpoint with a startup grace period.
+
+    The wrapper takes 10-30s to load XTTS-v2 + compute speaker embeddings on a
+    cold container start. Per build plan line 1469, we poll for up to
+    ``TTS_REACHABILITY_GRACE_SECONDS`` (default 60s) with a
+    ``TTS_REACHABILITY_PROBE_TIMEOUT`` per attempt, returning the first
+    ``model_loaded: true`` response.
+    """
+
+    endpoint = f"{settings.TTS_URL.rstrip('/')}/health"
+    deadline = time.monotonic() + settings.TTS_REACHABILITY_GRACE_SECONDS
+    per_probe = httpx.Timeout(settings.TTS_REACHABILITY_PROBE_TIMEOUT)
+    last_detail = "no probe completed"
+    attempt = 0
+
+    # One AsyncClient for the whole grace window so successive probes share
+    # the connection pool instead of paying TCP/TLS setup on every iteration.
+    async with httpx.AsyncClient(timeout=per_probe) as client:
+        while True:
+            attempt += 1
+            try:
+                response = await client.get(endpoint)
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                last_detail = f"unreachable ({exc.__class__.__name__}: {exc})"
+            else:
+                if response.is_success:
+                    try:
+                        body = response.json()
+                    except ValueError:
+                        body = {}
+                    if isinstance(body, dict) and body.get("model_loaded"):
+                        return CheckResult(
+                            name="tts",
+                            ok=True,
+                            detail=(
+                                f"HTTP {response.status_code} after {attempt} probe(s); "
+                                f"model_loaded=true, reference_loaded={body.get('reference_loaded', False)}"
+                            ),
+                        )
+                    last_detail = (
+                        f"HTTP {response.status_code} but model_loaded=false "
+                        f"(reference_loaded={body.get('reference_loaded') if isinstance(body, dict) else 'n/a'})"
+                    )
+                else:
+                    last_detail = f"HTTP {response.status_code}: {response.text[:120]}"
+
+            # Per-probe debug log so a stalled cold-start is visible in Loki
+            # instead of 60 silent seconds.
+            logger.debug(
+                "TTS reachability probe",
+                extra={
+                    "event": "reachability_probe",
+                    "phase": "startup",
+                    "check": "tts",
+                    "attempt": attempt,
+                    "detail": last_detail,
+                },
+            )
+
+            if time.monotonic() >= deadline:
+                return CheckResult(
+                    name="tts",
+                    ok=False,
+                    detail=(
+                        f"grace period ({settings.TTS_REACHABILITY_GRACE_SECONDS}s) expired "
+                        f"after {attempt} probe(s): {last_detail}"
+                    ),
+                )
+            # Back off a tick before the next probe so we don't hot-spin while
+            # the wrapper is still loading.
+            await asyncio.sleep(min(1.0, max(0.1, settings.TTS_REACHABILITY_PROBE_TIMEOUT / 10)))
+
+
 async def run_all(settings: Settings) -> list[CheckResult]:
     """Run every Phase-appropriate check.
 
@@ -120,6 +194,7 @@ async def run_all(settings: Settings) -> list[CheckResult]:
     results: list[CheckResult] = [
         await check_firecrawl(settings),
         await check_llm(settings),
+        await check_tts(settings),
     ]
     failed = [r for r in results if not r.ok]
     for result in results:

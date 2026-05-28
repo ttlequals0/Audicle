@@ -85,6 +85,21 @@ class Settings(BaseSettings):
     MAX_PROMPT_LENGTH_BYTES: int = 10240
     MAX_CORRECTIONS_ENTRIES: int = 500
 
+    # TTS wrapper (Phase 4).
+    TTS_LANGUAGE: str = "en"
+    TTS_DEVICE: Literal["cuda", "cpu"] = "cuda"
+    TTS_HTTP_TIMEOUT_SECONDS: float = 120
+    # Wired into the per-chunk pipeline call site in Phase 5; defined here so
+    # operators can tune .env now without a follow-up rebuild.
+    TTS_RETRY_COUNT: int = 3
+    TTS_REACHABILITY_GRACE_SECONDS: float = 60
+    TTS_REACHABILITY_PROBE_TIMEOUT: float = 10
+    XTTS_TEMPERATURE: float = 0.65
+    XTTS_LENGTH_PENALTY: float = 1.0
+    XTTS_REPETITION_PENALTY: float = 2.0
+    XTTS_TOP_K: int = 50
+    XTTS_TOP_P: float = 0.85
+
     @model_validator(mode="after")
     def _validate_provider(self) -> Settings:
         if self.LLM_PROVIDER == "openai-compatible":

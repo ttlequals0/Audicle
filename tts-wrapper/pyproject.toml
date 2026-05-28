@@ -1,0 +1,44 @@
+[project]
+name = "audicle-tts-wrapper"
+version = "0.1.0"
+description = "FastAPI wrapper around Coqui XTTS-v2 for Audicle."
+requires-python = ">=3.11,<3.13"
+# 3.11 lower bound: torch wheels for XTTS-v2 lag the latest Python release.
+# 3.13 upper bound: same constraint -- bump once the idiap fork ships 3.13.
+# (Backend pyproject pins >=3.13; two Python versions in one repo is the
+# pragmatic compromise. Each package has its own venv.)
+license = { text = "MPL-2.0" }
+authors = [{ name = "ttlequals0" }]
+
+# Upper bounds on coqui-tts: the wrapper reaches into
+# ``model.synthesizer.tts_model.get_conditioning_latents`` and ``.inference``,
+# which are Coqui internals not covered by semver. Pin to a tested range and
+# bump deliberately.
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "numpy>=1.26,<3.0",
+    "coqui-tts>=0.24,<0.25",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",
+    "ruff>=0.7",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-ra -q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

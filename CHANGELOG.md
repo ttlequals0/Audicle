@@ -6,6 +6,57 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Added (Phase 4 - TTS Wrapper)
+
+- `tts-wrapper/` — new sibling container that wraps Coqui XTTS-v2 in a FastAPI service. Endpoints per build plan:
+  - `POST /generate` accepts `{text, episode_id, chunk_index}`, runs inference under an `asyncio.Lock` so concurrent calls queue at the GPU boundary while `/health` stays responsive, writes the result to `/data/media/{episode_id}_chunk_{chunk_index}.wav`, returns `{wav_path, duration_secs, sample_rate}`.
+  - `GET /health` reports `{ok, model_loaded, reference_loaded}`; 503 until the model has loaded AND the reference embeddings are computed.
+  - `POST /reload` acquires the same lock, re-reads `reference/voice.wav`, and recomputes speaker embeddings — called by the main app after a reference-voice commit (Phase 10).
+- `tts-wrapper/engine.py`: `Engine` Protocol + `XTTSEngine` real implementation. The Coqui TTS and PyTorch imports are deferred to `XTTSEngine.load()` so the module is importable in test environments without GPU runtime. Tests inject a `FakeEngine` via `create_app(engine=…, data_dir=…)`.
+- `tts-wrapper/main.py`: lifespan calls `engine.load()` and `sys.exit(1)`s on failure so uvicorn exits non-zero and the container restart policy fires (matches the missing-`voice.wav` and model-load-failure deliverables). Pydantic request model uses `extra="forbid"`, `min_length` on text + episode_id, `ge=0` on `chunk_index`. GPU OOM raises a typed `GPUOutOfMemoryError` that the route catches, calls `torch.cuda.empty_cache()`, and returns 500 with `{error: "GPU OOM", cause}`. WAV duration is computed from the file header so the response value matches what was written.
+- `tts-wrapper/config.py`: env-driven `Config` carrying `TTS_DEVICE`, `TTS_LANGUAGE`, the XTTS generation tunables (`XTTS_TEMPERATURE`/`LENGTH_PENALTY`/`REPETITION_PENALTY`/`TOP_K`/`TOP_P`), and the sample rate. Defaults match build-plan.md.
+- `tts-wrapper/Dockerfile`: `pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime` base, `coqui-tts` (idiap fork) from PyPI, `libsndfile1`, `curl` for the healthcheck. `uvicorn main:create_app --factory --workers 1 --timeout-keep-alive 300`. Healthcheck on `/health` with 120s `start_period` to cover the model download/load on cold start.
+- `tts-wrapper/Dockerfile.cpu`: alternate base (`pytorch/pytorch:2.4.0-cpu`) for hosts without CUDA. 5-10× slower per build plan but verifies the contract.
+- `tts-wrapper/README.md`: XTTS CPML license note, voice-file specs (6-12s, 22050+ Hz, mono, clean) with the exact ffmpeg conversion line for the LibriTTS clips in `ref_audio/`, HF cache mount, CPU vs CUDA, GPU pinning.
+- `backend/app/services/tts.py`: async client for the wrapper. `generate_chunk(text, episode_id, chunk_index, settings)` returns a frozen `GenerateResult`. Typed exceptions `TTSTimeoutError`, `TTSProviderError` (5xx + network, retryable), `TTSRequestError` (4xx + malformed). `reload(settings)` posts `/reload` and returns the wrapper's body.
+- `backend/app/services/reachability.py`: added `check_tts(settings)` with the build-plan grace-period semantics (poll up to `TTS_REACHABILITY_GRACE_SECONDS` with `TTS_REACHABILITY_PROBE_TIMEOUT` per attempt, return on first `model_loaded: true`). Wired into `run_all` so the worker waits for the wrapper before processing.
+- `backend/app/config.py`: added `TTS_LANGUAGE`, `TTS_DEVICE`, `TTS_HTTP_TIMEOUT_SECONDS`, `TTS_RETRY_COUNT`, `TTS_REACHABILITY_GRACE_SECONDS`, `TTS_REACHABILITY_PROBE_TIMEOUT`, and the five `XTTS_*` tunables. `.env.example` documents every default.
+- `docker-compose.yml`: added the `tts-wrapper` service with nvidia GPU reservation (`device_ids: ['0']`), shared `./data:/data`, read-only reference mount, and a named `hf_cache` volume so the ~2GB model download survives container rebuilds. `app` now `depends_on: tts-wrapper: condition: service_healthy`.
+
+Tests (22 new, 153 total):
+
+- `tts-wrapper/tests/test_main.py` (9): /health 200 path + 503 when reference not loaded; /generate writes the WAV at the expected `/data/media/{episode}_chunk_{n}.wav` path with the duration computed from the header; blank text rejected; negative chunk_index rejected; extra fields rejected; GPU OOM surfaces the 500 envelope with cause; sequential /generate calls observed in submission order via the lock; /reload returns `{ok: true, reference_loaded: true}` and increments the engine's reload counter.
+- `backend/tests/test_tts.py` (9): client wire format (path + body), 5xx/4xx/timeout/network error classification, non-JSON + missing-key shape errors, /reload happy + 5xx paths.
+- `backend/tests/test_tts_reachability.py` (4): probe succeeds on first try, polls until `model_loaded` flips to true, reports `grace period expired` on network failure, reports `model_loaded=false` when the wrapper is up but not ready.
+
+Verification approach
+- The wrapper engine abstraction means the FastAPI contract is exercised end-to-end in CI without ever loading XTTS-v2. The real model load + GPU inference is operator-side per the build plan deliverable ("Manual test: send chunk text, get WAV back; verify CPU fallback path"). The `tts-wrapper/README.md` documents the exact `docker compose build tts-wrapper && docker compose up` flow plus a single-curl smoke test once the wrapper reports `model_loaded: true`.
+- `docker compose config` validates the full multi-service stack (app + tts-wrapper) including the GPU reservation, mount layout, env wiring, healthcheck dependency, and named volumes.
+
+### Code-review pass (multi-agent /simplify + /code-review for Phase 4)
+
+Findings surfaced and applied:
+
+- **Path traversal blocked**: `GenerateRequest.episode_id` now carries a `pattern=r"^[A-Za-z0-9_.-]+$"` and `chunk_index` an upper bound. The wrapper also runs a `Path.resolve().is_relative_to(out_dir)` belt-and-braces check before writing, so an episode_id that somehow slips through the validator still can't escape `data_dir/media/`.
+- **Event loop unblocked**: `XTTSEngine.synthesize` and `_compute_embeddings` now run via `asyncio.to_thread(...)`. The wrapper's `/health` route is genuinely responsive while a chunk is mid-inference, not just lock-free.
+- **Per-request inference timeout**: `/generate` wraps `engine.synthesize` in `asyncio.wait_for(timeout=TTS_REQUEST_TIMEOUT_SECONDS)` (default 120s, env-tunable) and returns 504 on timeout. Build-plan line 822's "Per-request timeout 120s" is now enforced; a wedged inference call can no longer hold the worker forever.
+- **WAV writes are atomic**: `_atomic_write_bytes` (tempfile + fsync + os.replace) replaces the bare `Path.write_bytes` so Phase 5+ stitching can't observe a partial chunk file.
+- **Lifespan re-raises instead of `sys.exit(1)`**: the original exception now propagates through Starlette's documented `lifespan.startup.failed` path, giving uvicorn a clean Exception-based exit and making the failure path safely testable via `TestClient.__enter__`.
+- **Reload no longer corrupts engine state on failure**: `reload_reference` snapshots the prior latent + speaker_embedding + reference_loaded flag and rolls them back if `_compute_embeddings` raises. A bad voice.wav now returns 500 but `/health` keeps reporting the prior good state instead of flipping to permanent `reference_loaded=false`.
+- **Spec drift fixed on response bodies**: `/reload` now returns just `{"ok": true}` per build-plan line 805; `/health` 503 body now includes a diagnostic `"error"` string per build-plan line 803.
+- **Coqui-tts version pinned**: `tts-wrapper/pyproject.toml` upper-bounds the dep to `<0.25` and a comment explains that the wrapper reaches into Coqui internals (`model.synthesizer.tts_model.get_conditioning_latents`/`inference`) not covered by semver.
+- **Dockerfile installs from pyproject**: both `Dockerfile` and `Dockerfile.cpu` drop their hand-written `pip install` list in favor of `pip install --no-cache-dir .`. Single source of truth across the venv-based dev and the container build.
+- **app.state.lock created at app construction**: no longer split between module-time engine assignment and lifespan-time lock assignment; consistent ordering for ASGI middleware or unusual test harnesses that bypass the lifespan.
+- **Compose security hardening parity**: tts-wrapper service now declares `security_opt: no-new-privileges: true` and `cap_drop: ALL`, matching the app service posture.
+- **check_tts AsyncClient pooled across probes**: one `httpx.AsyncClient` for the whole grace window so successive probes share the TCP connection pool. Per-probe debug log line emitted so a stalled cold-start shows up in Loki instead of 60 silent seconds.
+- **Module-style imports moved to top in `engine.py`**: `io`, `wave`, and `numpy` (transitive numpy dep) no longer hide as inline imports inside `_wav_bytes`, matching the project's "no inline imports" rule.
+
+New tests added by the review pass (5 more, 158 total):
+
+- `tts-wrapper/tests/test_main.py`: path traversal in `episode_id` rejected (covers `../etc/foo`, `a/b`, `with space`, `with\x00null`); `/reload` 404 when engine raises `FileNotFoundError`; `/reload` 500 when engine raises any other exception (each path matters because the backend's `tts.reload` client classifies 4xx as terminal `TTSRequestError` and 5xx as retryable `TTSProviderError`); engine `sample_rate` mismatch is observable in the response (FakeEngine.sample_rate=24000 over a 22050 Hz WAV → response carries the engine's value, duration computed from the WAV header — a future code change that reads the rate from the header fails the assertion); atomic write leaves no `.tmp` files on success.
+
+Container smoke remains operator-side per the original Phase 4 plan; the additional fixes don't change the manual XTTS smoke path documented in `tts-wrapper/README.md`.
+
 ### Added (Phase 3 - LLM Cleanup)
 
 - `backend/app/services/llm.py`: multi-provider client. `async generate(system, user, settings, *, temperature?, max_tokens?)` dispatches to `_call_openai_compatible` (POST `{OPENAI_BASE_URL}/chat/completions`) or `_call_anthropic` (POST `https://api.anthropic.com/v1/messages` with `x-api-key` + `anthropic-version` headers). Typed errors: `LLMTimeoutError`, `LLMProviderError` (5xx, retryable), `LLMRequestError` (4xx + malformed JSON, non-retryable). Both providers return parsed text via the established response shapes.
