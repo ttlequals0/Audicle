@@ -63,7 +63,7 @@ class Settings(BaseSettings):
 
     # Queue / HTTP / worker.
     QUEUE_POLL_INTERVAL_SECONDS: float = 2.0
-    JOB_TIMEOUT_SECONDS: int = 1800
+    JOB_TIMEOUT_SECONDS: float = 1800
     WEB_WORKERS: int = 2
 
     # Logging.

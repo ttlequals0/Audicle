@@ -1,17 +1,22 @@
 """Queue worker process.
 
-Phase 1: polling loop that performs crash recovery at startup, then idles. The
-pipeline stages (extract, cleanup, tts, ...) are wired up in later phases.
+Polls the jobs table for ``status='queued'`` rows. Single in-flight job: the
+pipeline runs sequentially and the next poll only happens after the previous
+job finishes (or fails). Crash recovery and reachability checks gate the
+polling loop.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import signal
+import sys
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.core import database
+from app.services import jobs, pipeline, reachability
 from app.startup import bootstrap
 
 logger = logging.getLogger("app.worker")
@@ -30,9 +35,38 @@ async def _crash_recovery(data_dir) -> None:
         conn.close()
 
 
+async def _pickup_once(settings: Settings) -> jobs.Job | None:
+    """Claim the oldest queued job, if any."""
+
+    conn = database.connect(database.db_path(settings.DATA_DIR))
+    try:
+        return jobs.claim_next_queued(conn)
+    finally:
+        conn.close()
+
+
+async def _process_one(settings: Settings) -> bool:
+    """Pick up and run one job. Returns True if a job was processed."""
+
+    job = await _pickup_once(settings)
+    if job is None:
+        return False
+    await pipeline.process_job(job, settings)
+    return True
+
+
 async def run() -> None:
     settings = get_settings()
     bootstrap(settings, process_label="worker")
+
+    try:
+        await reachability.run_all(settings)
+    except reachability.ReachabilityError as exc:
+        logger.error(
+            "Startup reachability checks failed; exiting",
+            extra={"event": "reachability_fatal", "stage": "startup", "error": str(exc)},
+        )
+        sys.exit(1)
 
     shutdown = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -53,10 +87,22 @@ async def run() -> None:
 
     poll_interval = settings.QUEUE_POLL_INTERVAL_SECONDS
     while not shutdown.is_set():
+        # Anything that escapes process_job (DB locked during pickup, OSError
+        # on the data dir, ...) must not kill the worker. Log it and back off
+        # one poll interval so we don't spin against a hard failure.
         try:
-            await asyncio.wait_for(shutdown.wait(), timeout=poll_interval)
-        except TimeoutError:
+            processed = await _process_one(settings)
+        except Exception:
+            logger.exception(
+                "Worker iteration failed; backing off",
+                extra={"event": "worker_iteration_failed"},
+            )
+            processed = False
+        if processed:
+            # Loop right back: a job may have arrived while we were working.
             continue
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(shutdown.wait(), timeout=poll_interval)
 
     logger.info("Worker stopped", extra={"event": "worker_stopped"})
 

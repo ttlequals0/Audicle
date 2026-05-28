@@ -9,7 +9,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api import errors as error_handlers
 from app.api.health import router as health_router
+from app.api.v1.router import router as v1_router
 from app.config import get_settings
 from app.startup import bootstrap
 from app.version import __version__
@@ -33,6 +35,8 @@ def create_app() -> FastAPI:
         openapi_url="/api/v1/openapi.json",
     )
     app.include_router(health_router)
+    app.include_router(v1_router)
+    error_handlers.register(app)
     return app
 
 
