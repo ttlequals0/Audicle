@@ -1,0 +1,27 @@
+/* Audicle design tokens.
+ * Source of truth: branding/tokens.json
+ */
+
+:root {
+  /* Color */
+  --audicle-color-primary: #1ce783;
+  --audicle-color-background: #040405;
+  --audicle-color-paper: #0a0a0c;
+  --audicle-color-surface: #15151a;
+  --audicle-color-line: #26262e;
+  --audicle-color-text: #f5f5f5;
+  --audicle-color-text-dim: #9a9aaa;
+  --audicle-color-text-mute: #6b6b78;
+  --audicle-color-danger: #ff5252;
+
+  /* Typography */
+  --audicle-font-sans: Satoshi, system-ui, -apple-system, sans-serif;
+  --audicle-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --audicle-letter-spacing-wordmark: -0.02em;
+  --audicle-letter-spacing-label: 0.08em;
+
+  /* Radius */
+  --audicle-radius-sm: 6px;
+  --audicle-radius-md: 8px;
+  --audicle-radius-lg: 12px;
+}

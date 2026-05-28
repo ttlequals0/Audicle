@@ -1,0 +1,8 @@
+<svg viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Audicle">
+  <path d="M 30 130 L 80 26 L 130 130" stroke="#1ce783" stroke-width="10" fill="none" stroke-linejoin="round" stroke-linecap="round"/>
+  <line x1="56" y1="100" x2="56" y2="112" stroke="#1ce783" stroke-width="6" stroke-linecap="round"/>
+  <line x1="68" y1="86" x2="68" y2="112" stroke="#1ce783" stroke-width="6" stroke-linecap="round"/>
+  <line x1="80" y1="74" x2="80" y2="112" stroke="#1ce783" stroke-width="6" stroke-linecap="round"/>
+  <line x1="92" y1="86" x2="92" y2="112" stroke="#1ce783" stroke-width="6" stroke-linecap="round"/>
+  <line x1="104" y1="100" x2="104" y2="112" stroke="#1ce783" stroke-width="6" stroke-linecap="round"/>
+</svg>

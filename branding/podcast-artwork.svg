@@ -1,0 +1,12 @@
+<svg viewBox="0 0 3000 3000" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Audicle podcast artwork">
+  <rect width="3000" height="3000" fill="#040405"/>
+  <g transform="translate(750, 600)">
+    <path d="M 300 1300 L 750 300 L 1200 1300" stroke="#1ce783" stroke-width="90" fill="none" stroke-linejoin="round" stroke-linecap="round"/>
+    <line x1="520" y1="1000" x2="520" y2="1120" stroke="#1ce783" stroke-width="60" stroke-linecap="round"/>
+    <line x1="630" y1="860" x2="630" y2="1120" stroke="#1ce783" stroke-width="60" stroke-linecap="round"/>
+    <line x1="750" y1="740" x2="750" y2="1120" stroke="#1ce783" stroke-width="60" stroke-linecap="round"/>
+    <line x1="870" y1="860" x2="870" y2="1120" stroke="#1ce783" stroke-width="60" stroke-linecap="round"/>
+    <line x1="980" y1="1000" x2="980" y2="1120" stroke="#1ce783" stroke-width="60" stroke-linecap="round"/>
+  </g>
+  <text x="1500" y="2450" font-family="Inter, system-ui, sans-serif" font-weight="600" font-size="320" fill="#1ce783" text-anchor="middle" letter-spacing="-10">audicle</text>
+</svg>

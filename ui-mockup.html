@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#040405">
+<title>Audicle</title>
+
+<link rel="preconnect" href="https://api.fontshare.com" crossorigin>
+<link href="https://api.fontshare.com/v2/css?f[]=jetbrains-mono@400,500,700&f[]=satoshi@400,500,700,900&display=swap" rel="stylesheet">
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          mono: ['JetBrains Mono', 'ui-monospace', 'monospace'],
+          sans: ['Satoshi', 'system-ui', 'sans-serif'],
+        },
+        colors: {
+          ink: '#040405', paper: '#0a0a0c', surface: '#15151a',
+          line: '#26262e', mute: '#6b6b78', dim: '#9a9aaa',
+          fg: '#f5f5f5', green: '#1ce783', danger: '#ff5252',
+        }
+      }
+    }
+  }
+</script>
+
+<style>
+  * { -webkit-tap-highlight-color: transparent; }
+  html, body { background: #040405; }
+  body { overflow-x: hidden; }
+
+  body::before {
+    content: ''; position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3CfeColorMatrix values='0 0 0 0 0.1 0 0 0 0 0.9 0 0 0 0 0.5 0 0 0 0.04 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    opacity: 0.5; pointer-events: none; z-index: 1;
+  }
+
+  .accent-line { background: linear-gradient(90deg, transparent 0%, #1ce783 20%, #1ce783 80%, transparent 100%); height: 1px; }
+
+  .tab-btn {
+    flex: 1; padding: 0.875rem 0.5rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.1em;
+    color: #6b6b78; transition: color 0.15s; position: relative;
+    background: transparent; border: none; cursor: pointer;
+  }
+  .tab-btn.active { color: #1ce783; }
+  .tab-btn.active::after {
+    content: ''; position: absolute; bottom: -1px; left: 50%;
+    width: 32px; height: 2px; background: #1ce783; transform: translateX(-50%);
+  }
+
+  .panel { display: none; animation: fade 0.25s ease-out; }
+  .panel.active { display: block; }
+  @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+  .field {
+    width: 100%; background: #15151a; border: 1px solid #26262e;
+    color: #f5f5f5; padding: 0.75rem 0.875rem; border-radius: 8px;
+    font-family: inherit; font-size: 0.9375rem; transition: border-color 0.15s;
+  }
+  .field:focus { outline: none; border-color: #1ce783; }
+
+  .field-label {
+    display: block; font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.08em;
+    color: #9a9aaa; margin-bottom: 0.5rem;
+  }
+
+  .btn-primary {
+    background: #1ce783; color: #040405; font-weight: 700;
+    padding: 0.875rem 1.5rem; border-radius: 8px; border: none;
+    cursor: pointer; transition: transform 0.08s, background 0.15s;
+    font-size: 0.9375rem;
+  }
+  .btn-primary:active { transform: translateY(1px); background: #16d076; }
+
+  .btn-ghost {
+    background: transparent; color: #dadae0; border: 1px solid #26262e;
+    padding: 0.5rem 0.875rem; border-radius: 6px; cursor: pointer;
+    font-size: 0.8125rem; transition: border-color 0.15s;
+  }
+  .btn-ghost:active { border-color: #1ce783; }
+  .btn-danger { color: #ff5252; border-color: #4a1f1f; }
+
+  .tag {
+    display: inline-flex; align-items: center; gap: 0.25rem;
+    font-family: 'JetBrains Mono', monospace; font-size: 0.625rem;
+    letter-spacing: 0.05em; text-transform: uppercase;
+    padding: 0.25rem 0.5rem; border-radius: 4px; font-weight: 500; white-space: nowrap;
+  }
+  .tag-done { background: #1ce783; color: #040405; }
+  .tag-processing { background: #b9831a; color: #fef3c7; }
+  .tag-queued { background: #26262e; color: #9a9aaa; }
+  .tag-failed { background: #4a1f1f; color: #ff5252; }
+  .tag-processing::before, .tag-queued::before {
+    content: ''; width: 6px; height: 6px; border-radius: 50%;
+    background: currentColor; animation: pulse 1.5s infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  .card {
+    background: #0a0a0c; border: 1px solid #26262e; border-radius: 12px;
+    overflow: hidden; transition: border-color 0.15s;
+  }
+  .card:hover { border-color: #3a3a45; }
+
+  .section {
+    background: #0a0a0c; border: 1px solid #26262e; border-radius: 12px;
+    padding: 1.25rem; margin-bottom: 1rem;
+  }
+  .section-title {
+    font-family: 'JetBrains Mono', monospace; font-size: 0.6875rem;
+    text-transform: uppercase; letter-spacing: 0.12em;
+    color: #1ce783; margin-bottom: 1rem;
+    display: flex; align-items: center; gap: 0.5rem;
+  }
+  .section-title::before {
+    content: ''; width: 4px; height: 4px; background: #1ce783; border-radius: 50%;
+  }
+
+  .wordmark { font-family: 'JetBrains Mono', monospace; font-weight: 700; letter-spacing: -0.02em; }
+  .mono { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; letter-spacing: -0.01em; }
+  .mono-xs { font-family: 'JetBrains Mono', monospace; font-size: 0.625rem; letter-spacing: 0.05em; }
+
+  .artwork {
+    width: 64px; height: 64px; border-radius: 8px; flex-shrink: 0;
+    position: relative; overflow: hidden;
+  }
+  .artwork::before {
+    content: ''; position: absolute; inset: 0;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06); border-radius: inherit;
+  }
+
+  .hero-input {
+    background: #0a0a0c; border: 2px solid #26262e; color: #f5f5f5;
+    padding: 1.25rem; border-radius: 12px;
+    font-family: 'JetBrains Mono', monospace; font-size: 0.875rem;
+    width: 100%; transition: border-color 0.2s;
+  }
+  .hero-input:focus { outline: none; border-color: #1ce783; }
+  .hero-input::placeholder { color: #6b6b78; }
+
+  .dropzone {
+    border: 1px dashed #3a3a45; border-radius: 10px;
+    padding: 1.5rem 1rem; text-align: center;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .dropzone:hover { border-color: #1ce783; background: #0d1812; }
+
+  .audio-bar {
+    background: #15151a; border-radius: 8px; padding: 0.625rem 0.875rem;
+    display: flex; align-items: center; gap: 0.75rem;
+  }
+  .audio-play {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: #1ce783; color: #040405; border: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .audio-bar .bars { flex: 1; height: 2px; background: #26262e; border-radius: 1px; position: relative; }
+  .audio-bar .bars::after {
+    content: ''; position: absolute; left: 0; top: 0; bottom: 0;
+    width: 30%; background: #1ce783; border-radius: 1px;
+  }
+
+  .safe-top { padding-top: env(safe-area-inset-top); }
+  .safe-bottom { padding-bottom: calc(env(safe-area-inset-bottom) + 1rem); }
+
+  .correction-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 0.5rem; margin-bottom: 0.5rem; }
+  @media (max-width: 480px) { .correction-row { grid-template-columns: 1fr 1fr 32px; } }
+
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: #0a0a0c; }
+  ::-webkit-scrollbar-thumb { background: #26262e; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a3a45; }
+
+  .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+</style>
+</head>
+<body class="text-fg font-sans antialiased min-h-screen flex flex-col">
+
+<header class="safe-top sticky top-0 z-20 bg-ink/95 backdrop-blur-md border-b border-line">
+  <div class="max-w-2xl mx-auto px-4">
+    <div class="flex items-center justify-between py-3.5">
+      <div class="flex items-center gap-2.5">
+        <svg width="28" height="28" viewBox="0 0 160 160" class="flex-shrink-0">
+          <path d="M 30 130 L 80 26 L 130 130" stroke="#1ce783" stroke-width="11" fill="none" stroke-linejoin="round" stroke-linecap="round"/>
+          <line x1="56" y1="100" x2="56" y2="112" stroke="#1ce783" stroke-width="7" stroke-linecap="round"/>
+          <line x1="68" y1="86" x2="68" y2="112" stroke="#1ce783" stroke-width="7" stroke-linecap="round"/>
+          <line x1="80" y1="74" x2="80" y2="112" stroke="#1ce783" stroke-width="7" stroke-linecap="round"/>
+          <line x1="92" y1="86" x2="92" y2="112" stroke="#1ce783" stroke-width="7" stroke-linecap="round"/>
+          <line x1="104" y1="100" x2="104" y2="112" stroke="#1ce783" stroke-width="7" stroke-linecap="round"/>
+        </svg>
+        <span class="wordmark text-lg">audicle</span>
+      </div>
+      <div class="mono-xs text-mute">v0.1.0</div>
+    </div>
+    <nav class="flex">
+      <button class="tab-btn active" data-tab="home">Home</button>
+      <button class="tab-btn" data-tab="feed">Feed</button>
+      <button class="tab-btn" data-tab="settings">Settings</button>
+    </nav>
+  </div>
+  <div class="accent-line"></div>
+</header>
+
+<main class="flex-1 max-w-2xl mx-auto w-full px-4 py-6 relative z-10 safe-bottom">
+
+  <section id="home" class="panel active">
+    <div class="pt-12 pb-8">
+      <div class="mono-xs text-green mb-3">// SUBMIT_ARTICLE</div>
+      <h1 class="text-4xl font-black tracking-tight mb-2 leading-tight">
+        Drop a link.<br>
+        <span class="text-green">Get a podcast.</span>
+      </h1>
+      <p class="text-dim text-sm mb-8 leading-relaxed">
+        Audicle reads articles aloud. Paste a URL and it joins your feed.
+      </p>
+      <form class="space-y-3">
+        <input type="url" placeholder="https://" class="hero-input" autocomplete="off">
+        <button type="submit" class="btn-primary w-full">Submit</button>
+      </form>
+      <div class="mt-8 pt-6 border-t border-line">
+        <div class="mono-xs text-mute mb-2">// LAST SUBMISSION</div>
+        <div class="flex items-center justify-between gap-3">
+          <div class="mono text-dim truncate flex-1">https://example.com/cache-invalidation</div>
+          <span class="tag tag-processing">processing</span>
+        </div>
+        <div class="mono-xs text-mute mt-1.5">stage: tts · 4 of 6 chunks</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="feed" class="panel">
+    <div class="flex items-baseline justify-between mb-3">
+      <h1 class="text-2xl font-black tracking-tight">Feed</h1>
+      <div class="mono-xs text-mute">12 episodes</div>
+    </div>
+    <button class="btn-ghost w-full mb-5 flex items-center justify-center gap-2" onclick="this.innerHTML='✓ Copied'; setTimeout(()=>this.innerHTML='⧉ Copy feed URL', 1500);">
+      <span>⧉ Copy feed URL</span>
+    </button>
+    <div class="space-y-3">
+
+      <article class="card p-4">
+        <div class="flex gap-3">
+          <div class="artwork" style="background: linear-gradient(135deg, #1ce783, #16d076);"></div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-start gap-2 mb-1">
+              <a href="#" class="text-sm font-bold leading-snug hover:text-green line-clamp-2 flex-1">A Survey of Modern Cache Invalidation Strategies in Distributed Systems</a>
+              <span class="tag tag-done">done</span>
+            </div>
+            <div class="mono-xs text-mute">jane smith · example.com</div>
+            <div class="mono-xs text-mute mt-0.5">2026-05-26 · 12:42</div>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-line">
+          <button class="btn-ghost">↻ Reprocess</button>
+          <button class="btn-ghost">Transcript</button>
+          <button class="btn-ghost btn-danger ml-auto">Delete</button>
+        </div>
+      </article>
+
+      <article class="card p-4">
+        <div class="flex gap-3">
+          <div class="artwork" style="background: linear-gradient(135deg, #6d28d9, #ec4899);"></div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-start gap-2 mb-1">
+              <a href="#" class="text-sm font-bold leading-snug hover:text-green line-clamp-2 flex-1">Building Reliable Distributed Systems Without Consensus Algorithms</a>
+              <span class="tag tag-processing">tts 4/6</span>
+            </div>
+            <div class="mono-xs text-mute">researchpaper.org</div>
+            <div class="mono-xs text-mute mt-0.5">2026-05-26 · 11:08</div>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-line">
+          <button class="btn-ghost opacity-40" disabled>↻ Reprocess</button>
+          <button class="btn-ghost btn-danger ml-auto">Cancel</button>
+        </div>
+      </article>
+
+      <article class="card p-4">
+        <div class="flex gap-3">
+          <div class="artwork" style="background: linear-gradient(135deg, #ea580c, #dc2626);"></div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-start gap-2 mb-1">
+              <a href="#" class="text-sm font-bold leading-snug hover:text-green line-clamp-2 flex-1">When You Shouldn't Use Kubernetes</a>
+              <span class="tag tag-failed">extract</span>
+            </div>
+            <div class="mono-xs text-mute">techblog.io</div>
+            <div class="mono-xs text-mute mt-0.5">2026-05-25 · 22:14</div>
+            <div class="mono-xs text-danger mt-2 leading-relaxed">
+              Firecrawl returned empty content after 3 retries (503)
+            </div>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-line">
+          <button class="btn-ghost">↻ Reprocess</button>
+          <button class="btn-ghost btn-danger ml-auto">Delete</button>
+        </div>
+      </article>
+
+      <article class="card p-4">
+        <div class="flex gap-3">
+          <div class="artwork" style="background: linear-gradient(135deg, #0ea5e9, #06b6d4);"></div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-start gap-2 mb-1">
+              <a href="#" class="text-sm font-bold leading-snug hover:text-green line-clamp-2 flex-1">A Practical Guide to PostgreSQL Performance Tuning</a>
+              <span class="tag tag-queued">queued</span>
+            </div>
+            <div class="mono-xs text-mute">carlos mendez · postgres.dev</div>
+            <div class="mono-xs text-mute mt-0.5">2026-05-25 · 18:30</div>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-line">
+          <button class="btn-ghost opacity-40" disabled>↻ Reprocess</button>
+          <button class="btn-ghost btn-danger ml-auto">Delete</button>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <section id="settings" class="panel">
+    <h1 class="text-2xl font-black tracking-tight mb-5">Settings</h1>
+
+    <section class="section">
+      <div class="section-title">LLM Provider</div>
+      <div class="space-y-3">
+        <div class="grid grid-cols-2 gap-3">
+          <label>
+            <span class="field-label">Provider</span>
+            <select class="field"><option>openai-compatible</option><option>anthropic</option></select>
+          </label>
+          <label>
+            <span class="field-label">Model</span>
+            <input type="text" value="qwen2.5:14b" class="field">
+          </label>
+        </div>
+        <label class="block">
+          <span class="field-label">Base URL</span>
+          <input type="text" value="http://host.docker.internal:11434/v1" class="field mono">
+        </label>
+        <label class="block">
+          <span class="field-label">API Key</span>
+          <input type="password" value="••••••••••••••••" class="field mono">
+        </label>
+        <div class="grid grid-cols-2 gap-3">
+          <label><span class="field-label">Temperature</span><input type="number" value="0.7" step="0.1" class="field"></label>
+          <label><span class="field-label">Max tokens</span><input type="number" value="4000" class="field"></label>
+        </div>
+        <div class="flex justify-end pt-1"><button class="btn-primary text-sm py-2.5 px-5">Save</button></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">TTS</div>
+      <div class="space-y-3">
+        <div class="grid grid-cols-2 gap-3">
+          <label><span class="field-label">Language</span><input type="text" value="en" class="field"></label>
+          <label><span class="field-label">Temperature</span><input type="number" value="0.65" step="0.05" class="field"></label>
+        </div>
+        <div class="pt-4 mt-2 border-t border-line">
+          <div class="mb-3">
+            <div class="text-sm font-semibold">Reference Voice</div>
+            <div class="mono-xs text-mute mt-0.5">voice.wav · 8.2s · 22050 Hz · mono</div>
+          </div>
+          <div class="audio-bar mb-3">
+            <button class="audio-play"><svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M2 1l6 4-6 4z"/></svg></button>
+            <div class="bars"></div>
+            <span class="mono-xs text-mute">0:02 / 0:08</span>
+          </div>
+          <div class="dropzone mb-3">
+            <div class="mono-xs text-mute mb-2">DROP WAV OR</div>
+            <button class="btn-ghost">Choose file</button>
+            <div class="mono-xs text-mute mt-3">6-12s · 22050+ Hz · mono · clean</div>
+          </div>
+          <div class="card p-3">
+            <div class="flex items-center justify-between mb-2">
+              <span class="mono text-dim">new-voice.wav · 9.1s</span>
+              <button class="text-mute hover:text-fg text-lg leading-none">×</button>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button class="btn-ghost text-xs">▶ Upload</button>
+              <button class="btn-ghost text-xs">▶ TTS test</button>
+              <button class="btn-primary text-xs py-1.5 px-3 ml-auto">Commit</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">Cleanup Prompt</div>
+      <textarea class="field font-mono text-xs leading-relaxed" rows="8">You are a text cleanup assistant that prepares articles for narration by a text-to-speech system.
+
+CRITICAL RULES:
+1. Do not summarize, paraphrase, or rewrite article content.
+2. Do not add commentary or external context.
+3. Preserve all factual content.
+4. Output plain text only.
+
+REMOVE: navigation, newsletter blocks, related articles, social share, cookie banners, comments, author bios...</textarea>
+      <div class="flex justify-between items-center gap-2 mt-3">
+        <button class="btn-ghost text-xs">Reset to default</button>
+        <button class="btn-primary text-sm py-2 px-5">Save</button>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">Pronunciation</div>
+      <div class="space-y-2 mb-3">
+        <div class="correction-row">
+          <input type="text" value="kubectl" class="field mono text-sm py-2">
+          <input type="text" value="kube control" class="field mono text-sm py-2">
+          <button class="text-mute hover:text-danger flex items-center justify-center w-8">×</button>
+        </div>
+        <div class="correction-row">
+          <input type="text" value="PostgreSQL" class="field mono text-sm py-2">
+          <input type="text" value="post gres Q L" class="field mono text-sm py-2">
+          <button class="text-mute hover:text-danger flex items-center justify-center w-8">×</button>
+        </div>
+        <div class="correction-row">
+          <input type="text" value="nginx" class="field mono text-sm py-2">
+          <input type="text" value="engine x" class="field mono text-sm py-2">
+          <button class="text-mute hover:text-danger flex items-center justify-center w-8">×</button>
+        </div>
+      </div>
+      <div class="flex justify-between gap-2">
+        <button class="btn-ghost text-xs">+ Add</button>
+        <button class="btn-primary text-sm py-2 px-5">Save</button>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">Retention</div>
+      <div class="grid grid-cols-2 gap-3 mb-4">
+        <label><span class="field-label">Days</span><input type="number" value="90" class="field"></label>
+        <label><span class="field-label">Sweep hour (UTC)</span><input type="number" value="7" min="0" max="23" class="field"></label>
+      </div>
+      <div class="flex flex-wrap justify-between items-center gap-2">
+        <button class="btn-ghost btn-danger text-xs">Purge all</button>
+        <button class="btn-primary text-sm py-2 px-5">Save</button>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">System</div>
+      <dl class="space-y-2 mono text-xs">
+        <div class="flex justify-between"><dt class="text-mute">version</dt><dd class="text-dim">0.1.0</dd></div>
+        <div class="flex justify-between"><dt class="text-mute">python</dt><dd class="text-dim">3.13.1</dd></div>
+        <div class="flex justify-between"><dt class="text-mute">episodes</dt><dd class="text-dim">12</dd></div>
+        <div class="flex justify-between"><dt class="text-mute">db size</dt><dd class="text-dim">2.4 MB</dd></div>
+        <div class="flex justify-between"><dt class="text-mute">media size</dt><dd class="text-dim">348 MB</dd></div>
+      </dl>
+    </section>
+
+  </section>
+
+</main>
+
+<script>
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById(btn.dataset.tab).classList.add('active');
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    });
+  });
+</script>
+
+</body>
+</html>
