@@ -52,12 +52,38 @@ async def test_pickup_runs_pipeline_against_a_queued_job(
         )
 
     async def _fake_llm(_system, _user, _settings, **_kwargs):
-        return "cleaned narration text " * 50
+        return (
+            "Structured cleaned narration sentence. "
+            "Another sentence with end-of-sentence punctuation. "
+            "More sentences keep the chunker happy. "
+        ) * 30
 
-    from app.services import llm
+    from app.services import audio, llm, tts
+
+    async def _fake_tts(text, episode_id, chunk_index, settings):
+        _ = text  # acknowledge
+        _ = settings
+        return tts.GenerateResult(
+            wav_path=f"/tmp/{episode_id}_chunk_{chunk_index}.wav",
+            duration_secs=1.0,
+            sample_rate=24000,
+        )
+
+    def _fake_concat(_paths, output_path, _settings):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"FAKE_WAV")
+        return output_path, 24000
+
+    def _fake_encode(_input_wav, output_mp3, _settings):
+        output_mp3.parent.mkdir(parents=True, exist_ok=True)
+        output_mp3.write_bytes(b"FAKE_MP3")
+        return audio.EncodeResult(mp3_path=output_mp3, duration_secs=2.5)
 
     monkeypatch.setattr(extraction, "extract", _fake_extract)
     monkeypatch.setattr(llm, "generate", _fake_llm)
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    monkeypatch.setattr(audio, "concat_with_padding", _fake_concat)
+    monkeypatch.setattr(audio, "normalize_and_encode", _fake_encode)
 
     # Insert one queued job via the helper so episode_id is computed.
     conn = database.connect(database.db_path(env))
@@ -78,7 +104,7 @@ async def test_pickup_runs_pipeline_against_a_queued_job(
     finally:
         conn.close()
     assert row["status"] == "done"
-    assert row["stage"] == "corrections"
+    assert row["stage"] == "audio"
     assert row["error"] is None
 
 

@@ -13,7 +13,22 @@ dependencies = [
     "pydantic-settings>=2.6",
     "httpx>=0.27",
     "tenacity>=9.0",
+    # Phase 5 audio pipeline. CPU-only torch wheel because the main app never
+    # runs GPU inference -- that's the tts-wrapper container's job. soundfile
+    # handles WAV I/O without torchaudio's TorchCodec dependency.
+    "torch>=2.4",
+    "numpy>=1.26",
+    "soundfile>=0.12",
+    "mutagen>=1.47",
 ]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 # PEP 735 dependency groups: `uv sync --no-dev` excludes these in the runtime
 # image; `uv sync --group dev` (or the default `uv sync`) installs them for

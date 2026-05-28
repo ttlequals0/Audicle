@@ -100,6 +100,22 @@ class Settings(BaseSettings):
     XTTS_TOP_K: int = 50
     XTTS_TOP_P: float = 0.85
 
+    # Chunking (Phase 5).
+    TTS_CHUNK_TARGET_WORDS: int = 180
+    TTS_CHUNK_MAX_WORDS: int = 220
+    TTS_CHUNK_MAX_CHARS: int = 1100
+    TTS_CHUNK_SILENCE_MS: int = 250
+
+    # Audio pipeline (Phase 5).
+    AUDIO_SILENCE_THRESHOLD: float = 0.003
+    AUDIO_SILENCE_BUFFER_MS: int = 5
+    LOUDNORM_TARGET_LUFS: float = -14
+    LOUDNORM_TRUE_PEAK_DB: float = -3
+    LOUDNORM_LRA: float = 7
+    MP3_BITRATE: str = "128k"
+    MP3_SAMPLE_RATE: int = 24000
+    MP3_CHANNELS: int = 2
+
     @model_validator(mode="after")
     def _validate_provider(self) -> Settings:
         if self.LLM_PROVIDER == "openai-compatible":

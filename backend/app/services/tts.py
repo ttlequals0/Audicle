@@ -21,6 +21,13 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+from tenacity import (
+    AsyncRetrying,
+    RetryError,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from app.config import Settings
 
@@ -98,6 +105,38 @@ async def generate_chunk(
     except (KeyError, TypeError, ValueError) as exc:
         raise TTSRequestError(f"Unexpected TTS response shape: {exc}") from exc
     return result
+
+
+async def generate_chunk_with_retry(
+    text: str,
+    episode_id: str,
+    chunk_index: int,
+    settings: Settings,
+) -> GenerateResult:
+    """Per-chunk TTS call with retry on transient failures.
+
+    Build plan line 829: TTS retries happen client-side (the wrapper itself
+    does not retry). ``TTS_RETRY_COUNT`` attempts with exponential backoff,
+    retry only on :class:`TTSProviderError` and :class:`TTSTimeoutError`;
+    :class:`TTSRequestError` propagates immediately.
+    """
+
+    retrying = AsyncRetrying(
+        stop=stop_after_attempt(settings.TTS_RETRY_COUNT),
+        wait=wait_exponential(multiplier=1, min=1, max=30),
+        retry=retry_if_exception_type((TTSProviderError, TTSTimeoutError)),
+        reraise=False,
+    )
+    try:
+        async for attempt in retrying:
+            with attempt:
+                return await generate_chunk(text, episode_id, chunk_index, settings)
+    except RetryError as exc:
+        inner = exc.last_attempt.exception()
+        if isinstance(inner, TTSError):
+            raise inner from exc
+        raise TTSProviderError(f"TTS retries exhausted: {inner}") from exc
+    raise TTSProviderError("TTS retry loop exited without a response")
 
 
 async def reload(settings: Settings) -> dict[str, Any]:

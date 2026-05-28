@@ -20,7 +20,11 @@ ENV PYTHONUNBUFFERED=1 \
     PATH=/opt/venv/bin:$PATH
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && apt-get install -y --no-install-recommends \
+         curl \
+         ca-certificates \
+         ffmpeg \
+         libsndfile1 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 1000 audicle
 
