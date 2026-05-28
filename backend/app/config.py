@@ -116,6 +116,15 @@ class Settings(BaseSettings):
     MP3_SAMPLE_RATE: int = 24000
     MP3_CHANNELS: int = 2
 
+    # Artwork (Phase 6).
+    ARTWORK_SIZE_PX: int = 3000
+    ARTWORK_JPG_QUALITY: int = 85
+    ARTWORK_FETCH_TIMEOUT_SECONDS: float = 15
+    ARTWORK_MIN_SOURCE_PX: int = 600
+    # Cap on the og:image download size so an attacker-controlled URL can't
+    # OOM the worker by streaming a multi-GB body within the fetch timeout.
+    ARTWORK_MAX_DOWNLOAD_BYTES: int = 25 * 1024 * 1024
+
     @model_validator(mode="after")
     def _validate_provider(self) -> Settings:
         if self.LLM_PROVIDER == "openai-compatible":

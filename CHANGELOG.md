@@ -6,6 +6,63 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Added (Phase 6 - Artwork + Transcripts)
+
+- Pipeline now runs **extract → cleanup → corrections → chunk → tts → audio → artwork → transcript**. Final `status=done` with `stage=transcript`. Phase 7 will append finalize (which inserts/updates the episodes row + writes the transcript to disk).
+- `backend/app/services/artwork.py`: async artwork pipeline per build-plan Artwork Processing.
+  - Pulls `ogImage` / `og:image` / `og_image` from the Firecrawl `metadata` dict.
+  - Downloads via `httpx.AsyncClient` with `ARTWORK_FETCH_TIMEOUT_SECONDS`, `follow_redirects=True`. HTTP errors and network errors are typed (`_HttpError` / `httpx.TimeoutException` / `httpx.NetworkError`).
+  - Opens with Pillow, validates the format against an explicit allowlist (`JPEG/PNG/WEBP/GIF/BMP/TIFF/MPO`) so SVG and exotic formats fall through cleanly.
+  - Rejects sources below `ARTWORK_MIN_SOURCE_PX` so we don't ship a blurry upscale as the episode card.
+  - Flattens `RGBA/LA/P` to RGB on a black background (JPEG has no alpha channel), center-crops to square, resizes via `LANCZOS` to `ARTWORK_SIZE_PX`, saves JPG quality `ARTWORK_JPG_QUALITY` with `optimize=True` and `exif=b""` to strip metadata.
+  - Every failure path returns `None` and emits an `artwork_fallback` WARN with a typed `reason` (`missing_og_image`, `download_unreachable`, `download_http_error`, `download_too_large`, `unidentified_format`, `unsupported_format`, `source_too_small`, `decompression_bomb`, `pillow_decode_failed`, `atomic_write_failed`, `blocked_scheme`, `blocked_host`). The pipeline continues; episodes with no per-episode JPG render the feed-level artwork (Phase 7).
+  - Hardened against attacker-controlled `og:image` URLs (the article HTML is scraped, so the URL is influenced by content the operator did not write): scheme allowlist (`http`/`https` only — rejects `data:`, `javascript:`, `file:`); SSRF guard rejects private/loopback/link-local/multicast IPs after DNS resolution; streaming download with hard `ARTWORK_MAX_DOWNLOAD_BYTES` cap so a hostile body can't OOM the worker; broad `httpx.HTTPError` catch so `InvalidURL` / `UnsupportedProtocol` / `TooManyRedirects` / `DecodingError` / `RemoteProtocolError` all fall back instead of escaping the "never raises" contract.
+  - EXIF orientation is honored via `ImageOps.exif_transpose` BEFORE flatten/crop/resize so phone-shot JPEGs (Orientation=6) don't render sideways after `exif=b""` strips the tag.
+  - JPG write is atomic (`services/atomic_write.write_bytes_atomic` with prefix `.artwork-`) so a crash mid-save can't leave a truncated cover served by the Phase 7 RSS handler.
+  - `Image.Resampling.LANCZOS` (not the deprecated `Image.LANCZOS` alias).
+- `backend/app/services/transcript.py`: pure WebVTT renderer.
+  - `TranscriptChunk(text, duration_secs)` + `build_vtt(chunks, silence_ms)`.
+  - Cumulative timeline mirrors the produced audio: `start[i+1] = end[i] + silence_ms/1000`. Cues numbered sequentially from 1.
+  - `_format_ts` renders `HH:MM:SS.mmm`. `_escape_cue` escapes `&` first (so `<` and `>` don't get double-encoded), then `<`, `>`.
+  - Validates: negative `silence_ms` and negative `duration_secs` raise `ValueError`. Empty chunk list returns the `WEBVTT` header only so Phase 7's finalize can still write a valid (if empty) file.
+- `backend/app/services/pipeline.py`:
+  - `_stage_artwork` calls `artwork.process_artwork` against the extraction metadata + `DATA_DIR/media`. Never raises; logs `artwork_fallback_to_feed` when the result is `None`.
+  - `_stage_transcript` zips chunk texts with per-chunk durations from `tts.GenerateResult` and calls `transcript.build_vtt(silence_ms=TTS_CHUNK_SILENCE_MS)` so VTT timestamps align with the produced MP3 exactly.
+  - Final `_mark_done(final_stage="transcript")`.
+- `backend/app/config.py`: `ARTWORK_SIZE_PX` (3000), `ARTWORK_JPG_QUALITY` (85), `ARTWORK_FETCH_TIMEOUT_SECONDS` (15), `ARTWORK_MIN_SOURCE_PX` (600). All overridable per `.env.example`.
+- Runtime deps: `pillow>=10.4`.
+
+Tests (23 new, 180 total)
+
+- `test_artwork.py` (9): happy path resize + EXIF stripped, 1200x800 center-crop yields square output, missing og:image, HTTP 404, ReadTimeout, corrupted bytes, undersized source, SVG body, RGBA flatten to RGB.
+- `test_transcript.py` (10): empty input returns header-only, single cue starts at zero, multi-cue inserts `silence_ms` padding (12.450 → 12.700 → 24.800), sequential cue numbering, hour-rollover timestamps, `&`/`<`/`>` escaping in cue text without double-encoding, zero-silence allowed, negative `silence_ms` rejected, negative duration rejected, output terminates with exactly one trailing newline.
+- `test_pipeline.py` (4 new): pipeline writes the JPG to `data/media/{episode_id}.jpg` and reaches `stage=transcript`; pipeline still completes when ogImage is absent (artwork fallback); transcript stage receives the live chunk texts + TTS durations + `TTS_CHUNK_SILENCE_MS`; a raising `build_vtt` marks the job failed with `stage=transcript` (no stuck-in-processing).
+- `test_pipeline.py` / `test_worker.py` (existing): updated `stage` assertions from `"audio"` to `"transcript"` to match the new final stage.
+
+Container smoke (`tmp/phase6_smoke.sh`) verified inside the runtime image: Pillow loads in the slim image, `process_artwork` produces a 53.3 KB JPG at 3000x3000 from a synthetic 1200x800 PNG with EXIF stripped, and `build_vtt` renders a 2-cue 120-byte VTT with the expected 250 ms inter-cue gap (`00:00:12.450 --> 00:00:20.800` after 12.700 boundary), HTML-escaped special chars, and `WEBVTT` header.
+
+### Code-review pass (multi-agent /simplify + /code-review for Phase 6)
+
+Findings surfaced and applied:
+
+- **httpx exception coverage broadened**: `_download`'s original `except (httpx.TimeoutException, httpx.NetworkError)` missed `httpx.InvalidURL`, `httpx.UnsupportedProtocol`, `httpx.TooManyRedirects`, `httpx.RemoteProtocolError`, and `httpx.DecodingError` — all reachable from attacker-controlled og:image URLs and all of which would escape the "never raises" contract and fail the artwork stage. Now catches `httpx.HTTPError` as the final arm so every transport-level error is converted to a `download_unreachable` fallback.
+- **SSRF guard**: `_assert_public_host` resolves the hostname (DNS) and rejects private / loopback / link-local / multicast / reserved / unspecified addresses BEFORE the GET. Re-runs on every redirect via httpx `event_hooks={"request": [...]}` so a 302 into the internal network is caught. Scheme allowlist (`http`/`https` only) rejects `data:`, `javascript:`, `file:`, `ftp:` up front. Two new typed exceptions: `_BlockedHostError` (with reason: `dns_resolution_failed`, `non_public_address_<ip>`, etc.) and the `blocked_scheme` fallback reason.
+- **Download size cap**: streams the response with `client.stream("GET", ...)`, checks advertised `Content-Length` first, then enforces `ARTWORK_MAX_DOWNLOAD_BYTES` on each streamed chunk. A hostile body can no longer OOM the worker by serving an unbounded payload within the fetch timeout. Default cap is 25 MiB (`ARTWORK_MAX_DOWNLOAD_BYTES=26214400` in `.env.example`).
+- **EXIF orientation honored before crop/resize**: a portrait phone JPEG with `Orientation=6` was being saved sideways at 3000x3000 because `exif=b""` strips the orientation tag with no recovery. Now `ImageOps.exif_transpose(img)` runs first; the test `test_process_artwork_exif_rotation_actually_rotates_pixels` samples a colored stripe from the expected post-rotation column to verify the pixels (not just the EXIF tag) were transposed.
+- **Pillow API hygiene**: uses `Image.Resampling.LANCZOS` (the supported attribute on Pillow 10+) instead of the deprecated `Image.LANCZOS` alias. Wraps `Image.open` in a context manager so the underlying `BytesIO` and Pillow decoder are released on every path. Uses `rgba.getchannel("A")` instead of `rgba.split()[-1]` (three fewer band-image allocations per source). Adds mode `"PA"` (palette-with-alpha) to the alpha-flatten list so transparent regions composite onto black rather than show the palette color.
+- **Atomic JPG write**: re-uses `services/atomic_write.write_bytes_atomic` (Phase 4 helper, with `prefix=".artwork-"`). A crash mid-save can no longer leave a truncated cover that the Phase 7 RSS handler would serve.
+- **Transcript timeline as integer ms**: `cursor_ms` is incremented as `int` rather than `cursor_secs` as `float`, eliminating cumulative drift over hundreds of cues. Trailing silence is no longer added after the final cue (was a dead store and would have desynced any cumulative-end check). `_escape_cue` switched to `html.escape(text, quote=False)` and now also flattens internal whitespace runs via `" ".join(text.split())` so a chunk with an embedded blank line can't split a VTT cue. `math.isfinite` rejects NaN and ±inf duration values (would have crashed `_format_ts`).
+- **Pipeline integration**: `core/paths.media_dir(settings)` is the single source of truth for `{DATA_DIR}/media`; `_stage_audio` and `_stage_artwork` both call it. `_stage_transcript` does an explicit `len(chunks) != len(chunk_results)` check so the resulting `jobs.error` reads "transcript stage: N chunks but M TTS results -- pipeline state corrupted" instead of a stdlib zip message.
+- **CHANGELOG accuracy**: previous draft listed `pillow_render_failed` (no longer emitted after the render path was folded into a single `_decode_and_render`) and was missing `download_too_large`, `decompression_bomb`, `atomic_write_failed`, `blocked_scheme`, `blocked_host` — now reflects the real reason set.
+- **Module docstring on `pipeline.py`**: was Phase-2 vintage and listed only the extract stage; updated to describe the Phase 6 chain.
+- **Stale comment / dead branch in `_decode_and_render`**: removed the `if oriented is None: oriented = opened` guard. `ImageOps.exif_transpose` does not return `None` on Pillow 10+; the comment was factually wrong about Pillow's contract.
+
+New tests added by the review pass (17 more, 197 total):
+
+- `test_artwork.py`: og:image as list (picks first non-empty string); scheme allowlist rejects `data:` / `javascript:` / `file:` / `ftp:`; non-timeout `httpx.RemoteProtocolError` falls back as `download_unreachable`; SSRF guard rejects a hostname that resolves to a private IP; streaming-only oversize cap (no Content-Length header, body delivered via `httpx.AsyncByteStream`); Content-Length cap fires before streaming; Pillow `DecompressionBombError` maps to `decompression_bomb` reason; EXIF orientation actually rotates pixels (samples a colored stripe from the expected post-rotation position); atomic-write leaves no `.artwork-*` temp file in the output dir on success; RGBA flattening preserved; ogImage list fallback.
+- `test_transcript.py`: NaN and +inf duration rejected via `math.isfinite`; internal newline runs collapse to a single space (would otherwise split a VTT cue); cumulative drift stays exact integer-ms over 300 cues with an irrational duration.
+- `test_pipeline.py`: transcript stage rejects a `len(chunks) != len(chunk_results)` mismatch with a domain-specific error message and stops at `stage='transcript'`.
+
 ### Added (Phase 5 - Chunking + Audio pipeline)
 
 - Pipeline now runs **extract → cleanup → corrections → chunk → tts → audio**. Final `status=done` with `stage=audio`; an MP3 lands at `/data/media/{episode_id}.mp3`. Phase 6 will append artwork + transcript + finalize.

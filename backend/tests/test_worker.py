@@ -36,7 +36,7 @@ async def test_pickup_runs_pipeline_against_a_queued_job(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """End-to-end inside the worker: insert a queued job, stub the extractor,
-    call _process_one, observe the job reach status=done with stage=extract."""
+    call _process_one, observe the job reach status=done with stage=transcript."""
 
     from app.config import get_settings
     from app.services import extraction
@@ -104,7 +104,7 @@ async def test_pickup_runs_pipeline_against_a_queued_job(
     finally:
         conn.close()
     assert row["status"] == "done"
-    assert row["stage"] == "audio"
+    assert row["stage"] == "transcript"
     assert row["error"] is None
 
 

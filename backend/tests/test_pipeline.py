@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import io
 from pathlib import Path
 
+import httpx
 import pytest
 from app.config import get_settings
 from app.core import database
-from app.services import extraction, jobs, llm, pipeline
+from app.services import extraction, jobs, llm, pipeline, transcript
+from PIL import Image
 
 
 def _stub_full_chain(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -119,7 +122,7 @@ async def test_pipeline_marks_job_done_on_success(
 
     after = _job_after(env, job.id)
     assert after.status == "done"
-    assert after.stage == "audio"
+    assert after.stage == "transcript"
     assert after.error is None
 
 
@@ -228,7 +231,7 @@ async def test_pipeline_retries_cleanup_on_transient_llm_provider_error(
 
     after = _job_after(env, job.id)
     assert after.status == "done"
-    assert after.stage == "audio"
+    assert after.stage == "transcript"
     assert attempts["n"] >= 2  # retried at least once
 
 
@@ -287,6 +290,215 @@ async def test_pipeline_records_failure_when_exception_contains_curly_braces(
     assert after.status == "failed"
     assert after.stage == "cleanup"
     assert "MIN_CLEANUP_CHARS" in (after.error or "")
+
+
+def _stub_artwork_download(monkeypatch: pytest.MonkeyPatch, png_bytes: bytes) -> None:
+    """Patch httpx.AsyncClient so artwork.process_artwork serves ``png_bytes``,
+    and bypass the SSRF resolver so example.test doesn't NXDOMAIN."""
+
+    transport = httpx.MockTransport(lambda _r: httpx.Response(200, content=png_bytes))
+    original = httpx.AsyncClient
+
+    def factory(*args, **kwargs):
+        kwargs.setdefault("transport", transport)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+
+    from app.services import artwork as _artwork
+
+    async def _allow_all(_host: str) -> None:
+        return None
+
+    monkeypatch.setattr(_artwork, "_assert_public_host", _allow_all)
+
+
+def _png_bytes(size: int = 800) -> bytes:
+    img = Image.new("RGB", (size, size), (10, 20, 30))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+async def test_pipeline_writes_artwork_jpg_and_reaches_transcript(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When extraction metadata carries ogImage, the artwork stage must write
+    a JPG to ``{DATA_DIR}/media/{episode_id}.jpg`` and the pipeline must
+    still terminate at stage='transcript'."""
+
+    database.run_migrations(env)
+
+    async def _fake_extract(_url, _settings):
+        return extraction.ExtractionResult(
+            markdown="raw " * 250,
+            metadata={
+                "title": "Example",
+                "ogImage": "https://example.test/cover.png",
+            },
+        )
+
+    async def _fake_llm(_system, _user, _settings, **_kwargs):
+        return (
+            "This is a cleaned narration sentence with proper punctuation. "
+            "Each sentence ends with a period. "
+            "Paragraphs are separated by blank lines.\n\n"
+            "Here is another paragraph of cleaned narration text. "
+            "The chunker can split on these boundaries. "
+        ) * 10
+
+    monkeypatch.setattr(extraction, "extract", _fake_extract)
+    monkeypatch.setattr(llm, "generate", _fake_llm)
+    _stub_tts_and_audio(monkeypatch)
+    _stub_artwork_download(monkeypatch, _png_bytes())
+
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+
+    after = _job_after(env, job.id)
+    assert after.status == "done"
+    assert after.stage == "transcript"
+
+    expected_jpg = env / "media" / f"{job.episode_id}.jpg"
+    assert expected_jpg.exists()
+    # Confirm it really is a JPG that Pillow can re-open at the configured size.
+    out = Image.open(expected_jpg)
+    out.load()
+    assert out.format == "JPEG"
+    assert out.size == (
+        get_settings().ARTWORK_SIZE_PX,
+        get_settings().ARTWORK_SIZE_PX,
+    )
+
+
+async def test_pipeline_succeeds_when_artwork_falls_back(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No ogImage in metadata -> artwork returns None, no JPG written, but
+    the pipeline must still complete at stage='transcript'."""
+
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)  # metadata is {"title": "Example"} -- no ogImage
+
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+
+    after = _job_after(env, job.id)
+    assert after.status == "done"
+    assert after.stage == "transcript"
+    assert not (env / "media" / f"{job.episode_id}.jpg").exists()
+
+
+async def test_pipeline_transcript_stage_builds_vtt_from_chunks(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Capture the (chunks, silence_ms) call into transcript.build_vtt to
+    confirm the pipeline threads the live chunk texts + TTS durations into
+    the VTT builder."""
+
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+
+    captured: dict[str, object] = {}
+    real_build = transcript.build_vtt
+
+    def _spy_build(chunks, silence_ms):
+        captured["chunks"] = list(chunks)
+        captured["silence_ms"] = silence_ms
+        return real_build(chunks, silence_ms)
+
+    monkeypatch.setattr(pipeline.transcript, "build_vtt", _spy_build)
+
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+
+    after = _job_after(env, job.id)
+    assert after.status == "done"
+    assert after.stage == "transcript"
+
+    chunks = captured["chunks"]
+    assert isinstance(chunks, list) and chunks
+    assert all(isinstance(c, transcript.TranscriptChunk) for c in chunks)
+    # Stubbed TTS reports 1s per chunk; transcript stage receives those.
+    assert all(c.duration_secs == 1.0 for c in chunks)
+    # silence_ms must match the configured chunk silence so VTT timestamps
+    # align with the produced MP3.
+    assert captured["silence_ms"] == get_settings().TTS_CHUNK_SILENCE_MS
+
+
+async def test_pipeline_transcript_stage_rejects_length_mismatch(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If anything between chunk and tts corrupts the in-memory state so the
+    two lists desync, the transcript stage must fail loudly with a clear
+    message (not a stdlib zip error) and stop at stage='transcript'."""
+
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+
+    from app.services import tts as tts_module
+
+    async def _drop_one(text, episode_id, chunk_index, settings):
+        result = await _stub_tts_for_extra(text, episode_id, chunk_index, settings)
+        return result
+
+    async def _stub_tts_for_extra(text, episode_id, chunk_index, settings):
+        return tts_module.GenerateResult(
+            wav_path=f"/tmp/{episode_id}_chunk_{chunk_index}.wav",
+            duration_secs=1.0,
+            sample_rate=24000,
+        )
+
+    call_count = {"n": 0}
+    real_tts = _drop_one
+
+    async def _short_tts(text, episode_id, chunk_index, settings):
+        call_count["n"] += 1
+        # Return only for first call; subsequent calls still execute but the
+        # test patches _stage_transcript's inputs by intercepting the chunker.
+        return await real_tts(text, episode_id, chunk_index, settings)
+
+    monkeypatch.setattr(tts_module, "generate_chunk_with_retry", _short_tts)
+
+    real_stage = pipeline._stage_tts
+
+    async def _truncate_tts(job, chunks, settings):
+        results = await real_stage(job, chunks, settings)
+        return results[:-1]  # drop one to force a length mismatch
+
+    monkeypatch.setattr(pipeline, "_stage_tts", _truncate_tts)
+
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+
+    after = _job_after(env, job.id)
+    assert after.status == "failed"
+    assert after.stage == "transcript"
+    assert "transcript stage:" in (after.error or "")
+    assert "pipeline state corrupted" in (after.error or "")
+
+
+async def test_pipeline_transcript_stage_failure_marks_job_failed(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If build_vtt raises, the failure must be persisted with
+    stage='transcript' rather than leaving the job stuck in 'processing'."""
+
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+
+    def _boom(_chunks, _silence_ms):
+        raise RuntimeError("vtt builder exploded")
+
+    monkeypatch.setattr(pipeline.transcript, "build_vtt", _boom)
+
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+
+    after = _job_after(env, job.id)
+    assert after.status == "failed"
+    assert after.stage == "transcript"
+    assert "vtt builder exploded" in (after.error or "")
 
 
 async def test_pipeline_audio_stage_cleans_up_intermediate_wavs(
