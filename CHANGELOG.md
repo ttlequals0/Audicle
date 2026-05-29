@@ -6,6 +6,15 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Added (Phase 10 - Runtime Settings + Episodes Admin)
+
+- `backend/app/services/runtime_settings.py`: operator-tunable settings backed by the new `runtime_settings` table. An explicit `ALLOWED_KEYS` allowlist gates writes so an attacker can't flip `DATA_DIR` or `SESSION_SECRET_KEY` through the admin UI.
+- `backend/app/api/v1/settings.py`: `GET /api/v1/settings` returns `{allowlist, values}`; `PUT /api/v1/settings` accepts a partial dict and persists each allowlisted key. Values are coerced back to the declared `Settings` field type on read so `RETENTION_DAYS=30` round-trips as `int` not `str`. Unknown keys return 400 with the allowlist in the error body. PUT requires `require_admin`.
+- `backend/app/api/v1/episodes.py`: `GET /api/v1/episodes` paginates (`page` + `per_page`) and emits `X-Total-Count`; `DELETE /api/v1/episodes/{id}` removes the row and any associated mp3/jpg via the Phase-8 defense-in-depth `_remove_path` helper. Both require `require_admin`.
+- Migration `004_runtime_settings` appends `runtime_settings(key PRIMARY KEY, value, updated_at)`. Phase 1-3 schemas untouched.
+
+Tests (8 new, 295 total): GET/PUT round-trip with type coercion (`int`, `bool`, `str`), unknown-key rejection with allowlist in the error body, pagination + `X-Total-Count` header, delete with file cleanup, 404 on missing episode.
+
 ### Added (Phase 9 - Authentication)
 
 - **Optional single-admin auth**: `AUTH_ENABLED=false` (the default) leaves the admin endpoints open for a single-operator localhost install. Flipping `AUTH_ENABLED=true` requires `ADMIN_PASSWORD_HASH` (bcrypt) and `SESSION_SECRET_KEY` (validated at startup; missing values raise a Pydantic `ValueError` so the process exits rather than silently serving the admin UI unauthenticated).
