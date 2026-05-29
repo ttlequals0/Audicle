@@ -175,9 +175,31 @@ def _m002_settings_kv(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m003_auth_lockout(conn: sqlite3.Connection) -> None:
+    """Phase 9: track failed login attempts + lockout window per identifier.
+
+    ``identifier`` is the lower-cased username (single-user admin today but
+    the schema doesn't bake that in). ``lockout_until`` is the ISO timestamp
+    after which the next login attempt is allowed; NULL means no current
+    lockout.
+    """
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS auth_lockout (
+            identifier        TEXT PRIMARY KEY,
+            failed_attempts   INTEGER NOT NULL DEFAULT 0,
+            last_attempt_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+            lockout_until     TEXT
+        )
+        """
+    )
+
+
 MIGRATIONS: list[tuple[str, Migration]] = [
     ("001_initial_schema", _m001_initial_schema),
     ("002_settings_kv", _m002_settings_kv),
+    ("003_auth_lockout", _m003_auth_lockout),
 ]
 
 

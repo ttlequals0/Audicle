@@ -81,6 +81,28 @@ class Settings(BaseSettings):
     # CORS.
     CORS_ORIGINS: str = ""
 
+    # Auth (Phase 9). When AUTH_ENABLED is false the admin endpoints accept
+    # unauthenticated requests; this is the default for single-operator
+    # localhost installs. Public-internet deployments must set
+    # AUTH_ENABLED=true plus an admin password.
+    AUTH_ENABLED: bool = False
+    ADMIN_USERNAME: str = "admin"
+    # Bcrypt hash. Operator runs ``python -c "from app.services import auth;
+    # print(auth.hash_password('secret'))"`` to generate. Required when
+    # AUTH_ENABLED=true.
+    ADMIN_PASSWORD_HASH: str | None = None
+    # Cookie-signing key for SessionMiddleware. MUST be set when
+    # AUTH_ENABLED=true; refuse to start otherwise. Operator generates with
+    # ``python -c "import secrets; print(secrets.token_urlsafe(64))"``.
+    SESSION_SECRET_KEY: str | None = None
+    # ``True`` requires HTTPS for the cookie to be sent; default False so
+    # localhost http:// works. Flip to True in production.
+    SESSION_COOKIE_SECURE: bool = False
+    SESSION_COOKIE_MAX_AGE_SECONDS: int = Field(default=86400 * 14, ge=60)
+    LOCKOUT_MAX_FAILED_ATTEMPTS: int = Field(default=5, ge=1, le=100)
+    LOCKOUT_WINDOW_SECONDS: int = Field(default=15 * 60, ge=10)
+    LOGIN_RATE_LIMIT: str = "10/minute"
+
     # Cleanup prompt + pronunciation corrections.
     MAX_PROMPT_LENGTH_BYTES: int = 10240
     MAX_CORRECTIONS_ENTRIES: int = 500
@@ -138,6 +160,19 @@ class Settings(BaseSettings):
         elif self.LLM_PROVIDER == "anthropic":
             if not self.ANTHROPIC_API_KEY:
                 raise ValueError("LLM_PROVIDER=anthropic requires ANTHROPIC_API_KEY")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_auth(self) -> Settings:
+        if not self.AUTH_ENABLED:
+            return self
+        missing: list[str] = []
+        if not self.ADMIN_PASSWORD_HASH:
+            missing.append("ADMIN_PASSWORD_HASH")
+        if not self.SESSION_SECRET_KEY:
+            missing.append("SESSION_SECRET_KEY")
+        if missing:
+            raise ValueError(f"AUTH_ENABLED=true requires {', '.join(missing)}")
         return self
 
     @property

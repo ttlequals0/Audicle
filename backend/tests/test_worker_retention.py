@@ -20,7 +20,6 @@ def _freeze_now(monkeypatch: pytest.MonkeyPatch, fake_now: datetime) -> None:
     AttributeError.
     """
 
-
     class _Frozen(datetime):
         @classmethod
         def now(cls, tz=None):

@@ -7,6 +7,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 
+from app.api.deps import require_admin
 from app.config import Settings, get_settings
 from app.services import corrections as corrections_service
 
@@ -26,7 +27,11 @@ def read_corrections() -> dict[str, str]:
         raise HTTPException(status_code=500, detail=f"corrections file invalid: {exc}") from exc
 
 
-@router.put("/corrections", summary="Replace the pronunciation dictionary")
+@router.put(
+    "/corrections",
+    summary="Replace the pronunciation dictionary",
+    dependencies=[Depends(require_admin)],
+)
 def write_corrections(
     # ``dict[str, Any]`` (not ``dict[str, str]``) so non-string values reach
     # corrections.validate and surface as the typed per-key failure envelope
