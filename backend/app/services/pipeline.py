@@ -1,8 +1,9 @@
 """Job processing pipeline orchestrator.
 
-Phase 6 wires the full read-aloud chain: extract -> cleanup -> corrections
--> chunk -> tts -> audio -> artwork -> transcript. Phase 7 appends finalize
-which inserts/updates the episodes row.
+Phase 7 wires the full chain: extract -> cleanup -> corrections -> chunk ->
+tts -> audio -> artwork -> transcript -> finalize. Finalize upserts the
+``episodes`` row that the RSS feed and ``/media/{id}.{mp3,jpg,vtt}``
+handlers serve.
 
 Conventions enforced here:
 - Every stage writes its name to ``jobs.stage`` BEFORE doing any work, so the
@@ -31,6 +32,7 @@ from app.services import (
     audio,
     chunker,
     corrections,
+    episodes,
     extraction,
     jobs,
     llm,
@@ -187,13 +189,13 @@ async def _run_stages(job: jobs.Job, settings: Settings) -> None:
         job.id,
         settings,
     )
-    await _run_stage(
+    audio_result = await _run_stage(
         "audio",
         lambda: _stage_audio(job, chunk_results, settings),
         job.id,
         settings,
     )
-    await _run_stage(
+    artwork_result = await _run_stage(
         "artwork",
         lambda: _stage_artwork(job, extraction_result.metadata, settings),
         job.id,
@@ -205,10 +207,20 @@ async def _run_stages(job: jobs.Job, settings: Settings) -> None:
         job.id,
         settings,
     )
-    # vtt content lives in memory; Phase 7's finalize stage writes it to
-    # episodes.transcript_vtt alongside audio_path + artwork_path.
-    _ = vtt
-    _mark_done(job.id, final_stage="transcript", settings=settings)
+    await _run_stage(
+        "finalize",
+        lambda: _stage_finalize(
+            job,
+            metadata=extraction_result.metadata,
+            audio_result=audio_result,
+            artwork_result=artwork_result,
+            vtt=vtt,
+            settings=settings,
+        ),
+        job.id,
+        settings,
+    )
+    _mark_done(job.id, final_stage="finalize", settings=settings)
 
 
 async def _run_stage(
@@ -435,6 +447,65 @@ async def _stage_transcript(
         },
     )
     return vtt
+
+
+async def _stage_finalize(
+    job: jobs.Job,
+    *,
+    metadata: dict[str, Any],
+    audio_result: audio.EncodeResult,
+    artwork_result: artwork.ArtworkResult | None,
+    vtt: str,
+    settings: Settings,
+) -> None:
+    """Upsert the ``episodes`` row that the RSS feed and media handlers read.
+
+    Title and author come from the extraction metadata (Firecrawl populates
+    both when the article has them); ``original_url`` is the job's input
+    URL; durations come from the audio stage; ``transcript_vtt`` is the
+    in-memory VTT rendered in the prior stage.
+    """
+
+    title = _coerce_str(metadata.get("title"))
+    author = _coerce_str(metadata.get("author")) or settings.FEED_AUTHOR
+    artwork_path = str(artwork_result.jpg_path) if artwork_result else None
+    duration_secs = round(audio_result.duration_secs)
+
+    conn = database.connect(database.db_path(settings.DATA_DIR))
+    try:
+        episodes.upsert(
+            conn,
+            id=job.episode_id,
+            job_id=job.id,
+            original_url=job.url,
+            title=title,
+            author=author,
+            audio_path=str(audio_result.mp3_path),
+            artwork_path=artwork_path,
+            transcript_vtt=vtt,
+            duration_secs=duration_secs,
+        )
+    finally:
+        conn.close()
+
+    logger.info(
+        "Episode finalized",
+        extra={
+            "event": "finalize_complete",
+            "episode_id": job.episode_id,
+            "title": title,
+            "duration_secs": duration_secs,
+            "has_artwork": artwork_path is not None,
+            "vtt_bytes": len(vtt.encode("utf-8")),
+        },
+    )
+
+
+def _coerce_str(value: Any) -> str | None:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return None
 
 
 async def _stage_corrections(cleaned: str, settings: Settings) -> str:

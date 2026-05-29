@@ -11,6 +11,8 @@ from fastapi import FastAPI
 
 from app.api import errors as error_handlers
 from app.api.health import router as health_router
+from app.api.media import router as media_router
+from app.api.rss import router as rss_router
 from app.api.v1.router import router as v1_router
 from app.config import get_settings
 from app.startup import bootstrap
@@ -36,6 +38,8 @@ def create_app() -> FastAPI:
     )
     app.include_router(health_router)
     app.include_router(v1_router)
+    app.include_router(rss_router)
+    app.include_router(media_router)
     error_handlers.register(app)
     return app
 

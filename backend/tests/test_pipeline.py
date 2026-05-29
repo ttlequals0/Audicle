@@ -122,7 +122,7 @@ async def test_pipeline_marks_job_done_on_success(
 
     after = _job_after(env, job.id)
     assert after.status == "done"
-    assert after.stage == "transcript"
+    assert after.stage == "finalize"
     assert after.error is None
 
 
@@ -231,7 +231,7 @@ async def test_pipeline_retries_cleanup_on_transient_llm_provider_error(
 
     after = _job_after(env, job.id)
     assert after.status == "done"
-    assert after.stage == "transcript"
+    assert after.stage == "finalize"
     assert attempts["n"] >= 2  # retried at least once
 
 
@@ -357,7 +357,7 @@ async def test_pipeline_writes_artwork_jpg_and_reaches_transcript(
 
     after = _job_after(env, job.id)
     assert after.status == "done"
-    assert after.stage == "transcript"
+    assert after.stage == "finalize"
 
     expected_jpg = env / "media" / f"{job.episode_id}.jpg"
     assert expected_jpg.exists()
@@ -385,7 +385,7 @@ async def test_pipeline_succeeds_when_artwork_falls_back(
 
     after = _job_after(env, job.id)
     assert after.status == "done"
-    assert after.stage == "transcript"
+    assert after.stage == "finalize"
     assert not (env / "media" / f"{job.episode_id}.jpg").exists()
 
 
@@ -414,7 +414,7 @@ async def test_pipeline_transcript_stage_builds_vtt_from_chunks(
 
     after = _job_after(env, job.id)
     assert after.status == "done"
-    assert after.stage == "transcript"
+    assert after.stage == "finalize"
 
     chunks = captured["chunks"]
     assert isinstance(chunks, list) and chunks
@@ -476,6 +476,82 @@ async def test_pipeline_transcript_stage_rejects_length_mismatch(
     assert after.stage == "transcript"
     assert "transcript stage:" in (after.error or "")
     assert "pipeline state corrupted" in (after.error or "")
+
+
+async def test_pipeline_finalize_upserts_episode_row(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Phase 7: finalize must write an episodes row carrying the live
+    audio/artwork/vtt/duration produced by the prior stages."""
+
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+
+    async def _fake_extract_with_title(_url, _settings):
+        return extraction.ExtractionResult(
+            markdown="raw " * 250,
+            metadata={"title": "Test Article", "author": "Test Author"},
+        )
+
+    monkeypatch.setattr(extraction, "extract", _fake_extract_with_title)
+
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+
+    after = _job_after(env, job.id)
+    assert after.status == "done"
+    assert after.stage == "finalize"
+
+    from app.services import episodes as episodes_service
+
+    conn = database.connect(database.db_path(env))
+    try:
+        row = episodes_service.get_by_id(conn, job.episode_id)
+    finally:
+        conn.close()
+
+    assert row is not None
+    assert row.title == "Test Article"
+    assert row.author == "Test Author"
+    assert row.original_url == job.url
+    assert row.audio_path and row.audio_path.endswith(f"/{job.episode_id}.mp3")
+    # No ogImage in metadata -> artwork falls back to feed-level art.
+    assert row.artwork_path is None
+    assert row.transcript_vtt and row.transcript_vtt.startswith("WEBVTT")
+    # Stubbed encode returns 2.5s; round() uses banker's rounding -> 2.
+    assert row.duration_secs == 2
+
+
+async def test_pipeline_finalize_falls_back_author_to_feed_author(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the article has no author, the episode row uses FEED_AUTHOR so
+    the iTunes author field stays populated."""
+
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+
+    async def _fake_extract_no_author(_url, _settings):
+        return extraction.ExtractionResult(
+            markdown="raw " * 250,
+            metadata={"title": "No Byline"},
+        )
+
+    monkeypatch.setattr(extraction, "extract", _fake_extract_no_author)
+
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+
+    from app.services import episodes as episodes_service
+
+    conn = database.connect(database.db_path(env))
+    try:
+        row = episodes_service.get_by_id(conn, job.episode_id)
+    finally:
+        conn.close()
+
+    assert row is not None
+    assert row.author == get_settings().FEED_AUTHOR
 
 
 async def test_pipeline_transcript_stage_failure_marks_job_failed(
