@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import secrets
 import time
 from collections.abc import AsyncIterator
@@ -87,21 +88,28 @@ def _mount_static_ui(app: FastAPI) -> None:
     # this handler.
     @app.get("/{path:path}", include_in_schema=False)
     async def _ui_fallback(path: str) -> FileResponse:
-        # If the requested path is a real static file (favicon, manifest,
-        # service worker, etc.), serve it; otherwise return index.html so
-        # the React router can pick up the route.
-        candidate = static_dir / path
-        if candidate.is_file() and _is_within(candidate, static_dir):
+        # If the requested path resolves to a real static file (favicon,
+        # manifest, service worker, etc.) inside static_dir, serve it;
+        # otherwise return index.html so the React router can pick up the
+        # route. The realpath + commonpath containment check both blocks
+        # traversal and is the form static analysis recognizes as a
+        # path-injection sanitizer.
+        candidate = _safe_static_path(path, static_dir)
+        if candidate is not None and candidate.is_file():
             return FileResponse(candidate)
         return FileResponse(index_path)
 
 
-def _is_within(candidate: Path, root: Path) -> bool:
-    try:
-        candidate.resolve().relative_to(root.resolve())
-        return True
-    except ValueError:
-        return False
+def _safe_static_path(path: str, root: Path) -> Path | None:
+    """Resolve ``path`` under ``root`` and return it only if it stays inside
+    ``root``; otherwise None. Returns the resolved path so the caller serves
+    the validated location, not the raw user input."""
+
+    root_real = os.path.realpath(root)
+    target = os.path.realpath(os.path.join(root_real, path))
+    if target != root_real and os.path.commonpath([root_real, target]) != root_real:
+        return None
+    return Path(target)
 
 
 def _attach_session_middleware(app: FastAPI, settings: Settings) -> None:

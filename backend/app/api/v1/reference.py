@@ -217,11 +217,16 @@ async def commit_candidate(
             try:
                 await client.post(f"{settings.TTS_URL.rstrip('/')}/reload")
             except httpx.HTTPError as exc:
-                # Clip is committed on disk; the wrapper just didn't
-                # reload. Operator can re-trigger.
+                # Clip is committed on disk; the wrapper just didn't reload.
+                # Operator can re-trigger. Log the underlying error rather than
+                # returning it so transport detail isn't exposed to the client.
+                logger.warning(
+                    "Reference committed but TTS /reload failed",
+                    extra={"event": "reference_reload_failed", "error": str(exc)},
+                )
                 return {
                     "committed": True,
-                    "tts_reload_warning": str(exc),
+                    "tts_reload_warning": "voice committed but TTS reload failed; retry /commit",
                     "sample_rate": sample_rate,
                     "duration_secs": round(duration_secs),
                 }

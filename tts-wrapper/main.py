@@ -218,13 +218,17 @@ def create_app(
 
         out_dir = chosen_data_dir / "media"
         out_dir.mkdir(parents=True, exist_ok=True)
-        wav_path = out_dir / f"{body.episode_id}_chunk_{body.chunk_index}.wav"
-        # ``resolve(strict=False)`` so we can compare against the intended
-        # parent even though the file doesn't exist yet. Path traversal in
-        # episode_id is already blocked by the Pydantic pattern, but the
-        # belt-and-braces check guards against future regex regressions.
-        if out_dir.resolve() not in wav_path.resolve().parents:
+        # episode_id is already constrained by the Pydantic pattern; the
+        # realpath + commonpath containment check is belt-and-braces against a
+        # future regex regression and is the form static analysis recognizes as
+        # a path-injection sanitizer (the validated realpath is what gets
+        # written, not the raw user input).
+        filename = f"{body.episode_id}_chunk_{body.chunk_index}.wav"
+        out_real = os.path.realpath(out_dir)
+        wav_real = os.path.realpath(os.path.join(out_real, filename))
+        if os.path.commonpath([out_real, wav_real]) != out_real:
             raise HTTPException(status_code=400, detail="resolved wav_path escapes data dir")
+        wav_path = Path(wav_real)
         _atomic_write_bytes(wav_path, wav_bytes)
         duration = _wav_duration_seconds(wav_bytes)
 
