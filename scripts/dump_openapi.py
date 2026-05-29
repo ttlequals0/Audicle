@@ -1,7 +1,10 @@
 """Regenerate ``openapi.yaml`` from the live FastAPI app.
 
 Usage:
-    PYTHONPATH=backend uv run python scripts/dump_openapi.py
+    uv run python scripts/dump_openapi.py
+
+(The script inserts ``backend`` onto ``sys.path`` itself, so no PYTHONPATH is
+needed.)
 """
 
 from __future__ import annotations

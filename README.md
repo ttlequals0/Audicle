@@ -65,7 +65,7 @@ First-run model download is ~2 GB and lives in a named volume (`hf_cache`).
 | `OPENAI_BASE_URL` | for openai-compatible only | `http://llm:8080/v1` |
 | `OPENAI_API_KEY` | for openai-compatible | `sk-...` |
 | `ANTHROPIC_API_KEY` | for anthropic | `sk-ant-...` |
-| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | Admin UI auth (if `AUTH_ENABLED=true`) | -- |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD_HASH` | Admin UI auth (if `AUTH_ENABLED=true`); the hash is bcrypt, generated via the helper in `.env.example` | -- |
 | `SESSION_SECRET_KEY` | 32+ random bytes for session signing | `openssl rand -hex 32` |
 
 Full list with defaults lives in `.env.example`. The runtime allowlist (what's editable from the UI without a restart) is enforced in `backend/app/services/runtime_settings.py`.
@@ -96,7 +96,7 @@ Two notes the docs page doesn't repeat:
 The application code is MIT. Two things downstream of it are not:
 
 - **XTTS-v2 weights** ship under the Coqui Public Model Licence 1.0.0 (CPML). It is non-commercial. Personal self-hosted use is fine; selling the generated audio isn't. If you need a commercial pipeline, swap the wrapper for a different TTS model that's licensed for it. The wrapper interface (`POST /generate` + `POST /reload`) is small enough that this is straightforward.
-- **Coqui TTS on Python 3.13**: the upstream `coqui-tts` PyPI package as of 2026-05 declares `python_requires<3.13`. The wrapper Dockerfile pins Python 3.11 for that reason. If you try to run the wrapper on a 3.13 host outside the container, install from the `idiap/coqui-ai-TTS` fork instead -- that one has the version constraint lifted.
+- **Coqui TTS on Python 3.13**: the wrapper installs `coqui-tts` (the maintained `idiap/coqui-ai-TTS` fork; the original `coqui-ai/TTS` is unmaintained). As of 2026-05 that package still declares `python_requires<3.13`, so the wrapper Dockerfile pins Python 3.11. The backend is separate: it requires Python `>=3.13` and ships on a `python:3.14-slim` image. Bump the wrapper's pin once the fork ships a 3.13-compatible wheel.
 
 The Audicle name and logo are reserved; see `branding/README.md`.
 

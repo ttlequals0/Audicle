@@ -38,6 +38,7 @@ class FakeEngine:
     """
 
     sample_rate = 24000
+    device = "cpu"
 
     def __init__(
         self,
@@ -88,7 +89,15 @@ def test_health_200_when_model_and_reference_loaded(tmp_path: Path) -> None:
         response = client.get("/health")
     assert response.status_code == 200
     body = response.json()
-    assert body == {"ok": True, "model_loaded": True, "reference_loaded": True}
+    # Core liveness flags are exact; the metadata fields (version/torch/
+    # coqui_tts/device/sample_rate) the main app aggregates into
+    # components.tts_wrapper are environment-dependent, so assert presence.
+    assert body["ok"] is True
+    assert body["model_loaded"] is True
+    assert body["reference_loaded"] is True
+    assert body["version"] == "0.1.0"
+    for key in ("torch", "coqui_tts", "device", "sample_rate"):
+        assert key in body
 
 
 def test_health_503_when_reference_not_loaded(tmp_path: Path) -> None:

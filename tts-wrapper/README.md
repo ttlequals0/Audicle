@@ -31,11 +31,13 @@ licensed replacement model.
 
 Drop a single WAV at `backend/app/reference/voice.wav` on the host. The
 compose mount makes it visible inside the container at
-`/app/reference/voice.wav`. Build-plan spec:
+`/app/app/reference/voice.wav`. Spec (see `backend/app/reference/README.md` for
+the authoritative version):
 
-- 6-12 seconds long
-- 22050 Hz or higher sample rate
+- 8-12 seconds recommended; 3-60 s hard limits enforced by `/api/v1/reference/commit`
+- 24 kHz recommended (16-48 kHz accepted)
 - Mono
+- <= 5 MB
 - Clean speech (no background music, low noise)
 
 LibriTTS clips work well. The four files in this repo's `ref_audio/` are

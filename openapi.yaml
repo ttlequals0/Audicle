@@ -449,15 +449,16 @@ paths:
       tags:
       - reference
       summary: Test Candidate
-      description: 'Synthesize ``sample_text`` using ``voice`` without committing
-        it.
+      description: 'Synthesize ``sample_text`` using ``voice`` without committing.
 
 
-        The candidate is staged under a tempfile that the TTS wrapper reads
+        Staged through the live reference path so the wrapper picks it up
 
-        via the same bind-mounted reference path; we restore the committed
+        via /reload; on every exit path the committed clip is restored. If
 
-        clip on return so a failed test never replaces the live voice.'
+        no clip was previously committed, the candidate is removed on exit
+
+        so /test never silently turns into /commit.'
       operationId: test_candidate_api_v1_reference_test_post
       requestBody:
         content:
@@ -503,6 +504,7 @@ paths:
                   anyOf:
                   - type: string
                   - type: integer
+                  - type: boolean
                 type: object
                 title: Response Commit Candidate Api V1 Reference Commit Post
         '422':
@@ -867,8 +869,9 @@ components:
         reprocess:
           type: boolean
           title: Reprocess
-          description: When true and the URL already has an episode/job, wipe the
-            prior state and start fresh. Default is to return 409.
+          description: When true and the URL already has an episode, re-run the pipeline
+            and update that episode in place (same episode_id, new pub_date). Default
+            is to return 409.
           default: false
       additionalProperties: false
       type: object
@@ -889,7 +892,7 @@ components:
         replaced_previous:
           type: boolean
           title: Replaced Previous
-          description: True if reprocess=true and a prior episode/job was deleted.
+          description: True if reprocess=true and a prior episode for this URL existed.
           default: false
       type: object
       required:

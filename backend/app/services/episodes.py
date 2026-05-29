@@ -66,8 +66,12 @@ def upsert(
 ) -> Episode:
     """Insert a new episode row, or update the existing one keyed by id.
 
-    On update, ``pub_date`` is preserved (the original publish moment) but
-    ``updated_at`` is bumped to now so RSS clients see a fresh ``lastBuildDate``.
+    The update branch is the reprocess path. Per the build plan's timestamp
+    semantics: ``created_at`` is left untouched (the moment the article first
+    entered the feed), while ``pub_date`` is bumped to now so a reprocessed
+    episode re-surfaces as new in podcast clients and re-sorts to the top of
+    the feed. ``updated_at`` bumps too so RSS clients see a fresh
+    ``lastBuildDate``.
     """
 
     conn.execute(
@@ -86,6 +90,7 @@ def upsert(
             artwork_path    = excluded.artwork_path,
             transcript_vtt  = excluded.transcript_vtt,
             duration_secs   = excluded.duration_secs,
+            pub_date        = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
             updated_at      = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
         """,
         (

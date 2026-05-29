@@ -45,8 +45,11 @@ def test_upsert_inserts_then_updates_same_id(env: Path) -> None:
         assert second.title == "First (updated)"
         assert second.artwork_path is None
         assert second.duration_secs == 130
-        # pub_date must NOT have changed -- preserves the original publish moment.
-        assert second.pub_date == first.pub_date
+        # created_at is the original feed-entry moment and must survive reprocess.
+        assert second.created_at == first.created_at
+        # pub_date bumps on reprocess so the episode re-surfaces as new (>= original;
+        # equal is possible when both upserts land in the same wall-clock second).
+        assert second.pub_date >= first.pub_date
     finally:
         conn.close()
 

@@ -31,7 +31,11 @@ def _stub_probes(monkeypatch) -> None:
     async def _ok(*_a, **_kw):
         return "ok"
 
+    async def _ok_tts(*_a, **_kw):
+        return "ok", {"version": "0.1.0", "device": "cpu", "model_loaded": True}
+
     monkeypatch.setattr(health_mod, "_probe_http", _ok)
+    monkeypatch.setattr(health_mod, "_probe_tts_wrapper", _ok_tts)
     monkeypatch.setattr(health_mod, "_ffmpeg_version", lambda: "stub")
 
 

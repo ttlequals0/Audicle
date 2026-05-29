@@ -60,6 +60,51 @@ def test_purge_older_than_removes_old_rows_and_files(env: Path) -> None:
         conn.close()
 
 
+def test_purge_expired_jobs_reaps_old_terminal_unreferenced(env: Path) -> None:
+    """Old done/failed job rows with no live episode reference are reaped;
+    queued jobs, recent jobs, and jobs a live episode points at survive."""
+
+    database.run_migrations(env)
+    conn = database.connect(database.db_path(env))
+    try:
+        # old, terminal, unreferenced -> reaped
+        conn.execute(
+            "INSERT INTO jobs (id, url, episode_id, status, created_at) "
+            "VALUES ('j_old', 'u', 'e_old', 'done', '2020-01-01T00:00:00Z')"
+        )
+        # old but still queued -> kept (never drop an in-flight job)
+        conn.execute(
+            "INSERT INTO jobs (id, url, episode_id, status, created_at) "
+            "VALUES ('j_queued', 'u', 'e_q', 'queued', '2020-01-01T00:00:00Z')"
+        )
+        # old, terminal, but referenced by a live episode -> kept (FK + provenance)
+        conn.execute(
+            "INSERT INTO jobs (id, url, episode_id, status, created_at) "
+            "VALUES ('j_ref', 'u', 'e_ref', 'done', '2020-01-01T00:00:00Z')"
+        )
+        conn.execute(
+            "INSERT INTO episodes (id, job_id, original_url) VALUES ('e_ref', 'j_ref', 'u2')"
+        )
+        # recent terminal -> kept (inside the window)
+        conn.execute(
+            "INSERT INTO jobs (id, url, episode_id, status, created_at) "
+            "VALUES ('j_new', 'u', 'e_new', 'failed', '2099-01-01T00:00:00Z')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    deleted = retention.purge_expired_jobs(get_settings(), older_than_days=30)
+    assert deleted == 1
+
+    conn = database.connect(database.db_path(env))
+    try:
+        survivors = {row["id"] for row in conn.execute("SELECT id FROM jobs").fetchall()}
+    finally:
+        conn.close()
+    assert survivors == {"j_queued", "j_ref", "j_new"}
+
+
 def test_purge_with_zero_days_wipes_everything(env: Path) -> None:
     _seed(env, id_="recent", pub_date="2099-01-01T00:00:00Z")
     result = retention.purge_older_than(get_settings(), older_than_days=0)

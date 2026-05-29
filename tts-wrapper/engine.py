@@ -34,6 +34,7 @@ class Engine(Protocol):
     model_loaded: bool
     reference_loaded: bool
     sample_rate: int
+    device: str
 
     def load(self) -> None:
         """Synchronous startup: load model weights + reference embeddings.
@@ -70,6 +71,7 @@ class XTTSEngine:
         self.model_loaded = False
         self.reference_loaded = False
         self.sample_rate = config.sample_rate
+        self.device = config.device
         self._model = None
         self._gpt_cond_latent = None
         self._speaker_embedding = None

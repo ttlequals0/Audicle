@@ -12,6 +12,7 @@ missing reference voice or model load error, and serve ``/generate`` /
 from __future__ import annotations
 
 import asyncio
+import importlib.metadata as _metadata
 import io
 import logging
 import os
@@ -30,6 +31,27 @@ from engine import Engine, GPUOutOfMemoryError, XTTSEngine
 
 logger = logging.getLogger("tts.main")
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
+
+# Wrapper's own version, surfaced in /health so the main app's
+# /health/ready can aggregate it into components.tts_wrapper.version.
+__version__ = "0.1.0"
+
+
+def _pkg_version(name: str) -> str | None:
+    """Installed distribution version, or None if the package isn't present
+    (e.g. the test environment runs without torch / coqui-tts)."""
+
+    try:
+        return _metadata.version(name)
+    except _metadata.PackageNotFoundError:
+        return None
+
+
+# Resolved once at import: installed versions never change for a running
+# process, and /health is polled every 30s by the docker healthcheck plus the
+# backend's readiness probe -- no point re-scanning dist metadata per request.
+_TORCH_VERSION = _pkg_version("torch")
+_COQUI_TTS_VERSION = _pkg_version("coqui-tts")
 
 # Build-plan line 822: per-request inference budget. Without this a wedged
 # torch call holds the lock forever and the wrapper stops serving anything.
@@ -59,6 +81,11 @@ class HealthResponse(BaseModel):
     ok: bool
     model_loaded: bool
     reference_loaded: bool
+    version: str | None = None
+    torch: str | None = None
+    coqui_tts: str | None = None
+    device: str | None = None
+    sample_rate: int | None = None
 
 
 def _default_engine_factory() -> Engine:
@@ -124,6 +151,11 @@ def create_app(
             "ok": ok,
             "model_loaded": model_loaded,
             "reference_loaded": reference_loaded,
+            "version": __version__,
+            "torch": _TORCH_VERSION,
+            "coqui_tts": _COQUI_TTS_VERSION,
+            "device": engine.device,
+            "sample_rate": engine.sample_rate,
         }
         if not ok:
             # Build-plan line 803 spec: 503 body includes a diagnostic "error".

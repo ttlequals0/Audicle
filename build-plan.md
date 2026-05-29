@@ -2,7 +2,7 @@
 
 > **Your reading list, as a podcast you own.**
 >
-> Audicle (audio + article) — a self-hosted service that turns articles into a Podcasting 2.0 compliant podcast feed.
+> Audicle (audio + article) -- a self-hosted service that turns articles into a Podcasting 2.0 compliant podcast feed.
 >
 > Repo: https://github.com/ttlequals0/Audicle
 
@@ -50,7 +50,7 @@ Admin endpoints (`/api/v1/*`) are LAN-only by deployment, not by code. Auth is i
 
 ### Stack
 
-Python 3.13 target. See README for the Coqui TTS install caveat (community-maintained, may need install workarounds for 3.13).
+Python target: the backend requires `>=3.13` and ships on a `python:3.14-slim` runtime image. The TTS wrapper is pinned to Python 3.11 because the `coqui-tts` (idiap fork) wheel currently caps at `<3.13`. See README for the Coqui TTS install caveat.
 
 | Component | Role |
 |-----------|------|
@@ -74,15 +74,15 @@ Python 3.13 target. See README for the Coqui TTS install caveat (community-maint
 
 Core containers in the docker-compose stack:
 
-1. **app** — runs two processes:
+1. **app** -- runs two processes:
    - `uvicorn` serving HTTP (UI, API, RSS, media). Worker count configurable via `WEB_WORKERS` (default 2) for UI responsiveness.
    - `python -m app.worker` running the SQLite-backed queue and pipeline. One process, one in-flight job.
    - Both started by `entrypoint.sh`. Both read from the same SQLite DB (WAL mode for concurrent access). No in-memory caching; status reads always hit the DB so workers stay in sync.
-2. **tts-wrapper** — XTTS-v2 HTTP server, GPU-pinned. Single uvicorn worker. Async lock serializes GPU access; `/health` stays responsive.
+2. **tts-wrapper** -- XTTS-v2 HTTP server, GPU-pinned. Single uvicorn worker. Async lock serializes GPU access; `/health` stays responsive.
 
 Optional public-exposure container (operator's choice):
 
-3. **cloudflared** (Cloudflare Tunnel daemon) — reference option. Swap for Tailscale Funnel, ngrok, or a reverse-proxy container as needed. Or run the app behind your existing edge.
+3. **cloudflared** (Cloudflare Tunnel daemon) -- reference option. Swap for Tailscale Funnel, ngrok, or a reverse-proxy container as needed. Or run the app behind your existing edge.
 
 State persistence: SQLite database file plus all generated media (MP3, JPG, intermediate WAVs) live in the `./data` bind-mounted volume on the host. The volume is shared between `app` and `tts-wrapper` so the wrapper can write WAVs the app then reads.
 
@@ -90,120 +90,129 @@ External dependencies (not in this stack):
 - **Ollama or other LLM endpoint.** Must be HTTP-reachable from inside the app container. Common patterns: `host.docker.internal:11434` for host-installed Ollama on Docker Desktop (Linux needs `extra_hosts: ["host.docker.internal:host-gateway"]` in compose); host LAN IP; or a separate Docker network if Ollama is containerized.
 - **Firecrawl instance.** Must be HTTP-reachable from the app container. Easiest path: put Audicle's app container on the same Docker network as the Firecrawl stack and reference by container name.
 
-Both endpoints are health-checked at app startup before the queue worker begins. Failures are logged and the app exits non-zero rather than running blind and failing every job at the relevant stage. See "Startup Reachability Checks" below.
+Both endpoints are health-checked in the worker process at startup before the queue loop begins (not in the web process, which serves the UI/RSS regardless). Failures are logged and the worker exits non-zero; entrypoint supervision then restarts the container rather than running blind and failing every job at the relevant stage. See "Startup Reachability Checks" below.
 
 ### Project Layout
 
 ```
 audicle/
-├── docker-compose.yml
-├── docker-compose.dev.yml         # bind mounts for live edits
-├── .env.example                   # template, checked in
-├── .env                           # operator-created, gitignored
-├── .gitignore
-├── .dockerignore
-├── pyproject.toml
-├── Dockerfile                     # backend (multi-stage: Node build for frontend, Python runtime)
-├── entrypoint.sh                  # starts uvicorn + worker, supervises both
-├── LICENSE                        # MIT
-├── README.md
-├── branding/                      # canonical brand assets, single source of truth
-│   ├── README.md                  # palette, typography, usage
-│   ├── tokens.json                # design tokens (color, type)
-│   ├── tokens.css                 # CSS custom properties for frontend consumers
-│   ├── mark.svg
-│   ├── mark-mono.svg
-│   ├── wordmark.svg
-│   ├── wordmark-mono.svg
-│   ├── podcast-artwork.svg
-│   ├── podcast-artwork-3000.png
-│   ├── podcast-artwork-1400.png
-│   ├── favicon.svg
-│   ├── favicon-32.png
-│   └── favicon-16.png
-├── backend/
-│   ├── app/
-│   │   ├── __init__.py
-│   │   ├── main.py                # FastAPI app, lifespan
-│   │   ├── worker.py             # queue process entry point (python -m app.worker)
-│   │   ├── config.py              # Pydantic BaseSettings
-│   │   ├── version.py             # __version__ single source of truth
-│   │   ├── api/
-│   │   │   ├── health.py
-│   │   │   └── v1/
-│   │   │       ├── router.py
-│   │   │       ├── submit.py
-│   │   │       ├── status.py
-│   │   │       ├── jobs.py
-│   │   │       ├── episodes.py        # list/delete
-│   │   │       ├── prompt.py
-│   │   │       ├── corrections.py
-│   │   │       ├── settings.py        # runtime overrides
-│   │   │       ├── reference.py       # preview/test/commit
-│   │   │       ├── auth.py            # login/logout/set-password/csrf
-│   │   │       ├── purge.py
-│   │   │       ├── rss.py
-│   │   │       └── media.py
-│   │   ├── core/
-│   │   │   └── database.py
-│   │   ├── models/
-│   │   │   ├── job.py
-│   │   │   ├── episode.py
-│   │   │   ├── settings.py        # runtime_settings + app settings (e.g. password hash)
-│   │   │   └── auth_lockout.py    # IP lockout state
-│   │   ├── services/
-│   │   │   ├── extraction.py      # Firecrawl client
-│   │   │   ├── llm.py             # multi-provider abstraction
-│   │   │   ├── tts.py             # XTTS wrapper client
-│   │   │   ├── audio.py           # trim, concat, normalize, encode
-│   │   │   ├── pipeline.py        # stage orchestration
-│   │   │   ├── queue.py           # background asyncio task
-│   │   │   ├── retention.py       # daily sweep
-│   │   │   ├── feed.py            # RSS generation
-│   │   │   ├── auth.py            # password, sessions, lockout
-│   │   │   └── csrf.py            # token issue/validate
-│   │   ├── utils/
-│   │   │   ├── logging.py
-│   │   │   └── corrections.py
-│   │   ├── prompts/
-│   │   │   └── script.txt         # bind-mounted, editable
-│   │   ├── corrections/
-│   │   │   └── pronunciation.json # bind-mounted, editable
-│   │   ├── reference/
-│   │   │   ├── README.md          # specs + sources for voice.wav
-│   │   │   └── voice.wav          # operator-supplied, gitignored
-│   │   └── assets/                # build-time copy of needed branding files for FastAPI to serve
-│   ├── tests/
-│   │   └── conftest.py
-│   └── scripts/
-├── frontend/                      # React 19 + Vite + TypeScript + Tailwind, PWA-capable
-│   ├── package.json
-│   ├── vite.config.ts
-│   ├── tsconfig.json
-│   ├── tailwind.config.js
-│   ├── index.html
-│   ├── public/
-│   │   ├── manifest.json
-│   │   └── (favicons, copied from /branding at build time)
-│   └── src/
-│       ├── main.tsx
-│       ├── App.tsx
-│       ├── routes/
-│       │   ├── Home.tsx           # URL submission form
-│       │   ├── Feed.tsx           # episode cards list with reprocess action
-│       │   └── Settings.tsx       # tunables, prompt editor, reference audio
-│       ├── components/
-│       └── api/                   # React Query hooks for backend endpoints
-├── tts-wrapper/
-│   ├── Dockerfile
-│   ├── main.py                    # FastAPI wrapping XTTS-v2
-│   └── requirements.txt
-└── data/                          # host-mounted volume
-    ├── podcast.db
-    └── media/
-        ├── {episode_id}.mp3
-        ├── {episode_id}.jpg
-        └── (transcripts stored in DB, served on-demand as .vtt)
+|-- docker-compose.yml
+|-- docker-compose.dev.yml         # bind mounts for live edits
+|-- .env.example                   # template, checked in
+|-- .env                           # operator-created, gitignored
+|-- .gitignore
+|-- .dockerignore
+|-- pyproject.toml
+|-- Dockerfile                     # backend (multi-stage: Node build for frontend, Python runtime)
+|-- entrypoint.sh                  # starts uvicorn + worker, supervises both
+|-- LICENSE                        # MIT
+|-- README.md
+|-- branding/                      # canonical brand assets, single source of truth
+|   |-- README.md                  # palette, typography, usage
+|   |-- tokens.json                # design tokens (color, type)
+|   |-- tokens.css                 # CSS custom properties for frontend consumers
+|   |-- mark.svg
+|   |-- mark-mono.svg
+|   |-- wordmark.svg
+|   |-- wordmark-mono.svg
+|   |-- podcast-artwork.svg
+|   |-- podcast-artwork-3000.png
+|   |-- podcast-artwork-1400.png
+|   |-- favicon.svg
+|   |-- favicon-32.png
+|   `-- favicon-16.png
+|-- backend/
+|   |-- app/
+|   |   |-- __init__.py
+|   |   |-- main.py                # FastAPI app, lifespan
+|   |   |-- worker.py             # queue process entry point (python -m app.worker)
+|   |   |-- config.py              # Pydantic BaseSettings
+|   |   |-- version.py             # __version__ single source of truth
+|   |   |-- api/
+|   |   |   |-- health.py            # /health/live, /health/ready, /health
+|   |   |   |-- media.py             # /media/{id}.mp3 / .jpg / .vtt
+|   |   |   |-- rss.py               # /rss/rss.xml
+|   |   |   |-- errors.py            # shared error-envelope handlers
+|   |   |   |-- deps.py              # require_admin + shared deps
+|   |   |   `-- v1/
+|   |   |       |-- router.py
+|   |   |       |-- submit.py
+|   |   |       |-- status.py
+|   |   |       |-- jobs.py
+|   |   |       |-- episodes.py        # list/delete
+|   |   |       |-- prompt.py
+|   |   |       |-- corrections.py
+|   |   |       |-- settings.py        # runtime overrides
+|   |   |       |-- reference.py       # preview/test/commit
+|   |   |       |-- auth.py            # login/logout/status
+|   |   |       `-- purge.py
+|   |   |-- core/
+|   |   |   |-- database.py          # schema, migrations, WAL, backups
+|   |   |   |-- paths.py
+|   |   |   `-- timestamps.py
+|   |   |-- services/                 # dataclasses (Job, Episode, ...) live in
+|   |   |   |                         # their service modules; no separate models/ dir
+|   |   |   |-- extraction.py      # Firecrawl client
+|   |   |   |-- llm.py             # multi-provider abstraction
+|   |   |   |-- tts.py             # XTTS wrapper client
+|   |   |   |-- audio.py           # trim, concat, normalize, encode (soundfile + ffmpeg)
+|   |   |   |-- chunker.py         # hybrid paragraph/sentence/comma chunking
+|   |   |   |-- transcript.py      # WebVTT generation
+|   |   |   |-- pipeline.py        # stage orchestration
+|   |   |   |-- jobs.py            # job-table helpers + queue claim (worker.py drives it)
+|   |   |   |-- episodes.py        # episode-table upsert/list helpers
+|   |   |   |-- retention.py       # daily sweep (episodes, jobs, orphan media)
+|   |   |   |-- feed.py            # RSS generation
+|   |   |   |-- artwork.py         # og:image fetch + crop/resize/JPG
+|   |   |   |-- corrections.py     # pronunciation dict load/validate/apply
+|   |   |   |-- prompt.py          # cleanup-prompt file load/save
+|   |   |   |-- runtime_settings.py # default->env->DB overlay + allowlist
+|   |   |   |-- settings_store.py  # settings table (podcast guid, etc.)
+|   |   |   |-- reachability.py    # startup dependency probes
+|   |   |   |-- atomic_write.py    # atomic file replace
+|   |   |   |-- auth.py            # password verify, sessions, lockout
+|   |   |   `-- csrf.py            # token issue/validate
+|   |   |-- utils/
+|   |   |   `-- logging.py
+|   |   |-- prompts/
+|   |   |   `-- script.txt         # bind-mounted, editable
+|   |   |-- corrections/
+|   |   |   `-- pronunciation.json # bind-mounted, editable
+|   |   |-- reference/
+|   |   |   |-- README.md          # specs + sources for voice.wav
+|   |   |   `-- voice.wav          # operator-supplied, gitignored
+|   |   `-- assets/                # build-time copy of needed branding files for FastAPI to serve
+|   |-- tests/
+|   |   `-- conftest.py
+|   `-- scripts/
+|-- frontend/                      # React 18 + Vite + TypeScript + Tailwind, PWA-capable
+|   |-- package.json
+|   |-- vite.config.ts
+|   |-- tsconfig.json
+|   |-- tailwind.config.js
+|   |-- index.html
+|   |-- public/
+|   |   |-- manifest.json
+|   |   `-- (favicons, copied from /branding at build time)
+|   `-- src/
+|       |-- main.tsx
+|       |-- App.tsx
+|       |-- routes/
+|       |   |-- Home.tsx           # URL submission form
+|       |   |-- Feed.tsx           # episode cards list with reprocess action
+|       |   `-- Settings.tsx       # tunables, prompt editor, reference audio
+|       |-- components/
+|       `-- api/                   # React Query hooks for backend endpoints
+|-- tts-wrapper/
+|   |-- Dockerfile
+|   |-- main.py                    # FastAPI wrapping XTTS-v2
+|   `-- requirements.txt
+`-- data/                          # host-mounted volume
+    |-- podcast.db
+    `-- media/
+        |-- {episode_id}.mp3
+        |-- {episode_id}.jpg
+        `-- (transcripts stored in DB, served on-demand as .vtt)
 ```
 
 ## Pipeline
@@ -361,20 +370,18 @@ GET    /api/v1/settings                 # read current runtime overrides
 PUT    /api/v1/settings                 # update a runtime setting
 
 # Reference Audio
-POST   /api/v1/reference/preview        # upload WAV, returns temp ID
-POST   /api/v1/reference/test           # generate sample TTS with temp upload
-POST   /api/v1/reference/commit         # swap temp into live voice.wav
+GET    /api/v1/reference/preview        # download the currently-installed voice.wav
+POST   /api/v1/reference/test           # upload a candidate WAV + sample text, audition without committing
+POST   /api/v1/reference/commit         # upload a candidate WAV, swap it into live voice.wav
 
 # Retention
 POST   /api/v1/purge                    # delete all episodes (requires confirm)
 POST   /api/v1/purge?older_than_days=N  # partial purge
 
 # Auth (when enabled)
-GET    /api/v1/auth/status              # passwordSet, authenticated. Always accessible.
-POST   /api/v1/auth/login               # body: {password}. Rate-limited.
+GET    /api/v1/auth/status              # auth_enabled, logged_in, username, csrf_token. Always accessible.
+POST   /api/v1/auth/login               # body: {username, password}. Rate-limited; returns csrf_token.
 POST   /api/v1/auth/logout              # clears session.
-POST   /api/v1/auth/set-password        # initial setup or change
-GET    /api/v1/auth/csrf                # CSRF token for state-changing endpoints
 
 # System
 GET    /health                          # health check
@@ -421,13 +428,13 @@ For 4xx errors, an optional `details` object may include validation context (fie
 
 List endpoints (`/api/v1/jobs`, `/api/v1/episodes`) accept:
 
-- `?limit=N` (default 20, max 100)
-- `?offset=M` (default 0)
+- `?page=N` (1-based, default 1)
+- `?per_page=M` (default 50, max 500)
 
 Total count returned in the `X-Total-Count` response header.
 
 ```
-GET /api/v1/episodes?limit=20&offset=40
+GET /api/v1/episodes?page=3&per_page=20
 X-Total-Count: 312
 ```
 
@@ -446,15 +453,15 @@ All timestamps in API responses are ISO 8601 UTC strings: `YYYY-MM-DDTHH:MM:SSZ`
 When auth is enabled:
 
 - State-changing requests (POST, PUT, DELETE) require an `X-CSRF-Token` header.
-- Token is obtained from `GET /api/v1/auth/csrf` after login.
-- Token is session-scoped and rotates on each login.
+- The token is returned by `POST /api/v1/auth/login` and `GET /api/v1/auth/status` (double-submit cookie pattern).
+- Token rotates on each login.
 - Missing or invalid token returns 403.
 
 Read-only requests (GET) do not require the header.
 
 #### Upload Limits
 
-- Reference audio (`POST /api/v1/reference/preview`): max 10MB, configurable via `REFERENCE_UPLOAD_MAX_BYTES`. Returns 413 on oversize.
+- Reference audio (`POST /api/v1/reference/test` and `/commit`): max 5 MB (hardcoded `_MAX_REFERENCE_BYTES`), plus a 3-60 s WAV duration check. Returns 400 on oversize or an unreadable/out-of-range clip; the upload is rejected mid-stream once it crosses the cap.
 
 ### Example Contracts
 
@@ -504,31 +511,36 @@ The illustrative examples below show the conventions in practice. Full per-endpo
 
 ## Authentication
 
-Optional password-based auth, lifted from MinusPod's pattern. Off by default; LAN-trust deployments leave it disabled. Operators who expose the app more broadly can enable it.
+Optional single-admin auth, lifted from MinusPod's pattern. Off by default
+(`AUTH_ENABLED=false`); LAN-trust deployments leave it disabled. Operators who
+expose the app more broadly enable it. The admin credential is supplied through
+env vars (a username plus a pre-computed bcrypt hash), not set at runtime.
 
 ### Behavior
 
-- **Off (no password set):** all requests allowed. `GET /api/v1/auth/status` returns `{"passwordSet": false, "authenticated": true}`.
-- **On (password set):** state-changing endpoints require an authenticated session. Read-only public routes (`/rss/*`, `/media/*`) are never gated.
+- **Off (`AUTH_ENABLED=false`):** all requests allowed; `require_admin` is a no-op. `GET /api/v1/auth/status` returns `{"auth_enabled": false, "logged_in": false, "username": "...", "csrf_token": "..."}`.
+- **On (`AUTH_ENABLED=true`):** state-changing endpoints require an authenticated session plus a valid CSRF token. Read-only public routes (`/rss/*`, `/media/*`) are never gated.
 
 ### Endpoints
 
 ```
-GET    /api/v1/auth/status         # passwordSet, authenticated. Always accessible.
-POST   /api/v1/auth/login          # body: {password}. Rate-limited.
+GET    /api/v1/auth/status         # auth_enabled, logged_in, username, csrf_token. Always accessible.
+POST   /api/v1/auth/login          # body: {username, password}. Rate-limited; returns a csrf_token.
 POST   /api/v1/auth/logout         # clears session.
-POST   /api/v1/auth/set-password   # body: {current_password, new_password}.
-                                   #   On first-run (no password yet) current_password is omitted.
 ```
+
+There is no `set-password` or dedicated `/auth/csrf` endpoint: the password is an
+env-supplied bcrypt hash (changed by editing `.env` + restart), and the CSRF
+token is returned by `/auth/login` and `/auth/status`.
 
 ### Mechanics
 
-- **Password storage:** bcrypt hash in a new `settings` table (key/value), under key `app_password`. Never logged or returned by any endpoint.
-- **Sessions:** Starlette `SessionMiddleware` with `SESSION_SECRET_KEY` env var. Generated random and persisted on first run if not provided.
-- **Cookie:** `SESSION_COOKIE_SECURE=true` for HTTPS-only by default. Override in dev.
-- **Rate limiting:** slowapi (FastAPI-compatible). Limits `/auth/login` to 3/min and 10/hour per IP.
-- **Lockout:** repeated failures from public IPs trigger temporary lockout (table `auth_lockout`, ported from MinusPod's `auth_lockout.py`). LAN/private IPs are exempt from lockout to prevent self-DoS.
-- **CSRF:** state-changing endpoints (`POST`, `PUT`, `DELETE`) require a CSRF token. Token issued via `GET /api/v1/auth/csrf` after login, included in `X-CSRF-Token` header. Lifted from MinusPod's `csrf.py`.
+- **Password storage:** the bcrypt hash is the `ADMIN_PASSWORD_HASH` env var (with `ADMIN_USERNAME`). Generate it with the helper command in `.env.example`. Never logged or returned by any endpoint. It is not stored in the DB.
+- **Sessions:** Starlette `SessionMiddleware` with `SESSION_SECRET_KEY`. Required when auth is on (startup fails if absent); when auth is off an ephemeral per-process key is used (not persisted).
+- **Cookie:** `SESSION_COOKIE_SECURE` defaults to **false** so localhost `http://` works; set true once HTTPS fronts the app. `SESSION_COOKIE_MAX_AGE_SECONDS` controls lifetime (default 14 days).
+- **Rate limiting:** slowapi limits `/auth/login` to `10/minute` (the decorator value is currently hardcoded; `LOGIN_RATE_LIMIT` is advisory until wired).
+- **Lockout:** repeated failures key on the (lowercased) **username**, not IP. `LOCKOUT_MAX_FAILED_ATTEMPTS` (default 5) opens a `LOCKOUT_WINDOW_SECONDS` window (default 900s) during which `/auth/login` returns 423. Table `auth_lockout`. There is no LAN/private-IP exemption.
+- **CSRF:** state-changing endpoints (`POST`, `PUT`, `DELETE`) require an `X-CSRF-Token` header matching a double-submit cookie token. The token is issued by `/auth/login` and `/auth/status` and rotates on each login. Lifted from MinusPod's `csrf.py`.
 
 ### New Schema
 
@@ -540,10 +552,11 @@ CREATE TABLE settings (
 );
 
 CREATE TABLE auth_lockout (
-    ip          TEXT PRIMARY KEY,
-    failed_count INTEGER NOT NULL DEFAULT 0,
-    locked_until TEXT,
-    updated_at  TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    identifier      TEXT PRIMARY KEY,   -- lowercased admin username, not IP
+    failed_attempts INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at TEXT,
+    lockout_until   TEXT,
+    updated_at      TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE TABLE runtime_settings (
@@ -558,15 +571,20 @@ CREATE TABLE runtime_settings (
 ### Env Vars
 
 ```
-SESSION_SECRET_KEY=                # required if auth enabled; auto-generated and persisted if absent
-SESSION_COOKIE_SECURE=true         # set false in local dev (no HTTPS)
-AUTH_LOCKOUT_THRESHOLD=10          # failed attempts before lockout
-AUTH_LOCKOUT_DURATION_MINUTES=30
+AUTH_ENABLED=false                 # master switch; off = all requests allowed
+ADMIN_USERNAME=admin               # required when AUTH_ENABLED=true
+ADMIN_PASSWORD_HASH=               # required when AUTH_ENABLED=true; bcrypt hash (see .env.example helper)
+SESSION_SECRET_KEY=                # required when AUTH_ENABLED=true; ephemeral per-process when off
+SESSION_COOKIE_SECURE=false        # set true once HTTPS fronts the app
+SESSION_COOKIE_MAX_AGE_SECONDS=1209600   # 14 days
+LOCKOUT_MAX_FAILED_ATTEMPTS=5      # failed attempts before lockout
+LOCKOUT_WINDOW_SECONDS=900         # 15-minute lockout window
+LOGIN_RATE_LIMIT=10/minute         # advisory; decorator value is currently hardcoded
 ```
 
 ## Web UI
 
-Three-tab progressive web app served from `/` by FastAPI as static files. Built from `frontend/` (React 19 + Vite + TypeScript + Tailwind + React Query + React Router). PWA capability via `vite-plugin-pwa` (install-to-homescreen; no offline mode).
+Three-tab progressive web app served from `/` by FastAPI as static files. Built from `frontend/` (React 18 + Vite + TypeScript + Tailwind + React Query + React Router). PWA capability via `vite-plugin-pwa` (install-to-homescreen; no offline mode).
 
 Mobile-first. Designed for one-handed phone use first, scales up to desktop.
 
@@ -631,20 +649,22 @@ Each card shows:
 - Error message (if failed)
 - Action row: Reprocess, View transcript, Delete. Reprocess disabled when status is queued or processing.
 
-Cards ordered newest first. Pull-to-refresh on mobile (matching MinusPod). Paginated if episode count grows.
+Cards ordered newest first. Pull-to-refresh on mobile (matching MinusPod). Paginated (`page`/`per_page`) if episode count grows.
 
-**3. Settings.** Editable settings grouped by section. Five sections exposed in the UI plus a read-only system info block:
+As built, the Feed card is a leaner subset of the above: title/link, created timestamp, an audio link, and a Delete action with pull-to-refresh and pagination. The richer per-card affordances (artwork thumbnail, status badge, inline Reprocess and View-transcript buttons, author/domain line) remain a target rather than shipped UI; the underlying endpoints (`/submit?reprocess`, `/media/{id}.vtt`, `/episodes`) all exist to support them.
 
-1. **LLM Provider:** `LLM_PROVIDER` (dropdown), `LLM_MODEL`, `OPENAI_BASE_URL`, `OPENAI_API_KEY` (masked), `ANTHROPIC_API_KEY` (masked), `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `LLM_TIMEOUT_SECONDS`, `LLM_RETRY_COUNT`. Provider-specific fields hide/show based on selection.
-2. **TTS:** `TTS_URL`, `TTS_LANGUAGE`, XTTS generation params, `TTS_HTTP_TIMEOUT_SECONDS`, `TTS_RETRY_COUNT`. Plus the reference audio widget.
-3. **Cleanup Prompt:** current prompt in a textarea (mono font, 8 rows visible). Buttons: Save, Reset to default. Maps to `GET/PUT /api/v1/prompt`.
-4. **Pronunciation Corrections:** table of word → pronunciation pairs. Add/remove rows. Maps to `GET/PUT /api/v1/corrections`.
-5. **Retention:** `RETENTION_DAYS`, `RETENTION_SWEEP_HOUR_UTC`. Plus a danger-styled "Purge all" button (with confirmation modal).
-6. **System** (read-only): app version, Python version, episode count, DB size, media size.
+**3. Settings.** Editable settings grouped by section. Five field groups exposed in the UI plus the prompt editor, corrections table, reference voice widget, and a read-only system-info block. The groups map to the runtime-settings allowlist (see "UI-Editable Subset"), not to provider/secret fields:
 
-Plus an Auth subsection (when auth is enabled): change password, log out.
+1. **Feed:** `FEED_TITLE`, `FEED_DESCRIPTION`, `FEED_AUTHOR`, `FEED_EMAIL`, `FEED_LANGUAGE`, `FEED_CATEGORY`, `FEED_EXPLICIT`, `FEED_ARTWORK_URL`.
+2. **TTS:** `TTS_CHUNK_TARGET_WORDS`, `TTS_CHUNK_MAX_WORDS`, `TTS_CHUNK_SILENCE_MS`. Plus the reference audio widget.
+3. **Cleanup:** `MIN_CLEANUP_CHARS`, `MAX_PROMPT_LENGTH_BYTES`. Plus the cleanup-prompt editor (`GET/PUT /api/v1/prompt`) and the pronunciation-corrections table (`GET/PUT /api/v1/corrections`).
+4. **Retention:** `RETENTION_DAYS`. Plus a danger-styled "Purge all" button (with confirmation).
+5. **RSS:** `RSS_CACHE_MAX_AGE_SECONDS`.
+6. **System** (read-only): auth state (`auth_enabled`, `logged_in`) and the count of operator-tunable keys.
 
-All other env vars stay in `.env` and are not editable from the UI.
+When auth is enabled the UI gates writes behind login + CSRF; there is no in-UI password change (the hash is env-supplied).
+
+LLM provider/model/key fields and the XTTS generation params are intentionally NOT UI-editable (secrets + infra stay in `.env`); they require a container restart to change. All other env vars stay in `.env` too.
 
 ### Settings Persistence
 
@@ -666,13 +686,13 @@ Three-step flow visible in the TTS settings section:
 2. **Drop zone** below: drag-and-drop or click to choose file. Shows specs (6-12s, 22050+ Hz, mono, clean).
 3. **Preview card** appears after upload: filename + duration, "Play upload" button, "TTS test" button (runs sample through wrapper with the uploaded voice), and a primary "Commit" button that swaps the live voice.
 
-Backend flow:
+Backend flow (no persistent temp-ID staging; each call carries the candidate WAV directly):
 
-1. `POST /api/v1/reference/preview` accepts a WAV upload, stores at `/data/tmp/reference-{uuid}.wav`. Returns the temp ID. UI can fetch and play this back directly.
-2. `POST /api/v1/reference/test` takes the temp ID and a fixed test sentence ("This is a test of the Audicle text to speech system. It uses your uploaded reference voice to generate audio for articles."). Sends to TTS wrapper, returns generated audio. UI plays it.
-3. `POST /api/v1/reference/commit` copies the temp file to the live `voice.wav` path. Triggers the wrapper to reload embeddings (new endpoint on the wrapper: `POST /reload`).
+1. `GET /api/v1/reference/preview` streams back the currently-installed `voice.wav` so the UI can play the live voice.
+2. `POST /api/v1/reference/test` accepts a candidate WAV upload plus a `sample_text` field. Under an `asyncio.Lock` it atomically stages the candidate into the live reference path, calls the wrapper `/reload` + `/generate`, returns the generated audio, then restores the prior clip (or removes the candidate if none existed) before releasing the lock. Nothing is left committed.
+3. `POST /api/v1/reference/commit` accepts a candidate WAV, validates it, atomically replaces `voice.wav`, and triggers the wrapper to reload embeddings (`POST /reload`).
 
-Temp files cleaned up by retention sweep (24h TTL).
+Because `/test` stages and restores atomically rather than writing to `/data/tmp`, there are no reference temp files to sweep.
 
 ### PWA
 
@@ -685,12 +705,16 @@ Temp files cleaned up by retention sweep (24h TTL).
   "start_url": "/",
   "display": "standalone",
   "background_color": "#040405",
-  "theme_color": "#1ce783",
+  "theme_color": "#040405",
   "icons": [
-    {"src": "/favicon-192.png", "sizes": "192x192", "type": "image/png"},
-    {"src": "/favicon-512.png", "sizes": "512x512", "type": "image/png"}
+    {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png"}
   ]
 }
+
+`theme_color` matches the app background (`#040405`) so iOS chrome blends, per
+the design-system note above. The manifest is generated by `vite-plugin-pwa`
+from `frontend/vite.config.ts`; the icon PNGs live in `frontend/public/`.
 ```
 
 Service worker registered for install-to-homescreen support. No offline caching of API responses.
@@ -830,7 +854,7 @@ Retries on `/generate` failures happen client-side in the main app (`TTS_RETRY_C
 
 ### XTTS License Note
 
-XTTS-v2 model weights ship under the **Coqui Public Model License 1.0.0 (CPML)**. The license restricts use to non-commercial purposes. The paid commercial-license tier that Coqui formerly offered is gone — Coqui AI shut down in January 2024 and no rights holder is currently selling commercial licenses.
+XTTS-v2 model weights ship under the **Coqui Public Model License 1.0.0 (CPML)**. The license restricts use to non-commercial purposes. The paid commercial-license tier that Coqui formerly offered is gone -- Coqui AI shut down in January 2024 and no rights holder is currently selling commercial licenses.
 
 For personal self-hosted use this is fine. README must document the license so operators know. Audicle does not redistribute model weights; the wrapper downloads them from Hugging Face on first run.
 
@@ -844,13 +868,14 @@ All inputs to the audio pipeline are 24000 Hz mono WAVs (XTTS-v2 native output, 
 
 1. **Trim silence** on each chunk WAV using torch-based detection. Threshold and buffer are tunable via `AUDIO_SILENCE_THRESHOLD` (default 0.003) and `AUDIO_SILENCE_BUFFER_MS` (default 5). Algorithm lifted from ebook2audiobook.
 2. **Insert silence padding** between chunks. Generated as `torch.zeros(1, samples)` tensors at 24000 Hz. Duration tunable via `TTS_CHUNK_SILENCE_MS` (default 250).
-3. **Concat** all chunk WAVs + silence tensors in Python via tensor append, write the combined WAV with torchaudio. Approach lifted from ebook2audiobook. ffmpeg takes over from step 4.
+3. **Concat** all chunk WAVs + silence tensors in Python via tensor append, write the combined WAV with `soundfile` (not `torchaudio.save`, which broke on the TorchCodec dependency change). Approach lifted from ebook2audiobook. ffmpeg takes over from step 4.
 4. **Normalize** the concatenated WAV with the ebook2audiobook filter chain:
    ```
    agate=threshold=-25dB:ratio=1.4:attack=10:release=250,
    afftdn=nf=-70,
    acompressor=threshold=-20dB:ratio=2:attack=80:release=200:makeup=1dB,
-   loudnorm=I=-14:TP=-3:LRA=7:linear=true,
+   loudnorm=I=-14:TP=-3:LRA=7,
+   # (single-pass loudnorm; the as-built filter omits linear=true / two-pass measurement)
    equalizer=f=150:t=q:w=2:g=1,
    equalizer=f=250:t=q:w=2:g=-3,
    equalizer=f=3000:t=q:w=2:g=2,
@@ -868,7 +893,7 @@ Per-chunk WAVs and the concatenated WAV are deleted on both success and failure 
 
 ## Chunking
 
-Order in the pipeline: LLM cleanup → pronunciation corrections (text substitution) → chunk → TTS. Chunking operates on the corrected prose so chunk boundaries don't fall mid-substitution.
+Order in the pipeline: LLM cleanup -> pronunciation corrections (text substitution) -> chunk -> TTS. Chunking operates on the corrected prose so chunk boundaries don't fall mid-substitution.
 
 Cleaned text is chunked for TTS using a hybrid strategy:
 
@@ -932,14 +957,14 @@ Bind-mounted, editable on disk or via API. Both edit paths write to the same fil
 
 - **Scope:** the daily sweep cleans up everything Audicle owns on disk and in the DB.
   - Expired episodes (audio, artwork, transcript, DB row): older than `RETENTION_DAYS` based on `pub_date`
-  - Expired job rows: older than `RETENTION_DAYS` regardless of final status
+  - Expired job rows: `done`/`failed` jobs older than `RETENTION_DAYS` that no live episode still references (queued/processing jobs are never reaped)
   - Expired migration backups: older than `MIGRATION_BACKUP_RETENTION_DAYS` (default 30)
-  - Expired reference upload temp files (`/data/tmp/reference-*.wav`): older than 24h
+  - (The reference `/test` flow stages and restores in place, so there are no `/data/tmp` reference temp files to sweep.)
 - **Episode trigger:** N days from episode `pub_date` (not `created_at`), configurable via `RETENTION_DAYS` env var. Reprocessing an episode updates `pub_date` and therefore extends its retention window. This matches the intent of reprocess: it's an active signal that the episode matters.
 - **Cleanup task:** runs daily at `RETENTION_SWEEP_HOUR_UTC`.
 - **Deletion order:** for each expired episode, DB row deleted first, then media files (`{id}.mp3`, `{id}.jpg`). If file deletion fails, the DB row is already gone so the feed doesn't reference missing files. Failed file deletes are logged at WARN.
 - **Orphan sweep:** the daily task also walks `/data/media/` and removes any file whose episode_id no longer exists in the `episodes` table. Catches files left behind by deletion failures or manual DB editing.
-- **Manual:** `POST /api/v1/purge` removes all episodes. `POST /api/v1/purge?older_than_days=N` for partial cleanup. Both require `confirm: true` in body to prevent accidents.
+- **Manual:** `POST /api/v1/purge` removes all episodes. `POST /api/v1/purge?older_than_days=N` for partial cleanup. Both require a `confirm=true` query parameter to prevent accidents.
 
 ## RSS Feed
 
@@ -982,8 +1007,8 @@ Recommended: option 1. Use `feedgen` for the well-trodden iTunes path, manually 
 | `<lastBuildDate>` | current UTC timestamp at feed generation, RFC 2822 format |
 | `<atom:link rel="self">` | `{BASE_URL}/rss/rss.xml` |
 | `<podcast:guid>` | Stable feed GUID, auto-generated UUIDv4 on first run and persisted to the `settings` table. Survives BASE_URL changes. |
-| `<podcast:locked>` | `yes` (hardcoded) |
-| `<podcast:txt purpose="ai-content">` | `true` (hardcoded; honest declaration of TTS-generated content) |
+| `<podcast:locked>` | `yes` (hardcoded), with `owner="{FEED_EMAIL}"` attribute |
+| `<podcast:txt purpose="ai-content">` | a human-readable sentence declaring TTS-generated narration (honest AI-content declaration; the tag carries prose, not the literal `true`) |
 | `<podcast:medium>` | `podcast` (hardcoded) |
 
 ### Per-Episode Fields
@@ -1039,6 +1064,7 @@ Newest first. No feed-size limit; retention controls volume.
   - Image format not supported by Pillow (e.g., SVG)
   - Source resolution below `ARTWORK_MIN_SOURCE_PX` on either axis (default 600). Smaller sources upscale poorly and produce blurry final artwork.
   - Pillow processing exception (corrupted file)
+  - SSRF/abuse guards (the og:image URL comes from scraped HTML, not the operator): `blocked_scheme` (non-http/https), `blocked_host` (private/loopback/link-local/multicast IP after DNS resolution), `download_too_large` (body exceeds `ARTWORK_MAX_DOWNLOAD_BYTES`), `decompression_bomb` (Pillow pixel-limit), `atomic_write_failed`
 - Each fallback logs the reason at WARN level (`event=artwork_fallback`, `reason=<...>`, `episode_id`, `source_url`) so operators can spot patterns.
 
 ### Feed-Level Artwork
@@ -1086,8 +1112,8 @@ The 250ms gap between cue 1's end (12.450) and cue 2's start (12.700) is the sil
 
 Audicle uses a two-domain split for clean separation between admin and public surface:
 
-- **UI / admin domain** (example: `audicle.example.com`) — serves the React UI at `/` and the admin API at `/api/v1/*`. Restricted to LAN or private network at the exposure layer. Operator-only.
-- **Public feed domain** (example: `audifeed.example.com`) — serves `/rss/*` and `/media/*` only. Internet-accessible. Podcast clients hit this domain.
+- **UI / admin domain** (example: `audicle.example.com`) -- serves the React UI at `/` and the admin API at `/api/v1/*`. Restricted to LAN or private network at the exposure layer. Operator-only.
+- **Public feed domain** (example: `audifeed.example.com`) -- serves `/rss/*` and `/media/*` only. Internet-accessible. Podcast clients hit this domain.
 
 Both domains route to the same FastAPI app and the same container. The exposure layer is responsible for:
 
@@ -1232,7 +1258,8 @@ ANTHROPIC_API_KEY=                                     # if LLM_PROVIDER=anthrop
 ### Optional (deployment-specific)
 
 ```
-CF_TUNNEL_TOKEN=                  # only if using cloudflared in the stack
+CF_TUNNEL_TOKEN=                  # compose-only (consumed by a cloudflared service); the app's
+                                  # Pydantic settings use extra="forbid", so this is NOT read by the app
 ```
 
 ### Tunable (with defaults)
@@ -1265,6 +1292,9 @@ XTTS_REPETITION_PENALTY=2.0
 XTTS_TOP_K=50
 XTTS_TOP_P=0.85
 TTS_RETRY_COUNT=3
+TTS_HTTP_TIMEOUT_SECONDS=120
+TTS_REACHABILITY_GRACE_SECONDS=60      # startup probe retry window for the wrapper
+TTS_REACHABILITY_PROBE_TIMEOUT=10
 
 # Chunking
 TTS_CHUNK_TARGET_WORDS=180
@@ -1294,8 +1324,8 @@ WEB_WORKERS=2
 
 # Limits
 MAX_PROMPT_LENGTH_BYTES=10240
-REFERENCE_UPLOAD_MAX_BYTES=10485760    # 10MB
 MAX_CORRECTIONS_ENTRIES=500
+# (reference upload cap is a hardcoded 5MB in reference.py, not an env var)
 
 # Logging
 LOG_LEVEL=INFO
@@ -1309,17 +1339,23 @@ MIGRATION_BACKUP_RETENTION_DAYS=30
 # RSS
 RSS_CACHE_MAX_AGE_SECONDS=300
 
-# Auth (only relevant when password is set; off by default)
-SESSION_SECRET_KEY=               # auto-generated and persisted to settings table if absent
-SESSION_COOKIE_SECURE=true        # set false in local dev (no HTTPS)
-AUTH_LOCKOUT_THRESHOLD=10         # failed login attempts before lockout
-AUTH_LOCKOUT_DURATION_MINUTES=30
+# Auth (off by default)
+AUTH_ENABLED=false                # master switch
+ADMIN_USERNAME=admin              # required when AUTH_ENABLED=true
+ADMIN_PASSWORD_HASH=              # required when AUTH_ENABLED=true; bcrypt hash
+SESSION_SECRET_KEY=               # required when AUTH_ENABLED=true; ephemeral per-process when off
+SESSION_COOKIE_SECURE=false       # set true once HTTPS fronts the app
+SESSION_COOKIE_MAX_AGE_SECONDS=1209600   # 14 days
+LOCKOUT_MAX_FAILED_ATTEMPTS=5     # failed login attempts before lockout
+LOCKOUT_WINDOW_SECONDS=900        # 15-minute lockout window
+LOGIN_RATE_LIMIT=10/minute        # advisory; slowapi decorator value is hardcoded
 
 # Artwork
 ARTWORK_SIZE_PX=3000
 ARTWORK_JPG_QUALITY=85
 ARTWORK_FETCH_TIMEOUT_SECONDS=15
 ARTWORK_MIN_SOURCE_PX=600
+ARTWORK_MAX_DOWNLOAD_BYTES=26214400   # 25MB SSRF/decompression-bomb download cap
 
 # CORS
 CORS_ORIGINS=                     # comma-separated origin list; empty = permissive within container/LAN
@@ -1327,35 +1363,42 @@ CORS_ORIGINS=                     # comma-separated origin list; empty = permiss
 
 ### UI-Editable Subset
 
-The following env var keys can be overridden at runtime via the Settings UI, which writes to the `runtime_settings` DB table. Config resolution per job: code default → env → DB override (last wins).
+The following env var keys can be overridden at runtime via the Settings UI, which writes to the `runtime_settings` DB table. Config resolution per job: code default -> env -> DB override (last wins).
+
+The implemented allowlist (`services/runtime_settings.py` `ALLOWED_KEYS`) is the
+cosmetic/tuning subset; secrets and infrastructure paths are deliberately
+excluded:
 
 ```
-# LLM Provider group
-LLM_PROVIDER
-LLM_MODEL
-OPENAI_BASE_URL
-OPENAI_API_KEY
-ANTHROPIC_API_KEY
-LLM_TEMPERATURE
-LLM_MAX_TOKENS
-LLM_TIMEOUT_SECONDS
-LLM_RETRY_COUNT
+# Feed group
+FEED_TITLE
+FEED_DESCRIPTION
+FEED_AUTHOR
+FEED_EMAIL
+FEED_LANGUAGE
+FEED_CATEGORY
+FEED_EXPLICIT
+FEED_ARTWORK_URL
 
-# TTS group
-TTS_URL
-TTS_LANGUAGE
-XTTS_TEMPERATURE
-XTTS_LENGTH_PENALTY
-XTTS_REPETITION_PENALTY
-XTTS_TOP_K
-XTTS_TOP_P
-TTS_HTTP_TIMEOUT_SECONDS
-TTS_RETRY_COUNT
+# TTS / chunking group
+TTS_CHUNK_TARGET_WORDS
+TTS_CHUNK_MAX_WORDS
+TTS_CHUNK_SILENCE_MS
+
+# Cleanup group
+MIN_CLEANUP_CHARS
+MAX_PROMPT_LENGTH_BYTES
 
 # Retention group
 RETENTION_DAYS
-RETENTION_SWEEP_HOUR_UTC
+
+# RSS group
+RSS_CACHE_MAX_AGE_SECONDS
 ```
+
+LLM provider/model/keys, `TTS_URL`, and the XTTS generation params are NOT in
+the allowlist (they are secrets/infra or restart-affecting), contrary to an
+earlier draft of this plan; they stay env-only.
 
 Plus the cleanup prompt (`PUT /api/v1/prompt` writes to `prompts/script.txt` directly) and pronunciation corrections (`PUT /api/v1/corrections` writes to `corrections/pronunciation.json` directly). These aren't env vars; they're files with their own endpoints.
 
@@ -1384,7 +1427,7 @@ Every record includes `timestamp` (ISO 8601), `level`, `logger`, `hostname`, `pi
 
 `backend/app/version.py` holds `__version__` as the single source of truth. Imported by:
 
-- `main.py` lifespan — logs `Audicle starting` with version, Python version, hostname, PID at startup
+- `main.py` lifespan -- logs `Audicle starting` with version, Python version, hostname, PID at startup
 - FastAPI app metadata (`version=__version__`)
 - `pyproject.toml` build metadata (kept in sync manually or via build script)
 - `GET /health` endpoint response
@@ -1393,9 +1436,9 @@ Every record includes `timestamp` (ISO 8601), `level`, `logger`, `hostname`, `pi
 
 Three routes, standard Kubernetes-style:
 
-- **`GET /health/live`** — process is alive. No dependency checks. Returns 200 + minimal body (`{"ok": true, "version": "0.1.0"}`). Used by orchestrators for restart decisions.
-- **`GET /health/ready`** — dependencies reachable, ready to serve traffic. Returns full body (see below). 503 if any subsystem fails. Used by orchestrators for traffic-routing decisions.
-- **`GET /health`** — alias for `/health/ready`. Kept for backward compatibility and casual use.
+- **`GET /health/live`** -- process is alive. No dependency checks. Returns 200 + minimal body (`{"ok": true, "version": "0.1.0"}`). Used by orchestrators for restart decisions.
+- **`GET /health/ready`** -- dependencies reachable, ready to serve traffic. Returns full body (see below). 503 if any subsystem fails. Used by orchestrators for traffic-routing decisions.
+- **`GET /health`** -- alias for `/health/ready`. Kept for backward compatibility and casual use.
 
 All three are LAN-only.
 
@@ -1486,9 +1529,10 @@ services:
       - "host.docker.internal:host-gateway"   # lets the app reach host-installed Ollama on Linux
     volumes:
       - ./data:/data
-      - ./backend/app/prompts:/app/prompts
-      - ./backend/app/corrections:/app/corrections
-      - ./backend/app/reference:/app/reference
+      # Image copies the package to /app/app, so the editable mounts target /app/app/*
+      - ./backend/app/prompts:/app/app/prompts
+      - ./backend/app/corrections:/app/app/corrections
+      - ./backend/app/reference:/app/app/reference
     depends_on:
       tts-wrapper:
         condition: service_healthy
@@ -1593,7 +1637,7 @@ Phased approach so each phase produces a working, testable slice. Phases are ord
 ### Phase 5: Chunking and Audio Pipeline
 
 - `MIN_CLEANUP_CHARS` guard (fail job if cleanup output too short)
-- Hybrid chunker (paragraphs → sentences → commas), fallback WARN logging, hard abort with sentence preview if no breakpoint fits
+- Hybrid chunker (paragraphs -> sentences -> commas), fallback WARN logging, hard abort with sentence preview if no breakpoint fits
 - Per-chunk TTS calls with `chunk_index`, client-side retry
 - Silence trim (torch), silence padding (torch zeros), concat (tensor append + torchaudio)
 - ffmpeg normalization filter chain (loudnorm, EQ, denoise, compress)
@@ -1643,7 +1687,7 @@ Phased approach so each phase produces a working, testable slice. Phases are ord
 ### Phase 10: Runtime Settings
 
 - `runtime_settings` table
-- Config resolution chain (default → env → DB override), re-read per job
+- Config resolution chain (default -> env -> DB override), re-read per job
 - `GET/PUT /api/v1/settings` with allowlist enforcement
 - `GET /api/v1/episodes` (list, pagination, X-Total-Count) and `DELETE /api/v1/episodes/{id}`
 - Reference audio endpoints: `/reference/preview`, `/reference/test`, `/reference/commit`
@@ -1659,7 +1703,7 @@ Phased approach so each phase produces a working, testable slice. Phases are ord
 - Pull-to-refresh on Feed
 - Reference audio widget (upload, test, commit)
 - `vite-plugin-pwa` for `manifest.json` and service worker
-- Dockerfile frontend stage activated: Node build → copy `dist/` into Python runtime image
+- Dockerfile frontend stage activated: Node build -> copy `dist/` into Python runtime image
 - FastAPI `StaticFiles` mount at `/` serving the built UI
 
 ### Phase 12: Public Exposure
@@ -1687,8 +1731,8 @@ Phased approach so each phase produces a working, testable slice. Phases are ord
 | [MinusPod](https://github.com/ttlequals0/MinusPod) | Single-container pattern, SQLite-as-queue, crash recovery | Whole architecture |
 | [MinusPod](https://github.com/ttlequals0/MinusPod) | Multi-provider LLM abstraction (anthropic + openai-compatible) | `services/llm.py` |
 | [MinusPod](https://github.com/ttlequals0/MinusPod) | Episode ID strategy (MD5[:12]) | `services/pipeline.py` |
-| [MinusPod](https://github.com/ttlequals0/MinusPod) | Pronunciation corrections dictionary pattern (inverse direction) | `utils/corrections.py` |
-| [MinusPod](https://github.com/ttlequals0/MinusPod) | Stage tracking on jobs, structured logging with job_id, JSONFormatter | `services/queue.py`, `utils/logging.py` |
+| [MinusPod](https://github.com/ttlequals0/MinusPod) | Pronunciation corrections dictionary pattern (inverse direction) | `services/corrections.py` |
+| [MinusPod](https://github.com/ttlequals0/MinusPod) | Stage tracking on jobs, structured logging with job_id, JSONFormatter | `worker.py` + `services/jobs.py`, `utils/logging.py` |
 | [MinusPod](https://github.com/ttlequals0/MinusPod) | PC2 namespace emission patterns, transcript-in-DB storage | `services/feed.py` |
 | [MinusPod](https://github.com/ttlequals0/MinusPod) | Optional password auth: sessions, CSRF, IP lockout, rate limiting | `services/auth.py`, `services/csrf.py` |
 | [MinusPod](https://github.com/ttlequals0/MinusPod) | Application-managed timestamps, idempotent startup migrations | `core/database.py` |

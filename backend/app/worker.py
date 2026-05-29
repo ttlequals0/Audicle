@@ -67,7 +67,11 @@ def _maybe_run_retention_sweep(settings: Settings, last_sweep_day: str | None) -
         # takes effect on the next sweep without a worker restart.
         overlaid = runtime_settings.overlay(settings)
         retention.purge_older_than(overlaid, older_than_days=overlaid.RETENTION_DAYS)
+        retention.purge_expired_jobs(overlaid, older_than_days=overlaid.RETENTION_DAYS)
         retention.sweep_orphan_media(overlaid)
+        database.prune_backups(
+            overlaid.DATA_DIR, retention_days=overlaid.MIGRATION_BACKUP_RETENTION_DAYS
+        )
     except Exception:
         logger.exception(
             "Retention sweep failed; will retry next iteration",

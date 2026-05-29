@@ -45,12 +45,12 @@ Green mark on rich-black background. This is the canonical version used for podc
 
 Saved at `backend/app/assets/`:
 
-- `mark.svg` — icon only, primary green on transparent
-- `mark-mono.svg` — icon only, currentColor (inherits from CSS)
-- `wordmark.svg` — mark + "audicle" text, primary green
-- `wordmark-mono.svg` — same, currentColor
-- `podcast-artwork.svg` — 3000x3000 square for feed-level artwork (rasterize to PNG before serving)
-- `favicon.svg` — 16x16 optimized version with thicker strokes
+- `mark.svg` -- icon only, primary green on transparent
+- `mark-mono.svg` -- icon only, currentColor (inherits from CSS)
+- `wordmark.svg` -- mark + "audicle" text, primary green
+- `wordmark-mono.svg` -- same, currentColor
+- `podcast-artwork.svg` -- 3000x3000 square for feed-level artwork (rasterize to PNG before serving)
+- `favicon.svg` -- 16x16 optimized version with thicker strokes
 
 ## Rasterization for Podcast Artwork
 

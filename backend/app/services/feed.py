@@ -12,6 +12,7 @@ restarts and feed-URL changes.
 
 from __future__ import annotations
 
+import html
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -100,7 +101,8 @@ def render(
         if ep.author:
             item.author({"name": ep.author})
         item.link(href=ep.original_url)
-        item.description(ep.title or ep.original_url)
+        item.description(_episode_description_html(ep))
+        item.podcast.itunes_summary(_episode_summary(ep))
         item.pubDate(_parse_iso(ep.pub_date) or last_build)
         if ep.audio_path:
             audio_url = _media_url(settings.BASE_URL, ep.id, "mp3")
@@ -125,6 +127,30 @@ def render(
         episodes=episodes,
         settings=settings,
     )
+
+
+def _episode_description_html(ep: Episode) -> str:
+    """HTML body for the per-episode ``<description>``: title, author (when
+    known), and a link back to the source article. feedgen escapes the
+    string, so podcast clients receive renderable HTML."""
+
+    title = html.escape(ep.title or ep.original_url)
+    url = html.escape(ep.original_url, quote=True)
+    parts = [f"<p>{title}</p>"]
+    if ep.author:
+        parts.append(f"<p>By {html.escape(ep.author)}</p>")
+    parts.append(f'<p>Source: <a href="{url}">{html.escape(ep.original_url)}</a></p>')
+    return "".join(parts)
+
+
+def _episode_summary(ep: Episode) -> str:
+    """Plain-text counterpart to the HTML description for ``itunes:summary``."""
+
+    lines = [ep.title or ep.original_url]
+    if ep.author:
+        lines.append(f"By {ep.author}")
+    lines.append(f"Source: {ep.original_url}")
+    return "\n".join(lines)
 
 
 def _inject_pc2_tags(
