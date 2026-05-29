@@ -1,0 +1,96 @@
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { api, Episode } from "../lib/api";
+
+export default function Feed() {
+  const [copied, setCopied] = useState(false);
+  const feedUrl = `${window.location.origin}/rss/rss.xml`;
+  const qc = useQueryClient();
+
+  const episodesQ = useQuery({
+    queryKey: ["episodes"],
+    queryFn: () => api<Episode[]>("/api/v1/episodes?per_page=50"),
+  });
+
+  const deleteM = useMutation({
+    mutationFn: (id: string) =>
+      api(`/api/v1/episodes/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["episodes"] }),
+  });
+
+  const copy = async () => {
+    await navigator.clipboard.writeText(feedUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="space-y-6">
+      <section className="card">
+        <p className="label">feed url</p>
+        <div className="flex gap-2 items-center">
+          <code className="flex-1 font-mono text-xs text-fg bg-surface px-3 py-2 rounded border border-line truncate">
+            {feedUrl}
+          </code>
+          <button className="btn-ghost" onClick={copy}>
+            {copied ? "copied" : "copy"}
+          </button>
+        </div>
+        <p className="text-mute text-xs mt-2">
+          paste into any podcast client (Pocket Casts, Overcast, Apple Podcasts) to subscribe.
+        </p>
+      </section>
+
+      <section>
+        <h2 className="font-mono uppercase text-xs text-dim mb-3">episodes</h2>
+        {episodesQ.isLoading && <p className="text-mute text-sm">loading…</p>}
+        {episodesQ.data && episodesQ.data.length === 0 && (
+          <p className="text-mute text-sm">no episodes yet.</p>
+        )}
+        <ul className="space-y-2">
+          {(episodesQ.data ?? []).map((ep) => (
+            <li key={ep.id} className="card">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm truncate">{ep.title ?? ep.original_url}</p>
+                  <p className="font-mono text-[11px] text-mute truncate mt-1">
+                    {ep.id} &middot; {formatDuration(ep.duration_secs)} &middot; {ep.pub_date}
+                  </p>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <a
+                    className="btn-ghost text-center"
+                    href={`/media/${ep.id}.mp3`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    mp3
+                  </a>
+                  <button
+                    className="btn-ghost btn-danger text-danger border-line"
+                    disabled={deleteM.isPending}
+                    onClick={() => {
+                      if (confirm(`Delete episode ${ep.id}?`)) deleteM.mutate(ep.id);
+                    }}
+                  >
+                    delete
+                  </button>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </section>
+    </div>
+  );
+}
+
+function formatDuration(secs: number | null): string {
+  if (!secs) return "-";
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  if (h > 0)
+    return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}

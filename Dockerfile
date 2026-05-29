@@ -1,10 +1,15 @@
 # syntax=docker/dockerfile:1.7
 
-# ---- Stage 1: frontend builder (stubbed for Phase 1; real Vite build lands in Phase 11). ----
-FROM node:20-alpine AS frontend
+# ---- Stage 1: frontend builder (Vite + React + Tailwind). ----
+FROM node:22-alpine AS frontend
 WORKDIR /build
-RUN mkdir -p dist && \
-    printf '<!doctype html><meta charset="utf-8"><title>Audicle</title>\n<p>UI lands in Phase 11. The API is at <a href="/api/v1/docs">/api/v1/docs</a>.</p>\n' > dist/index.html
+COPY frontend/package.json frontend/package-lock.json* ./
+# ``--ignore-scripts`` blocks dependency lifecycle hooks from running with
+# the npm install -- defense-in-depth against malicious postinstall scripts
+# in transitive deps.
+RUN npm install --ignore-scripts --no-audit --no-fund
+COPY frontend/ ./
+RUN npm run build
 
 # ---- Stage 2: uv builder ----
 # Pin uv to a single tag for reproducibility; bump deliberately.
