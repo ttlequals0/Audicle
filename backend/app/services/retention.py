@@ -33,8 +33,10 @@ class PurgeResult:
 # Upper bound on the day-count parameter; Python's datetime only spans years
 # 1..9999, so ``datetime.now() - timedelta(days=N)`` overflows past roughly
 # 2.9M days. Cap at 100k days (~273 years) which is well past any plausible
-# retention window and still safely inside the datetime range.
-_MAX_OLDER_THAN_DAYS = 100_000
+# retention window and still safely inside the datetime range. The purge
+# endpoint mirrors this via ``le=MAX_OLDER_THAN_DAYS`` on the Query.
+MAX_OLDER_THAN_DAYS = 100_000
+_MAX_OLDER_THAN_DAYS = MAX_OLDER_THAN_DAYS  # backwards-compat alias
 
 
 def purge_older_than(

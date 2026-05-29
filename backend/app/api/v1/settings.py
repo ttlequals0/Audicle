@@ -29,7 +29,11 @@ class SettingsResponse(BaseModel):
     values: dict[str, Any]
 
 
-@router.get("/settings", response_model=SettingsResponse)
+@router.get(
+    "/settings",
+    response_model=SettingsResponse,
+    dependencies=[Depends(require_admin)],
+)
 async def get_settings_overrides(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> SettingsResponse:

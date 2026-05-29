@@ -48,7 +48,11 @@ def health_ready(request: Request, response: Response) -> dict[str, Any]:
             extra={"event": "health_db_error", "error": str(exc)},
             exc_info=True,
         )
-        checks["db"] = f"error: {exc}"
+        # Generic ``"error"`` rather than the raw exception string so
+        # /health/ready (unauthenticated, conventionally polled by public
+        # load balancers) doesn't leak DATA_DIR paths or errno text. The
+        # full exception is in the WARN log above.
+        checks["db"] = "error"
 
     started_at = getattr(request.app.state, "started_at", time.monotonic())
     body: dict[str, Any] = {

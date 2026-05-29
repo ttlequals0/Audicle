@@ -38,7 +38,10 @@ _REQUEST_INFERENCE_TIMEOUT_SECONDS = float(os.environ.get("TTS_REQUEST_TIMEOUT_S
 
 class GenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    text: str = Field(min_length=1)
+    # Cap matches the backend chunker's TTS_CHUNK_MAX_CHARS ceiling plus a
+    # small headroom. An oversized payload would hold the asyncio.Lock for
+    # the inference window and starve every other /generate call.
+    text: str = Field(min_length=1, max_length=4000)
     # Path-safety: episode_id ends up in a filename; reject anything that
     # could escape data_dir/media. Backend uses MD5[:12] hex by default but
     # accept a slightly broader alphabet for hand-curated cases.

@@ -18,7 +18,11 @@ def _corrections_path() -> Path:
     return Path(__file__).parent.parent.parent / "corrections" / "pronunciation.json"
 
 
-@router.get("/corrections", summary="Read the pronunciation dictionary")
+@router.get(
+    "/corrections",
+    summary="Read the pronunciation dictionary",
+    dependencies=[Depends(require_admin)],
+)
 def read_corrections() -> dict[str, str]:
     try:
         return corrections_service.load(_corrections_path())

@@ -32,6 +32,11 @@ def require_admin(
     user = request.session.get(SESSION_KEY_USER)
     if not user:
         raise HTTPException(status_code=401, detail="login required")
+    # Skip CSRF on safe methods. The header is a write-side defense; a
+    # cookie-authenticated GET in a fresh tab (before the UI has loaded the
+    # cookie into memory) should warm the cache, not 403.
+    if request.method in {"GET", "HEAD", "OPTIONS"}:
+        return
     if not csrf.verify_token(
         request.headers.get(csrf.CSRF_HEADER_NAME),
         request.cookies.get(csrf.CSRF_COOKIE_NAME),
