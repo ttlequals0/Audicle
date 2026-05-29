@@ -651,20 +651,21 @@ Each card shows:
 
 Cards ordered newest first. Pull-to-refresh on mobile (matching MinusPod). Paginated (`page`/`per_page`) if episode count grows.
 
-As built, the Feed card is a leaner subset of the above: title/link, created timestamp, an audio link, and a Delete action with pull-to-refresh and pagination. The richer per-card affordances (artwork thumbnail, status badge, inline Reprocess and View-transcript buttons, author/domain line) remain a target rather than shipped UI; the underlying endpoints (`/submit?reprocess`, `/media/{id}.vtt`, `/episodes`) all exist to support them.
+Each card shows the artwork thumbnail, a status badge, the title linked to the source article (2-line clamp), the author and source domain, the episode id and duration, and an action row: mp3, transcript (`/media/{id}.vtt`), Reprocess (`POST /api/v1/submit` with `reprocess=true`), and Delete. The list is published-episode-backed, so the badge reads `done`; in-flight/failed job states surface on the Home tab.
 
-**3. Settings.** Editable settings grouped by section. Five field groups exposed in the UI plus the prompt editor, corrections table, reference voice widget, and a read-only system-info block. The groups map to the runtime-settings allowlist (see "UI-Editable Subset"), not to provider/secret fields:
+**3. Settings.** Editable settings grouped by section. Six field groups exposed in the UI plus the prompt editor, corrections table, reference voice widget, and a read-only system-info block. The groups map to the runtime-settings allowlist (see "UI-Editable Subset"):
 
-1. **Feed:** `FEED_TITLE`, `FEED_DESCRIPTION`, `FEED_AUTHOR`, `FEED_EMAIL`, `FEED_LANGUAGE`, `FEED_CATEGORY`, `FEED_EXPLICIT`, `FEED_ARTWORK_URL`.
-2. **TTS:** `TTS_CHUNK_TARGET_WORDS`, `TTS_CHUNK_MAX_WORDS`, `TTS_CHUNK_SILENCE_MS`. Plus the reference audio widget.
-3. **Cleanup:** `MIN_CLEANUP_CHARS`, `MAX_PROMPT_LENGTH_BYTES`. Plus the cleanup-prompt editor (`GET/PUT /api/v1/prompt`) and the pronunciation-corrections table (`GET/PUT /api/v1/corrections`).
-4. **Retention:** `RETENTION_DAYS`. Plus a danger-styled "Purge all" button (with confirmation).
-5. **RSS:** `RSS_CACHE_MAX_AGE_SECONDS`.
-6. **System** (read-only): auth state (`auth_enabled`, `logged_in`) and the count of operator-tunable keys.
+1. **LLM:** `LLM_PROVIDER` (dropdown), `LLM_MODEL`, `OPENAI_BASE_URL`, `OPENAI_API_KEY` (masked), `ANTHROPIC_API_KEY` (masked), `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `LLM_TIMEOUT_SECONDS`, `LLM_RETRY_COUNT`. The API keys render as password inputs; the backend masks them on read and ignores the mask sentinel on save so re-saving never clobbers the stored secret.
+2. **Feed:** `FEED_TITLE`, `FEED_DESCRIPTION`, `FEED_AUTHOR`, `FEED_EMAIL`, `FEED_LANGUAGE`, `FEED_CATEGORY`, `FEED_EXPLICIT`, `FEED_ARTWORK_URL`.
+3. **TTS:** `TTS_CHUNK_TARGET_WORDS`, `TTS_CHUNK_MAX_WORDS`, `TTS_CHUNK_SILENCE_MS`. Plus the reference audio widget.
+4. **Cleanup:** `MIN_CLEANUP_CHARS`, `MAX_PROMPT_LENGTH_BYTES`. Plus the cleanup-prompt editor (`GET/PUT /api/v1/prompt`) and the pronunciation-corrections table (`GET/PUT /api/v1/corrections`).
+5. **Retention:** `RETENTION_DAYS`. Plus a danger-styled "Purge all" button (with confirmation).
+6. **RSS:** `RSS_CACHE_MAX_AGE_SECONDS`.
+7. **System** (read-only): auth state (`auth_enabled`, `logged_in`) and the count of operator-tunable keys.
 
 When auth is enabled the UI gates writes behind login + CSRF; there is no in-UI password change (the hash is env-supplied).
 
-LLM provider/model/key fields and the XTTS generation params are intentionally NOT UI-editable (secrets + infra stay in `.env`); they require a container restart to change. All other env vars stay in `.env` too.
+The XTTS generation params and infrastructure paths (`TTS_URL`, `DATA_DIR`, etc.) stay env-only and require a container restart to change. Runtime overrides are applied per job by the worker (`runtime_settings.overlay`), so LLM/feed/chunk edits take effect on the next submission.
 
 ### Settings Persistence
 
@@ -1366,10 +1367,22 @@ CORS_ORIGINS=                     # comma-separated origin list; empty = permiss
 The following env var keys can be overridden at runtime via the Settings UI, which writes to the `runtime_settings` DB table. Config resolution per job: code default -> env -> DB override (last wins).
 
 The implemented allowlist (`services/runtime_settings.py` `ALLOWED_KEYS`) is the
-cosmetic/tuning subset; secrets and infrastructure paths are deliberately
-excluded:
+operator-tunable subset. API keys are included but masked on read (see
+`MASKED_KEYS`); infrastructure paths (`DATA_DIR`, `TTS_URL`) and the XTTS
+generation params stay env-only:
 
 ```
+# LLM group (OPENAI_API_KEY / ANTHROPIC_API_KEY are masked on read)
+LLM_PROVIDER
+LLM_MODEL
+OPENAI_BASE_URL
+OPENAI_API_KEY
+ANTHROPIC_API_KEY
+LLM_TEMPERATURE
+LLM_MAX_TOKENS
+LLM_TIMEOUT_SECONDS
+LLM_RETRY_COUNT
+
 # Feed group
 FEED_TITLE
 FEED_DESCRIPTION
@@ -1396,9 +1409,9 @@ RETENTION_DAYS
 RSS_CACHE_MAX_AGE_SECONDS
 ```
 
-LLM provider/model/keys, `TTS_URL`, and the XTTS generation params are NOT in
-the allowlist (they are secrets/infra or restart-affecting), contrary to an
-earlier draft of this plan; they stay env-only.
+`TTS_URL`, `DATA_DIR`, and the XTTS generation params are NOT in the allowlist
+(infrastructure or restart-affecting); they stay env-only. The worker applies
+the overlay per job, so allowlisted edits take effect on the next submission.
 
 Plus the cleanup prompt (`PUT /api/v1/prompt` writes to `prompts/script.txt` directly) and pronunciation corrections (`PUT /api/v1/corrections` writes to `corrections/pronunciation.json` directly). These aren't env vars; they're files with their own endpoints.
 

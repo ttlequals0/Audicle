@@ -106,6 +106,13 @@ export default function SettingsRoute() {
   const save = () => {
     const payload: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(draft)) {
+      if (MASKED_KEYS.has(key)) {
+        // Secrets are sent verbatim (never number-coerced). The mask sentinel
+        // round-trips and the backend ignores it; an empty value clears the
+        // stored override (reverts to the .env value).
+        payload[key] = value;
+        continue;
+      }
       if (value === "") continue;
       if (value === "true") payload[key] = true;
       else if (value === "false") payload[key] = false;

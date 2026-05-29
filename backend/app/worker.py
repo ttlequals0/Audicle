@@ -90,7 +90,17 @@ async def _process_one(settings: Settings) -> bool:
     # Apply runtime_settings DB overrides per job so Settings-UI edits
     # (LLM/feed/chunk/cleanup tunables) take effect on the next submission
     # without a worker restart -- the resolution chain the build plan promises.
-    await pipeline.process_job(job, runtime_settings.overlay(settings))
+    # A transient overlay read failure must not fail an otherwise-runnable job;
+    # fall back to the env settings in that case.
+    try:
+        effective = runtime_settings.overlay(settings)
+    except Exception:
+        logger.exception(
+            "runtime_settings overlay failed; running job on env settings",
+            extra={"event": "overlay_failed", "job_id": job.id},
+        )
+        effective = settings
+    await pipeline.process_job(job, effective)
     return True
 
 

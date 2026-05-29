@@ -90,6 +90,23 @@ def test_api_key_is_masked_on_get_and_survives_resave(env: Path) -> None:
     assert stored["OPENAI_API_KEY"] == "sk-secret-123"
 
 
+def test_api_key_cleared_by_empty_value(env: Path) -> None:
+    """Sending an empty string for a masked key removes the override."""
+
+    from app.services import runtime_settings
+
+    with _client(env) as client:
+        client.put("/api/v1/settings", json={"OPENAI_API_KEY": "sk-to-clear"})
+        client.put("/api/v1/settings", json={"OPENAI_API_KEY": ""})
+
+    conn = database.connect(database.db_path(env))
+    try:
+        stored = runtime_settings.get_all(conn)
+    finally:
+        conn.close()
+    assert "OPENAI_API_KEY" not in stored
+
+
 def test_api_key_overlay_reaches_settings(env: Path) -> None:
     """An LLM override stored via the API is applied by overlay() -- the same
     resolution the worker now runs per job."""

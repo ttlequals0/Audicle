@@ -28,6 +28,13 @@ Audited the whole codebase against `build-plan.md` for completeness and accuracy
 - All Markdown docs normalized to ASCII (em-dashes, arrows, ellipses, box-drawing tree glyphs) per the repo's ASCII-only rule.
 - `scripts/dump_openapi.py`: usage docstring matches the README (`uv run python scripts/dump_openapi.py`; the script self-inserts `backend` on the path).
 
+**Features built (closing documented gaps) + CodeQL:**
+
+- LLM Provider settings group: `LLM_PROVIDER`/`LLM_MODEL`/`OPENAI_BASE_URL`/`OPENAI_API_KEY`/`ANTHROPIC_API_KEY`/`LLM_TEMPERATURE`/`LLM_MAX_TOKENS`/`LLM_TIMEOUT_SECONDS`/`LLM_RETRY_COUNT` added to `runtime_settings.ALLOWED_KEYS`. API keys are masked on GET (`MASK_SENTINEL`) and the sentinel is ignored on PUT so re-saving never overwrites the stored secret; an empty value clears the override. `Settings.tsx` gains an LLM group with a provider dropdown and password inputs.
+- `worker.py`: `_process_one` now runs `runtime_settings.overlay()` per job (with a fallback to env settings if the overlay read fails), so Settings-UI edits actually reach the pipeline -- the per-job resolution chain the plan promised was not previously wired into `process_job`.
+- `Feed.tsx`: cards now show artwork thumbnail, status badge, title link (2-line clamp), author + source domain, and inline transcript / reprocess / mp3 / delete actions, with error feedback (e.g. a 409 on reprocessing an in-flight URL surfaces a message instead of silently failing).
+- CodeQL: deleted `.github/workflows/codeql.yml` (it conflicted with the repo's enabled default CodeQL setup, which covers python + js/ts/actions). Fixed the flagged alerts: `main.py` SPA fallback serves an allowlist of root static files plus the hash-named workbox runtime (user path never reaches the filesystem); `tts-wrapper/main.py` `/generate` validates the wav path via `realpath`+`commonpath`; `reference.py` `/commit` no longer returns the raw httpx error string.
+
 ### Gap-closure pass (`chore/close-real-gaps`)
 
 Plan-completion audit found 5 missing deliverables and 7 partially-shipped items left from earlier phases. This pass closes them and folds in the simplify + code-review fix lists.

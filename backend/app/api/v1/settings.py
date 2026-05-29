@@ -42,18 +42,7 @@ async def get_settings_overrides(
         stored = runtime_settings.get_all(conn)
     finally:
         conn.close()
-    coerced = {
-        key: (
-            runtime_settings.MASK_SENTINEL
-            if key in runtime_settings.MASKED_KEYS
-            else _coerce(key, value, settings)
-        )
-        for key, value in stored.items()
-    }
-    return SettingsResponse(
-        allowlist=sorted(runtime_settings.ALLOWED_KEYS),
-        values=coerced,
-    )
+    return _masked_response(stored, settings)
 
 
 @router.put(
@@ -89,7 +78,14 @@ async def put_settings_overrides(
         stored = runtime_settings.get_all(conn)
     finally:
         conn.close()
-    coerced = {
+    return _masked_response(stored, settings)
+
+
+def _masked_response(stored: dict[str, str], settings: Settings) -> SettingsResponse:
+    """Build the GET/PUT response, masking secret-bearing keys so their stored
+    value is never echoed to the client."""
+
+    values = {
         key: (
             runtime_settings.MASK_SENTINEL
             if key in runtime_settings.MASKED_KEYS
@@ -97,10 +93,7 @@ async def put_settings_overrides(
         )
         for key, value in stored.items()
     }
-    return SettingsResponse(
-        allowlist=sorted(runtime_settings.ALLOWED_KEYS),
-        values=coerced,
-    )
+    return SettingsResponse(allowlist=sorted(runtime_settings.ALLOWED_KEYS), values=values)
 
 
 def _coerce(key: str, value: str, settings: Settings) -> Any:

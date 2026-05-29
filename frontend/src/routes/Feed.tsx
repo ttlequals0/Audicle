@@ -35,8 +35,19 @@ function usePullToRefresh(onRefresh: () => void) {
 
 export default function Feed() {
   const [copied, setCopied] = useState(false);
+  const [actionMsg, setActionMsg] = useState<string | null>(null);
   const feedUrl = `${window.location.origin}/rss/rss.xml`;
   const qc = useQueryClient();
+
+  const onActionError = (verb: string) => (err: unknown) => {
+    const status = (err as { status?: number })?.status;
+    setActionMsg(
+      status === 409
+        ? "already queued or processing for that URL"
+        : `${verb} failed${status ? ` (HTTP ${status})` : ""}`,
+    );
+    setTimeout(() => setActionMsg(null), 4000);
+  };
 
   const episodesQ = useQuery({
     queryKey: ["episodes"],
@@ -50,6 +61,7 @@ export default function Feed() {
     mutationFn: (id: string) =>
       api(`/api/v1/episodes/${id}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["episodes"] }),
+    onError: onActionError("delete"),
   });
 
   const reprocessM = useMutation({
@@ -58,7 +70,12 @@ export default function Feed() {
         method: "POST",
         body: JSON.stringify({ url, reprocess: true }),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["episodes"] }),
+    onSuccess: () => {
+      setActionMsg("reprocess queued");
+      setTimeout(() => setActionMsg(null), 4000);
+      qc.invalidateQueries({ queryKey: ["episodes"] });
+    },
+    onError: onActionError("reprocess"),
   });
 
   const copy = async () => {
@@ -85,7 +102,12 @@ export default function Feed() {
       </section>
 
       <section>
-        <h2 className="font-mono uppercase text-xs text-dim mb-3">episodes</h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-mono uppercase text-xs text-dim">episodes</h2>
+          {actionMsg && (
+            <span className="font-mono text-[11px] text-accent">{actionMsg}</span>
+          )}
+        </div>
         {episodesQ.isLoading && <p className="text-mute text-sm">loading…</p>}
         {episodesQ.data && episodesQ.data.length === 0 && (
           <p className="text-mute text-sm">no episodes yet.</p>
