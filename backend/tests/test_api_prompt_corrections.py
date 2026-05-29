@@ -29,25 +29,7 @@ def test_get_prompt_returns_current_file_contents(client: TestClient) -> None:
     assert len(body["prompt"]) > 0
 
 
-@pytest.fixture
-def _preserve_prompt_file():
-    """Snapshot the on-disk prompt before the test and always restore on teardown.
-
-    These tests write through the real API, which resolves the path relative
-    to the source tree (intentional: the bind mount points host edits and API
-    edits at the same file). A failing assert without this finalizer leaves
-    the repo dirty and breaks every later test run.
-    """
-
-    target = Path(__file__).parent.parent / "app" / "prompts" / "script.txt"
-    snapshot = target.read_text(encoding="utf-8")
-    try:
-        yield target
-    finally:
-        target.write_text(snapshot, encoding="utf-8")
-
-
-def test_put_prompt_persists_for_next_get(client: TestClient, _preserve_prompt_file) -> None:
+def test_put_prompt_persists_for_next_get(client: TestClient) -> None:
     with client:
         new_text = "Phase 3 test prompt body"
         put = client.put("/api/v1/prompt", json={"prompt": new_text})
@@ -87,22 +69,7 @@ def test_get_corrections_returns_dictionary(client: TestClient) -> None:
     assert isinstance(response.json(), dict)
 
 
-@pytest.fixture
-def _preserve_corrections_file():
-    target = Path(__file__).parent.parent / "app" / "corrections" / "pronunciation.json"
-    snapshot = target.read_text(encoding="utf-8") if target.exists() else None
-    try:
-        yield target
-    finally:
-        if snapshot is None:
-            target.unlink(missing_ok=True)
-        else:
-            target.write_text(snapshot, encoding="utf-8")
-
-
-def test_put_corrections_persists_for_next_get(
-    client: TestClient, _preserve_corrections_file
-) -> None:
+def test_put_corrections_persists_for_next_get(client: TestClient) -> None:
     payload = {"kubectl": "kube control", "PostgreSQL": "post gres Q L"}
     with client:
         put = client.put("/api/v1/corrections", json=payload)
@@ -153,7 +120,7 @@ def test_put_prompt_rejects_blank_prompt(client: TestClient) -> None:
 
 
 def test_put_prompt_boundary_at_max_bytes_succeeds(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, _preserve_prompt_file
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Exactly MAX_PROMPT_LENGTH_BYTES bytes must succeed; one over must 413.
     Guards against the `>` -> `>=` off-by-one in prompt_service.save."""
@@ -170,7 +137,7 @@ def test_put_prompt_boundary_at_max_bytes_succeeds(
 
 
 def test_put_corrections_typed_failure_envelope_on_non_string_value(
-    client: TestClient, _preserve_corrections_file
+    client: TestClient,
 ) -> None:
     """Non-string values must surface as the per-key 'Corrections validation
     failed' envelope rather than the generic Pydantic 'Validation failed' --

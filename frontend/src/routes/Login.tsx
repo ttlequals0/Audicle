@@ -30,7 +30,7 @@ export default function Login() {
     },
     onError: (e) => {
       if (e instanceof ApiError) {
-        if (e.status === 423) setError("account locked — wait and retry");
+        if (e.status === 423) setError("account locked - wait and retry");
         else if (e.status === 401) setError("invalid username or password");
         else if (e.status === 400) setError("auth is not enabled on this server");
         else setError(`error ${e.status}`);
@@ -79,7 +79,7 @@ export default function Login() {
         className="btn-primary w-full"
         disabled={loginM.isPending || !password}
       >
-        {loginM.isPending ? "signing in…" : "sign in"}
+        {loginM.isPending ? "signing in..." : "sign in"}
       </button>
     </form>
   );

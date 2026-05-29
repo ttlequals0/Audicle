@@ -123,7 +123,7 @@ export default function SettingsRoute() {
     putM.mutate(payload);
   };
 
-  if (settingsQ.isLoading) return <p className="text-mute text-sm">loading…</p>;
+  if (settingsQ.isLoading) return <p className="text-mute text-sm">loading...</p>;
 
   return (
     <div className="space-y-8">
@@ -173,7 +173,7 @@ export default function SettingsRoute() {
 
       <div className="flex items-center gap-3 sticky bottom-2">
         <button className="btn-primary" disabled={putM.isPending} onClick={save}>
-          {putM.isPending ? "saving…" : "save all"}
+          {putM.isPending ? "saving..." : "save all"}
         </button>
         {savedMsg && (
           <span className="font-mono text-xs text-accent">{savedMsg}</span>
@@ -239,7 +239,7 @@ function PromptEditor({ initial }: { initial: string }) {
       />
       <div className="flex items-center gap-3">
         <button className="btn-primary" disabled={m.isPending} onClick={() => m.mutate()}>
-          {m.isPending ? "saving…" : "save prompt"}
+          {m.isPending ? "saving..." : "save prompt"}
         </button>
         {msg && <span className="font-mono text-xs text-accent">{msg}</span>}
       </div>
@@ -317,7 +317,7 @@ function CorrectionsTable({ initial }: { initial: Record<string, string> }) {
               className="btn-ghost text-danger"
               onClick={() => setRows((rs) => rs.filter((r) => r.id !== row.id))}
             >
-              ×
+              &times;
             </button>
           </div>
         ))}
@@ -330,7 +330,7 @@ function CorrectionsTable({ initial }: { initial: Record<string, string> }) {
       </div>
       <div className="flex items-center gap-3">
         <button className="btn-primary" disabled={m.isPending} onClick={() => m.mutate()}>
-          {m.isPending ? "saving…" : "save corrections"}
+          {m.isPending ? "saving..." : "save corrections"}
         </button>
         {msg && <span className="font-mono text-xs text-accent">{msg}</span>}
       </div>

@@ -15,6 +15,7 @@ data/
 ref_audio/
 *.png
 !branding/*.png
+!frontend/public/*.png
 *.flac
 *.mp3
 *.wav

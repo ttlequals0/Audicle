@@ -108,7 +108,7 @@ export default function Feed() {
             <span className="font-mono text-[11px] text-accent">{actionMsg}</span>
           )}
         </div>
-        {episodesQ.isLoading && <p className="text-mute text-sm">loading…</p>}
+        {episodesQ.isLoading && <p className="text-mute text-sm">loading...</p>}
         {episodesQ.data && episodesQ.data.length === 0 && (
           <p className="text-mute text-sm">no episodes yet.</p>
         )}
@@ -143,7 +143,7 @@ export default function Feed() {
                     {ep.title ?? ep.original_url}
                   </a>
                   <p className="font-mono text-[11px] text-mute truncate mt-1">
-                    {ep.author ? `${ep.author} · ` : ""}
+                    {ep.author ? <>{ep.author} &middot; </> : ""}
                     {sourceDomain(ep.original_url)} &middot; {ep.pub_date}
                   </p>
                   <div className="flex flex-wrap gap-1 mt-2">
