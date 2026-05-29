@@ -20,23 +20,24 @@ from fastapi import APIRouter, Depends, Header, Response
 
 from app.config import Settings, get_settings
 from app.core import database
-from app.services import episodes, feed, settings_store
+from app.services import episodes, feed, runtime_settings, settings_store
 
 router = APIRouter(prefix="/rss", tags=["rss"])
 
 
 @router.get("/rss.xml")
 async def get_rss(
-    settings: Annotated[Settings, Depends(get_settings)],
+    base_settings: Annotated[Settings, Depends(get_settings)],
     if_modified_since: Annotated[str | None, Header()] = None,
 ) -> Response:
-    conn = database.connect(database.db_path(settings.DATA_DIR))
-    try:
+    # Apply the runtime_settings overlay so an operator PUT to
+    # /api/v1/settings (FEED_TITLE, FEED_DESCRIPTION, FEED_LANGUAGE, etc.)
+    # is reflected on the next RSS render without a process restart.
+    settings = runtime_settings.overlay(base_settings)
+    with database.connection(settings.DATA_DIR) as conn:
         rows = episodes.list_published(conn)
         latest = episodes.latest_updated_at(conn)
         guid = settings_store.get_or_init_podcast_guid(conn, settings.BASE_URL)
-    finally:
-        conn.close()
 
     last_build = _last_build_datetime(latest)
     not_modified = _is_not_modified(if_modified_since, last_build)

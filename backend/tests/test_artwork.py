@@ -20,12 +20,17 @@ def _patch_async_client(monkeypatch: pytest.MonkeyPatch, transport: httpx.MockTr
 
     monkeypatch.setattr(httpx, "AsyncClient", factory)
 
-    # SSRF guard would NXDOMAIN on example.test; tests exercise the rest of
-    # the pipeline via MockTransport, so bypass it for these fixtures.
+    # SSRF guard would NXDOMAIN on example.test; tests exercise the rest
+    # of the pipeline via MockTransport, so stub both the resolver and the
+    # legacy wrapper to return TEST-NET-3 (RFC 5737).
     async def _allow_all(_host: str) -> None:
         return None
 
+    async def _stub_resolve(_host: str) -> str:
+        return "203.0.113.1"
+
     monkeypatch.setattr(artwork, "_assert_public_host", _allow_all)
+    monkeypatch.setattr(artwork, "_resolve_public_host", _stub_resolve)
 
 
 def _png_bytes(

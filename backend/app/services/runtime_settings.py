@@ -4,6 +4,12 @@ Only an allowlisted subset of ``Settings`` fields is exposed -- the rest are
 infrastructure-level (DB path, secret keys) and would be footguns to flip
 without a restart. The resolver coerces stored strings back to the field's
 declared type via ``Settings.__class__.model_fields`` introspection.
+
+``overlay(settings)`` returns a copy of ``Settings`` with the
+``runtime_settings`` row values applied on top of the env defaults. This is
+the resolution chain Phase 10's docstring promises:
+
+    code default -> env var (Pydantic) -> runtime_settings DB row
 """
 
 from __future__ import annotations
@@ -11,6 +17,9 @@ from __future__ import annotations
 import json
 import sqlite3
 from typing import Any
+
+from app.config import Settings
+from app.core import database
 
 # Operator-tunable subset. Any field not in this set returns 400 on PUT and
 # is invisible on GET; cosmetic/runtime tuning lives here, secrets and
@@ -61,6 +70,57 @@ def set_value(conn: sqlite3.Connection, key: str, value: Any) -> None:
 def delete(conn: sqlite3.Connection, key: str) -> None:
     conn.execute("DELETE FROM runtime_settings WHERE key = ?", (key,))
     conn.commit()
+
+
+def overlay(settings: Settings) -> Settings:
+    """Return ``settings`` with the ``runtime_settings`` row values applied
+    on top of the env defaults.
+
+    Reads the DB once per call. Callers that hit a hot path should cache
+    the result for the duration of the request -- ``api.deps.runtime_settings``
+    does this via ``Depends``. ``Settings`` is a frozen-ish Pydantic model;
+    we use ``model_copy(update=...)`` so the result is a new instance and
+    the cached singleton from ``get_settings()`` is not mutated.
+    """
+
+    with database.connection(settings.DATA_DIR) as conn:
+        stored = get_all(conn)
+    if not stored:
+        return settings
+    coerced: dict[str, Any] = {}
+    for key, raw_value in stored.items():
+        field = settings.__class__.model_fields.get(key)
+        if field is None:
+            continue
+        coerced[key] = _coerce_for_field(raw_value, field.annotation)
+    return settings.model_copy(update=coerced)
+
+
+def _coerce_for_field(value: str, annotation: Any) -> Any:
+    """Best-effort coercion mirroring the api/v1/settings.py route logic."""
+
+    if annotation is bool:
+        try:
+            return bool(json.loads(value))
+        except (TypeError, ValueError):
+            return value.lower() in {"true", "1", "yes"}
+    if annotation is int:
+        try:
+            return int(json.loads(value))
+        except (TypeError, ValueError):
+            try:
+                return int(value)
+            except ValueError:
+                return value
+    if annotation is float:
+        try:
+            return float(json.loads(value))
+        except (TypeError, ValueError):
+            try:
+                return float(value)
+            except ValueError:
+                return value
+    return value
 
 
 def _serialize(value: Any) -> str:

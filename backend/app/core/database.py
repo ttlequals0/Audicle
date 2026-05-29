@@ -63,6 +63,23 @@ def connect(path: Path, *, timeout: float = 30.0) -> sqlite3.Connection:
 
 
 @contextmanager
+def connection(data_dir: Path, *, timeout: float = 30.0) -> Iterator[sqlite3.Connection]:
+    """``with connection(settings.DATA_DIR) as conn:`` — replaces every
+    open + try/finally close pair across services and routes.
+
+    Identical semantics to ``connect(db_path(data_dir))`` plus guaranteed
+    close on exception; written as a context manager so the 20-odd call
+    sites collapse to one line.
+    """
+
+    conn = connect(db_path(data_dir), timeout=timeout)
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+@contextmanager
 def migration_lock(data_dir: Path) -> Iterator[None]:
     """Serialize concurrent startups via fcntl.flock on .migration.lock."""
 

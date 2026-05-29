@@ -47,14 +47,11 @@ async def list_episodes(
     page: Annotated[int, Query(ge=1)] = 1,
     per_page: Annotated[int, Query(ge=1, le=500)] = 50,
 ) -> list[EpisodeListItem]:
-    conn = database.connect(database.db_path(settings.DATA_DIR))
-    try:
-        all_rows = episodes_service.list_published(conn)
-        total = len(all_rows)
-        start = (page - 1) * per_page
-        page_rows = all_rows[start : start + per_page]
-    finally:
-        conn.close()
+    with database.connection(settings.DATA_DIR) as conn:
+        total = episodes_service.count_published(conn)
+        page_rows = episodes_service.list_published_page(
+            conn, limit=per_page, offset=(page - 1) * per_page
+        )
     response.headers["X-Total-Count"] = str(total)
     return [
         EpisodeListItem(

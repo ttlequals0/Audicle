@@ -45,20 +45,22 @@ async def list_jobs(
     page: Annotated[int, Query(ge=1)] = 1,
     per_page: Annotated[int, Query(ge=1, le=500)] = 50,
 ) -> list[JobListItem]:
-    conn = database.connect(database.db_path(settings.DATA_DIR))
-    try:
+    offset = (page - 1) * per_page
+    with database.connection(settings.DATA_DIR) as conn:
         if status is None:
-            rows = conn.execute("SELECT * FROM jobs ORDER BY created_at DESC").fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM jobs WHERE status = ? ORDER BY created_at DESC",
-                (status,),
+            total = conn.execute("SELECT COUNT(*) AS n FROM jobs").fetchone()["n"]
+            page_rows = conn.execute(
+                "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (per_page, offset),
             ).fetchall()
-    finally:
-        conn.close()
-    total = len(rows)
-    start = (page - 1) * per_page
-    page_rows = rows[start : start + per_page]
+        else:
+            total = conn.execute(
+                "SELECT COUNT(*) AS n FROM jobs WHERE status = ?", (status,)
+            ).fetchone()["n"]
+            page_rows = conn.execute(
+                "SELECT * FROM jobs WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (status, per_page, offset),
+            ).fetchall()
     response.headers["X-Total-Count"] = str(total)
     return [
         JobListItem(
