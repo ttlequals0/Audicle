@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-import os
+import re
 import secrets
 import time
 from collections.abc import AsyncIterator
@@ -88,28 +88,33 @@ def _mount_static_ui(app: FastAPI) -> None:
     # this handler.
     @app.get("/{path:path}", include_in_schema=False)
     async def _ui_fallback(path: str) -> FileResponse:
-        # If the requested path resolves to a real static file (favicon,
-        # manifest, service worker, etc.) inside static_dir, serve it;
-        # otherwise return index.html so the React router can pick up the
-        # route. The realpath + commonpath containment check both blocks
-        # traversal and is the form static analysis recognizes as a
-        # path-injection sanitizer.
-        candidate = _safe_static_path(path, static_dir)
-        if candidate is not None and candidate.is_file():
-            return FileResponse(candidate)
+        # Serve the known SPA root static files (favicon, manifest, service
+        # worker, icons, and the hash-named workbox runtime imported by
+        # sw.js); every other path returns index.html so the React router
+        # handles it. Matching the request against a fixed allowlist / strict
+        # pattern keeps the user-supplied path off the filesystem entirely --
+        # there is no traversal surface to guard.
+        if path in _ROOT_STATIC_FILES or _WORKBOX_FILE_RE.fullmatch(path):
+            candidate = static_dir / path
+            if candidate.is_file():
+                return FileResponse(candidate)
         return FileResponse(index_path)
 
 
-def _safe_static_path(path: str, root: Path) -> Path | None:
-    """Resolve ``path`` under ``root`` and return it only if it stays inside
-    ``root``; otherwise None. Returns the resolved path so the caller serves
-    the validated location, not the raw user input."""
-
-    root_real = os.path.realpath(root)
-    target = os.path.realpath(os.path.join(root_real, path))
-    if target != root_real and os.path.commonpath([root_real, target]) != root_real:
-        return None
-    return Path(target)
+# SPA root files served by the catch-all (everything under /assets is mounted
+# separately via StaticFiles). vite-plugin-pwa additionally emits a
+# content-hashed ``workbox-<hex>.js`` runtime that sw.js imports.
+_ROOT_STATIC_FILES = frozenset(
+    {
+        "favicon.svg",
+        "manifest.webmanifest",
+        "registerSW.js",
+        "sw.js",
+        "icon-192.png",
+        "icon-512.png",
+    }
+)
+_WORKBOX_FILE_RE = re.compile(r"workbox-[0-9a-f]+\.js")
 
 
 def _attach_session_middleware(app: FastAPI, settings: Settings) -> None:

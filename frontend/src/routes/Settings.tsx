@@ -11,6 +11,17 @@ import { api, readCsrf, SettingsPayload } from "../lib/api";
  */
 
 const GROUPS: Record<string, string[]> = {
+  LLM: [
+    "LLM_PROVIDER",
+    "LLM_MODEL",
+    "OPENAI_BASE_URL",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "LLM_TEMPERATURE",
+    "LLM_MAX_TOKENS",
+    "LLM_TIMEOUT_SECONDS",
+    "LLM_RETRY_COUNT",
+  ],
   Feed: [
     "FEED_TITLE",
     "FEED_DESCRIPTION",
@@ -26,6 +37,11 @@ const GROUPS: Record<string, string[]> = {
   Retention: ["RETENTION_DAYS"],
   RSS: ["RSS_CACHE_MAX_AGE_SECONDS"],
 };
+
+// Secret fields: rendered as password inputs. The backend masks them on read
+// (a sentinel arrives instead of the value) and ignores the sentinel on save.
+const MASKED_KEYS = new Set(["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]);
+const PROVIDER_OPTIONS = ["openai-compatible", "anthropic"];
 
 interface PromptBody {
   prompt: string;
@@ -115,14 +131,33 @@ export default function SettingsRoute() {
                 <label className="label" htmlFor={key}>
                   {key}
                 </label>
-                <input
-                  id={key}
-                  className="field"
-                  value={draft[key] ?? ""}
-                  onChange={(e) =>
-                    setDraft((p) => ({ ...p, [key]: e.target.value }))
-                  }
-                />
+                {key === "LLM_PROVIDER" ? (
+                  <select
+                    id={key}
+                    className="field"
+                    value={draft[key] ?? ""}
+                    onChange={(e) =>
+                      setDraft((p) => ({ ...p, [key]: e.target.value }))
+                    }
+                  >
+                    {PROVIDER_OPTIONS.map((opt) => (
+                      <option key={opt} value={opt}>
+                        {opt}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    id={key}
+                    className="field"
+                    type={MASKED_KEYS.has(key) ? "password" : "text"}
+                    autoComplete={MASKED_KEYS.has(key) ? "off" : undefined}
+                    value={draft[key] ?? ""}
+                    onChange={(e) =>
+                      setDraft((p) => ({ ...p, [key]: e.target.value }))
+                    }
+                  />
+                )}
               </div>
             ))}
           </section>

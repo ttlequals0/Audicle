@@ -87,7 +87,10 @@ async def _process_one(settings: Settings) -> bool:
     job = await _pickup_once(settings)
     if job is None:
         return False
-    await pipeline.process_job(job, settings)
+    # Apply runtime_settings DB overrides per job so Settings-UI edits
+    # (LLM/feed/chunk/cleanup tunables) take effect on the next submission
+    # without a worker restart -- the resolution chain the build plan promises.
+    await pipeline.process_job(job, runtime_settings.overlay(settings))
     return True
 
 

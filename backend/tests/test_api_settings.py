@@ -53,3 +53,53 @@ def test_put_then_get_round_trips(env: Path) -> None:
         client.put("/api/v1/settings", json={"FEED_AUTHOR": "New Owner"})
         response = client.get("/api/v1/settings")
     assert response.json()["values"]["FEED_AUTHOR"] == "New Owner"
+
+
+def test_llm_provider_group_is_editable(env: Path) -> None:
+    with _client(env) as client:
+        response = client.put(
+            "/api/v1/settings",
+            json={"LLM_PROVIDER": "anthropic", "LLM_MODEL": "claude-x", "LLM_TEMPERATURE": 0.5},
+        )
+    assert response.status_code == 200
+    values = response.json()["values"]
+    assert values["LLM_PROVIDER"] == "anthropic"
+    assert values["LLM_MODEL"] == "claude-x"
+    assert values["LLM_TEMPERATURE"] == 0.5
+
+
+def test_api_key_is_masked_on_get_and_survives_resave(env: Path) -> None:
+    """A stored secret never echoes back; re-saving the form (which sends the
+    mask sentinel) must not clobber the real value."""
+
+    from app.services import runtime_settings
+
+    with _client(env) as client:
+        client.put("/api/v1/settings", json={"OPENAI_API_KEY": "sk-secret-123"})
+        masked = client.get("/api/v1/settings").json()["values"]["OPENAI_API_KEY"]
+        assert masked == runtime_settings.MASK_SENTINEL
+        # Re-save with the sentinel (as the UI would) -> stored value unchanged.
+        client.put("/api/v1/settings", json={"OPENAI_API_KEY": runtime_settings.MASK_SENTINEL})
+
+    # The real value is still in the DB (overlay would resolve it), not the mask.
+    conn = database.connect(database.db_path(env))
+    try:
+        stored = runtime_settings.get_all(conn)
+    finally:
+        conn.close()
+    assert stored["OPENAI_API_KEY"] == "sk-secret-123"
+
+
+def test_api_key_overlay_reaches_settings(env: Path) -> None:
+    """An LLM override stored via the API is applied by overlay() -- the same
+    resolution the worker now runs per job."""
+
+    from app.config import get_settings
+    from app.services import runtime_settings
+
+    with _client(env) as client:
+        client.put("/api/v1/settings", json={"OPENAI_API_KEY": "sk-overlaid", "LLM_MODEL": "m2"})
+
+    overlaid = runtime_settings.overlay(get_settings())
+    assert overlaid.OPENAI_API_KEY == "sk-overlaid"
+    assert overlaid.LLM_MODEL == "m2"
