@@ -57,9 +57,20 @@ def render(
     fg = FeedGenerator()
     fg.load_extension("podcast")  # iTunes namespace shortcut
 
-    fg.title(settings.FEED_TITLE)
+    # FEED_* are operator-set at runtime and may be empty on a fresh, unconfigured
+    # install. Emit title (defaults to "Audicle") and description always; gate
+    # author/owner/artwork on non-empty values so an empty feed still validates.
+    # Compute title + author once so "which fields are present" lives in one spot.
+    title = settings.FEED_TITLE or "Audicle"
+    author = {
+        key: value
+        for key, value in (("name", settings.FEED_AUTHOR), ("email", settings.FEED_EMAIL))
+        if value
+    }
+    fg.title(title)
     fg.description(settings.FEED_DESCRIPTION)
-    fg.author({"name": settings.FEED_AUTHOR, "email": settings.FEED_EMAIL})
+    if author:
+        fg.author(author)
     fg.language(settings.FEED_LANGUAGE)
     # Order matters: feedgen's channel ``<link>`` is bound to the LAST link()
     # call. Call the atom ``rel="self"`` first so the channel ``<link>``
@@ -69,17 +80,16 @@ def render(
     fg.link(href=f"{settings.BASE_URL.rstrip('/')}/rss/rss.xml", rel="self")
     fg.link(href=settings.BASE_URL, rel="alternate")
     # Legacy ``<image>`` needs ``<title>`` and ``<link>`` per RSS 2.0 to
-    # validate; the build plan calls these out explicitly.
-    fg.image(
-        url=settings.FEED_ARTWORK_URL,
-        title=settings.FEED_TITLE,
-        link=settings.BASE_URL,
-    )
+    # validate; only emit it when artwork is configured.
+    if settings.FEED_ARTWORK_URL:
+        fg.image(url=settings.FEED_ARTWORK_URL, title=title, link=settings.BASE_URL)
+        fg.podcast.itunes_image(settings.FEED_ARTWORK_URL)
     fg.lastBuildDate(last_build)
-    fg.podcast.itunes_author(settings.FEED_AUTHOR)
-    fg.podcast.itunes_owner(name=settings.FEED_AUTHOR, email=settings.FEED_EMAIL)
+    if settings.FEED_AUTHOR:
+        fg.podcast.itunes_author(settings.FEED_AUTHOR)
+    if author:
+        fg.podcast.itunes_owner(name=author.get("name"), email=author.get("email"))
     fg.podcast.itunes_category(settings.FEED_CATEGORY)
-    fg.podcast.itunes_image(settings.FEED_ARTWORK_URL)
     fg.podcast.itunes_explicit("yes" if settings.FEED_EXPLICIT else "no")
     fg.podcast.itunes_summary(settings.FEED_DESCRIPTION)
     # Tell Apple Podcasts this is an episodic (not serial) feed so the UI

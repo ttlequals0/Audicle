@@ -17,8 +17,11 @@ services:
       - ./backend/app/corrections:/app/app/corrections
       - ./backend/app/reference:/app/app/reference
     depends_on:
+      # service_started, not service_healthy: the app boots and configures TTS
+      # at runtime (voice upload via the UI). Gating on wrapper readiness would
+      # deadlock -- the wrapper is 503 until a reference voice is committed.
       tts-wrapper:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
       interval: 30s

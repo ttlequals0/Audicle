@@ -44,7 +44,7 @@ This is not a NotebookLM-style two-speaker dialogue podcast. The LLM removes sit
 
 **Default deployment shape:** single user, LAN-administered, with the public feed (RSS, MP3, VTT, JPG) exposed by a tunnel or reverse proxy of the operator's choosing. The reference setup uses Cloudflare Tunnel and a Pocket Casts UA lock at the WAF layer, but any HTTPS exposure that restricts paths to `/rss/*` and `/media/*` works (e.g. Tailscale Funnel, ngrok, nginx-proxy-manager, plain Nginx with TLS).
 
-Admin endpoints (`/api/v1/*`) are LAN-only by deployment, not by code. Auth is intentionally absent inside the LAN perimeter.
+Admin endpoints (`/api/v1/*`) are LAN-only by deployment. Auth is optional: with no admin password set the app runs in open convenience mode; set one in the Settings UI to gate writes once the app is reachable beyond the LAN.
 
 ## Architecture
 
@@ -90,7 +90,7 @@ External dependencies (not in this stack):
 - **Ollama or other LLM endpoint.** Must be HTTP-reachable from inside the app container. Common patterns: `host.docker.internal:11434` for host-installed Ollama on Docker Desktop (Linux needs `extra_hosts: ["host.docker.internal:host-gateway"]` in compose); host LAN IP; or a separate Docker network if Ollama is containerized.
 - **Firecrawl instance.** Must be HTTP-reachable from the app container. Easiest path: put Audicle's app container on the same Docker network as the Firecrawl stack and reference by container name.
 
-Both endpoints are health-checked in the worker process at startup before the queue loop begins (not in the web process, which serves the UI/RSS regardless). Failures are logged and the worker exits non-zero; entrypoint supervision then restarts the container rather than running blind and failing every job at the relevant stage. See "Startup Reachability Checks" below.
+Both endpoints are probed in the worker process at startup before the queue loop begins (not in the web process, which serves the UI/RSS regardless). The probes are advisory: results are logged and surfaced in `/health/ready`, but a failure never stops the worker -- it enters the queue loop anyway, and a job that hits a down dependency fails that stage with a clear error. See "Startup Reachability Checks" below.
 
 ### Project Layout
 
@@ -217,7 +217,7 @@ audicle/
 
 ## Pipeline
 
-Before any pipeline processing begins, startup reachability checks confirm Firecrawl, the LLM endpoint, and the TTS wrapper are healthy. See "Startup Reachability Checks" under Failure Handling for details. Failures cause the app to exit non-zero rather than running blind.
+At worker startup, advisory reachability checks probe Firecrawl, the LLM endpoint, and the TTS wrapper. See "Startup Reachability Checks" under Failure Handling for details. Failures are logged and surfaced in `/health/ready` but never block startup -- the app boots unconfigured and dependencies are set at runtime via the Settings UI.
 
 End-to-end per submitted URL:
 
@@ -378,13 +378,18 @@ POST   /api/v1/reference/commit         # upload a candidate WAV, swap it into l
 POST   /api/v1/purge                    # delete all episodes (requires confirm)
 POST   /api/v1/purge?older_than_days=N  # partial purge
 
-# Auth (when enabled)
-GET    /api/v1/auth/status              # auth_enabled, logged_in, username, csrf_token. Always accessible.
-POST   /api/v1/auth/login               # body: {username, password}. Rate-limited; returns csrf_token.
+# Auth (password set at runtime via the UI; open convenience mode when unset)
+GET    /api/v1/auth/status              # password_set, authenticated, csrf_token. Always accessible.
+POST   /api/v1/auth/login               # body: {password}. Rate-limited; returns csrf_token.
 POST   /api/v1/auth/logout              # clears session.
+PUT    /api/v1/auth/password            # body: {current_password?, new_password}. Set/change/clear.
+
+# LLM model selection (for the Settings dropdown)
+GET    /api/v1/llm/models[?provider=]   # list models for the (previewed) provider
+POST   /api/v1/llm/models/refresh       # flush the TTL cache and re-fetch
 
 # System
-GET    /health                          # health check
+GET    /health                          # liveness; /health/live and /health/ready also exist
 ```
 
 ### API Conventions
@@ -450,7 +455,7 @@ All timestamps in API responses are ISO 8601 UTC strings: `YYYY-MM-DDTHH:MM:SSZ`
 
 #### CSRF
 
-When auth is enabled:
+When an admin password is set:
 
 - State-changing requests (POST, PUT, DELETE) require an `X-CSRF-Token` header.
 - The token is returned by `POST /api/v1/auth/login` and `GET /api/v1/auth/status` (double-submit cookie pattern).
@@ -511,48 +516,51 @@ The illustrative examples below show the conventions in practice. Full per-endpo
 
 ## Authentication
 
-Optional single-admin auth, lifted from MinusPod's pattern. Off by default
-(`AUTH_ENABLED=false`); LAN-trust deployments leave it disabled. Operators who
-expose the app more broadly enable it. The admin credential is supplied through
-env vars (a username plus a pre-computed bcrypt hash), not set at runtime.
+Password-only single-admin auth, lifted from MinusPod's pattern. There is no
+env-var credential and no master switch: the admin password is set at runtime in
+the Settings UI, and its bcrypt hash is stored in the `settings` DB table. With
+no password set, the app runs in open convenience mode for a single-operator
+localhost install.
 
 ### Behavior
 
-- **Off (`AUTH_ENABLED=false`):** all requests allowed; `require_admin` is a no-op. `GET /api/v1/auth/status` returns `{"auth_enabled": false, "logged_in": false, "username": "...", "csrf_token": "..."}`.
-- **On (`AUTH_ENABLED=true`):** state-changing endpoints require an authenticated session plus a valid CSRF token. Read-only public routes (`/rss/*`, `/media/*`) are never gated.
+- **No password set (convenience mode):** all requests allowed; `require_admin` is a no-op. `GET /api/v1/auth/status` returns `{"password_set": false, "authenticated": true, "csrf_token": "..."}`.
+- **Password set:** state-changing endpoints require an authenticated session plus a valid CSRF token. Read-only public routes (`/rss/*`, `/media/*`) are never gated.
 
 ### Endpoints
 
 ```
-GET    /api/v1/auth/status         # auth_enabled, logged_in, username, csrf_token. Always accessible.
-POST   /api/v1/auth/login          # body: {username, password}. Rate-limited; returns a csrf_token.
+GET    /api/v1/auth/status         # password_set, authenticated, csrf_token. Always accessible.
+POST   /api/v1/auth/login          # body: {password}. Rate-limited; returns a csrf_token.
 POST   /api/v1/auth/logout         # clears session.
+PUT    /api/v1/auth/password       # body: {current_password?, new_password}. Set/change/clear.
 ```
 
-There is no `set-password` or dedicated `/auth/csrf` endpoint: the password is an
-env-supplied bcrypt hash (changed by editing `.env` + restart), and the CSRF
-token is returned by `/auth/login` and `/auth/status`.
+`PUT /auth/password` sets the first password (no `current_password` needed in
+convenience mode), changes it (requires the correct `current_password`), or
+clears it back to convenience mode (empty `new_password`). New passwords must be
+at least 8 characters.
 
 ### Mechanics
 
-- **Password storage:** the bcrypt hash is the `ADMIN_PASSWORD_HASH` env var (with `ADMIN_USERNAME`). Generate it with the helper command in `.env.example`. Never logged or returned by any endpoint. It is not stored in the DB.
-- **Sessions:** Starlette `SessionMiddleware` with `SESSION_SECRET_KEY`. Required when auth is on (startup fails if absent); when auth is off an ephemeral per-process key is used (not persisted).
-- **Cookie:** `SESSION_COOKIE_SECURE` defaults to **false** so localhost `http://` works; set true once HTTPS fronts the app. `SESSION_COOKIE_MAX_AGE_SECONDS` controls lifetime (default 14 days).
+- **Password storage:** the bcrypt hash lives in the `settings` table under key `app_password`, set via `PUT /auth/password`. Never logged or returned by any endpoint. Presence of the row enables auth; absence is convenience mode.
+- **Sessions:** Starlette `SessionMiddleware`. The signing secret comes from `SESSION_SECRET_KEY` when set, otherwise an auto-generated value persisted in the `settings` table (key `session_secret`) so sessions survive restarts without an env var.
+- **Cookie:** `SESSION_COOKIE_SECURE` defaults to **true** (secure by default); set false only for plain-http localhost dev. `SESSION_COOKIE_MAX_AGE_SECONDS` controls lifetime (default 14 days).
 - **Rate limiting:** slowapi limits `/auth/login` to `10/minute` (the decorator value is currently hardcoded; `LOGIN_RATE_LIMIT` is advisory until wired).
-- **Lockout:** repeated failures key on the (lowercased) **username**, not IP. `LOCKOUT_MAX_FAILED_ATTEMPTS` (default 5) opens a `LOCKOUT_WINDOW_SECONDS` window (default 900s) during which `/auth/login` returns 423. Table `auth_lockout`. There is no LAN/private-IP exemption.
+- **Lockout:** repeated failures key on the **client IP**. `LOCKOUT_MAX_FAILED_ATTEMPTS` (default 5) opens a `LOCKOUT_WINDOW_SECONDS` window (default 900s) during which `/auth/login` returns 423. Table `auth_lockout`. There is no LAN/private-IP exemption.
 - **CSRF:** state-changing endpoints (`POST`, `PUT`, `DELETE`) require an `X-CSRF-Token` header matching a double-submit cookie token. The token is issued by `/auth/login` and `/auth/status` and rotates on each login. Lifted from MinusPod's `csrf.py`.
 
 ### New Schema
 
 ```sql
-CREATE TABLE settings (
+CREATE TABLE settings (             -- app_password (bcrypt), session_secret, podcast_guid
     key         TEXT PRIMARY KEY,
     value       TEXT NOT NULL,
     updated_at  TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE TABLE auth_lockout (
-    identifier      TEXT PRIMARY KEY,   -- lowercased admin username, not IP
+    identifier      TEXT PRIMARY KEY,   -- client IP
     failed_attempts INTEGER NOT NULL DEFAULT 0,
     last_attempt_at TEXT,
     lockout_until   TEXT,
@@ -566,16 +574,13 @@ CREATE TABLE runtime_settings (
 );
 ```
 
-`runtime_settings` (used by Settings UI) is separate from `settings` (used by auth) to keep concerns split.
+`runtime_settings` (operator-tunable config from the Settings UI) is separate from `settings` (auth secrets + feed GUID) to keep concerns split.
 
 ### Env Vars
 
 ```
-AUTH_ENABLED=false                 # master switch; off = all requests allowed
-ADMIN_USERNAME=admin               # required when AUTH_ENABLED=true
-ADMIN_PASSWORD_HASH=               # required when AUTH_ENABLED=true; bcrypt hash (see .env.example helper)
-SESSION_SECRET_KEY=                # required when AUTH_ENABLED=true; ephemeral per-process when off
-SESSION_COOKIE_SECURE=false        # set true once HTTPS fronts the app
+SESSION_SECRET_KEY=                # optional; auto-generated + persisted to DB when blank
+SESSION_COOKIE_SECURE=true         # secure by default; set false for plain-http localhost dev
 SESSION_COOKIE_MAX_AGE_SECONDS=1209600   # 14 days
 LOCKOUT_MAX_FAILED_ATTEMPTS=5      # failed attempts before lockout
 LOCKOUT_WINDOW_SECONDS=900         # 15-minute lockout window
@@ -653,17 +658,19 @@ Cards ordered newest first. Pull-to-refresh on mobile (matching MinusPod). Pagin
 
 Each card shows the artwork thumbnail, a status badge, the title linked to the source article (2-line clamp), the author and source domain, the episode id and duration, and an action row: mp3, transcript (`/media/{id}.vtt`), Reprocess (`POST /api/v1/submit` with `reprocess=true`), and Delete. The list is published-episode-backed, so the badge reads `done`; in-flight/failed job states surface on the Home tab.
 
-**3. Settings.** Editable settings grouped by section. Six field groups exposed in the UI plus the prompt editor, corrections table, reference voice widget, and a read-only system-info block. The groups map to the runtime-settings allowlist (see "UI-Editable Subset"):
+**3. Settings.** Editable settings grouped by section, plus the prompt editor, corrections table, reference voice widget, a security (password) block, and a read-only system-info block. The field groups map to the runtime-settings allowlist (see "UI-Editable Subset"):
 
-1. **LLM:** `LLM_PROVIDER` (dropdown), `LLM_MODEL`, `OPENAI_BASE_URL`, `OPENAI_API_KEY` (masked), `ANTHROPIC_API_KEY` (masked), `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `LLM_TIMEOUT_SECONDS`, `LLM_RETRY_COUNT`. The API keys render as password inputs; the backend masks them on read and ignores the mask sentinel on save so re-saving never clobbers the stored secret.
-2. **Feed:** `FEED_TITLE`, `FEED_DESCRIPTION`, `FEED_AUTHOR`, `FEED_EMAIL`, `FEED_LANGUAGE`, `FEED_CATEGORY`, `FEED_EXPLICIT`, `FEED_ARTWORK_URL`.
-3. **TTS:** `TTS_CHUNK_TARGET_WORDS`, `TTS_CHUNK_MAX_WORDS`, `TTS_CHUNK_SILENCE_MS`. Plus the reference audio widget.
-4. **Cleanup:** `MIN_CLEANUP_CHARS`, `MAX_PROMPT_LENGTH_BYTES`. Plus the cleanup-prompt editor (`GET/PUT /api/v1/prompt`) and the pronunciation-corrections table (`GET/PUT /api/v1/corrections`).
-5. **Retention:** `RETENTION_DAYS`. Plus a danger-styled "Purge all" button (with confirmation).
-6. **RSS:** `RSS_CACHE_MAX_AGE_SECONDS`.
-7. **System** (read-only): auth state (`auth_enabled`, `logged_in`) and the count of operator-tunable keys.
+1. **LLM:** `LLM_PROVIDER` (dropdown), `LLM_MODEL` (dropdown populated from `GET /api/v1/llm/models`, with an orphan option for a saved-but-unlisted value, a refresh button, and a free-text fallback), `OPENAI_BASE_URL`, `OPENAI_API_KEY` (masked), `ANTHROPIC_API_KEY` (masked), `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `LLM_TIMEOUT_SECONDS`, `LLM_RETRY_COUNT`. The API keys render as password inputs; the backend masks them on read and ignores the mask sentinel on save so re-saving never clobbers the stored secret.
+2. **Connections:** `FIRECRAWL_URL`, `TTS_URL`. Point these at an external Firecrawl/TTS without an env edit + restart.
+3. **Feed:** `FEED_TITLE`, `FEED_DESCRIPTION`, `FEED_AUTHOR`, `FEED_EMAIL`, `FEED_LANGUAGE`, `FEED_CATEGORY`, `FEED_EXPLICIT`, `FEED_ARTWORK_URL`.
+4. **TTS:** `TTS_CHUNK_TARGET_WORDS`, `TTS_CHUNK_MAX_WORDS`, `TTS_CHUNK_SILENCE_MS`. Plus the reference audio widget.
+5. **Cleanup:** `MIN_CLEANUP_CHARS`, `MAX_PROMPT_LENGTH_BYTES`. Plus the cleanup-prompt editor (`GET/PUT /api/v1/prompt`) and the pronunciation-corrections table (`GET/PUT /api/v1/corrections`).
+6. **Retention:** `RETENTION_DAYS`. Plus a danger-styled "Purge all" button (with confirmation).
+7. **RSS:** `RSS_CACHE_MAX_AGE_SECONDS`.
+8. **Security:** set/change/clear the admin password (`PUT /api/v1/auth/password`), with a warning banner when no password is set.
+9. **System** (read-only): auth state (`password_set`, `authenticated`) and the count of operator-tunable keys.
 
-When auth is enabled the UI gates writes behind login + CSRF; there is no in-UI password change (the hash is env-supplied).
+When a password is set the UI gates writes behind login + CSRF; the password itself is set and changed in the Security block.
 
 The XTTS generation params and infrastructure paths (`TTS_URL`, `DATA_DIR`, etc.) stay env-only and require a container restart to change. Runtime overrides are applied per job by the worker (`runtime_settings.overlay`), so LLM/feed/chunk edits take effect on the next submission.
 
@@ -1342,12 +1349,9 @@ MIGRATION_BACKUP_RETENTION_DAYS=30
 # RSS
 RSS_CACHE_MAX_AGE_SECONDS=300
 
-# Auth (off by default)
-AUTH_ENABLED=false                # master switch
-ADMIN_USERNAME=admin              # required when AUTH_ENABLED=true
-ADMIN_PASSWORD_HASH=              # required when AUTH_ENABLED=true; bcrypt hash
-SESSION_SECRET_KEY=               # required when AUTH_ENABLED=true; ephemeral per-process when off
-SESSION_COOKIE_SECURE=false       # set true once HTTPS fronts the app
+# Auth (password set at runtime in the Settings UI; no env credential)
+SESSION_SECRET_KEY=               # optional; auto-generated + persisted to DB when blank
+SESSION_COOKIE_SECURE=true        # secure by default; set false for plain-http localhost dev
 SESSION_COOKIE_MAX_AGE_SECONDS=1209600   # 14 days
 LOCKOUT_MAX_FAILED_ATTEMPTS=5     # failed login attempts before lockout
 LOCKOUT_WINDOW_SECONDS=900        # 15-minute lockout window
@@ -1515,16 +1519,16 @@ On startup, any job left in `processing` (from a crash mid-pipeline) is reset to
 
 ### Startup Reachability Checks
 
-Before the queue worker starts processing, the app probes each required external endpoint and logs the result. Failures cause the app to exit non-zero so the container restart loop surfaces the problem instead of silently failing every job.
+When the queue worker starts, the app probes each external endpoint and logs the result. The probes are advisory: a failure is logged and surfaced in `/health/ready` but never stops the worker, so an unconfigured or temporarily-down dependency does not block startup. A job that later hits a down dependency fails that stage with a clear error.
 
 Checks:
 
 | Endpoint | Method | Expected | On failure |
 |----------|--------|----------|------------|
-| Firecrawl `FIRECRAWL_URL` | GET `/` or `/health` (per Firecrawl version) | HTTP 200 within 5s | Log + exit non-zero |
-| LLM endpoint (OpenAI-compatible) | GET `OPENAI_BASE_URL/models` | HTTP 200, JSON listing models | Log + exit non-zero |
-| LLM endpoint (Anthropic) | Skip; Anthropic API has no cheap health check | n/a | Validate API key format at startup only |
-| TTS wrapper `TTS_URL` | GET `/health` | HTTP 200 within 10s (wrapper may still be loading model) | Log + retry for up to 60s, then exit non-zero |
+| Firecrawl `FIRECRAWL_URL` | GET `/` or `/health` (per Firecrawl version) | HTTP 200 within 5s | Log + mark degraded in `/health/ready` |
+| LLM endpoint (OpenAI-compatible) | GET `OPENAI_BASE_URL/models` | HTTP 200, JSON listing models | Log + mark degraded in `/health/ready` |
+| LLM endpoint (Anthropic) | Skip; Anthropic API has no cheap health check | n/a | Report key-present only |
+| TTS wrapper `TTS_URL` | GET `/health` | HTTP 200 within 10s (wrapper may still be loading model) | Log + retry for up to 60s, then mark degraded |
 
 The TTS wrapper gets a longer grace period because XTTS-v2 takes 10-30 seconds to load weights and pre-compute speaker embeddings at startup. If the app boots faster than the wrapper, polling avoids a startup race.
 
@@ -1549,8 +1553,11 @@ services:
       - ./backend/app/corrections:/app/app/corrections
       - ./backend/app/reference:/app/app/reference
     depends_on:
+      # service_started, not service_healthy: the app boots and configures TTS
+      # at runtime (voice upload via the UI), so it must not wait on wrapper
+      # readiness (the wrapper is 503 until a reference voice is committed).
       tts-wrapper:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
       interval: 30s

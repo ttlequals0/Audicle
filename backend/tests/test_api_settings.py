@@ -21,6 +21,26 @@ def test_get_settings_returns_empty_values_initially(env: Path) -> None:
     assert body["values"] == {}
 
 
+def test_connection_urls_are_allowlisted_and_round_trip(env: Path) -> None:
+    """FIRECRAWL_URL + TTS_URL are operator-tunable so an external Firecrawl/TTS
+    can be configured without an env edit + restart."""
+
+    with _client(env) as client:
+        assert "FIRECRAWL_URL" in client.get("/api/v1/settings").json()["allowlist"]
+        assert "TTS_URL" in client.get("/api/v1/settings").json()["allowlist"]
+        response = client.put(
+            "/api/v1/settings",
+            json={
+                "FIRECRAWL_URL": "http://firecrawl.other:3002",
+                "TTS_URL": "http://tts.other:8000",
+            },
+        )
+    assert response.status_code == 200
+    values = response.json()["values"]
+    assert values["FIRECRAWL_URL"] == "http://firecrawl.other:3002"
+    assert values["TTS_URL"] == "http://tts.other:8000"
+
+
 def test_put_settings_persists_and_coerces_types(env: Path) -> None:
     with _client(env) as client:
         response = client.put(

@@ -2,8 +2,8 @@
 
 Polls the jobs table for ``status='queued'`` rows. Single in-flight job: the
 pipeline runs sequentially and the next poll only happens after the previous
-job finishes (or fails). Crash recovery and reachability checks gate the
-polling loop.
+job finishes (or fails). Crash recovery runs before the loop; reachability is
+advisory (logged, never blocks).
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ import asyncio
 import contextlib
 import logging
 import signal
-import sys
 from datetime import UTC, datetime
 
 from app.config import Settings, get_settings
@@ -108,14 +107,10 @@ async def run() -> None:
     settings = get_settings()
     bootstrap(settings, process_label="worker")
 
-    try:
-        await reachability.run_all(settings)
-    except reachability.ReachabilityError as exc:
-        logger.error(
-            "Startup reachability checks failed; exiting",
-            extra={"event": "reachability_fatal", "stage": "startup", "error": str(exc)},
-        )
-        sys.exit(1)
+    # Advisory only: logs dependency status and a warning if any are down, but
+    # never blocks the worker from starting. Operators configure URLs/keys at
+    # runtime via the UI; a job that needs a down dependency fails that stage.
+    await reachability.run_all(settings)
 
     shutdown = asyncio.Event()
     loop = asyncio.get_running_loop()

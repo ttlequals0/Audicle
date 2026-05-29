@@ -8,6 +8,7 @@ from app.api.v1 import auth as auth_routes
 from app.api.v1 import corrections as corrections_routes
 from app.api.v1 import episodes as episodes_routes
 from app.api.v1 import jobs as jobs_routes
+from app.api.v1 import llm as llm_routes
 from app.api.v1 import prompt as prompt_routes
 from app.api.v1 import purge as purge_routes
 from app.api.v1 import reference as reference_routes
@@ -26,3 +27,4 @@ router.include_router(settings_routes.router)
 router.include_router(episodes_routes.router)
 router.include_router(jobs_routes.router)
 router.include_router(reference_routes.router)
+router.include_router(llm_routes.router)

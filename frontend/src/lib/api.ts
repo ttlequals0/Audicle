@@ -79,10 +79,19 @@ export class ApiError extends Error {
 }
 
 export interface AuthStatus {
-  auth_enabled: boolean;
-  logged_in: boolean;
-  username: string | null;
+  password_set: boolean;
+  authenticated: boolean;
   csrf_token: string | null;
+}
+
+export interface LlmModel {
+  id: string;
+  name: string;
+}
+
+export interface LlmModelsResponse {
+  provider: string;
+  models: LlmModel[];
 }
 
 export interface Episode {

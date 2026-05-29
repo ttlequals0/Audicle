@@ -65,10 +65,10 @@ First-run model download is ~2 GB and lives in a named volume (`hf_cache`).
 | `OPENAI_BASE_URL` | for openai-compatible only | `http://llm:8080/v1` |
 | `OPENAI_API_KEY` | for openai-compatible | `sk-...` |
 | `ANTHROPIC_API_KEY` | for anthropic | `sk-ant-...` |
-| `ADMIN_USERNAME` / `ADMIN_PASSWORD_HASH` | Admin UI auth (if `AUTH_ENABLED=true`); the hash is bcrypt, generated via the helper in `.env.example` | -- |
-| `SESSION_SECRET_KEY` | 32+ random bytes for session signing | `openssl rand -hex 32` |
+| `SESSION_SECRET_KEY` | Optional session-signing key; auto-generated and persisted to the DB when blank | `openssl rand -hex 32` |
+| `SESSION_COOKIE_SECURE` | Require HTTPS for the session cookie; true by default | `false` for localhost dev |
 
-Full list with defaults lives in `.env.example`. The runtime allowlist (what's editable from the UI without a restart) is enforced in `backend/app/services/runtime_settings.py`.
+Nothing above is required: the app boots unconfigured and you set operational config (LLM provider/model, feed metadata, connection URLs) and the admin password at runtime in the Settings UI. The admin password is set under Settings > Security (bcrypt hash stored in the DB); until then the app runs in open convenience mode. Full list with defaults lives in `.env.example`. The runtime allowlist (what's editable from the UI without a restart) is enforced in `backend/app/services/runtime_settings.py`.
 
 ## Valid iTunes categories
 

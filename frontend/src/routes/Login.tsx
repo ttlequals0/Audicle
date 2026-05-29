@@ -5,13 +5,12 @@ import { api, ApiError } from "../lib/api";
 import { useAuth } from "../lib/auth";
 
 interface LoginResponse {
-  logged_in: boolean;
-  username: string;
+  authenticated: boolean;
+  password_set: boolean;
   csrf_token: string;
 }
 
 export default function Login() {
-  const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const { refresh } = useAuth();
@@ -21,7 +20,7 @@ export default function Login() {
     mutationFn: () =>
       api<LoginResponse>("/api/v1/auth/login", {
         method: "POST",
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ password }),
       }),
     onSuccess: () => {
       setError(null);
@@ -31,8 +30,8 @@ export default function Login() {
     onError: (e) => {
       if (e instanceof ApiError) {
         if (e.status === 423) setError("account locked - wait and retry");
-        else if (e.status === 401) setError("invalid username or password");
-        else if (e.status === 400) setError("auth is not enabled on this server");
+        else if (e.status === 401) setError("invalid password");
+        else if (e.status === 400) setError("no password is set; auth is open");
         else setError(`error ${e.status}`);
       } else {
         setError((e as Error).message);
@@ -48,18 +47,6 @@ export default function Login() {
   return (
     <form onSubmit={submit} className="card space-y-4 max-w-md mx-auto">
       <h1 className="font-mono uppercase text-sm text-accent">login</h1>
-      <div>
-        <label className="label" htmlFor="user">
-          username
-        </label>
-        <input
-          id="user"
-          className="field"
-          autoComplete="username"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-        />
-      </div>
       <div>
         <label className="label" htmlFor="pw">
           password

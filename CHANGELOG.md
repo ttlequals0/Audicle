@@ -6,6 +6,19 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-29
+
+### De-gate startup + runtime-configurable auth and model selection
+
+The app now boots unconfigured and you set operational config at runtime in the Settings UI, mirroring MinusPod. Nothing external blocks startup.
+
+- **Config defaults:** every formerly-required field now has a compose-friendly default (`BASE_URL=http://localhost:8000`, `FIRECRAWL_URL=http://firecrawl:3002`, `TTS_URL=http://tts-wrapper:8000`, `LLM_PROVIDER=openai-compatible`; `LLM_MODEL`/keys/`FEED_*` empty), so `Settings()` never raises at import. `extra="ignore"` means a leftover/legacy env var (e.g. a dropped auth key) is ignored rather than fatal.
+- **Advisory reachability:** `reachability.run_all` no longer raises and the worker no longer exits on a down dependency. Results are logged and surfaced in `/health/ready`; a job that hits a down dependency fails that stage with a clear error. `feed.py` emits `itunes:owner`/author/email/image only when those fields are non-empty so an unconfigured feed still renders.
+- **Connections are UI-settable:** `FIRECRAWL_URL` and `TTS_URL` added to the runtime-settings allowlist and a Connections group in the Settings UI, so an external Firecrawl/TTS can be pointed at without an env edit + restart.
+- **LLM model selection (MinusPod pattern):** new `GET /api/v1/llm/models[?provider=]` and `POST /api/v1/llm/models/refresh` list models for the configured or previewed provider (openai-compatible `/models` with an Ollama `/api/tags` fallback; anthropic known-model list), with a per-process TTL cache and never a 500 (empty list on error). The Settings UI renders `LLM_MODEL` as a dropdown keyed by provider, with an orphan option for a saved-but-unlisted value, a refresh button, and a free-text fallback.
+- **Password-only auth (full MinusPod parity):** dropped `AUTH_ENABLED`/`ADMIN_USERNAME`/`ADMIN_PASSWORD_HASH`. The admin password is set in the Settings UI (`PUT /api/v1/auth/password`); its bcrypt hash lives in the `settings` DB table. No password set = open convenience mode. `GET /auth/status` returns `{password_set, authenticated, csrf_token}`; `POST /auth/login` takes `{password}`. Lockout keys on the client IP. The session secret is auto-generated and persisted to the DB (key `session_secret`) when `SESSION_SECRET_KEY` is unset, so sessions survive restarts. `SESSION_COOKIE_SECURE` now defaults to true.
+- **Compose:** `app.depends_on.tts-wrapper.condition` changed from `service_healthy` to `service_started` so the app no longer deadlocks waiting on a voice-less wrapper.
+
 ### Image polish + headless TTS (`chore/build-plan-audit-and-cleanup`)
 
 - TTS wrapper accepts the CPML terms non-interactively (`COQUI_TOS_AGREED=1` in both Dockerfiles): without it the first XTTS-v2 load blocks on an interactive y/n prompt that has no TTY in a container, so the wrapper crashed on startup.

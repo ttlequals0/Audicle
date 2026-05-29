@@ -1,11 +1,9 @@
-"""Startup reachability checks.
+"""Startup reachability checks (advisory).
 
-Each external dependency the pipeline needs is probed before the worker begins
-processing. A failure here is fatal: the process exits non-zero so the
-container restart loop surfaces the problem instead of every job failing in
-the same way mid-stage.
-
-Firecrawl + LLM + TTS wrapper are all probed.
+Each external dependency the pipeline needs (Firecrawl + LLM + TTS wrapper) is
+probed when the worker starts. Results are logged and surfaced in /health/ready,
+but a failure never blocks startup: the worker enters its poll loop regardless,
+and a job that hits a down dependency fails that stage with a clear error.
 """
 
 from __future__ import annotations
@@ -20,10 +18,6 @@ import httpx
 from app.config import Settings
 
 logger = logging.getLogger("app.services.reachability")
-
-
-class ReachabilityError(RuntimeError):
-    """Raised when a required external dependency is unreachable at startup."""
 
 
 @dataclass(frozen=True)
@@ -184,12 +178,13 @@ async def check_tts(settings: Settings) -> CheckResult:
 
 
 async def run_all(settings: Settings) -> list[CheckResult]:
-    """Run every reachability check.
+    """Run every reachability check (advisory).
 
-    Logs each result and raises ``ReachabilityError`` if any check failed. The
-    worker bootstrap calls this; the FastAPI lifespan doesn't (so reviewers
-    using the API for /health while a dependency is down still get a useful
-    503 instead of a refusing-to-start container).
+    Logs each result and a summary warning if any dependency is down, but never
+    raises -- the worker enters its poll loop regardless so an unconfigured or
+    temporarily-unreachable dependency (Firecrawl/LLM/TTS) doesn't block the
+    whole stack from starting. A job that hits a down dependency fails that
+    stage with a clear error, and /health/ready reports the live status.
     """
 
     results: list[CheckResult] = [
@@ -215,5 +210,9 @@ async def run_all(settings: Settings) -> list[CheckResult]:
         )
     if failed:
         names = ", ".join(r.name for r in failed)
-        raise ReachabilityError(f"reachability checks failed: {names}")
+        logger.warning(
+            "Reachability: some dependencies are down; starting anyway "
+            "(jobs needing them will fail that stage until they recover)",
+            extra={"event": "reachability_degraded", "phase": "startup", "down": names},
+        )
     return results

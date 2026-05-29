@@ -1,25 +1,23 @@
-"""Single-admin authentication for the admin UI.
+"""Password-only admin authentication for the admin UI (MinusPod pattern).
 
-A single ``ADMIN_USERNAME`` whose bcrypt hash lives in
-``ADMIN_PASSWORD_HASH``. The login flow:
+The admin password bcrypt hash lives in the ``settings`` table (set via the
+UI), not an env var. No password set = open convenience mode. The login flow:
 
-1. Operator POSTs username/password to ``/api/v1/auth/login``.
-2. ``services.auth.verify_credentials`` checks the bcrypt hash AND that the
-   identifier isn't currently locked out.
-3. On success the session cookie is set (signed by
-   ``SESSION_SECRET_KEY``) and any prior lockout row is cleared.
-4. On failure the lockout counter is bumped; ``LOCKOUT_MAX_FAILED_ATTEMPTS``
-   triggers a ``LOCKOUT_WINDOW_SECONDS`` ban window during which the next
-   login attempt returns 423 Locked.
+1. Operator POSTs ``{password}`` to ``/api/v1/auth/login``.
+2. ``services.auth.verify_login`` checks the bcrypt hash AND that the client
+   IP isn't currently locked out.
+3. On success the session cookie is set and any prior lockout row is cleared.
+4. On failure the lockout counter for that IP is bumped;
+   ``LOCKOUT_MAX_FAILED_ATTEMPTS`` triggers a ``LOCKOUT_WINDOW_SECONDS`` ban
+   window during which the next attempt returns 423 Locked.
 
 The auth_lockout table is the source of truth for the lockout window; the
 verifier always re-reads it (no in-memory cache) so a manual
-``DELETE FROM auth_lockout`` immediately recovers a locked-out account.
+``DELETE FROM auth_lockout`` immediately recovers a locked-out IP.
 """
 
 from __future__ import annotations
 
-import hmac
 import logging
 import sqlite3
 from dataclasses import dataclass
@@ -28,13 +26,15 @@ from datetime import UTC, datetime, timedelta
 import bcrypt
 
 from app.config import Settings
+from app.services import settings_store
 
 # Precomputed valid-shape bcrypt hash whose checkpw of any input is False.
-# Verify_credentials runs bcrypt even on unknown usernames against this hash
-# so the wall-clock cost of a login attempt is constant regardless of
-# whether the username exists -- closes the timing oracle described by the
-# code-review pass.
+# verify_login runs bcrypt against this even when no password is stored so the
+# wall-clock cost is constant regardless of whether a password is set.
 _DUMMY_HASH = "$2b$12$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.123"
+
+# Minimum length enforced when setting a password via the UI.
+MIN_PASSWORD_LENGTH = 8
 
 logger = logging.getLogger("app.services.auth")
 
@@ -44,7 +44,7 @@ class AuthError(Exception):
 
 
 class InvalidCredentialsError(AuthError):
-    """Username or password did not match."""
+    """The password did not match."""
 
 
 class LockedOutError(AuthError):
@@ -63,8 +63,6 @@ class LockoutState:
 
 
 def hash_password(plaintext: str) -> str:
-    """Helper for operators to generate the env-var hash."""
-
     return bcrypt.hashpw(plaintext.encode("utf-8"), bcrypt.gensalt()).decode("ascii")
 
 
@@ -72,50 +70,54 @@ def _verify_password(plaintext: str, stored_hash: str) -> bool:
     try:
         return bcrypt.checkpw(plaintext.encode("utf-8"), stored_hash.encode("ascii"))
     except (ValueError, TypeError):
-        # Malformed hash (operator mis-pasted the env var). Treat as a
-        # non-match rather than 500 so the admin gets a normal 401.
-        logger.warning(
-            "ADMIN_PASSWORD_HASH appears malformed",
-            extra={"event": "auth_hash_malformed"},
-        )
+        # Malformed stored hash. Treat as a non-match rather than 500.
+        logger.warning("stored password hash appears malformed", extra={"event": "auth_hash_malformed"})
         return False
 
 
-def verify_credentials(
+def is_password_set(conn: sqlite3.Connection) -> bool:
+    """True when an admin password is configured (auth on); False = convenience mode."""
+
+    return bool(settings_store.get(conn, settings_store.APP_PASSWORD_KEY))
+
+
+def set_password(conn: sqlite3.Connection, plaintext: str) -> None:
+    """Store the bcrypt hash of ``plaintext`` as the admin password."""
+
+    settings_store.set_(conn, settings_store.APP_PASSWORD_KEY, hash_password(plaintext))
+
+
+def clear_password(conn: sqlite3.Connection) -> None:
+    """Remove the admin password (revert to open convenience mode)."""
+
+    conn.execute("DELETE FROM settings WHERE key = ?", (settings_store.APP_PASSWORD_KEY,))
+    conn.commit()
+
+
+def verify_login(
     conn: sqlite3.Connection,
     *,
-    username: str,
     password: str,
+    identifier: str,
     settings: Settings,
 ) -> None:
-    """Authenticate ``username``/``password`` against the admin config.
+    """Verify ``password`` for the client ``identifier`` (its IP).
 
-    Raises :class:`LockedOutError` if the identifier is currently in the
-    lockout window, or :class:`InvalidCredentialsError` on a mismatch
-    (which also bumps the lockout counter).
+    Raises :class:`LockedOutError` if the IP is in its lockout window, or
+    :class:`InvalidCredentialsError` on a mismatch (which bumps the counter).
     """
 
-    if not settings.ADMIN_PASSWORD_HASH:
-        raise AuthError("ADMIN_PASSWORD_HASH is not set")
-
-    identifier = username.strip().lower()
     state = _get_lockout(conn, identifier)
     now = datetime.now(UTC)
     if state and state.locked_until and state.locked_until > now:
         raise LockedOutError(state.locked_until)
 
-    expected_user = settings.ADMIN_USERNAME.strip().lower()
-    # Always run bcrypt -- against the dummy hash for an unknown username --
-    # so the response time doesn't reveal whether the username matched.
-    # ``hmac.compare_digest`` is constant-time over the strings.
-    user_ok = hmac.compare_digest(identifier, expected_user)
-    pw_ok = _verify_password(
-        password,
-        settings.ADMIN_PASSWORD_HASH if user_ok else _DUMMY_HASH,
-    )
-    if not (user_ok and pw_ok):
+    stored = settings_store.get(conn, settings_store.APP_PASSWORD_KEY)
+    # Always run bcrypt (dummy hash when unset) so timing doesn't reveal whether
+    # a password is configured; an unset password never authenticates.
+    if not stored or not _verify_password(password, stored or _DUMMY_HASH):
         _register_failed_attempt(conn, identifier, settings)
-        raise InvalidCredentialsError("invalid username or password")
+        raise InvalidCredentialsError("invalid password")
 
     _clear_lockout(conn, identifier)
 

@@ -250,3 +250,15 @@ async def test_anthropic_picks_text_block_among_thinking_and_tool_use(
 
     result = await llm.generate("s", "u", get_settings())
     assert result == "part one. part two."
+
+
+async def test_openai_compatible_empty_base_url_raises_request_error(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unconfigured install (no OPENAI_BASE_URL) must fail the stage with a
+    clear error instead of letting httpx raise on a relative URL."""
+
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    get_settings.cache_clear()
+    with pytest.raises(llm.LLMRequestError, match="OPENAI_BASE_URL"):
+        await llm.generate("s", "u", get_settings())

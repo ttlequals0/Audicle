@@ -108,11 +108,12 @@ async def test_check_tts_ok_when_model_loaded_even_on_503(
     assert "model_loaded=true" in result.detail
 
 
-async def test_run_all_raises_when_any_check_fails(
+async def test_run_all_is_advisory_and_never_raises_when_a_check_fails(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Firecrawl: every endpoint candidate fails -> reachability error.
-    # LLM + TTS: succeed so the failure attribution names "firecrawl".
+    """A down dependency is logged + surfaced via /health/ready but must not
+    raise -- startup is de-gated (the worker enters its poll loop regardless)."""
+
     _patch_async_client(
         monkeypatch,
         _transport(
@@ -125,8 +126,11 @@ async def test_run_all_raises_when_any_check_fails(
             ),  # tts /health
         ),
     )
-    with pytest.raises(reachability.ReachabilityError, match="firecrawl"):
-        await reachability.run_all(get_settings())
+    results = await reachability.run_all(get_settings())
+    by_name = {r.name: r for r in results}
+    assert by_name["firecrawl"].ok is False
+    assert by_name["llm"].ok is True
+    assert by_name["tts"].ok is True
 
 
 async def test_run_all_returns_results_when_all_pass(

@@ -35,6 +35,10 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "FEED_EXPLICIT",
         "FEED_ARTWORK_URL",
         "RETENTION_DAYS",
+        # Connections: the bundled service URLs are operator-tunable so they can
+        # be pointed at an external Firecrawl/TTS without an env edit + restart.
+        "FIRECRAWL_URL",
+        "TTS_URL",
         "TTS_CHUNK_TARGET_WORDS",
         "TTS_CHUNK_MAX_WORDS",
         "TTS_CHUNK_SILENCE_MS",

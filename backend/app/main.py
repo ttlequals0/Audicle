@@ -24,6 +24,8 @@ from app.api.rss import router as rss_router
 from app.api.v1.auth import _LOGIN_LIMITER
 from app.api.v1.router import router as v1_router
 from app.config import Settings, get_settings
+from app.core import database
+from app.services import settings_store
 from app.startup import bootstrap
 from app.version import __version__
 
@@ -124,23 +126,37 @@ _ROOT_STATIC_FILES = frozenset(
 _WORKBOX_FILE_RE = re.compile(r"workbox-[0-9a-f]+\.js")
 
 
+def _resolve_session_secret(settings: Settings) -> str:
+    """Session signing key: explicit env override, else a DB-persisted secret
+    (auto-generated on first run) so sessions survive restarts. Falls back to an
+    ephemeral key if the DB isn't ready yet (e.g. a stray pre-migration import).
+    """
+
+    if settings.SESSION_SECRET_KEY:
+        return settings.SESSION_SECRET_KEY
+    try:
+        # run_migrations is idempotent + file-locked; ensures the settings table
+        # exists before we read/init the persisted secret (middleware is built
+        # before the lifespan's own migration call).
+        database.run_migrations(settings.DATA_DIR)
+        with database.connection(settings.DATA_DIR) as conn:
+            return settings_store.get_or_init_session_secret(conn)
+    except Exception:
+        logging.getLogger("app.main").warning(
+            "Could not persist a session secret; using an ephemeral key "
+            "(sessions won't survive restart until DATA_DIR is writable)",
+            extra={"event": "session_secret_ephemeral"},
+            exc_info=True,
+        )
+        return secrets.token_urlsafe(64)
+
+
 def _attach_session_middleware(app: FastAPI, settings: Settings) -> None:
-    # When auth is disabled we still attach SessionMiddleware with a random
-    # ephemeral key so the session attribute exists on Request (the auth
-    # router and require_admin read from request.session even when auth is
-    # off, in which case both reads return None). The ephemeral key means
-    # the cookie is unforgeable across restarts but no operator state
-    # depends on it persisting.
-    # ``_validate_auth`` refuses to start with AUTH_ENABLED=true and no
-    # SESSION_SECRET_KEY, so the random-key path is only reached when auth
-    # is off -- the session contents are not security-relevant in that mode.
-    if settings.AUTH_ENABLED and settings.SESSION_SECRET_KEY:
-        secret_key = settings.SESSION_SECRET_KEY
-    else:
-        secret_key = secrets.token_urlsafe(64)
+    # SessionMiddleware is always attached so request.session exists for the auth
+    # router / require_admin (which read it even in open convenience mode).
     app.add_middleware(
         SessionMiddleware,
-        secret_key=secret_key,
+        secret_key=_resolve_session_secret(settings),
         session_cookie="audicle_session",
         max_age=settings.SESSION_COOKIE_MAX_AGE_SECONDS,
         same_site="lax",

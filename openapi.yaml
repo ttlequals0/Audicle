@@ -220,6 +220,19 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/auth/status:
+    get:
+      tags:
+      - auth
+      summary: Get Status
+      operationId: get_status_api_v1_auth_status_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/app__api__v1__auth__StatusResponse'
   /api/v1/auth/login:
     post:
       tags:
@@ -238,7 +251,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/LoginResponse'
+                $ref: '#/components/schemas/AuthActionResponse'
         '422':
           description: Validation Error
           content:
@@ -261,19 +274,31 @@ paths:
                   type: boolean
                 type: object
                 title: Response Post Logout Api V1 Auth Logout Post
-  /api/v1/auth/status:
-    get:
+  /api/v1/auth/password:
+    put:
       tags:
       - auth
-      summary: Get Status
-      operationId: get_status_api_v1_auth_status_get
+      summary: Put Password
+      operationId: put_password_api_v1_auth_password_put
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordRequest'
+        required: true
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/app__api__v1__auth__StatusResponse'
+                $ref: '#/components/schemas/AuthActionResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/settings:
     get:
       tags:
@@ -513,6 +538,62 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/llm/models:
+    get:
+      tags:
+      - llm
+      summary: List Models
+      operationId: list_models_api_v1_llm_models_get
+      parameters:
+      - name: provider
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Provider
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/llm/models/refresh:
+    post:
+      tags:
+      - llm
+      summary: Refresh Models
+      operationId: refresh_models_api_v1_llm_models_refresh_post
+      parameters:
+      - name: provider
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Provider
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /rss/rss.xml:
     get:
       tags:
@@ -617,6 +698,25 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
+    AuthActionResponse:
+      properties:
+        authenticated:
+          type: boolean
+          title: Authenticated
+        password_set:
+          type: boolean
+          title: Password Set
+        csrf_token:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Csrf Token
+      additionalProperties: false
+      type: object
+      required:
+      - authenticated
+      - password_set
+      title: AuthActionResponse
     Body_commit_candidate_api_v1_reference_commit_post:
       properties:
         voice:
@@ -766,11 +866,6 @@ components:
       title: JobListItem
     LoginRequest:
       properties:
-        username:
-          type: string
-          maxLength: 200
-          minLength: 1
-          title: Username
         password:
           type: string
           maxLength: 200
@@ -779,27 +874,55 @@ components:
       additionalProperties: false
       type: object
       required:
-      - username
       - password
       title: LoginRequest
-    LoginResponse:
+    ModelEntry:
       properties:
-        logged_in:
-          type: boolean
-          title: Logged In
-        username:
+        id:
           type: string
-          title: Username
-        csrf_token:
+          title: Id
+        name:
           type: string
-          title: Csrf Token
+          title: Name
       additionalProperties: false
       type: object
       required:
-      - logged_in
-      - username
-      - csrf_token
-      title: LoginResponse
+      - id
+      - name
+      title: ModelEntry
+    ModelsResponse:
+      properties:
+        provider:
+          type: string
+          title: Provider
+        models:
+          items:
+            $ref: '#/components/schemas/ModelEntry'
+          type: array
+          title: Models
+      additionalProperties: false
+      type: object
+      required:
+      - provider
+      - models
+      title: ModelsResponse
+    PasswordRequest:
+      properties:
+        current_password:
+          anyOf:
+          - type: string
+            maxLength: 200
+          - type: 'null'
+          title: Current Password
+        new_password:
+          type: string
+          maxLength: 200
+          title: New Password
+      additionalProperties: false
+      type: object
+      required:
+      - new_password
+      title: PasswordRequest
     PromptBody:
       properties:
         prompt:
@@ -928,17 +1051,12 @@ components:
       title: ValidationError
     app__api__v1__auth__StatusResponse:
       properties:
-        auth_enabled:
+        password_set:
           type: boolean
-          title: Auth Enabled
-        logged_in:
+          title: Password Set
+        authenticated:
           type: boolean
-          title: Logged In
-        username:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Username
+          title: Authenticated
         csrf_token:
           anyOf:
           - type: string
@@ -947,8 +1065,8 @@ components:
       additionalProperties: false
       type: object
       required:
-      - auth_enabled
-      - logged_in
+      - password_set
+      - authenticated
       title: StatusResponse
     app__api__v1__status__StatusResponse:
       properties:

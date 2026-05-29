@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,26 +18,30 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
-        extra="forbid",
+        # ignore (not forbid): nothing should block startup -- a leftover or
+        # legacy env var (or a deprecated auth key) is ignored rather than
+        # fatal. Operational config is set at runtime via the Settings UI.
+        extra="ignore",
     )
 
-    # Required (no defaults) -- fail fast at startup if missing.
-    BASE_URL: str = Field(description="Public feed URL base (https://audifeed.example.com)")
-    UI_BASE_URL: str = Field(description="Admin UI URL base")
-    DATA_DIR: Path = Field(description="Path that holds podcast.db, media/, backups, locks")
-    FIRECRAWL_URL: str = Field(description="HTTP base for the Firecrawl instance")
-    TTS_URL: str = Field(description="HTTP base for the XTTS wrapper")
-    LLM_PROVIDER: Literal["openai-compatible", "anthropic"] = Field(
-        description="Which LLM backend the cleanup stage uses"
-    )
-    LLM_MODEL: str = Field(description="Model identifier (example: qwen2.5:14b)")
-    FEED_TITLE: str = Field(description="Channel title for the RSS feed")
-    FEED_DESCRIPTION: str = Field(description="Channel description for the RSS feed")
-    FEED_AUTHOR: str = Field(description="iTunes author")
-    FEED_EMAIL: str = Field(description="iTunes owner email")
-    FEED_ARTWORK_URL: str = Field(description="Default channel artwork URL")
+    # Everything has a default so the app boots unconfigured; the operator fills
+    # these in via the Settings UI (most are in the runtime_settings allowlist).
+    # Compose-friendly defaults point at the bundled service names.
+    BASE_URL: str = "http://localhost:8000"
+    UI_BASE_URL: str = ""
+    DATA_DIR: Path = Path("/data")
+    FIRECRAWL_URL: str = "http://firecrawl:3002"
+    TTS_URL: str = "http://tts-wrapper:8000"
+    LLM_PROVIDER: Literal["openai-compatible", "anthropic"] = "openai-compatible"
+    LLM_MODEL: str = ""
+    FEED_TITLE: str = "Audicle"
+    FEED_DESCRIPTION: str = ""
+    FEED_AUTHOR: str = ""
+    FEED_EMAIL: str = ""
+    FEED_ARTWORK_URL: str = ""
 
-    # Conditionally required (validated below).
+    # LLM provider connection (UI-settable). Missing values surface at job time
+    # and in /health/ready rather than blocking startup.
     OPENAI_BASE_URL: str | None = None
     OPENAI_API_KEY: str | None = None
     ANTHROPIC_API_KEY: str | None = None
@@ -80,23 +84,14 @@ class Settings(BaseSettings):
     # CORS.
     CORS_ORIGINS: str = ""
 
-    # Auth. When AUTH_ENABLED is false the admin endpoints accept
-    # unauthenticated requests; this is the default for single-operator
-    # localhost installs. Public-internet deployments must set
-    # AUTH_ENABLED=true plus an admin password.
-    AUTH_ENABLED: bool = False
-    ADMIN_USERNAME: str = "admin"
-    # Bcrypt hash. Operator runs ``python -c "from app.services import auth;
-    # print(auth.hash_password('secret'))"`` to generate. Required when
-    # AUTH_ENABLED=true.
-    ADMIN_PASSWORD_HASH: str | None = None
-    # Cookie-signing key for SessionMiddleware. MUST be set when
-    # AUTH_ENABLED=true; refuse to start otherwise. Operator generates with
-    # ``python -c "import secrets; print(secrets.token_urlsafe(64))"``.
+    # Auth is set up at runtime via the UI (MinusPod-style): the admin password
+    # bcrypt hash lives in the settings DB table, not env. No password set =
+    # open convenience mode. The session secret is auto-generated and persisted
+    # to the DB; SESSION_SECRET_KEY is an optional override.
     SESSION_SECRET_KEY: str | None = None
-    # ``True`` requires HTTPS for the cookie to be sent; default False so
-    # localhost http:// works. Flip to True in production.
-    SESSION_COOKIE_SECURE: bool = False
+    # ``True`` requires HTTPS for the session cookie. Default True (secure by
+    # default); set false only for plain-http localhost dev.
+    SESSION_COOKIE_SECURE: bool = True
     SESSION_COOKIE_MAX_AGE_SECONDS: int = Field(default=86400 * 14, ge=60)
     LOCKOUT_MAX_FAILED_ATTEMPTS: int = Field(default=5, ge=1, le=100)
     LOCKOUT_WINDOW_SECONDS: int = Field(default=15 * 60, ge=10)
@@ -145,34 +140,6 @@ class Settings(BaseSettings):
     # Cap on the og:image download size so an attacker-controlled URL can't
     # OOM the worker by streaming a multi-GB body within the fetch timeout.
     ARTWORK_MAX_DOWNLOAD_BYTES: int = 25 * 1024 * 1024
-
-    @model_validator(mode="after")
-    def _validate_provider(self) -> Settings:
-        if self.LLM_PROVIDER == "openai-compatible":
-            missing: list[str] = []
-            if not self.OPENAI_BASE_URL:
-                missing.append("OPENAI_BASE_URL")
-            if not self.OPENAI_API_KEY:
-                missing.append("OPENAI_API_KEY")
-            if missing:
-                raise ValueError(f"LLM_PROVIDER=openai-compatible requires {', '.join(missing)}")
-        elif self.LLM_PROVIDER == "anthropic":
-            if not self.ANTHROPIC_API_KEY:
-                raise ValueError("LLM_PROVIDER=anthropic requires ANTHROPIC_API_KEY")
-        return self
-
-    @model_validator(mode="after")
-    def _validate_auth(self) -> Settings:
-        if not self.AUTH_ENABLED:
-            return self
-        missing: list[str] = []
-        if not self.ADMIN_PASSWORD_HASH:
-            missing.append("ADMIN_PASSWORD_HASH")
-        if not self.SESSION_SECRET_KEY:
-            missing.append("SESSION_SECRET_KEY")
-        if missing:
-            raise ValueError(f"AUTH_ENABLED=true requires {', '.join(missing)}")
-        return self
 
     @property
     def cors_origin_list(self) -> list[str]:

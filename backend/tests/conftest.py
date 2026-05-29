@@ -92,6 +92,9 @@ def env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         monkeypatch.setenv(key, value)
     monkeypatch.setenv("DATA_DIR", str(data_dir))
     monkeypatch.setenv("LOG_FORMAT", "text")
+    # TestClient speaks plain http; the production default (secure cookies)
+    # would drop the session cookie so login wouldn't persist in tests.
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "false")
     # Reachability checks in tests must finish fast; tests that need a longer
     # grace can override these in their own monkeypatch.
     monkeypatch.setenv("TTS_REACHABILITY_GRACE_SECONDS", "0.5")

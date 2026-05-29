@@ -134,3 +134,26 @@ async def test_run_exits_cleanly_when_reachability_passes_and_shutdown_set(
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task
+
+
+async def test_run_does_not_exit_when_reachability_fails(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reachability is advisory: a down dependency must not raise SystemExit
+    or otherwise stop the worker from entering its poll loop."""
+
+    from app import worker
+    from app.services import reachability
+
+    async def _stub_run_all(_settings):
+        return [reachability.CheckResult(name="firecrawl", ok=False, detail="down")]
+
+    monkeypatch.setattr(reachability, "run_all", _stub_run_all)
+
+    task = asyncio.create_task(worker.run())
+    await asyncio.sleep(0.2)
+    # The loop is still running (no SystemExit / early return).
+    assert not task.done()
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
