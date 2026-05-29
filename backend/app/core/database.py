@@ -196,10 +196,27 @@ def _m003_auth_lockout(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m004_runtime_settings(conn: sqlite3.Connection) -> None:
+    """Phase 10: operator-tunable settings that override env defaults at
+    request time. Keys are constrained to the Phase-10 allowlist; values
+    are stored as strings and coerced by the resolver."""
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS runtime_settings (
+            key         TEXT PRIMARY KEY,
+            value       TEXT NOT NULL,
+            updated_at  TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        )
+        """
+    )
+
+
 MIGRATIONS: list[tuple[str, Migration]] = [
     ("001_initial_schema", _m001_initial_schema),
     ("002_settings_kv", _m002_settings_kv),
     ("003_auth_lockout", _m003_auth_lockout),
+    ("004_runtime_settings", _m004_runtime_settings),
 ]
 
 

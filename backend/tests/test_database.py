@@ -10,7 +10,12 @@ from app.core import database
 
 def test_run_migrations_creates_tables(tmp_path: Path) -> None:
     applied = database.run_migrations(tmp_path)
-    assert applied == ["001_initial_schema", "002_settings_kv", "003_auth_lockout"]
+    assert applied == [
+        "001_initial_schema",
+        "002_settings_kv",
+        "003_auth_lockout",
+        "004_runtime_settings",
+    ]
 
     conn = database.connect(database.db_path(tmp_path))
     try:
@@ -25,7 +30,12 @@ def test_run_migrations_creates_tables(tmp_path: Path) -> None:
 def test_second_run_is_a_noop(tmp_path: Path) -> None:
     first = database.run_migrations(tmp_path)
     second = database.run_migrations(tmp_path)
-    assert first == ["001_initial_schema", "002_settings_kv", "003_auth_lockout"]
+    assert first == [
+        "001_initial_schema",
+        "002_settings_kv",
+        "003_auth_lockout",
+        "004_runtime_settings",
+    ]
     assert second == []
 
 
