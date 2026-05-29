@@ -1208,7 +1208,7 @@ The TTS wrapper Dockerfile uses an official PyTorch base image (e.g. `pytorch/py
 
 - Synthesis is ~5-10x slower (a 5-minute article may take 25+ minutes)
 - The `nvidia` device reservation block in compose must be removed
-- The PyTorch CPU-only base image (`pytorch/pytorch:2.4.0-cpu`) is the right choice for CPU-only deployments to avoid pulling unused CUDA libraries
+- Build the wrapper from `tts-wrapper/Dockerfile.cpu`, which uses a plain `python:3.11-slim` base and installs the CPU-only torch wheel from PyTorch's CPU index (there is no `pytorch/pytorch:*-cpu` tag), avoiding the unused CUDA libraries
 
 CPU mode is supported but not recommended for regular use.
 

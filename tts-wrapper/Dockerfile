@@ -1,8 +1,9 @@
 # syntax=docker/dockerfile:1.7
 
 # CUDA + cuDNN runtime image with PyTorch preinstalled.
-# Operators on CPU-only hosts can swap this base for ``pytorch/pytorch:2.4.0-cpu``
-# and set ``TTS_DEVICE=cpu`` -- the rest of the image is identical.
+# Operators on CPU-only hosts should use ``Dockerfile.cpu`` (which builds on a
+# plain Python base, since there is no ``pytorch/pytorch:*-cpu`` tag) and set
+# ``TTS_DEVICE=cpu``.
 FROM pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime AS runtime
 
 ENV PYTHONUNBUFFERED=1 \

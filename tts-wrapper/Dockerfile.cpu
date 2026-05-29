@@ -3,7 +3,12 @@
 # CPU-only variant. Same code, smaller image (no CUDA toolkit), substantially
 # slower runtime (5-10x per build plan). Set TTS_DEVICE=cpu in .env when using
 # this image.
-FROM pytorch/pytorch:2.4.0-cpu AS runtime
+#
+# There is no published ``pytorch/pytorch:*-cpu`` tag, so this builds on a plain
+# Python base (matching the wrapper's 3.11 pin) and installs the CPU-only torch
+# wheel from PyTorch's CPU index before the rest of the deps, so coqui-tts
+# reuses it instead of pulling the much larger CUDA build.
+FROM python:3.11-slim AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -11,14 +16,18 @@ ENV PYTHONUNBUFFERED=1 \
     HF_HOME=/root/.cache/huggingface \
     TTS_HOME=/root/.cache/huggingface/tts
 
+# build-essential: several coqui-tts deps (e.g. numba/llvmlite) build native
+# extensions. libsndfile for soundfile/coqui WAV IO; curl for healthchecks.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates libsndfile1 \
+    && apt-get install -y --no-install-recommends \
+         curl ca-certificates libsndfile1 build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY pyproject.toml ./
 COPY config.py engine.py main.py ./
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir .
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=120s \

@@ -22,6 +22,17 @@ dependencies = [
     "coqui-tts>=0.24,<0.25",
 ]
 
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# The wrapper is a flat layout of three top-level modules. Declare them
+# explicitly: modern setuptools refuses to auto-discover a flat layout with
+# multiple top-level modules, which breaks ``pip install .`` on a current
+# Python base image (older bases shipped a lenient setuptools that hid this).
+[tool.setuptools]
+py-modules = ["config", "engine", "main"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.3",

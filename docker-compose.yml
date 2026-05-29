@@ -2,7 +2,7 @@
 
 services:
   app:
-    image: ghcr.io/ttlequals0/audicle:latest
+    image: ttlequals0/audicle:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -42,7 +42,7 @@ services:
   tts-wrapper:
     # Single in-flight job; one uvicorn worker; GPU-pinned. Override
     # dockerfile to ``Dockerfile.cpu`` for CPU-only hosts (5-10x slower).
-    image: ghcr.io/ttlequals0/audicle-tts:latest
+    image: ttlequals0/audicle-tts:latest
     build:
       context: ./tts-wrapper
       dockerfile: Dockerfile
