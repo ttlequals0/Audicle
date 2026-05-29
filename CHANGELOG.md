@@ -6,6 +6,39 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Security + correctness (codebase-wide review)
+
+Multi-agent /simplify + /code-review sweep over the full backend (49 service modules + 38 test files), plus a background security finding (missing auth on `GET /api/v1/settings`).
+
+**Security:**
+
+- **Missing auth on read-only admin endpoints**: `GET /api/v1/prompt`, `GET /api/v1/corrections`, `GET /api/v1/settings` had no `require_admin` dependency, so when `AUTH_ENABLED=true` they still leaked operator config. Added `dependencies=[Depends(require_admin)]` to all three.
+- **Missing auth on `POST /api/v1/submit`**: anyone could enqueue jobs and burn LLM / TTS quota. Added `require_admin`.
+- **Login timing oracle**: `verify_credentials` short-circuited bcrypt for unknown usernames so response time revealed whether a username existed (~50-100ms vs. ~0ms). Now always runs bcrypt against either the real `ADMIN_PASSWORD_HASH` or a precomputed `_DUMMY_HASH`; username comparison uses `hmac.compare_digest`.
+- **Lockout counter race**: previous `_register_failed_attempt` was a SELECT-then-UPSERT pair; concurrent failed logins under `WEB_WORKERS=2` could both read N and both write N+1, defeating `LOCKOUT_MAX_FAILED_ATTEMPTS`. Replaced with `INSERT ... ON CONFLICT DO UPDATE SET failed_attempts = failed_attempts + 1, lockout_until = CASE WHEN ... THEN ... ELSE NULL END` so the increment + threshold check happen inside one engine-serialized statement.
+- **CSRF on safe methods**: `require_admin` enforced the CSRF header on every method including `GET`, which 403'd a SPA between session-cookie load and CSRF-cookie read. Now skips for `GET`/`HEAD`/`OPTIONS`; session check still applies.
+- **`/health/ready` exception leak**: failure path returned `f"error: {exc}"` in the response body, exposing `sqlite3.OperationalError` text including the absolute `DATA_DIR` path. Now returns a generic `"error"`; the full exception stays in the WARN log only.
+- **`POST /api/v1/submit.url` length cap**: added `max_length=2048`.
+- **`tts-wrapper` `GenerateRequest.text` length cap**: added `max_length=4000` so an oversized payload can't hold the `asyncio.Lock` for 120s and starve every other `/generate` call.
+- **`.env.example` had no auth block**: operators copying it deployed with `AUTH_ENABLED=false` and zero signal to flip it. Added a `# ---- Auth (REQUIRED for any public-internet deployment) ----` section with placeholders, generation commands, and explanatory comments.
+
+**Cleanup:**
+
+- Shared `retention.MAX_OLDER_THAN_DAYS` between the service guard and the purge endpoint's `Query(..., le=...)` constraint.
+- Lifted three inline imports in `main.py` (`secrets`, `_LOGIN_LIMITER`, `JSONResponse`) to the module top per `CLAUDE.md`.
+- Replaced the hand-built 429 envelope in `_attach_rate_limiter` with `errors.envelope(status=429, error="rate limit exceeded")` — the canonical helper every other 4xx/5xx route uses.
+
+**Tests (16 new, 317 total):** parametrized tables in `test_api_auth.py` assert every admin route returns 401 without a session when `AUTH_ENABLED=true`, mutating routes return 403 without `X-CSRF-Token`, and `GET` is allowed with session + no CSRF (safe-methods exemption). A typo on any future `dependencies=[Depends(require_admin)]` declaration is caught immediately.
+
+**Deferred (real findings, deserve their own PR):**
+
+- Runtime settings (`PUT /api/v1/settings`) persists overrides but no production service reads them back. The Phase 10 docstring promised a "code default → env var → DB" resolution chain that doesn't yet exist.
+- `database.connect/close` try/finally repeats 20 times across 12 modules — would benefit from a `core/database.connection(settings)` context manager.
+- ISO-timestamp `Z`-suffix parsing repeats in `feed.py`, `auth.py`, and `api/rss.py` — promote to `core/timestamps.parse_iso`.
+- `list_episodes` / `list_jobs` use Python slice rather than SQL `LIMIT`/`OFFSET` + `COUNT(*)`.
+- DNS-rebinding TOCTOU in the artwork SSRF guard.
+- Phase 11 (Web UI) remains deferred.
+
 ### Security (Pre-emptive CodeQL hardening)
 
 - `.github/workflows/codeql.yml`: GitHub CodeQL with the `security-and-quality` query pack. Runs on every PR + push + a weekly schedule. Top-level `permissions: {}` with the analysis job re-narrowing to `security-events: write` + read-only repo access (least privilege).

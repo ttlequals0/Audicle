@@ -34,7 +34,12 @@ class PromptBody(BaseModel):
         return value
 
 
-@router.get("/prompt", response_model=PromptBody, summary="Read the cleanup prompt")
+@router.get(
+    "/prompt",
+    response_model=PromptBody,
+    summary="Read the cleanup prompt",
+    dependencies=[Depends(require_admin)],
+)
 def read_prompt() -> PromptBody:
     path = _prompt_path()
     try:

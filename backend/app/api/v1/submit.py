@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator
 
+from app.api.deps import require_admin
 from app.config import Settings, get_settings
 from app.core import database
 from app.services import jobs
@@ -20,6 +21,10 @@ class SubmitRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     url: str = Field(
+        # 2048 covers every legitimate article URL we've seen in practice
+        # and caps a pathological-URL DoS at a reasonable size.
+        max_length=2048,
+        min_length=1,
         description="HTTP/HTTPS URL of the article to ingest.",
     )
     reprocess: bool = Field(
@@ -56,6 +61,7 @@ class SubmitResponse(BaseModel):
     status_code=201,
     response_model=SubmitResponse,
     summary="Submit an article URL for processing",
+    dependencies=[Depends(require_admin)],
 )
 def submit(
     body: SubmitRequest,

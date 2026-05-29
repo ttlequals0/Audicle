@@ -19,6 +19,7 @@ verifier always re-reads it (no in-memory cache) so a manual
 
 from __future__ import annotations
 
+import hmac
 import logging
 import sqlite3
 from dataclasses import dataclass
@@ -27,6 +28,13 @@ from datetime import UTC, datetime, timedelta
 import bcrypt
 
 from app.config import Settings
+
+# Precomputed valid-shape bcrypt hash whose checkpw of any input is False.
+# Verify_credentials runs bcrypt even on unknown usernames against this hash
+# so the wall-clock cost of a login attempt is constant regardless of
+# whether the username exists -- closes the timing oracle described by the
+# code-review pass.
+_DUMMY_HASH = "$2b$12$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.123"
 
 logger = logging.getLogger("app.services.auth")
 
@@ -97,7 +105,15 @@ def verify_credentials(
         raise LockedOutError(state.locked_until)
 
     expected_user = settings.ADMIN_USERNAME.strip().lower()
-    if identifier != expected_user or not _verify_password(password, settings.ADMIN_PASSWORD_HASH):
+    # Always run bcrypt -- against the dummy hash for an unknown username --
+    # so the response time doesn't reveal whether the username matched.
+    # ``hmac.compare_digest`` is constant-time over the strings.
+    user_ok = hmac.compare_digest(identifier, expected_user)
+    pw_ok = _verify_password(
+        password,
+        settings.ADMIN_PASSWORD_HASH if user_ok else _DUMMY_HASH,
+    )
+    if not (user_ok and pw_ok):
         _register_failed_attempt(conn, identifier, settings)
         raise InvalidCredentialsError("invalid username or password")
 
@@ -122,35 +138,52 @@ def _get_lockout(conn: sqlite3.Connection, identifier: str) -> LockoutState | No
 
 
 def _register_failed_attempt(conn: sqlite3.Connection, identifier: str, settings: Settings) -> None:
+    """Atomically bump the failed-attempt counter and arm the lockout window.
+
+    The previous implementation read the row in Python and wrote the new
+    value back, which raced under WEB_WORKERS=2 (two concurrent failed
+    logins could both read N and write N+1, defeating the threshold). The
+    single SQL statement below does the increment + lockout decision inside
+    the engine so SQLite's per-row write lock makes the operation
+    serializable.
+    """
+
     now = datetime.now(UTC)
     now_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    state = _get_lockout(conn, identifier)
-    failed = (state.failed_attempts if state else 0) + 1
-    locked_until: str | None = None
-    if failed >= settings.LOCKOUT_MAX_FAILED_ATTEMPTS:
-        locked_until = (now + timedelta(seconds=settings.LOCKOUT_WINDOW_SECONDS)).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
+    locked_until_iso = (now + timedelta(seconds=settings.LOCKOUT_WINDOW_SECONDS)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    threshold = settings.LOCKOUT_MAX_FAILED_ATTEMPTS
     conn.execute(
         """
-        INSERT INTO auth_lockout (identifier, failed_attempts, last_attempt_at, lockout_until)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO auth_lockout (
+            identifier, failed_attempts, last_attempt_at, lockout_until
+        )
+        VALUES (?, 1, ?, NULL)
         ON CONFLICT(identifier) DO UPDATE SET
-            failed_attempts = excluded.failed_attempts,
+            failed_attempts = failed_attempts + 1,
             last_attempt_at = excluded.last_attempt_at,
-            lockout_until   = excluded.lockout_until
+            lockout_until = CASE
+                WHEN failed_attempts + 1 >= ?
+                THEN ?
+                ELSE NULL
+            END
         """,
-        (identifier, failed, now_iso, locked_until),
+        (identifier, now_iso, threshold, locked_until_iso),
     )
     conn.commit()
-    if locked_until:
+    row = conn.execute(
+        "SELECT failed_attempts, lockout_until FROM auth_lockout WHERE identifier = ?",
+        (identifier,),
+    ).fetchone()
+    if row is not None and row["lockout_until"] is not None:
         logger.warning(
             "Lockout triggered",
             extra={
                 "event": "auth_lockout_triggered",
                 "identifier": identifier,
-                "failed_attempts": failed,
-                "locked_until": locked_until,
+                "failed_attempts": row["failed_attempts"],
+                "locked_until": row["lockout_until"],
             },
         )
 

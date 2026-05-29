@@ -143,6 +143,62 @@ def test_mutating_endpoint_succeeds_with_session_and_csrf(auth_env) -> None:
     assert response.status_code == 200
 
 
+@pytest.mark.parametrize(
+    "method,url,body",
+    [
+        ("GET", "/api/v1/prompt", None),
+        ("GET", "/api/v1/corrections", None),
+        ("GET", "/api/v1/settings", None),
+        ("GET", "/api/v1/episodes", None),
+        ("GET", "/api/v1/jobs", None),
+        ("PUT", "/api/v1/settings", {"FEED_TITLE": "x"}),
+        ("PUT", "/api/v1/prompt", {"prompt": "x" * 200}),
+        ("DELETE", "/api/v1/episodes/abc123", None),
+        ("POST", "/api/v1/submit", {"url": "https://example.test/x"}),
+        ("POST", "/api/v1/purge?confirm=true", None),
+    ],
+)
+def test_admin_routes_require_session_when_auth_enabled(auth_env, method, url, body) -> None:
+    """Any route under ``dependencies=[Depends(require_admin)]`` must 401
+    without a session. Parametrized so a typo on a single route declaration
+    is caught."""
+
+    with _client() as client:
+        response = client.request(method, url, json=body)
+    assert response.status_code == 401, f"{method} {url} leaked without a session"
+
+
+@pytest.mark.parametrize(
+    "method,url,body",
+    [
+        ("PUT", "/api/v1/settings", {"FEED_TITLE": "x"}),
+        ("PUT", "/api/v1/prompt", {"prompt": "x" * 200}),
+        ("DELETE", "/api/v1/episodes/abc123", None),
+        ("POST", "/api/v1/submit", {"url": "https://example.test/x"}),
+        ("POST", "/api/v1/purge?confirm=true", None),
+    ],
+)
+def test_admin_mutating_routes_require_csrf_after_login(auth_env, method, url, body) -> None:
+    """A logged-in client must echo the CSRF header on mutating calls.
+    GETs are exempt per the deps.require_admin contract."""
+
+    with _client() as client:
+        client.post("/api/v1/auth/login", json=auth_env)
+        response = client.request(method, url, json=body)
+    assert response.status_code == 403, f"{method} {url} accepted without X-CSRF-Token"
+
+
+def test_admin_get_route_is_allowed_with_session_no_csrf(auth_env) -> None:
+    """GET must NOT require the CSRF header even with auth on -- a SPA
+    warming the cache shouldn't 403 between session-cookie load and
+    CSRF-cookie read."""
+
+    with _client() as client:
+        client.post("/api/v1/auth/login", json=auth_env)
+        response = client.get("/api/v1/prompt")
+    assert response.status_code == 200
+
+
 def test_mutating_endpoint_unrestricted_when_auth_disabled(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

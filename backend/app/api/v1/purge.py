@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.api.deps import require_admin
 from app.config import Settings, get_settings
 from app.services import retention
+from app.services.retention import MAX_OLDER_THAN_DAYS
 
 router = APIRouter(tags=["maintenance"])
 
@@ -44,7 +45,7 @@ async def post_purge(
         Query(
             description="Purge episodes older than N days. 0 wipes everything.",
             ge=0,
-            le=100_000,
+            le=MAX_OLDER_THAN_DAYS,
         ),
     ] = 0,
 ) -> PurgeResponse:
