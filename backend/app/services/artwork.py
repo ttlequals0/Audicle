@@ -244,11 +244,35 @@ class _BlockedHostError(RuntimeError):
         self.reason = reason
 
 
-async def _assert_public_host(host: str) -> None:
+def _pin_url_to_ip(url: str, ip: str) -> str:
+    """Return ``url`` rewritten so the host component is ``ip`` (literal),
+    preserving scheme, port, path, query, and fragment. IPv6 literals are
+    bracketed."""
+
+    parts = urlsplit(url)
+    netloc_host = f"[{ip}]" if ":" in ip else ip
+    netloc = f"{netloc_host}:{parts.port}" if parts.port else netloc_host
+    if parts.username or parts.password:
+        # Preserve credentials in case (operator-set basic auth).
+        userinfo = parts.username or ""
+        if parts.password:
+            userinfo += f":{parts.password}"
+        netloc = f"{userinfo}@{netloc}"
+    return parts._replace(netloc=netloc).geturl()
+
+
+async def _resolve_public_host(host: str) -> str:
     """SSRF guard: resolve ``host`` and refuse private/loopback/link-local/
-    multicast/reserved addresses. Article HTML is third-party content, so a
-    hostile og:image can point at the worker's internal network without this
-    check."""
+    multicast/reserved addresses. Returns the resolved IP literal so the
+    caller can pin the connection to that IP -- closing the DNS-rebinding
+    TOCTOU where the validation lookup gets a public IP and httpx's
+    subsequent lookup gets a private one.
+
+    The returned IP literal is substituted into the URL via ``_pin_to_ip``;
+    httpx still sends the original ``Host:`` header (preserved via
+    ``Request.headers``) so the upstream sees the operator-controlled name
+    and TLS SNI works correctly.
+    """
 
     if not host:
         raise _BlockedHostError("", "empty hostname")
@@ -259,6 +283,7 @@ async def _assert_public_host(host: str) -> None:
         raise _BlockedHostError(host, f"dns_resolution_failed: {exc}") from exc
     if not infos:
         raise _BlockedHostError(host, "dns_no_records")
+    public_ip: str | None = None
     for info in infos:
         sockaddr = info[4]
         addr = sockaddr[0]
@@ -275,6 +300,18 @@ async def _assert_public_host(host: str) -> None:
             or ip.is_unspecified
         ):
             raise _BlockedHostError(host, f"non_public_address_{ip}")
+        if public_ip is None:
+            public_ip = str(ip)
+    assert public_ip is not None  # we'd have raised above
+    return public_ip
+
+
+async def _assert_public_host(host: str) -> None:
+    """Wrapper around :func:`_resolve_public_host` that discards the IP --
+    kept for the event-hook redirect re-check where pinning isn't viable
+    (httpx builds the redirected URL itself)."""
+
+    await _resolve_public_host(host)
 
 
 async def _download(url: str, settings: Settings) -> bytes:
@@ -287,12 +324,24 @@ async def _download(url: str, settings: Settings) -> bytes:
     omit it.
     """
 
-    host = urlsplit(url).hostname or ""
-    await _assert_public_host(host)
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    pinned_ip = await _resolve_public_host(host)
+
+    # Closes the DNS-rebinding TOCTOU: a hostile DNS server could otherwise
+    # answer the resolver check with a public IP and httpx's subsequent
+    # lookup with a private one. We pass the IP literal to httpx but
+    # preserve the original Host header so the upstream sees the
+    # operator-controlled name and TLS SNI still works.
+    pinned_url = _pin_url_to_ip(url, pinned_ip)
 
     async def _check_redirect(request: httpx.Request) -> None:
         # Fires for every outgoing request including redirects, so we re-run
-        # the SSRF guard against the redirected hostname.
+        # the SSRF guard against the redirected hostname. The initial GET is
+        # already pinned to a resolved public IP; this hook covers the
+        # ``Location:`` header path where httpx synthesizes a fresh URL.
+        if request.url.host == pinned_ip:
+            return  # already validated above
         await _assert_public_host(request.url.host)
 
     timeout = httpx.Timeout(settings.ARTWORK_FETCH_TIMEOUT_SECONDS)
@@ -303,7 +352,7 @@ async def _download(url: str, settings: Settings) -> bytes:
             follow_redirects=True,
             event_hooks={"request": [_check_redirect]},
         ) as client,
-        client.stream("GET", url) as response,
+        client.stream("GET", pinned_url, headers={"Host": host}) as response,
     ):
         if not response.is_success:
             raise _HttpError(response.status_code)

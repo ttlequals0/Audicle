@@ -138,6 +138,27 @@ def list_published(conn: sqlite3.Connection) -> list[Episode]:
     return [_row_to_episode(row) for row in rows]
 
 
+def count_published(conn: sqlite3.Connection) -> int:
+    row = conn.execute("SELECT COUNT(*) AS n FROM episodes WHERE audio_path IS NOT NULL").fetchone()
+    return int(row["n"] if row else 0)
+
+
+def list_published_page(conn: sqlite3.Connection, *, limit: int, offset: int) -> list[Episode]:
+    """SQL-paginated counterpart to ``list_published`` -- avoids reading
+    every row when the admin UI only wants 50."""
+
+    rows = conn.execute(
+        # _SELECT_COLUMNS is a fixed module constant -- no user input.
+        "SELECT " + _SELECT_COLUMNS + " "
+        "FROM episodes "
+        "WHERE audio_path IS NOT NULL "
+        "ORDER BY pub_date DESC, created_at DESC "
+        "LIMIT ? OFFSET ?",
+        (limit, offset),
+    ).fetchall()
+    return [_row_to_episode(row) for row in rows]
+
+
 def latest_updated_at(conn: sqlite3.Connection) -> str | None:
     """Most-recent ``updated_at`` across published episodes, for the RSS
     ``Last-Modified`` header and the ``<lastBuildDate>`` channel field."""

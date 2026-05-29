@@ -21,6 +21,7 @@ import defusedxml.ElementTree as DET
 from feedgen.feed import FeedGenerator
 
 from app.config import Settings
+from app.core.timestamps import parse_iso
 from app.services.episodes import Episode
 
 logger = logging.getLogger("app.services.feed")
@@ -229,22 +230,16 @@ def _hms(seconds: int) -> str:
 
 
 def _parse_iso(value: str) -> datetime | None:
-    """Parse the ISO-8601 timestamps SQLite emits via ``strftime``.
+    """Parse via the canonical helper; emit a WARN on parse failure since
+    that means an episode row carries a malformed timestamp."""
 
-    feedgen requires tz-aware datetimes; the DB values end in ``Z`` so we
-    swap that for ``+00:00`` to satisfy ``datetime.fromisoformat`` on
-    Python < 3.11 hosts. On 3.11+ the literal ``Z`` parses but the swap is
-    harmless.
-    """
-
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except (TypeError, ValueError):
+    parsed = parse_iso(value)
+    if parsed is None and value:
         logger.warning(
             "Could not parse episode timestamp",
             extra={"event": "feed_timestamp_parse_failed", "value": value},
         )
-        return None
+    return parsed
 
 
 def _safe_filesize(path_str: str) -> int:

@@ -193,10 +193,7 @@ def _clear_lockout(conn: sqlite3.Connection, identifier: str) -> None:
     conn.commit()
 
 
-def _parse_iso(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
-    except (TypeError, ValueError):
-        return None
+# Module-level alias keeps the existing call sites stable while routing
+# through the canonical helper. Future code should import ``parse_iso``
+# directly from ``app.core.timestamps``.
+from app.core.timestamps import parse_iso as _parse_iso  # noqa: E402

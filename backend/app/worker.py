@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 
 from app.config import Settings, get_settings
 from app.core import database
-from app.services import jobs, pipeline, reachability, retention
+from app.services import jobs, pipeline, reachability, retention, runtime_settings
 from app.startup import bootstrap
 
 logger = logging.getLogger("app.worker")
@@ -63,8 +63,11 @@ def _maybe_run_retention_sweep(settings: Settings, last_sweep_day: str | None) -
     if last_sweep_day == today:
         return last_sweep_day
     try:
-        retention.purge_older_than(settings, older_than_days=settings.RETENTION_DAYS)
-        retention.sweep_orphan_media(settings)
+        # Apply DB overrides so RETENTION_DAYS set via PUT /api/v1/settings
+        # takes effect on the next sweep without a worker restart.
+        overlaid = runtime_settings.overlay(settings)
+        retention.purge_older_than(overlaid, older_than_days=overlaid.RETENTION_DAYS)
+        retention.sweep_orphan_media(overlaid)
     except Exception:
         logger.exception(
             "Retention sweep failed; will retry next iteration",

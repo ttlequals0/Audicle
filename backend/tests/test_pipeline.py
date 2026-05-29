@@ -310,7 +310,11 @@ def _stub_artwork_download(monkeypatch: pytest.MonkeyPatch, png_bytes: bytes) ->
     async def _allow_all(_host: str) -> None:
         return None
 
+    async def _stub_resolve(_host: str) -> str:
+        return "203.0.113.1"
+
     monkeypatch.setattr(_artwork, "_assert_public_host", _allow_all)
+    monkeypatch.setattr(_artwork, "_resolve_public_host", _stub_resolve)
 
 
 def _png_bytes(size: int = 800) -> bytes:
