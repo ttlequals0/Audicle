@@ -1,13 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  api,
-  ApiError,
-  readCsrf,
-  LlmModelsResponse,
-  SettingsPayload,
-} from "../lib/api";
+import { api, ApiError, readCsrf, LlmModelsResponse, SettingsPayload } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { useHealthLive } from "../lib/useHealthLive";
+import CollapsibleSection from "../components/CollapsibleSection";
 
 /**
  * Operator-facing setting groups, plus the prompt
@@ -24,6 +20,8 @@ const GROUPS: Record<string, string[]> = {
     "OPENAI_BASE_URL",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
+    "OPENROUTER_API_KEY",
+    "OLLAMA_BASE_URL",
     "LLM_TEMPERATURE",
     "LLM_MAX_TOKENS",
     "LLM_TIMEOUT_SECONDS",
@@ -48,8 +46,26 @@ const GROUPS: Record<string, string[]> = {
 
 // Secret fields: rendered as password inputs. The backend masks them on read
 // (a sentinel arrives instead of the value) and ignores the sentinel on save.
-const MASKED_KEYS = new Set(["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]);
-const PROVIDER_OPTIONS = ["openai-compatible", "anthropic"];
+const MASKED_KEYS = new Set([
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "OPENROUTER_API_KEY",
+]);
+const PROVIDER_OPTIONS = ["openai-compatible", "anthropic", "openrouter", "ollama"];
+
+// Which provider-specific keys are relevant per provider. Keys not listed for
+// the selected provider are hidden (openrouter's base URL is fixed server-side;
+// anthropic has no base URL). Provider-agnostic keys (model, tuning) always show.
+const PROVIDER_FIELDS: Record<string, Set<string>> = {
+  "openai-compatible": new Set(["OPENAI_BASE_URL", "OPENAI_API_KEY"]),
+  anthropic: new Set(["ANTHROPIC_API_KEY"]),
+  openrouter: new Set(["OPENROUTER_API_KEY"]),
+  ollama: new Set(["OLLAMA_BASE_URL"]),
+};
+// Union of every provider's keys, derived so it can't drift from PROVIDER_FIELDS.
+const PROVIDER_SPECIFIC_KEYS = new Set(
+  Object.values(PROVIDER_FIELDS).flatMap((s) => [...s])
+);
 
 interface PromptBody {
   prompt: string;
@@ -72,9 +88,14 @@ export default function SettingsRoute() {
     queryKey: ["corrections"],
     queryFn: () => api<Record<string, string>>("/api/v1/corrections"),
   });
+  const healthQ = useHealthLive();
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
   const seeded = useRef(false);
+  // The seeded values (override-or-default) so save() can send only the keys
+  // the operator actually changed -- otherwise every default would be written
+  // as an explicit override.
+  const baseline = useRef<Record<string, string>>({});
 
   // Seed the draft once on first arrival; subsequent refetches must not
   // clobber unsaved field edits.
@@ -82,10 +103,13 @@ export default function SettingsRoute() {
     if (!seeded.current && settingsQ.data) {
       const next: Record<string, string> = {};
       for (const key of settingsQ.data.allowlist) {
-        const v = settingsQ.data.values[key];
+        // Stored override if present, else the effective default, so fields
+        // show editable values instead of blank.
+        const v = settingsQ.data.values[key] ?? settingsQ.data.defaults[key];
         next[key] = v === undefined || v === null ? "" : String(v);
       }
       setDraft(next);
+      baseline.current = { ...next };
       seeded.current = true;
     }
   }, [settingsQ.data]);
@@ -108,6 +132,9 @@ export default function SettingsRoute() {
   const save = () => {
     const payload: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(draft)) {
+      // Only persist keys the operator changed from the seeded value, so
+      // leaving a field at its default doesn't pin it as an override.
+      if (value === (baseline.current[key] ?? "")) continue;
       if (MASKED_KEYS.has(key)) {
         // Secrets are sent verbatim (never number-coerced). The mask sentinel
         // round-trips and the backend ignores it; an empty value clears the
@@ -128,13 +155,18 @@ export default function SettingsRoute() {
   if (settingsQ.isLoading) return <p className="text-mute text-sm">loading...</p>;
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-4">
+      <h1 className="text-2xl font-black tracking-tight mb-1">Settings</h1>
       {Object.entries(GROUPS).map(([group, keys]) => {
-        const visible = keys.filter((k) => settingsQ.data?.allowlist.includes(k));
+        const provider = draft["LLM_PROVIDER"] ?? "";
+        const visible = keys.filter((k) => {
+          if (!settingsQ.data?.allowlist.includes(k)) return false;
+          // A provider-specific key shows only for its provider; others always show.
+          return !PROVIDER_SPECIFIC_KEYS.has(k) || (PROVIDER_FIELDS[provider]?.has(k) ?? false);
+        });
         if (visible.length === 0) return null;
         return (
-          <section key={group} className="space-y-3">
-            <h2 className="font-mono uppercase text-xs text-dim">{group}</h2>
+          <CollapsibleSection key={group} title={group} defaultOpen={group === "LLM"}>
             {visible.map((key) => (
               <div key={key}>
                 <label className="label" htmlFor={key}>
@@ -175,11 +207,11 @@ export default function SettingsRoute() {
                 )}
               </div>
             ))}
-          </section>
+          </CollapsibleSection>
         );
       })}
 
-      <div className="flex items-center gap-3 sticky bottom-2">
+      <div className="flex items-center gap-3 sticky bottom-2 z-10">
         <button className="btn-primary" disabled={putM.isPending} onClick={save}>
           {putM.isPending ? "saving..." : "save all"}
         </button>
@@ -188,25 +220,57 @@ export default function SettingsRoute() {
         )}
       </div>
 
-      {promptQ.data !== undefined && <PromptEditor initial={promptQ.data.prompt} />}
-      {correctionsQ.data !== undefined && <CorrectionsTable initial={correctionsQ.data} />}
-      <ReferenceVoiceWidget />
+      {promptQ.data !== undefined && (
+        <CollapsibleSection title="cleanup prompt">
+          <PromptEditor initial={promptQ.data.prompt} />
+        </CollapsibleSection>
+      )}
+      {correctionsQ.data !== undefined && (
+        <CollapsibleSection title="pronunciation corrections">
+          <CorrectionsTable initial={correctionsQ.data} />
+        </CollapsibleSection>
+      )}
+      <CollapsibleSection title="reference voice">
+        <ReferenceVoiceWidget />
+      </CollapsibleSection>
 
       {authStatus && (
-        <SecuritySection passwordSet={authStatus.password_set} onChanged={refreshAuth} />
+        <CollapsibleSection title="security">
+          <SecuritySection passwordSet={authStatus.password_set} onChanged={refreshAuth} />
+        </CollapsibleSection>
       )}
 
-      <section className="space-y-2 border-t border-line pt-6">
-        <h2 className="font-mono uppercase text-xs text-dim">system info</h2>
+      <CollapsibleSection title="system info" defaultOpen>
+        <ReadOnlyRow label="version" value={healthQ.data?.version ?? "loading"} />
+        <ReadOnlyRow label="uptime" value={formatUptime(healthQ.data?.uptime_seconds)} />
         <ReadOnlyRow label="password_set" value={String(authStatus?.password_set ?? "loading")} />
         <ReadOnlyRow label="authenticated" value={String(authStatus?.authenticated ?? "loading")} />
-        <ReadOnlyRow
-          label="allowlist_keys"
-          value={String(settingsQ.data?.allowlist.length ?? 0)}
-        />
-      </section>
+        <div className="flex justify-between font-mono text-[11px] pt-1">
+          <span className="text-dim uppercase">api docs</span>
+          <a
+            href="/api/v1/docs"
+            target="_blank"
+            rel="noreferrer"
+            className="text-accent hover:underline"
+          >
+            /api/v1/docs
+          </a>
+        </div>
+      </CollapsibleSection>
     </div>
   );
+}
+
+function formatUptime(seconds: number | undefined): string {
+  if (seconds === undefined) return "loading";
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const parts = [];
+  if (d) parts.push(`${d}d`);
+  if (h) parts.push(`${h}h`);
+  parts.push(`${m}m`);
+  return parts.join(" ");
 }
 
 function ModelField({
@@ -337,8 +401,7 @@ function SecuritySection({
   });
 
   return (
-    <section className="space-y-3 border-t border-line pt-6">
-      <h2 className="font-mono uppercase text-xs text-dim">security</h2>
+    <section className="space-y-3">
       {!passwordSet && (
         <p className="text-danger text-xs font-mono">
           no password set - the admin UI and API are open to anyone who can reach
@@ -432,8 +495,7 @@ function PromptEditor({ initial }: { initial: string }) {
   });
 
   return (
-    <section className="space-y-3 border-t border-line pt-6">
-      <h2 className="font-mono uppercase text-xs text-dim">cleanup prompt</h2>
+    <section className="space-y-3">
       <textarea
         className="field min-h-[200px] font-mono text-xs"
         value={text}
@@ -487,16 +549,15 @@ function CorrectionsTable({ initial }: { initial: Record<string, string> }) {
   });
 
   return (
-    <section className="space-y-3 border-t border-line pt-6">
-      <h2 className="font-mono uppercase text-xs text-dim">pronunciation corrections</h2>
+    <section className="space-y-3">
       <p className="text-mute text-xs">
         left column: source word; right column: the spelling the TTS should narrate.
       </p>
       <div className="space-y-2">
         {rows.map((row) => (
-          <div key={row.id} className="flex gap-2">
+          <div key={row.id} className="correction-row">
             <input
-              className="field flex-1"
+              className="field"
               placeholder="word"
               value={row.k}
               onChange={(e) =>
@@ -506,7 +567,7 @@ function CorrectionsTable({ initial }: { initial: Record<string, string> }) {
               }
             />
             <input
-              className="field flex-1"
+              className="field"
               placeholder="replacement"
               value={row.v}
               onChange={(e) =>
@@ -516,7 +577,7 @@ function CorrectionsTable({ initial }: { initial: Record<string, string> }) {
               }
             />
             <button
-              className="btn-ghost text-danger"
+              className="text-mute hover:text-danger flex items-center justify-center w-8"
               onClick={() => setRows((rs) => rs.filter((r) => r.id !== row.id))}
             >
               &times;
@@ -609,10 +670,9 @@ function ReferenceVoiceWidget() {
   };
 
   return (
-    <section className="space-y-3 border-t border-line pt-6">
-      <h2 className="font-mono uppercase text-xs text-dim">reference voice</h2>
+    <section className="space-y-3">
       <audio controls src={previewUrl} className="w-full" />
-      <div>
+      <div className="dropzone">
         <label className="label" htmlFor="ref-file">
           upload candidate WAV (3-60s, &lt;= 5 MB)
         </label>

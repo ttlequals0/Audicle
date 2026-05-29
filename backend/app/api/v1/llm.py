@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app.api.deps import require_admin
 from app.config import Settings, get_settings
-from app.services import runtime_settings
+from app.services import llm, runtime_settings
 
 logger = logging.getLogger("app.api.v1.llm")
 
@@ -69,7 +69,9 @@ def _cache_set(key: str, models: list[dict[str, str]]) -> None:
     _model_cache[key] = (time.monotonic() + _CACHE_TTL_SECONDS, models)
 
 
-async def _list_openai_models(base_url: str, api_key: str | None) -> list[dict[str, str]]:
+async def _list_openai_models(
+    base_url: str, api_key: str | None, extra_headers: dict[str, str] | None = None
+) -> list[dict[str, str]]:
     """GET {base_url}/models -> [{id, name}], with an Ollama /api/tags fallback.
 
     Returns an empty list on any failure (unreachable, non-2xx, malformed body)
@@ -78,7 +80,9 @@ async def _list_openai_models(base_url: str, api_key: str | None) -> list[dict[s
 
     base = base_url.rstrip("/")
     endpoint = f"{base}/models"
-    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    headers = dict(extra_headers or {})
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     async with httpx.AsyncClient(timeout=10.0) as client:
         try:
             response = await client.get(endpoint, headers=headers)
@@ -121,14 +125,16 @@ def _cache_key(provider: str, base: str) -> str:
 async def _resolve_models(settings: Settings, provider: str) -> list[dict[str, str]]:
     if provider == "anthropic":
         return [{"id": m, "name": m} for m in _ANTHROPIC_MODELS]
-    base = (settings.OPENAI_BASE_URL or "").rstrip("/")
+    # openai-compatible / openrouter / ollama all list via {base}/models.
+    base, api_key, extra_headers = llm.openai_compatible_connection(settings, provider)
+    base = base.rstrip("/")
     if not base:
         return []
     key = _cache_key(provider, base)
     cached = _cache_get(key)
     if cached is not None:
         return cached
-    models = await _list_openai_models(base, settings.OPENAI_API_KEY)
+    models = await _list_openai_models(base, api_key, extra_headers)
     _cache_set(key, models)
     return models
 
@@ -155,6 +161,7 @@ async def refresh_models(
     overlaid = runtime_settings.overlay(settings)
     # Drop only the entry being refreshed so other providers stay cached.
     selected = provider or overlaid.LLM_PROVIDER
-    base = (overlaid.OPENAI_BASE_URL or "").rstrip("/")
-    _model_cache.pop(_cache_key(selected, base), None)
+    if llm.is_openai_compatible_provider(selected):
+        base, _, _ = llm.openai_compatible_connection(overlaid, selected)
+        _model_cache.pop(_cache_key(selected, base.rstrip("/")), None)
     return await _models_response(overlaid, provider)

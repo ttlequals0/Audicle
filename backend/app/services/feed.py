@@ -79,11 +79,12 @@ def render(
     # players.
     fg.link(href=f"{settings.BASE_URL.rstrip('/')}/rss/rss.xml", rel="self")
     fg.link(href=settings.BASE_URL, rel="alternate")
-    # Legacy ``<image>`` needs ``<title>`` and ``<link>`` per RSS 2.0 to
-    # validate; only emit it when artwork is configured.
-    if settings.FEED_ARTWORK_URL:
-        fg.image(url=settings.FEED_ARTWORK_URL, title=title, link=settings.BASE_URL)
-        fg.podcast.itunes_image(settings.FEED_ARTWORK_URL)
+    # Channel artwork: the operator's FEED_ARTWORK_URL when set, otherwise the
+    # bundled default served at /media/default.jpg (seeded on startup). Always
+    # emitted so a feed validates and shows art even before it's configured.
+    artwork_url = settings.FEED_ARTWORK_URL or f"{settings.BASE_URL.rstrip('/')}/media/default.jpg"
+    fg.image(url=artwork_url, title=title, link=settings.BASE_URL)
+    fg.podcast.itunes_image(artwork_url)
     fg.lastBuildDate(last_build)
     if settings.FEED_AUTHOR:
         fg.podcast.itunes_author(settings.FEED_AUTHOR)

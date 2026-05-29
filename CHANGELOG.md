@@ -6,6 +6,19 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-29
+
+### Settings UX overhaul, multi-provider LLM, and bind-mount-safe defaults
+
+- **Providers:** `LLM_PROVIDER` now supports `openrouter` (fixed base `https://openrouter.ai/api/v1` + `HTTP-Referer`/`X-Title` headers + `OPENROUTER_API_KEY`) and `ollama` (`OLLAMA_BASE_URL`, no key) alongside `openai-compatible` and `anthropic`. The openai-compatible family shares one call path via `openai_compatible_connection()`; `/api/v1/llm/models` lists models for each. The Settings dropdown shows all four and reveals only the relevant connection fields per provider.
+- **Editable defaults:** `GET /api/v1/settings` returns a `defaults` map (effective env/code value per allowlisted key, secrets masked); the UI seeds fields from `values[k] ?? defaults[k]` so LLM/TTS/Cleanup/Feed show editable defaults instead of blanks, and only operator-changed keys are persisted.
+- **Bind-mount-safe defaults:** the shipped prompt and a curated default pronunciation set are seeded into the prompt/corrections locations on first boot from a packaged `app/defaults/` dir, so an empty bind-mount no longer hides them. Default podcast artwork (from branding) is seeded to `DATA_DIR/media/default.jpg`; the feed channel image falls back to `{BASE_URL}/media/default.jpg` when `FEED_ARTWORK_URL` is unset.
+- **Feed URL:** the Feed page's subscribe URL is built from the configured `BASE_URL` (exposed via `/health/live`), not the browser origin.
+- **Non-root:** documented that the image runs as uid 1000 and host bind-mounts must be `chown`ed to 1000:1000 (README + compose comment + optional `user:` line).
+- **UI:** rebuilt to the branding/mockup design system -- logo mark, JetBrains Mono + Satoshi, Home hero, Feed cards with status tags, and collapsible Settings sections. System info shows version + uptime (replacing the `allowlist_keys` row) and a link to the API docs (`/api/v1/docs`); `/health/live` now returns `uptime_seconds` + `base_url`.
+- **Access logging:** a structured HTTP access log, always enabled (one `http_access` record per request: method, path, status, duration, client) with a per-request `request_id` stamped onto every log emitted during the request.
+- **Reachability/health:** `reachability.check_llm` and `/health/ready` now probe the selected provider's endpoint (openrouter/ollama included) with the right base + key, instead of assuming `OPENAI_BASE_URL`.
+
 ## [0.2.0] - 2026-05-29
 
 ### De-gate startup + runtime-configurable auth and model selection

@@ -70,6 +70,30 @@ def test_openai_compatible_lists_models_from_endpoint(
     assert ids == ["qwen3", "mistral"]
 
 
+def test_openrouter_lists_models(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_async_client(
+        monkeypatch,
+        _transport(httpx.Response(200, json={"data": [{"id": "anthropic/claude-3.5"}]})),
+    )
+    with _client(env) as client:
+        response = client.get("/api/v1/llm/models?provider=openrouter")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["provider"] == "openrouter"
+    assert [m["id"] for m in body["models"]] == ["anthropic/claude-3.5"]
+
+
+def test_ollama_lists_models(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_async_client(
+        monkeypatch,
+        _transport(httpx.Response(200, json={"data": [{"id": "llama3:8b"}]})),
+    )
+    with _client(env) as client:
+        response = client.get("/api/v1/llm/models?provider=ollama")
+    assert response.status_code == 200
+    assert [m["id"] for m in response.json()["models"]] == ["llama3:8b"]
+
+
 def test_openai_compatible_falls_back_to_ollama_tags(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

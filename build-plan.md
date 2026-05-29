@@ -658,9 +658,9 @@ Cards ordered newest first. Pull-to-refresh on mobile (matching MinusPod). Pagin
 
 Each card shows the artwork thumbnail, a status badge, the title linked to the source article (2-line clamp), the author and source domain, the episode id and duration, and an action row: mp3, transcript (`/media/{id}.vtt`), Reprocess (`POST /api/v1/submit` with `reprocess=true`), and Delete. The list is published-episode-backed, so the badge reads `done`; in-flight/failed job states surface on the Home tab.
 
-**3. Settings.** Editable settings grouped by section, plus the prompt editor, corrections table, reference voice widget, a security (password) block, and a read-only system-info block. The field groups map to the runtime-settings allowlist (see "UI-Editable Subset"):
+**3. Settings.** Each group is a collapsible section (mockup-styled card with a green section label; open state persisted in localStorage). Fields are seeded from the effective default when not overridden -- `GET /api/v1/settings` returns `{allowlist, values, defaults}` and the UI shows `values[k] ?? defaults[k]`, so LLM/TTS/Cleanup/Feed render editable defaults instead of blanks. Save persists only the keys the operator actually changed. Groups map to the runtime-settings allowlist (see "UI-Editable Subset"):
 
-1. **LLM:** `LLM_PROVIDER` (dropdown), `LLM_MODEL` (dropdown populated from `GET /api/v1/llm/models`, with an orphan option for a saved-but-unlisted value, a refresh button, and a free-text fallback), `OPENAI_BASE_URL`, `OPENAI_API_KEY` (masked), `ANTHROPIC_API_KEY` (masked), `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `LLM_TIMEOUT_SECONDS`, `LLM_RETRY_COUNT`. The API keys render as password inputs; the backend masks them on read and ignores the mask sentinel on save so re-saving never clobbers the stored secret.
+1. **LLM:** `LLM_PROVIDER` (dropdown: openai-compatible / anthropic / openrouter / ollama), `LLM_MODEL` (dropdown populated from `GET /api/v1/llm/models`, with an orphan option for a saved-but-unlisted value, a refresh button, and a free-text fallback), provider-specific connection fields shown per selection (`OPENAI_BASE_URL`/`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `OLLAMA_BASE_URL`), `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `LLM_TIMEOUT_SECONDS`, `LLM_RETRY_COUNT`. API keys render as password inputs; the backend masks them on read (and in `defaults`) and ignores the mask sentinel on save so re-saving never clobbers the stored secret.
 2. **Connections:** `FIRECRAWL_URL`, `TTS_URL`. Point these at an external Firecrawl/TTS without an env edit + restart.
 3. **Feed:** `FEED_TITLE`, `FEED_DESCRIPTION`, `FEED_AUTHOR`, `FEED_EMAIL`, `FEED_LANGUAGE`, `FEED_CATEGORY`, `FEED_EXPLICIT`, `FEED_ARTWORK_URL`.
 4. **TTS:** `TTS_CHUNK_TARGET_WORDS`, `TTS_CHUNK_MAX_WORDS`, `TTS_CHUNK_SILENCE_MS`. Plus the reference audio widget.
@@ -668,7 +668,9 @@ Each card shows the artwork thumbnail, a status badge, the title linked to the s
 6. **Retention:** `RETENTION_DAYS`. Plus a danger-styled "Purge all" button (with confirmation).
 7. **RSS:** `RSS_CACHE_MAX_AGE_SECONDS`.
 8. **Security:** set/change/clear the admin password (`PUT /api/v1/auth/password`), with a warning banner when no password is set.
-9. **System** (read-only): auth state (`password_set`, `authenticated`) and the count of operator-tunable keys.
+9. **System** (read-only): `version` and `uptime` (from `GET /health/live`) plus auth state (`password_set`, `authenticated`).
+
+The shipped default prompt (`script.txt`) and a curated default pronunciation set (`pronunciation.json`) are seeded into the prompt/corrections locations on first boot (from a packaged `app/defaults/` dir) so an empty bind-mount doesn't hide them. Default podcast artwork (`app/assets/default-artwork.jpg`, from the branding source) is seeded to `DATA_DIR/media/default.jpg`; the feed's channel image falls back to `{BASE_URL}/media/default.jpg` when `FEED_ARTWORK_URL` is empty.
 
 When a password is set the UI gates writes behind login + CSRF; the password itself is set and changed in the Security block.
 
@@ -764,27 +766,34 @@ async def generate(
 
 The pipeline's `cleanup` stage wraps this with tenacity for retries on retryable errors. The pipeline doesn't know which provider is selected.
 
-Internal implementation: a thin module that dispatches to either `_call_openai_compatible()` or `_call_anthropic()` based on `LLM_PROVIDER`. Both use httpx for transport.
+Internal implementation: a thin module that dispatches to `_call_anthropic()` or the shared `_call_openai_compatible()` based on `LLM_PROVIDER`. The openai-compatible family (`openai-compatible`, `openrouter`, `ollama`) resolves its `(base_url, api_key, extra_headers)` via `openai_compatible_connection()` so all three hit the same chat-completions path. Both call shapes use httpx for transport.
 
-Compatible providers for `openai-compatible` mode: Ollama, vLLM, LM Studio, OpenRouter, Groq, Fireworks, llama.cpp server, any service exposing OpenAI's `/v1/chat/completions` endpoint shape.
+Providers:
+
+- `openai-compatible`: any server exposing OpenAI's `/v1/chat/completions` (vLLM, LM Studio, Groq, Fireworks, llama.cpp server). Set `OPENAI_BASE_URL` + `OPENAI_API_KEY`.
+- `anthropic`: `https://api.anthropic.com/v1/messages` with `ANTHROPIC_API_KEY`.
+- `openrouter`: fixed base `https://openrouter.ai/api/v1`, `OPENROUTER_API_KEY`, plus `HTTP-Referer`/`X-Title` identifying headers.
+- `ollama`: openai-compatible against a local Ollama daemon at `OLLAMA_BASE_URL` (no key); model listing uses the `/api/tags` fallback.
 
 ### Configuration
 
-Configurable via env:
+All UI-settable (runtime allowlist); env just provides defaults:
 
 ```
-LLM_PROVIDER=openai-compatible   # or "anthropic"
-LLM_MODEL=                       # required, no default (example: qwen2.5:14b)
-OPENAI_BASE_URL=http://host.docker.internal:11434/v1   # if LLM_PROVIDER=openai-compatible
-OPENAI_API_KEY=not-needed                              # if LLM_PROVIDER=openai-compatible
-ANTHROPIC_API_KEY=               # required if LLM_PROVIDER=anthropic
+LLM_PROVIDER=openai-compatible   # openai-compatible | anthropic | openrouter | ollama
+LLM_MODEL=                       # picked from the Settings dropdown (per provider)
+OPENAI_BASE_URL=                 # openai-compatible
+OPENAI_API_KEY=                  # openai-compatible
+ANTHROPIC_API_KEY=               # anthropic
+OPENROUTER_API_KEY=              # openrouter
+OLLAMA_BASE_URL=http://host.docker.internal:11434/v1   # ollama
 LLM_TEMPERATURE=0.7
 LLM_MAX_TOKENS=4000
 LLM_TIMEOUT_SECONDS=300
 LLM_RETRY_COUNT=3
 ```
 
-Validation at startup: required vars for selected provider must be present, fail fast otherwise.
+No startup validation: a missing value for the selected provider fails the job's cleanup stage with a clear error (e.g. "LLM base URL is not configured") rather than blocking boot.
 
 ### Cleanup Prompt
 
@@ -1438,9 +1447,11 @@ Designed for Loki ingestion via Promtail or the Docker Loki driver. To avoid lab
 - **Indexed labels (low cardinality):** `level`, `stage`, `status`, `service`
 - **Body fields (high cardinality):** `job_id`, `episode_id`, `url`, `message`, `exception`
 
-Context propagation uses `contextvars` (FastAPI equivalent of Flask's `g`). A context filter pulls the current `job_id` onto every log record emitted inside a job's processing scope, so individual log calls don't need to pass it explicitly.
+Context propagation uses `contextvars` (FastAPI equivalent of Flask's `g`). A context filter pulls the current `request_id`/`job_id` onto every log record emitted inside that scope, so individual log calls don't need to pass it explicitly.
 
 Every record includes `timestamp` (ISO 8601), `level`, `logger`, `hostname`, `pid`, `message`, plus context fields when present.
+
+**HTTP access log:** an ASGI middleware (`api/access_log.py`), always enabled, emits one `event=http_access` record per request (method, path, query, status, `duration_ms`, client IP, `forwarded_for`) and sets a per-request `request_id` contextvar so the access line and the request's downstream logs share an id. uvicorn's own access log stays silenced.
 
 ### Version Logging
 

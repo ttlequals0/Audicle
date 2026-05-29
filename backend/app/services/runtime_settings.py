@@ -52,6 +52,8 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "OPENAI_BASE_URL",
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
+        "OPENROUTER_API_KEY",
+        "OLLAMA_BASE_URL",
         "LLM_TEMPERATURE",
         "LLM_MAX_TOKENS",
         "LLM_TIMEOUT_SECONDS",
@@ -61,7 +63,9 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
 
 # Secret-bearing keys: their stored value is never returned by GET (masked to a
 # sentinel) so the Settings UI can show "set" without leaking the credential.
-MASKED_KEYS: frozenset[str] = frozenset({"OPENAI_API_KEY", "ANTHROPIC_API_KEY"})
+MASKED_KEYS: frozenset[str] = frozenset(
+    {"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY"}
+)
 
 # Sentinel returned by GET for a masked key that has a stored override, and
 # recognized by PUT as "leave unchanged" so re-saving the form doesn't clobber

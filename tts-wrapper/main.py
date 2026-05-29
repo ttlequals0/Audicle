@@ -34,7 +34,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 
 # Wrapper's own version, surfaced in /health so the main app's
 # /health/ready can aggregate it into components.tts_wrapper.version.
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 
 def _pkg_version(name: str) -> str | None:

@@ -32,7 +32,9 @@ class Settings(BaseSettings):
     DATA_DIR: Path = Path("/data")
     FIRECRAWL_URL: str = "http://firecrawl:3002"
     TTS_URL: str = "http://tts-wrapper:8000"
-    LLM_PROVIDER: Literal["openai-compatible", "anthropic"] = "openai-compatible"
+    LLM_PROVIDER: Literal["openai-compatible", "anthropic", "openrouter", "ollama"] = (
+        "openai-compatible"
+    )
     LLM_MODEL: str = ""
     FEED_TITLE: str = "Audicle"
     FEED_DESCRIPTION: str = ""
@@ -45,6 +47,11 @@ class Settings(BaseSettings):
     OPENAI_BASE_URL: str | None = None
     OPENAI_API_KEY: str | None = None
     ANTHROPIC_API_KEY: str | None = None
+    # OpenRouter: fixed base URL (set in services/llm.py); only the key is tunable.
+    OPENROUTER_API_KEY: str | None = None
+    # Ollama: openai-compatible against a local Ollama daemon. Its own base URL
+    # so it can be selected without clobbering OPENAI_BASE_URL.
+    OLLAMA_BASE_URL: str = "http://host.docker.internal:11434/v1"
 
     # Feed metadata defaults.
     FEED_LANGUAGE: str = "en-us"

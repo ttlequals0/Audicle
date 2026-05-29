@@ -17,6 +17,7 @@ from slowapi.errors import RateLimitExceeded
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.api import errors as error_handlers
+from app.api.access_log import AccessLogMiddleware
 from app.api.errors import envelope
 from app.api.health import router as health_router
 from app.api.media import router as media_router
@@ -50,6 +51,9 @@ def create_app() -> FastAPI:
     )
     _attach_session_middleware(app, settings)
     _attach_rate_limiter(app, settings)
+    # Always on, added last so it wraps the others: request_id is set + the timer
+    # starts before any inner middleware/handler runs.
+    app.add_middleware(AccessLogMiddleware)
     app.include_router(health_router)
     app.include_router(v1_router)
     app.include_router(rss_router)

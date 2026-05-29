@@ -4,6 +4,12 @@
 services:
   app:
     image: ttlequals0/audicle:latest
+    # The image already runs as a non-root user (uid 1000). If you set `user:`
+    # or bind-mount host dirs, make those dirs writable by uid 1000:
+    #   chown -R 1000:1000 ./data ./backend/app/prompts ./backend/app/corrections ./backend/app/reference
+    # The app seeds default prompt/corrections into empty mounts on first boot,
+    # which only works if uid 1000 can write to them.
+    # user: "1000:1000"
     ports:
       - "8000:8000"
     env_file: .env
@@ -12,7 +18,8 @@ services:
     volumes:
       - ./data:/data
       # Bind mounts target /app/app/* (the Dockerfile copies backend/app there);
-      # host edits show up at the path the code reads from.
+      # host edits show up at the path the code reads from. An empty mount is
+      # seeded with the packaged default on first boot.
       - ./backend/app/prompts:/app/app/prompts
       - ./backend/app/corrections:/app/app/corrections
       - ./backend/app/reference:/app/app/reference

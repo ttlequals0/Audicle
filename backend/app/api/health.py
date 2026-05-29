@@ -19,6 +19,7 @@ from fastapi import APIRouter, Request, Response, status
 
 from app.config import get_settings
 from app.core import database
+from app.services import llm
 from app.version import __version__
 
 logger = logging.getLogger("app.api.health")
@@ -26,8 +27,17 @@ router = APIRouter(tags=["health"])
 
 
 @router.get("/health/live")
-def health_live() -> dict[str, Any]:
-    return {"ok": True, "version": __version__}
+def health_live(request: Request) -> dict[str, Any]:
+    started_at = getattr(request.app.state, "started_at", None)
+    uptime_seconds = int(time.monotonic() - started_at) if started_at is not None else 0
+    # base_url so the UI shows the configured public feed URL (BASE_URL), not
+    # whatever host the browser happens to be on.
+    return {
+        "ok": True,
+        "version": __version__,
+        "uptime_seconds": uptime_seconds,
+        "base_url": get_settings().BASE_URL,
+    }
 
 
 @router.get("/health/ready")
@@ -51,15 +61,21 @@ async def health_ready(request: Request, response: Response) -> dict[str, Any]:
     # Fan probes out concurrently so one stuck upstream can't add its
     # timeout budget to the others'. return_exceptions=True ensures one
     # raising probe doesn't cancel the others and 500 the whole endpoint.
-    llm_url = (
-        settings.OPENAI_BASE_URL
-        if settings.LLM_PROVIDER == "openai-compatible"
-        else None
-    )
+    # Anthropic has no cheap unauthenticated probe (skip); the openai-compatible
+    # family (openai-compatible / openrouter / ollama) all expose {base}/models,
+    # resolved with the same base + auth the pipeline uses.
+    llm_url: str | None = None
+    llm_headers: dict[str, str] = {}
+    if llm.is_openai_compatible_provider(settings.LLM_PROVIDER):
+        base_url, api_key, extra_headers = llm.openai_compatible_connection(settings)
+        llm_url = base_url or None
+        llm_headers = dict(extra_headers)
+        if api_key:
+            llm_headers["Authorization"] = f"Bearer {api_key}"
     tts_result, firecrawl_result, llm_result = await asyncio.gather(
         _probe_tts_wrapper(settings.TTS_URL, 2.0),
         _probe_http(settings.FIRECRAWL_URL, "/health", 2.0),
-        _probe_http(llm_url, "/models", 2.0),
+        _probe_http(llm_url, "/models", 2.0, llm_headers),
         return_exceptions=True,
     )
     tts_check, tts_detail = _coerce_tts(tts_result)
@@ -164,7 +180,9 @@ class _OnceCache:
 _ffmpeg_version_cached = _OnceCache()
 
 
-async def _probe_http(base: str | None, path: str, timeout_secs: float) -> str:
+async def _probe_http(
+    base: str | None, path: str, timeout_secs: float, headers: dict[str, str] | None = None
+) -> str:
     """``GET {base}{path}`` -> ``"ok"`` on 2xx, else a short reason."""
 
     if not base:
@@ -172,7 +190,7 @@ async def _probe_http(base: str | None, path: str, timeout_secs: float) -> str:
     url = f"{base.rstrip('/')}{path}"
     try:
         async with httpx.AsyncClient(timeout=timeout_secs) as client:
-            r = await client.get(url)
+            r = await client.get(url, headers=headers or {})
         return "ok" if r.is_success else f"http_{r.status_code}"
     except httpx.HTTPError as exc:
         return f"unreachable_{type(exc).__name__}"

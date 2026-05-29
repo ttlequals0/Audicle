@@ -45,8 +45,8 @@ export default function Login() {
   };
 
   return (
-    <form onSubmit={submit} className="card space-y-4 max-w-md mx-auto">
-      <h1 className="font-mono uppercase text-sm text-accent">login</h1>
+    <form onSubmit={submit} className="card p-6 space-y-4 max-w-md mx-auto mt-10">
+      <h1 className="section-title">login</h1>
       <div>
         <label className="label" htmlFor="pw">
           password
