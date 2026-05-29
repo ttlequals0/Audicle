@@ -20,6 +20,11 @@ dependencies = [
     "pydantic>=2.9",
     "numpy>=1.26,<3.0",
     "coqui-tts>=0.24,<0.25",
+    # coqui-tts 0.24 declares transformers>=4.43.0 with no upper bound, so a
+    # fresh resolve pulls transformers 5.x whose lazy-import API coqui can't use
+    # (ModuleNotFoundError: GPT2PreTrainedModel at model import). Cap to the 4.4x
+    # line coqui-tts 0.24 was built against.
+    "transformers>=4.43.0,<4.47",
 ]
 
 [build-system]
