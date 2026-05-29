@@ -101,7 +101,11 @@ def upsert(
         ),
     )
     conn.commit()
-    row = conn.execute(f"SELECT {_SELECT_COLUMNS} FROM episodes WHERE id = ?", (id,)).fetchone()
+    # _SELECT_COLUMNS is a fixed module constant -- no user input.
+    row = conn.execute(
+        "SELECT " + _SELECT_COLUMNS + " FROM episodes WHERE id = ?",
+        (id,),
+    ).fetchone()
     if row is None:
         # ``assert`` would disappear under ``python -O``; a real check stays.
         raise RuntimeError(f"episode {id!r} disappeared between upsert and SELECT")
@@ -109,8 +113,10 @@ def upsert(
 
 
 def get_by_id(conn: sqlite3.Connection, episode_id: str) -> Episode | None:
+    # _SELECT_COLUMNS is a fixed module constant -- no user input.
     row = conn.execute(
-        f"SELECT {_SELECT_COLUMNS} FROM episodes WHERE id = ?", (episode_id,)
+        "SELECT " + _SELECT_COLUMNS + " FROM episodes WHERE id = ?",
+        (episode_id,),
     ).fetchone()
     return None if row is None else _row_to_episode(row)
 
@@ -123,12 +129,11 @@ def list_published(conn: sqlite3.Connection) -> list[Episode]:
     """
 
     rows = conn.execute(
-        f"""
-        SELECT {_SELECT_COLUMNS}
-        FROM episodes
-        WHERE audio_path IS NOT NULL
-        ORDER BY pub_date DESC, created_at DESC
-        """
+        # _SELECT_COLUMNS is a fixed module constant -- no user input.
+        "SELECT " + _SELECT_COLUMNS + " "
+        "FROM episodes "
+        "WHERE audio_path IS NOT NULL "
+        "ORDER BY pub_date DESC, created_at DESC"
     ).fetchall()
     return [_row_to_episode(row) for row in rows]
 

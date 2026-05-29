@@ -36,7 +36,13 @@ class Job:
 def compute_episode_id(url: str) -> str:
     """MD5(url) truncated to 12 hex chars. Deterministic per URL."""
 
-    return hashlib.md5(url.encode("utf-8")).hexdigest()[:12]
+    # md5 here is a content identity hash, not a security primitive (the URL
+    # is operator-supplied via /submit, not attacker-influenced). Marking
+    # ``usedforsecurity=False`` silences CodeQL's ``py/weak-cryptographic-
+    # algorithm`` finding which otherwise flags every md5 call regardless of
+    # purpose. Identity-shortening to 12 hex chars is a deliberate trade-off
+    # for a stable, short, lowercase-only episode id.
+    return hashlib.md5(url.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
 
 
 def _row_to_job(row: sqlite3.Row) -> Job:
