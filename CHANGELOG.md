@@ -6,6 +6,19 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-05-29
+
+### tts-wrapper CVE remediation
+
+Patches the fixable HIGH/CRITICAL CVEs in the tts-wrapper image (16 of 17; the
+78 `linux-libc-dev` findings are kernel-header noise, not exploitable in a container).
+
+- Bump transitive deps to their patched versions in both wrapper Dockerfiles: `urllib3>=2.7.0`, `cryptography>=46.0.5`, `pillow>=12.2.0`, `Brotli>=1.2.0`, `setuptools>=78.1.1`, `wheel>=0.46.2`.
+- `transformers` pinned to the 4.48.x line (`>=4.48.0,<4.49`) -- clears CVE-2024-11392/-11393/-11394; coqui-tts 0.24 requires `>=4.43.0` unbounded and only breaks on the 5.x line, so 4.48 is safe.
+- `gpgv` upgraded to the patched base-image package (CVE-2025-68973).
+- `torch` left at 2.4.x: the only fix (2.6.0) flips `torch.load` to `weights_only=True`, which breaks XTTS checkpoint loading, and CVE-2025-32434 is a `torch.load` RCE unreachable with Audicle's trusted model + WAV inputs.
+- Versions bumped to 0.3.1 (app + wrapper) so `BUILD_VERSION=0.3.1` resolves for both images.
+
 ## [0.3.0] - 2026-05-29
 
 ### Settings UX overhaul, multi-provider LLM, and bind-mount-safe defaults
