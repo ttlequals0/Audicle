@@ -93,16 +93,27 @@ class XTTSEngine:
 
         # The reference voice is optional at startup: the operator can upload one
         # later via the UI (which writes voice.wav and calls /reload). Compute
-        # embeddings now if it's already present; otherwise stay up and serve
-        # /health (reference_loaded=false) until a voice arrives.
+        # embeddings now if a usable clip is present; a missing OR unreadable one
+        # just leaves reference_loaded=false and /generate returning 503 -- the
+        # wrapper stays up so the operator can upload a good clip rather than
+        # crash-looping on a bad pre-staged file.
         ref_path = Path(self.config.reference_path)
-        if ref_path.exists():
-            self._compute_embeddings(ref_path)
-        else:
+        if not ref_path.exists():
             logger.warning(
                 "No reference voice yet; upload one via the UI. /generate is "
                 "unavailable until a voice is committed.",
                 extra={"event": "tts_reference_missing", "path": str(ref_path)},
+            )
+            return
+        try:
+            self._compute_embeddings(ref_path)
+        except Exception:
+            logger.warning(
+                "Reference voice present but could not be decoded; ignoring it. "
+                "Upload a valid clip via the UI. /generate is unavailable until a "
+                "usable voice is committed.",
+                extra={"event": "tts_reference_invalid", "path": str(ref_path)},
+                exc_info=True,
             )
 
     def _compute_embeddings(self, ref_path: Path) -> None:
