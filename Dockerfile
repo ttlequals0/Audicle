@@ -8,7 +8,7 @@ RUN mkdir -p dist && \
 
 # ---- Stage 2: uv builder ----
 # Pin uv to a single tag for reproducibility; bump deliberately.
-FROM ghcr.io/astral-sh/uv:0.5.8 AS uv
+FROM ghcr.io/astral-sh/uv:0.11.17 AS uv
 
 # ---- Stage 3: Python runtime ----
 FROM python:3.13-slim AS runtime
