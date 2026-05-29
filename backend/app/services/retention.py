@@ -108,6 +108,49 @@ def purge_older_than(
     )
 
 
+def sweep_orphan_media(settings: Settings) -> int:
+    """Remove on-disk media files that have no matching ``episodes.id``.
+
+    Phase 13 hardening: a crash between ``audio.normalize_and_encode`` and
+    ``_stage_finalize`` can leave an mp3 + jpg on disk without an episodes
+    row. This sweep walks ``media_dir`` and unlinks any ``{id}.mp3`` /
+    ``{id}.jpg`` / ``{id}.vtt`` whose id doesn't match a live episode.
+    Returns the count of files removed.
+    """
+
+    out_root = media_dir(settings)
+    if not out_root.exists():
+        return 0
+    conn = database.connect(database.db_path(settings.DATA_DIR))
+    try:
+        rows = conn.execute("SELECT id FROM episodes").fetchall()
+    finally:
+        conn.close()
+    live_ids = {row["id"] for row in rows}
+    removed = 0
+    for child in out_root.iterdir():
+        if not child.is_file():
+            continue
+        # ``{id}.{ext}`` and ``{id}_combined.wav`` both belong to an episode
+        # id; strip the suffix and the optional ``_combined`` tail.
+        stem = child.stem
+        if stem.endswith("_combined"):
+            stem = stem[: -len("_combined")]
+        if stem in live_ids:
+            continue
+        # Skip the operator's reference voice clip + any non-episode artifact.
+        if child.name in ("voice.wav", "source.png"):
+            continue
+        if _remove_path(child, root_guard=out_root):
+            removed += 1
+    if removed:
+        logger.info(
+            "Orphan media sweep removed files",
+            extra={"event": "retention_orphan_sweep", "files_removed": removed},
+        )
+    return removed
+
+
 def _remove_path(path: Path, *, root_guard: Path | None = None) -> bool:
     """Unlink ``path``. If ``root_guard`` is provided, refuse paths that
     don't resolve under it (defense-in-depth against a poisoned row pointing

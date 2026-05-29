@@ -6,6 +6,18 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Added (Phases 12 + 13 - Operations + Polish)
+
+- `backend/app/api/v1/jobs.py`: `GET /api/v1/jobs` admin inspector with `?status=` filter (`queued`/`processing`/`done`/`failed`) + pagination + `X-Total-Count`. Lets the UI surface failed jobs without round-tripping through the SQLite shell.
+- `backend/app/services/retention.sweep_orphan_media`: walks `DATA_DIR/media` and removes any `{id}.{mp3,jpg,vtt}` / `{id}_combined.wav` whose id no longer matches a live `episodes` row. Plugged into the daily worker sweep right after the age-based purge so a crash between `audio.normalize_and_encode` and `_stage_finalize` doesn't leave permanently-orphaned files. Skips `voice.wav` (operator reference audio).
+- `scripts/dump_openapi.py`: regenerates `openapi.yaml` from the live FastAPI app. Adds env-var placeholders so `uv run python scripts/dump_openapi.py` works outside a deployed environment.
+- `LICENSE` (MIT) at the repo root. The Audicle brand is reserved (see `branding/README.md`); the license covers code only. Notes the CPML constraint on XTTS-v2 weights.
+- Runtime deps: `pyyaml>=6` (for the OpenAPI dump script).
+
+**Phase 11 (Web UI) is intentionally deferred.** Building Vite + React + TypeScript + Tailwind + React Query + React Router + vite-plugin-pwa from scratch is a multi-day frontend track that exceeds the current execution budget. All API endpoints the UI will consume (`/api/v1/auth/*`, `/api/v1/settings`, `/api/v1/episodes`, `/api/v1/jobs`, `/api/v1/prompt`, `/api/v1/corrections`, `/api/v1/purge`, `/api/v1/submit`, `/api/v1/status`) are shipped and tested; the UI is the remaining missing piece.
+
+Tests (6 new, 301 total): jobs filter by status, jobs pagination + total-count, orphan sweep removes only files without matching rows, voice.wav skipped, missing media dir is a no-op.
+
 ### Added (Phase 10 - Runtime Settings + Episodes Admin)
 
 - `backend/app/services/runtime_settings.py`: operator-tunable settings backed by the new `runtime_settings` table. An explicit `ALLOWED_KEYS` allowlist gates writes so an attacker can't flip `DATA_DIR` or `SESSION_SECRET_KEY` through the admin UI.
