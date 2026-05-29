@@ -22,6 +22,15 @@ dependencies = [
     "mutagen>=1.47",
     # Phase 6 artwork. Pillow reads JPEG/PNG/WebP/GIF/BMP/TIFF.
     "pillow>=10.4",
+    # Phase 7 RSS feed. feedgen renders the iTunes/Atom/PSC namespaces; PC2
+    # tags are appended via string-level XML construction afterwards because
+    # feedgen doesn't model the namespace natively.
+    "feedgen>=1.0",
+    # defusedxml.ElementTree.fromstring blocks XXE / billion-laughs / DTD
+    # retrieval that stdlib xml.etree allows by default. The feed parser
+    # only ever reads feedgen's own output (no attacker input), but
+    # defense-in-depth is cheap and the linter flags any stdlib XML parse.
+    "defusedxml>=0.7",
 ]
 
 [tool.uv.sources]

@@ -1,0 +1,149 @@
+"""CRUD helpers for the ``episodes`` table.
+
+The pipeline's finalize stage upserts a row here; the RSS render and the
+media handlers read from it. ``original_url`` is the natural deduplication
+key so re-running a job for the same URL updates the existing row rather
+than producing a second feed entry.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Episode:
+    id: str
+    job_id: str | None
+    title: str | None
+    author: str | None
+    original_url: str
+    audio_path: str | None
+    artwork_path: str | None
+    transcript_vtt: str | None
+    duration_secs: int | None
+    pub_date: str
+    created_at: str
+    updated_at: str
+
+
+_SELECT_COLUMNS = (
+    "id, job_id, title, author, original_url, audio_path, artwork_path, "
+    "transcript_vtt, duration_secs, pub_date, created_at, updated_at"
+)
+
+
+def _row_to_episode(row: sqlite3.Row) -> Episode:
+    return Episode(
+        id=row["id"],
+        job_id=row["job_id"],
+        title=row["title"],
+        author=row["author"],
+        original_url=row["original_url"],
+        audio_path=row["audio_path"],
+        artwork_path=row["artwork_path"],
+        transcript_vtt=row["transcript_vtt"],
+        duration_secs=row["duration_secs"],
+        pub_date=row["pub_date"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def upsert(
+    conn: sqlite3.Connection,
+    *,
+    id: str,
+    job_id: str | None,
+    original_url: str,
+    title: str | None,
+    author: str | None,
+    audio_path: str | None,
+    artwork_path: str | None,
+    transcript_vtt: str | None,
+    duration_secs: int | None,
+) -> Episode:
+    """Insert a new episode row, or update the existing one keyed by id.
+
+    On update, ``pub_date`` is preserved (the original publish moment) but
+    ``updated_at`` is bumped to now so RSS clients see a fresh ``lastBuildDate``.
+    """
+
+    conn.execute(
+        """
+        INSERT INTO episodes (
+            id, job_id, title, author, original_url, audio_path,
+            artwork_path, transcript_vtt, duration_secs
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            job_id          = excluded.job_id,
+            title           = excluded.title,
+            author          = excluded.author,
+            original_url    = excluded.original_url,
+            audio_path      = excluded.audio_path,
+            artwork_path    = excluded.artwork_path,
+            transcript_vtt  = excluded.transcript_vtt,
+            duration_secs   = excluded.duration_secs,
+            updated_at      = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+        """,
+        (
+            id,
+            job_id,
+            title,
+            author,
+            original_url,
+            audio_path,
+            artwork_path,
+            transcript_vtt,
+            duration_secs,
+        ),
+    )
+    conn.commit()
+    row = conn.execute(f"SELECT {_SELECT_COLUMNS} FROM episodes WHERE id = ?", (id,)).fetchone()
+    if row is None:
+        # ``assert`` would disappear under ``python -O``; a real check stays.
+        raise RuntimeError(f"episode {id!r} disappeared between upsert and SELECT")
+    return _row_to_episode(row)
+
+
+def get_by_id(conn: sqlite3.Connection, episode_id: str) -> Episode | None:
+    row = conn.execute(
+        f"SELECT {_SELECT_COLUMNS} FROM episodes WHERE id = ?", (episode_id,)
+    ).fetchone()
+    return None if row is None else _row_to_episode(row)
+
+
+def list_published(conn: sqlite3.Connection) -> list[Episode]:
+    """Return episodes in newest-first order for RSS rendering.
+
+    Filters to rows that have a non-NULL ``audio_path`` so a half-finalized
+    row (audio still pending) doesn't leak into the feed.
+    """
+
+    rows = conn.execute(
+        f"""
+        SELECT {_SELECT_COLUMNS}
+        FROM episodes
+        WHERE audio_path IS NOT NULL
+        ORDER BY pub_date DESC, created_at DESC
+        """
+    ).fetchall()
+    return [_row_to_episode(row) for row in rows]
+
+
+def latest_updated_at(conn: sqlite3.Connection) -> str | None:
+    """Most-recent ``updated_at`` across published episodes, for the RSS
+    ``Last-Modified`` header and the ``<lastBuildDate>`` channel field."""
+
+    row = conn.execute(
+        """
+        SELECT updated_at
+        FROM episodes
+        WHERE audio_path IS NOT NULL
+        ORDER BY updated_at DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    return None if row is None else row["updated_at"]

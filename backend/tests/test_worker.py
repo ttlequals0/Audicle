@@ -104,7 +104,7 @@ async def test_pickup_runs_pipeline_against_a_queued_job(
     finally:
         conn.close()
     assert row["status"] == "done"
-    assert row["stage"] == "transcript"
+    assert row["stage"] == "finalize"
     assert row["error"] is None
 
 

@@ -161,8 +161,23 @@ def _m001_initial_schema(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_pub_date ON episodes(pub_date DESC)")
 
 
+def _m002_settings_kv(conn: sqlite3.Connection) -> None:
+    """Phase 7: settings key/value store (podcast:guid, future runtime knobs)."""
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS settings (
+            key         TEXT PRIMARY KEY,
+            value       TEXT NOT NULL,
+            updated_at  TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        )
+        """
+    )
+
+
 MIGRATIONS: list[tuple[str, Migration]] = [
     ("001_initial_schema", _m001_initial_schema),
+    ("002_settings_kv", _m002_settings_kv),
 ]
 
 

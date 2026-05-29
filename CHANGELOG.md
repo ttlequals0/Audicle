@@ -6,6 +6,53 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Added (Phase 7 - RSS Feed and Media Serving)
+
+- Pipeline now runs **extract -> cleanup -> corrections -> chunk -> tts -> audio -> artwork -> transcript -> finalize**. Final `status=done` with `stage=finalize`. The finalize stage upserts a row into the `episodes` table that the RSS feed and media handlers read from.
+- `backend/app/core/database.py`: migration `002_settings_kv` appends a `settings(key, value, updated_at)` k/v table for `podcast:guid` and future runtime knobs. Phase-1 schema is left untouched.
+- `backend/app/services/episodes.py`: typed `Episode` dataclass + `upsert`, `get_by_id`, `list_published` (newest-first, filters out rows with `audio_path IS NULL` so half-finalized jobs don't leak into the feed), `latest_updated_at` (for the RSS `Last-Modified` header and `<lastBuildDate>` field). `upsert` preserves `pub_date` on update (original publish moment) but bumps `updated_at` so clients see a fresh build.
+- `backend/app/services/settings_store.py`: k/v get/set + `get_or_init_podcast_guid` which derives a UUIDv5 from `BASE_URL` on first call and persists it. The PC2 spec requires the guid stay stable across feed-URL changes, so the persisted value is returned verbatim on subsequent calls regardless of `BASE_URL`.
+- `backend/app/services/feed.py`: `render(episodes, settings, podcast_guid, last_build) -> bytes`. feedgen renders Atom + iTunes namespaces; PC2 (`podcast:` namespace) tags are layered on via string-level XML construction afterwards (`podcast:guid`, `podcast:locked` with `owner=FEED_EMAIL`, `podcast:txt purpose="ai-content"` at channel level; `podcast:transcript` per item when `transcript_vtt` is present). Item enclosures get the on-disk MP3 size via `Path.stat().st_size` (missing files report length=0 rather than 500). `itunes:duration` renders as `HH:MM:SS`. Uses `defusedxml.ElementTree.fromstring` for parsing feedgen's output — XXE/billion-laughs defense-in-depth, even though the parser only ever sees our own output.
+- `backend/app/api/rss.py`: `GET /rss/rss.xml` -- streams the rendered feed with `Cache-Control: public, max-age=RSS_CACHE_MAX_AGE_SECONDS` and `Last-Modified` derived from the newest episode's `updated_at` (or the channel build time when the feed is empty). `If-Modified-Since` round-trips to `304 Not Modified` so podcast clients don't refetch the full body on every poll.
+- `backend/app/api/media.py`: `GET /media/{episode_id}.mp3`, `/media/{episode_id}.jpg` serve from disk via `FileResponse` with the right content-types and a 24h cache. `GET /media/{episode_id}.vtt` serves the transcript directly from the episode row's `transcript_vtt` column with `Cache-Control: public, max-age=86400`. The `episode_id` route parameter is validated against a strict allowlist (`^[A-Za-z0-9_-]+$`) so a client can't use `..` or absolute paths to escape `DATA_DIR/media`.
+- `backend/app/services/pipeline.py`: `_stage_finalize` calls `episodes.upsert` with the live audio/artwork/vtt/duration produced by prior stages. Title and author come from the extraction metadata; when Firecrawl doesn't report an author the row falls back to `FEED_AUTHOR` so the iTunes author field stays populated. The transcript stage no longer drops its VTT on the floor.
+- `backend/app/main.py`: mounted `rss` and `media` routers at the root prefix (the build-plan paths are `/rss/rss.xml` and `/media/{id}.{ext}`, not `/api/v1/*`).
+- Runtime deps: `feedgen>=1.0`, `defusedxml>=0.7` (plus transitive `lxml`, `python-dateutil`).
+
+Tests (43 new, 240 total)
+
+- `test_episodes.py` (5): insert + update by same id (pub_date preserved on update), list_published newest-first ordering, half-finalized rows excluded, get_by_id None for unknown, latest_updated_at tracks most-recent published.
+- `test_settings_store.py` (7): get/set round-trip, upsert on existing key, get_or_init persists first call, stable across calls, UUIDv5 of BASE_URL is reproducible, returns persisted value even when BASE_URL changes.
+- `test_feed.py` (13): channel title/description/language/image, PC2 guid/locked/txt tags, enclosure length from filesize (and 0 when missing), itunes:duration HH:MM:SS, podcast:transcript present when VTT, omitted when not, per-episode jpg vs feed-level artwork fallback, atom:link self pointing at /rss/rss.xml, `_hms` edge cases (zero, negative, hour rollover), `_parse_iso` Z-suffix and garbage handling.
+- `test_api_rss.py` (7): 200 with valid XML body, Cache-Control header, Last-Modified round-trips to 304, full body when client is older, podcast:guid persists across requests, empty channel for no episodes, half-finalized rows excluded.
+- `test_api_media.py` (9): mp3/jpg/vtt 200 with correct content-types, 404 on missing files / missing episode / null transcript, path-traversal blocked at the route boundary (`..%2f` URL-encoded), dot-prefixed ids rejected by the allowlist regex.
+- `test_pipeline.py` (2): finalize upserts the episode row with audio/artwork/vtt/duration from the in-memory pipeline state; FEED_AUTHOR fallback when extraction metadata has no author.
+
+### Code-review pass (multi-agent /simplify + /code-review for Phase 7)
+
+Findings surfaced and applied:
+
+- **Channel `<link>` was pointing at the feed URL, not BASE_URL**: feedgen's `link()` setter binds the channel `<link>` to the *last* href passed. The original code called `rel='alternate'` then `rel='self'`, so the rendered `<link>` carried `/rss/rss.xml`. Swapped the order so `rel='self'` runs first and the channel `<link>` correctly renders BASE_URL (the website).
+- **Stdlib ElementTree was emitting `ns0:` / `ns1:` prefixes after the round-trip**: only the `podcast` namespace was registered, so the re-serialized feed lost the `atom:` and `itunes:` prefixes. Apple Podcasts and Cast Feed Validator reject the auto-prefixed forms. Now registers `atom`, `itunes`, and `podcast` namespaces at module load (before any render).
+- **PC2 channel tags were appended after `<item>` elements**: `ET.SubElement(channel, ...)` appends, so `podcast:guid` / `podcast:locked` / `podcast:txt` ended up at the bottom of the channel after all items. Some PC2 validators warn. Switched to `channel.insert(idx_before_first_item, el)` and added a `_first_item_index` helper.
+- **`podcast:guid` was derived from `uuid.NAMESPACE_URL` instead of the PC2 namespace**: the PC2 spec mandates UUIDv5 over the namespace `ead4c236-bf58-58c6-a2c6-a6b28d128cb6` with the scheme stripped and trailing slash removed. The previous derivation produced a value no other PC2-aware tool would compute for the same feed, defeating cross-aggregator deduplication. Added `_canonical_feed_url` helper, switched to the spec-mandated namespace.
+- **`podcast:txt` text was the literal string `"true"`**: not a recognized sentinel for any PC2 purpose. PC2-aware clients (Fountain, Podverse) display the body verbatim, which read as broken. Replaced with a human-readable disclosure (`"This podcast contains AI-generated narration via TTS."`) while keeping `purpose="ai-content"` on the attribute.
+- **Missing `<itunes:type>episodic</itunes:type>`**: Apple Podcasts defaults to serial-style ordering without this tag, which is wrong for the news/article-narration use case. Added via `fg.podcast.itunes_type("episodic")`.
+- **Missing `<podcast:medium>podcast</podcast:medium>`**: PC2-aware aggregators use this to route the feed into the correct player section. Added at the top of the PC2 channel block.
+- **`<image>` was missing `<title>` and `<link>` subelements**: RSS 2.0 requires all three; validators reject otherwise. Now passes `title=` and `link=` to `fg.image`.
+- **`zip(items, episodes, strict=False)` could silently misalign transcripts**: if feedgen ever filters or reorders entries, the per-item `podcast:transcript` URLs would attach to wrong items without a test failure. Switched to `strict=True` so the failure surfaces loudly.
+- **Bare `assert row is not None` in `episodes.upsert`**: removed under `python -O`, would surface a confusing `TypeError` instead of a clear failure. Replaced with `if row is None: raise RuntimeError(...)`.
+- **Path-traversal test passed for the wrong reason**: the encoded `..%2f` URL caused Starlette's router (not the in-handler regex) to 404. Added `test_media_routes_reject_dot_prefixed_id` that asserts the lowercase `"not found"` body shape from the custom error handler, proving `_validate_episode_id` actually fired.
+- **Cleanup**: removed unused `now_utc()` helper, removed unused `response: Response` parameter from `rss.py:get_rss`, dropped redundant `int(seconds)` cast in `_hms`, inlined the `_PODCAST_GUID_NAMESPACE` alias.
+
+New tests added by the review pass (8 more, 245 total):
+
+- `test_feed.py`: PC2 channel tags precede items, `itunes:type=episodic` present, `<image>` has `<url>`+`<title>`+`<link>`, channel `<link>` points at BASE_URL not the feed URL, `podcast:medium=podcast` present, `podcast:txt` carries the human-readable disclosure.
+- `test_settings_store.py`: `podcast:guid` is UUIDv5 over the PC2 namespace with the URL canonicalized (scheme stripped, trailing slash removed); `_canonical_feed_url` round-trips three input shapes.
+- `test_api_media.py`: `_validate_episode_id` rejection produces the lowercase `"not found"` body (proves the in-handler regex defense actually fires, not just FastAPI's router).
+
+Container smoke (`tmp/phase7_smoke.sh`) verified inside the runtime image: feedgen + defusedxml + lxml load in the slim image; seeded a synthetic episode, fetched `/rss/rss.xml` (200, 1957 B, `application/rss+xml`), validated the PC2 namespace via `defusedxml.ElementTree`, confirmed `itunes:duration=00:02:05`, `podcast:guid` is a stable UUIDv5, `enclosure length=13` matches the seeded MP3 bytes, `/media/{id}.mp3` returns `audio/mpeg`, `/media/{id}.jpg` returns `image/jpeg`, `/media/{id}.vtt` returns `text/vtt` with `Cache-Control: max-age=86400`, and `If-Modified-Since` round-trips to `304 Not Modified`.
+
 ### Added (Phase 6 - Artwork + Transcripts)
 
 - Pipeline now runs **extract → cleanup → corrections → chunk → tts → audio → artwork → transcript**. Final `status=done` with `stage=transcript`. Phase 7 will append finalize (which inserts/updates the episodes row + writes the transcript to disk).
