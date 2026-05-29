@@ -7,7 +7,7 @@ declared type via ``Settings.__class__.model_fields`` introspection.
 
 ``overlay(settings)`` returns a copy of ``Settings`` with the
 ``runtime_settings`` row values applied on top of the env defaults. This is
-the resolution chain Phase 10's docstring promises:
+the resolution chain:
 
     code default -> env var (Pydantic) -> runtime_settings DB row
 """
@@ -35,14 +35,38 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "FEED_EXPLICIT",
         "FEED_ARTWORK_URL",
         "RETENTION_DAYS",
+        # Connections: the bundled service URLs are operator-tunable so they can
+        # be pointed at an external Firecrawl/TTS without an env edit + restart.
+        "FIRECRAWL_URL",
+        "TTS_URL",
         "TTS_CHUNK_TARGET_WORDS",
         "TTS_CHUNK_MAX_WORDS",
         "TTS_CHUNK_SILENCE_MS",
         "RSS_CACHE_MAX_AGE_SECONDS",
         "MIN_CLEANUP_CHARS",
         "MAX_PROMPT_LENGTH_BYTES",
+        # LLM provider group (build-plan Settings UI). API keys are stored but
+        # masked on read -- see MASKED_KEYS and api/v1/settings.py.
+        "LLM_PROVIDER",
+        "LLM_MODEL",
+        "OPENAI_BASE_URL",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "LLM_TEMPERATURE",
+        "LLM_MAX_TOKENS",
+        "LLM_TIMEOUT_SECONDS",
+        "LLM_RETRY_COUNT",
     }
 )
+
+# Secret-bearing keys: their stored value is never returned by GET (masked to a
+# sentinel) so the Settings UI can show "set" without leaking the credential.
+MASKED_KEYS: frozenset[str] = frozenset({"OPENAI_API_KEY", "ANTHROPIC_API_KEY"})
+
+# Sentinel returned by GET for a masked key that has a stored override, and
+# recognized by PUT as "leave unchanged" so re-saving the form doesn't clobber
+# the secret with the mask.
+MASK_SENTINEL = "********"
 
 
 def get_all(conn: sqlite3.Connection) -> dict[str, str]:

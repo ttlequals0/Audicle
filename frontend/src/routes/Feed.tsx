@@ -35,8 +35,19 @@ function usePullToRefresh(onRefresh: () => void) {
 
 export default function Feed() {
   const [copied, setCopied] = useState(false);
+  const [actionMsg, setActionMsg] = useState<string | null>(null);
   const feedUrl = `${window.location.origin}/rss/rss.xml`;
   const qc = useQueryClient();
+
+  const onActionError = (verb: string) => (err: unknown) => {
+    const status = (err as { status?: number })?.status;
+    setActionMsg(
+      status === 409
+        ? "already queued or processing for that URL"
+        : `${verb} failed${status ? ` (HTTP ${status})` : ""}`,
+    );
+    setTimeout(() => setActionMsg(null), 4000);
+  };
 
   const episodesQ = useQuery({
     queryKey: ["episodes"],
@@ -50,6 +61,21 @@ export default function Feed() {
     mutationFn: (id: string) =>
       api(`/api/v1/episodes/${id}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["episodes"] }),
+    onError: onActionError("delete"),
+  });
+
+  const reprocessM = useMutation({
+    mutationFn: (url: string) =>
+      api("/api/v1/submit", {
+        method: "POST",
+        body: JSON.stringify({ url, reprocess: true }),
+      }),
+    onSuccess: () => {
+      setActionMsg("reprocess queued");
+      setTimeout(() => setActionMsg(null), 4000);
+      qc.invalidateQueries({ queryKey: ["episodes"] });
+    },
+    onError: onActionError("reprocess"),
   });
 
   const copy = async () => {
@@ -76,39 +102,87 @@ export default function Feed() {
       </section>
 
       <section>
-        <h2 className="font-mono uppercase text-xs text-dim mb-3">episodes</h2>
-        {episodesQ.isLoading && <p className="text-mute text-sm">loading…</p>}
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-mono uppercase text-xs text-dim">episodes</h2>
+          {actionMsg && (
+            <span className="font-mono text-[11px] text-accent">{actionMsg}</span>
+          )}
+        </div>
+        {episodesQ.isLoading && <p className="text-mute text-sm">loading...</p>}
         {episodesQ.data && episodesQ.data.length === 0 && (
           <p className="text-mute text-sm">no episodes yet.</p>
         )}
         <ul className="space-y-2">
           {(episodesQ.data ?? []).map((ep) => (
             <li key={ep.id} className="card">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-sm truncate">{ep.title ?? ep.original_url}</p>
-                  <p className="font-mono text-[11px] text-mute truncate mt-1">
-                    {ep.id} &middot; {formatDuration(ep.duration_secs)} &middot; {ep.pub_date}
-                  </p>
-                </div>
-                <div className="flex flex-col gap-1">
+              <div className="flex items-start gap-3">
+                {ep.artwork_path ? (
+                  <img
+                    src={`/media/${ep.id}.jpg`}
+                    alt=""
+                    className="h-16 w-16 flex-none rounded border border-line object-cover"
+                  />
+                ) : (
+                  <div className="h-16 w-16 flex-none rounded border border-line bg-surface" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[10px] uppercase text-accent border border-line rounded px-1.5 py-0.5">
+                      done
+                    </span>
+                    <span className="font-mono text-[11px] text-mute truncate">
+                      {ep.id} &middot; {formatDuration(ep.duration_secs)}
+                    </span>
+                  </div>
                   <a
-                    className="btn-ghost text-center"
-                    href={`/media/${ep.id}.mp3`}
+                    href={ep.original_url}
                     target="_blank"
                     rel="noreferrer"
+                    className="block text-sm mt-1 line-clamp-2 hover:text-accent"
                   >
-                    mp3
+                    {ep.title ?? ep.original_url}
                   </a>
-                  <button
-                    className="btn-ghost btn-danger text-danger border-line"
-                    disabled={deleteM.isPending}
-                    onClick={() => {
-                      if (confirm(`Delete episode ${ep.id}?`)) deleteM.mutate(ep.id);
-                    }}
-                  >
-                    delete
-                  </button>
+                  <p className="font-mono text-[11px] text-mute truncate mt-1">
+                    {ep.author ? <>{ep.author} &middot; </> : ""}
+                    {sourceDomain(ep.original_url)} &middot; {ep.pub_date}
+                  </p>
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    <a
+                      className="btn-ghost"
+                      href={`/media/${ep.id}.mp3`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      mp3
+                    </a>
+                    <a
+                      className="btn-ghost"
+                      href={`/media/${ep.id}.vtt`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      transcript
+                    </a>
+                    <button
+                      className="btn-ghost"
+                      disabled={reprocessM.isPending}
+                      onClick={() => {
+                        if (confirm(`Reprocess "${ep.title ?? ep.original_url}"?`))
+                          reprocessM.mutate(ep.original_url);
+                      }}
+                    >
+                      reprocess
+                    </button>
+                    <button
+                      className="btn-ghost btn-danger text-danger border-line"
+                      disabled={deleteM.isPending}
+                      onClick={() => {
+                        if (confirm(`Delete episode ${ep.id}?`)) deleteM.mutate(ep.id);
+                      }}
+                    >
+                      delete
+                    </button>
+                  </div>
                 </div>
               </div>
             </li>
@@ -117,6 +191,14 @@ export default function Feed() {
       </section>
     </div>
   );
+}
+
+function sourceDomain(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
 }
 
 function formatDuration(secs: number | null): string {

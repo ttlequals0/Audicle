@@ -1,10 +1,10 @@
 """FastAPI dependencies for auth + CSRF enforcement.
 
-Mutating admin endpoints (``PUT /prompt``, ``PUT /corrections``,
-``POST /purge``) depend on ``require_admin`` which is a no-op when
-``AUTH_ENABLED=false`` and otherwise asserts a valid session cookie + CSRF
-header. Read-only endpoints (``GET /status``, ``GET /rss/rss.xml``,
-``GET /media/*``) remain unauthenticated so podcast clients can subscribe.
+Mutating admin endpoints depend on ``require_admin``. When no admin password is
+set (the open convenience mode for a single-operator localhost install) it is a
+no-op; once a password is set it requires a valid session cookie plus a CSRF
+header on mutating methods. Read-only public routes (``/rss/*``, ``/media/*``)
+stay unauthenticated so podcast clients can subscribe.
 """
 
 from __future__ import annotations
@@ -14,7 +14,8 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, Request
 
 from app.config import Settings, get_settings
-from app.services import csrf
+from app.core import database
+from app.services import auth, csrf
 
 SESSION_KEY_USER = "audicle_user"
 
@@ -23,18 +24,16 @@ def require_admin(
     request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> None:
-    """Allow the request through only if either auth is disabled (single-
-    operator install) or the session cookie + CSRF header are both valid.
-    """
+    """Allow the request only in convenience mode (no password set) or when the
+    session cookie + CSRF header are both valid."""
 
-    if not settings.AUTH_ENABLED:
+    with database.connection(settings.DATA_DIR) as conn:
+        password_set = auth.is_password_set(conn)
+    if not password_set:
         return
-    user = request.session.get(SESSION_KEY_USER)
-    if not user:
+    if not request.session.get(SESSION_KEY_USER):
         raise HTTPException(status_code=401, detail="login required")
-    # Skip CSRF on safe methods. The header is a write-side defense; a
-    # cookie-authenticated GET in a fresh tab (before the UI has loaded the
-    # cookie into memory) should warm the cache, not 403.
+    # Safe methods don't need the CSRF header (it's a write-side defense).
     if request.method in {"GET", "HEAD", "OPTIONS"}:
         return
     if not csrf.verify_token(

@@ -140,7 +140,7 @@ Migration = Callable[[sqlite3.Connection], None]
 
 
 def _m001_initial_schema(conn: sqlite3.Connection) -> None:
-    """Phase 1: jobs and episodes."""
+    """Schema: jobs and episodes."""
 
     conn.execute(
         """
@@ -179,7 +179,7 @@ def _m001_initial_schema(conn: sqlite3.Connection) -> None:
 
 
 def _m002_settings_kv(conn: sqlite3.Connection) -> None:
-    """Phase 7: settings key/value store (podcast:guid, future runtime knobs)."""
+    """Settings key/value store (podcast:guid, future runtime knobs)."""
 
     conn.execute(
         """
@@ -193,7 +193,7 @@ def _m002_settings_kv(conn: sqlite3.Connection) -> None:
 
 
 def _m003_auth_lockout(conn: sqlite3.Connection) -> None:
-    """Phase 9: track failed login attempts + lockout window per identifier.
+    """Track failed login attempts + lockout window per identifier.
 
     ``identifier`` is the lower-cased username (single-user admin today but
     the schema doesn't bake that in). ``lockout_until`` is the ISO timestamp
@@ -214,7 +214,7 @@ def _m003_auth_lockout(conn: sqlite3.Connection) -> None:
 
 
 def _m004_runtime_settings(conn: sqlite3.Connection) -> None:
-    """Phase 10: operator-tunable settings that override env defaults at
+    """Operator-tunable settings that override env defaults at
     request time. Keys are constrained to the Phase-10 allowlist; values
     are stored as strings and coerced by the resolver."""
 

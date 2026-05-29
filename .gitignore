@@ -1,5 +1,6 @@
 CLAUDE.md
 tmp/
+ref_audio/
 
 # Python
 __pycache__/

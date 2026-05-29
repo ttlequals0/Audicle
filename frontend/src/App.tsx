@@ -1,12 +1,18 @@
 import { Routes, Route, NavLink, Navigate } from "react-router-dom";
+import { useMutation } from "@tanstack/react-query";
 import { AuthProvider, useAuth } from "./lib/auth";
+import { api } from "./lib/api";
 import Home from "./routes/Home";
 import Feed from "./routes/Feed";
 import SettingsRoute from "./routes/Settings";
 import Login from "./routes/Login";
 
 function Shell() {
-  const { status } = useAuth();
+  const { status, refresh } = useAuth();
+  const logoutM = useMutation({
+    mutationFn: () => api("/api/v1/auth/logout", { method: "POST" }),
+    onSuccess: () => refresh(),
+  });
   return (
     <div className="min-h-screen flex flex-col">
       <header className="border-b border-line">
@@ -14,17 +20,21 @@ function Shell() {
           <NavLink to="/" className="font-mono uppercase tracking-wider text-accent">
             audicle
           </NavLink>
-          {status?.auth_enabled && status?.logged_in ? (
-            <span className="font-mono text-[11px] text-dim">
-              {status.username}
-            </span>
-          ) : status?.auth_enabled ? (
+          {status?.password_set && status?.authenticated ? (
+            <button
+              className="btn-ghost"
+              disabled={logoutM.isPending}
+              onClick={() => logoutM.mutate()}
+            >
+              logout
+            </button>
+          ) : status?.password_set ? (
             <NavLink to="/login" className="btn-ghost">
               login
             </NavLink>
           ) : (
             <span className="font-mono text-[11px] text-dim">
-              auth disabled
+              no password set
             </span>
           )}
         </div>

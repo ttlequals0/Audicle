@@ -38,6 +38,7 @@ class FakeEngine:
     """
 
     sample_rate = 24000
+    device = "cpu"
 
     def __init__(
         self,
@@ -88,7 +89,15 @@ def test_health_200_when_model_and_reference_loaded(tmp_path: Path) -> None:
         response = client.get("/health")
     assert response.status_code == 200
     body = response.json()
-    assert body == {"ok": True, "model_loaded": True, "reference_loaded": True}
+    # Core liveness flags are exact; the metadata fields (version/torch/
+    # coqui_tts/device/sample_rate) the main app aggregates into
+    # components.tts_wrapper are environment-dependent, so assert presence.
+    assert body["ok"] is True
+    assert body["model_loaded"] is True
+    assert body["reference_loaded"] is True
+    assert body["version"] == "0.2.0"
+    for key in ("torch", "coqui_tts", "device", "sample_rate"):
+        assert key in body
 
 
 def test_health_503_when_reference_not_loaded(tmp_path: Path) -> None:
@@ -103,8 +112,38 @@ def test_health_503_when_reference_not_loaded(tmp_path: Path) -> None:
     assert body["ok"] is False
     assert body["model_loaded"] is True
     assert body["reference_loaded"] is False
-    # Build-plan spec line 803: 503 body includes a diagnostic "error" string.
+    # 503 body includes a diagnostic "error" string.
     assert "reference voice not loaded" in body["error"]
+
+
+def test_generate_503_when_reference_not_loaded(tmp_path: Path) -> None:
+    """With the model up but no committed voice, /generate refuses rather than
+    synthesizing with no speaker; the operator uploads a voice via the UI first."""
+
+    engine = FakeEngine()
+    with _client(engine, tmp_path) as client:
+        engine.reference_loaded = False
+        response = client.post(
+            "/generate", json={"text": "hello there", "episode_id": "ep1", "chunk_index": 0}
+        )
+    assert response.status_code == 503
+    assert "no reference voice" in str(response.json()["detail"])
+
+
+def test_health_live_200_without_reference(tmp_path: Path) -> None:
+    """Liveness is satisfied by the model alone. A voice-less wrapper returns
+    503 on /health (readiness) but must be 200 on /health/live, or the app's
+    depends_on(service_healthy) deadlocks waiting for a voice that can only be
+    uploaded after the app starts."""
+
+    engine = FakeEngine()
+    with _client(engine, tmp_path) as client:
+        engine.reference_loaded = False
+        live = client.get("/health/live")
+        ready = client.get("/health")
+    assert live.status_code == 200
+    assert live.json()["model_loaded"] is True
+    assert ready.status_code == 503
 
 
 # --- /generate ------------------------------------------------------------

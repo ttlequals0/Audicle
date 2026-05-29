@@ -1,7 +1,7 @@
 """Wrapper-side configuration.
 
 Loaded from environment variables so the operator can tune generation params
-without rebuilding the image. Defaults match build-plan.md:
+without rebuilding the image.
 "Generation parameters in config.py, tunable: temperature 0.65,
 length_penalty 1.0, repetition_penalty 2.0, top_k 50, top_p 0.85".
 """

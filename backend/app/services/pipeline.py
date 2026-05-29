@@ -1,6 +1,6 @@
 """Job processing pipeline orchestrator.
 
-Phase 7 wires the full chain: extract -> cleanup -> corrections -> chunk ->
+The full chain: extract -> cleanup -> corrections -> chunk ->
 tts -> audio -> artwork -> transcript -> finalize. Finalize upserts the
 ``episodes`` row that the RSS feed and ``/media/{id}.{mp3,jpg,vtt}``
 handlers serve.
@@ -70,9 +70,8 @@ def _stage_context(stage_name: str):
 async def process_job(job: jobs.Job, settings: Settings) -> None:
     """Run the configured pipeline stages against ``job``.
 
-    Phase 2: extract only, then mark done. On any failure write
-    ``stage`` + ``error`` and set status=failed. On timeout report the last
-    persisted stage in the error message.
+    On any failure write ``stage`` + ``error`` and set status=failed. On
+    timeout report the last persisted stage in the error message.
     """
 
     with _job_context(job):
@@ -156,11 +155,9 @@ def _finalize_failure(
 
 
 async def _run_stages(job: jobs.Job, settings: Settings) -> None:
-    """Phase 6 pipeline: extract -> cleanup -> corrections -> chunk -> tts ->
-    audio -> artwork -> transcript.
-
-    Phase 7+ appends finalize (which inserts/updates the episodes row).
-    """
+    """Run the stages in order: extract -> cleanup -> corrections -> chunk ->
+    tts -> audio -> artwork -> transcript -> finalize (finalize inserts/updates
+    the episodes row)."""
 
     extraction_result = await _run_stage(
         "extract", lambda: _stage_extract(job, settings), job.id, settings
@@ -372,7 +369,7 @@ async def _stage_audio(
     """Trim / concat / normalize / encode the per-chunk WAVs into an MP3.
 
     Removes per-chunk WAVs and the concatenated WAV on both success and
-    failure -- no persistent debug artifacts per build-plan.
+    failure -- no persistent debug artifacts.
     """
 
     out_root = media_dir(settings)
@@ -405,7 +402,7 @@ async def _stage_artwork(
     """Download + process the article's og:image.
 
     Never raises -- returns None on any documented failure so the pipeline
-    advances to transcript regardless. RSS (Phase 7) renders the feed-level
+    advances to transcript regardless. RSS renders the feed-level
     artwork for episodes with no per-episode JPG on disk.
     """
 

@@ -1,7 +1,7 @@
 """Shared filesystem path helpers.
 
 Single source of truth for the on-disk layout under ``DATA_DIR``. Stages and
-Phase 7's finalize use these to avoid hard-coding ``settings.DATA_DIR /
+The finalize stage uses these to avoid hard-coding ``settings.DATA_DIR /
 "media"`` in multiple places and drifting when the layout changes.
 """
 

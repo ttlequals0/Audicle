@@ -1,4 +1,4 @@
-"""RSS feed generation per build-plan.md Phase 7.
+"""RSS feed generation.
 
 feedgen renders the Atom + iTunes namespaces; the Podcasting 2.0 (``podcast:``)
 namespace is layered on via string-level XML construction afterwards because
@@ -12,6 +12,7 @@ restarts and feed-URL changes.
 
 from __future__ import annotations
 
+import html
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -56,9 +57,20 @@ def render(
     fg = FeedGenerator()
     fg.load_extension("podcast")  # iTunes namespace shortcut
 
-    fg.title(settings.FEED_TITLE)
+    # FEED_* are operator-set at runtime and may be empty on a fresh, unconfigured
+    # install. Emit title (defaults to "Audicle") and description always; gate
+    # author/owner/artwork on non-empty values so an empty feed still validates.
+    # Compute title + author once so "which fields are present" lives in one spot.
+    title = settings.FEED_TITLE or "Audicle"
+    author = {
+        key: value
+        for key, value in (("name", settings.FEED_AUTHOR), ("email", settings.FEED_EMAIL))
+        if value
+    }
+    fg.title(title)
     fg.description(settings.FEED_DESCRIPTION)
-    fg.author({"name": settings.FEED_AUTHOR, "email": settings.FEED_EMAIL})
+    if author:
+        fg.author(author)
     fg.language(settings.FEED_LANGUAGE)
     # Order matters: feedgen's channel ``<link>`` is bound to the LAST link()
     # call. Call the atom ``rel="self"`` first so the channel ``<link>``
@@ -68,17 +80,16 @@ def render(
     fg.link(href=f"{settings.BASE_URL.rstrip('/')}/rss/rss.xml", rel="self")
     fg.link(href=settings.BASE_URL, rel="alternate")
     # Legacy ``<image>`` needs ``<title>`` and ``<link>`` per RSS 2.0 to
-    # validate; the build plan calls these out explicitly.
-    fg.image(
-        url=settings.FEED_ARTWORK_URL,
-        title=settings.FEED_TITLE,
-        link=settings.BASE_URL,
-    )
+    # validate; only emit it when artwork is configured.
+    if settings.FEED_ARTWORK_URL:
+        fg.image(url=settings.FEED_ARTWORK_URL, title=title, link=settings.BASE_URL)
+        fg.podcast.itunes_image(settings.FEED_ARTWORK_URL)
     fg.lastBuildDate(last_build)
-    fg.podcast.itunes_author(settings.FEED_AUTHOR)
-    fg.podcast.itunes_owner(name=settings.FEED_AUTHOR, email=settings.FEED_EMAIL)
+    if settings.FEED_AUTHOR:
+        fg.podcast.itunes_author(settings.FEED_AUTHOR)
+    if author:
+        fg.podcast.itunes_owner(name=author.get("name"), email=author.get("email"))
     fg.podcast.itunes_category(settings.FEED_CATEGORY)
-    fg.podcast.itunes_image(settings.FEED_ARTWORK_URL)
     fg.podcast.itunes_explicit("yes" if settings.FEED_EXPLICIT else "no")
     fg.podcast.itunes_summary(settings.FEED_DESCRIPTION)
     # Tell Apple Podcasts this is an episodic (not serial) feed so the UI
@@ -100,7 +111,8 @@ def render(
         if ep.author:
             item.author({"name": ep.author})
         item.link(href=ep.original_url)
-        item.description(ep.title or ep.original_url)
+        item.description(_episode_description_html(ep))
+        item.podcast.itunes_summary(_episode_summary(ep))
         item.pubDate(_parse_iso(ep.pub_date) or last_build)
         if ep.audio_path:
             audio_url = _media_url(settings.BASE_URL, ep.id, "mp3")
@@ -125,6 +137,30 @@ def render(
         episodes=episodes,
         settings=settings,
     )
+
+
+def _episode_description_html(ep: Episode) -> str:
+    """HTML body for the per-episode ``<description>``: title, author (when
+    known), and a link back to the source article. feedgen escapes the
+    string, so podcast clients receive renderable HTML."""
+
+    title = html.escape(ep.title or ep.original_url)
+    url = html.escape(ep.original_url, quote=True)
+    parts = [f"<p>{title}</p>"]
+    if ep.author:
+        parts.append(f"<p>By {html.escape(ep.author)}</p>")
+    parts.append(f'<p>Source: <a href="{url}">{html.escape(ep.original_url)}</a></p>')
+    return "".join(parts)
+
+
+def _episode_summary(ep: Episode) -> str:
+    """Plain-text counterpart to the HTML description for ``itunes:summary``."""
+
+    lines = [ep.title or ep.original_url]
+    if ep.author:
+        lines.append(f"By {ep.author}")
+    lines.append(f"Source: {ep.original_url}")
+    return "\n".join(lines)
 
 
 def _inject_pc2_tags(

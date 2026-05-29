@@ -48,12 +48,6 @@ async def health_ready(request: Request, response: Response) -> dict[str, Any]:
         )
         checks["db"] = "error"
 
-    components: dict[str, Any] = {
-        "app": __version__,
-        "python": platform.python_version(),
-        "ffmpeg": _ffmpeg_version(),
-    }
-
     # Fan probes out concurrently so one stuck upstream can't add its
     # timeout budget to the others'. return_exceptions=True ensures one
     # raising probe doesn't cancel the others and 500 the whole endpoint.
@@ -62,19 +56,40 @@ async def health_ready(request: Request, response: Response) -> dict[str, Any]:
         if settings.LLM_PROVIDER == "openai-compatible"
         else None
     )
-    results = await asyncio.gather(
-        _probe_http(settings.TTS_URL, "/health", 2.0),
+    tts_result, firecrawl_result, llm_result = await asyncio.gather(
+        _probe_tts_wrapper(settings.TTS_URL, 2.0),
         _probe_http(settings.FIRECRAWL_URL, "/health", 2.0),
         _probe_http(llm_url, "/models", 2.0),
         return_exceptions=True,
     )
-    checks["tts"] = _coerce_result(results[0])
-    checks["firecrawl"] = _coerce_result(results[1])
-    checks["llm"] = _coerce_result(results[2])
+    tts_check, tts_detail = _coerce_tts(tts_result)
+    checks["tts_wrapper"] = tts_check
+    checks["firecrawl"] = _coerce_result(firecrawl_result)
+    checks["llm"] = _coerce_result(llm_result)
+
+    # Per build plan: aggregate component-level detail (wrapper version/torch/
+    # coqui_tts/device from its /health, LLM + Firecrawl reachability) alongside
+    # the local app/python/ffmpeg versions.
+    components: dict[str, Any] = {
+        "app": __version__,
+        "python": platform.python_version(),
+        "ffmpeg": _ffmpeg_version(),
+        "tts_wrapper": {**tts_detail, "reachable": _reachable(tts_check)},
+        "firecrawl": {
+            "url": settings.FIRECRAWL_URL,
+            "reachable": _reachable(checks["firecrawl"]),
+        },
+        "llm": {
+            "provider": settings.LLM_PROVIDER,
+            "model": settings.LLM_MODEL,
+            "base_url": llm_url,
+            "reachable": _reachable(checks["llm"]),
+        },
+    }
 
     started_at = getattr(request.app.state, "started_at", time.monotonic())
     body: dict[str, Any] = {
-        "ok": all(v in {"ok", "skipped"} for v in checks.values()),
+        "ok": all(_reachable(v) for v in checks.values()),
         "version": __version__,
         "uptime_seconds": int(time.monotonic() - started_at),
         "components": components,
@@ -86,10 +101,23 @@ async def health_ready(request: Request, response: Response) -> dict[str, Any]:
     return body
 
 
+def _reachable(status: str) -> bool:
+    """A probe is "reachable" when it answered ok or was deliberately skipped
+    (no URL configured). Matches the top-level ``ok`` aggregation."""
+
+    return status in {"ok", "skipped"}
+
+
 def _coerce_result(value: Any) -> str:
     if isinstance(value, BaseException):
         return f"error_{type(value).__name__}"
     return str(value)
+
+
+def _coerce_tts(value: Any) -> tuple[str, dict[str, Any]]:
+    if isinstance(value, BaseException):
+        return f"error_{type(value).__name__}", {}
+    return value
 
 
 def _ffmpeg_version() -> str:
@@ -148,3 +176,32 @@ async def _probe_http(base: str | None, path: str, timeout_secs: float) -> str:
         return "ok" if r.is_success else f"http_{r.status_code}"
     except httpx.HTTPError as exc:
         return f"unreachable_{type(exc).__name__}"
+
+
+async def _probe_tts_wrapper(base: str | None, timeout_secs: float) -> tuple[str, dict[str, Any]]:
+    """``GET {base}/health`` -> ``(check_status, component_detail)``.
+
+    The wrapper reports its own ``version``/``torch``/``coqui_tts``/``device``/
+    ``model_loaded``; surface that subset under ``components.tts_wrapper``.
+    """
+
+    if not base:
+        return "skipped", {}
+    url = f"{base.rstrip('/')}/health"
+    try:
+        async with httpx.AsyncClient(timeout=timeout_secs) as client:
+            r = await client.get(url)
+    except httpx.HTTPError as exc:
+        return f"unreachable_{type(exc).__name__}", {}
+    try:
+        payload = r.json()
+    except ValueError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    detail = {
+        key: payload[key]
+        for key in ("version", "torch", "coqui_tts", "device", "model_loaded")
+        if key in payload
+    }
+    return ("ok" if r.is_success else f"http_{r.status_code}"), detail

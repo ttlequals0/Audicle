@@ -64,7 +64,7 @@ export default function Home() {
             disabled={!url || submitM.isPending}
             onClick={() => submitM.mutate(url)}
           >
-            {submitM.isPending ? "enqueuing…" : "enqueue"}
+            {submitM.isPending ? "enqueuing..." : "enqueue"}
           </button>
           {error && (
             <span className="text-danger text-xs font-mono">{error}</span>
@@ -77,10 +77,10 @@ export default function Home() {
           recent jobs
         </h2>
         {jobsQ.isLoading && (
-          <p className="text-mute text-sm">loading…</p>
+          <p className="text-mute text-sm">loading...</p>
         )}
         {jobsQ.data && jobsQ.data.length === 0 && (
-          <p className="text-mute text-sm">no jobs yet — submit a URL above.</p>
+          <p className="text-mute text-sm">no jobs yet - submit a URL above.</p>
         )}
         <ul className="space-y-2">
           {(jobsQ.data ?? []).map((j) => (

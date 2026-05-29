@@ -34,6 +34,7 @@ class Engine(Protocol):
     model_loaded: bool
     reference_loaded: bool
     sample_rate: int
+    device: str
 
     def load(self) -> None:
         """Synchronous startup: load model weights + reference embeddings.
@@ -70,6 +71,7 @@ class XTTSEngine:
         self.model_loaded = False
         self.reference_loaded = False
         self.sample_rate = config.sample_rate
+        self.device = config.device
         self._model = None
         self._gpt_cond_latent = None
         self._speaker_embedding = None
@@ -83,19 +85,36 @@ class XTTSEngine:
         device = self.config.device
         logger.info("Loading XTTS-v2 model", extra={"event": "tts_model_loading", "device": device})
 
-        ref_path = Path(self.config.reference_path)
-        if not ref_path.exists():
-            raise FileNotFoundError(
-                f"reference voice not found at {ref_path}; mount voice.wav to that path"
-            )
-
-        # ``progress_bar=False`` keeps the container log clean.
+        # progress_bar=False keeps the container log clean.
         self._model = TTS("tts_models/multilingual/multi-dataset/xtts_v2", progress_bar=False).to(
             device
         )
         self.model_loaded = True
 
-        self._compute_embeddings(ref_path)
+        # The reference voice is optional at startup: the operator can upload one
+        # later via the UI (which writes voice.wav and calls /reload). Compute
+        # embeddings now if a usable clip is present; a missing OR unreadable one
+        # just leaves reference_loaded=false and /generate returning 503 -- the
+        # wrapper stays up so the operator can upload a good clip rather than
+        # crash-looping on a bad pre-staged file.
+        ref_path = Path(self.config.reference_path)
+        if not ref_path.exists():
+            logger.warning(
+                "No reference voice yet; upload one via the UI. /generate is "
+                "unavailable until a voice is committed.",
+                extra={"event": "tts_reference_missing", "path": str(ref_path)},
+            )
+            return
+        try:
+            self._compute_embeddings(ref_path)
+        except Exception:
+            logger.warning(
+                "Reference voice present but could not be decoded; ignoring it. "
+                "Upload a valid clip via the UI. /generate is unavailable until a "
+                "usable voice is committed.",
+                extra={"event": "tts_reference_invalid", "path": str(ref_path)},
+                exc_info=True,
+            )
 
     def _compute_embeddings(self, ref_path: Path) -> None:
         assert self._model is not None

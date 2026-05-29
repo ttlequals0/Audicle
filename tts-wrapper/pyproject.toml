@@ -1,6 +1,6 @@
 [project]
 name = "audicle-tts-wrapper"
-version = "0.1.0"
+version = "0.2.0"
 description = "FastAPI wrapper around Coqui XTTS-v2 for Audicle."
 requires-python = ">=3.11,<3.13"
 # 3.11 lower bound: torch wheels for XTTS-v2 lag the latest Python release.
@@ -21,6 +21,27 @@ dependencies = [
     "numpy>=1.26,<3.0",
     "coqui-tts>=0.24,<0.25",
 ]
+# NOTE: coqui-tts 0.24 declares ``transformers>=4.43.0`` with no upper bound, so
+# a fresh resolve pulls transformers 5.x whose lazy-import API coqui can't use
+# (ModuleNotFoundError: GPT2PreTrainedModel at XTTS import). The required cap
+# (``transformers<4.47``) is applied at install time in the Dockerfiles rather
+# than here: pinning it in the manifest would surface coqui's transitive
+# transformers as a direct dependency to dependency-review, which flags HIGH
+# advisories on the only transformers line coqui works with. The advisories
+# concern untrusted-model deserialization; the wrapper only loads the trusted
+# XTTS-v2 weights, so the path is not reachable, and the cap is an unavoidable
+# install constraint of coqui-tts 0.24, not a dependency this project chooses.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# The wrapper is a flat layout of three top-level modules. Declare them
+# explicitly: modern setuptools refuses to auto-discover a flat layout with
+# multiple top-level modules, which breaks ``pip install .`` on a current
+# Python base image (older bases shipped a lenient setuptools that hid this).
+[tool.setuptools]
+py-modules = ["config", "engine", "main"]
 
 [dependency-groups]
 dev = [

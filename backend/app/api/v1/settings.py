@@ -42,11 +42,7 @@ async def get_settings_overrides(
         stored = runtime_settings.get_all(conn)
     finally:
         conn.close()
-    coerced = {key: _coerce(key, value, settings) for key, value in stored.items()}
-    return SettingsResponse(
-        allowlist=sorted(runtime_settings.ALLOWED_KEYS),
-        values=coerced,
-    )
+    return _masked_response(stored, settings)
 
 
 @router.put(
@@ -69,15 +65,35 @@ async def put_settings_overrides(
     conn = database.connect(database.db_path(settings.DATA_DIR))
     try:
         for key, value in payload.items():
+            if key in runtime_settings.MASKED_KEYS:
+                # Re-saving the form sends back the mask sentinel for an
+                # unchanged secret -- skip it so the stored value survives.
+                # An explicit empty string clears the override (revert to env).
+                if value == runtime_settings.MASK_SENTINEL:
+                    continue
+                if value == "":
+                    runtime_settings.delete(conn, key)
+                    continue
             runtime_settings.set_value(conn, key, value)
         stored = runtime_settings.get_all(conn)
     finally:
         conn.close()
-    coerced = {key: _coerce(key, value, settings) for key, value in stored.items()}
-    return SettingsResponse(
-        allowlist=sorted(runtime_settings.ALLOWED_KEYS),
-        values=coerced,
-    )
+    return _masked_response(stored, settings)
+
+
+def _masked_response(stored: dict[str, str], settings: Settings) -> SettingsResponse:
+    """Build the GET/PUT response, masking secret-bearing keys so their stored
+    value is never echoed to the client."""
+
+    values = {
+        key: (
+            runtime_settings.MASK_SENTINEL
+            if key in runtime_settings.MASKED_KEYS
+            else _coerce(key, value, settings)
+        )
+        for key, value in stored.items()
+    }
+    return SettingsResponse(allowlist=sorted(runtime_settings.ALLOWED_KEYS), values=values)
 
 
 def _coerce(key: str, value: str, settings: Settings) -> Any:

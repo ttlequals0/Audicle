@@ -3,24 +3,47 @@
 # CPU-only variant. Same code, smaller image (no CUDA toolkit), substantially
 # slower runtime (5-10x per build plan). Set TTS_DEVICE=cpu in .env when using
 # this image.
-FROM pytorch/pytorch:2.4.0-cpu AS runtime
+#
+# There is no published ``pytorch/pytorch:*-cpu`` tag, so this builds on a plain
+# Python base (matching the wrapper's 3.11 pin) and installs the CPU-only torch
+# wheel from PyTorch's CPU index before the rest of the deps, so coqui-tts
+# reuses it instead of pulling the much larger CUDA build.
+FROM python:3.11-slim AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     HF_HOME=/root/.cache/huggingface \
-    TTS_HOME=/root/.cache/huggingface/tts
+    TTS_HOME=/root/.cache/huggingface/tts \
+    # Coqui gates the first XTTS-v2 load behind an interactive y/n CPML prompt;
+    # in a container there is no TTY to answer it, so the load hangs/fails.
+    # Self-hosting the wrapper is acceptance of the non-commercial CPML (see the
+    # README license note); agree non-interactively so the model loads headless.
+    COQUI_TOS_AGREED=1
 
+# build-essential: several coqui-tts deps (e.g. numba/llvmlite) build native
+# extensions. libsndfile for soundfile/coqui WAV IO; curl for healthchecks.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates libsndfile1 \
+    && apt-get install -y --no-install-recommends \
+         curl ca-certificates libsndfile1 build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY pyproject.toml ./
 COPY config.py engine.py main.py ./
-RUN pip install --no-cache-dir .
+# Install torch AND torchaudio together from the CPU index with matching
+# versions. coqui-tts imports torchaudio; if it comes from PyPI while torch is
+# the CPU-index build, the torchaudio native extension fails to load against
+# torch (ABI mismatch). Pinning both from the same CPU index keeps them in step.
+# Cap transformers below 4.47: coqui-tts 0.24 pins it unbounded (>=4.43) but
+# breaks on transformers 5.x (see tts-wrapper/pyproject.toml note). Installed
+# here rather than in the manifest so it stays a transitive constraint.
+RUN pip install --no-cache-dir torch==2.4.1 torchaudio==2.4.1 \
+        --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir "transformers>=4.43.0,<4.47" \
+    && pip install --no-cache-dir .
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=120s \
-    CMD curl -fsS http://localhost:8000/health || exit 1
+    CMD curl -fsS http://localhost:8000/health/live || exit 1
 CMD ["uvicorn", "main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--timeout-keep-alive", "300"]

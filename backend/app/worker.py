@@ -2,8 +2,8 @@
 
 Polls the jobs table for ``status='queued'`` rows. Single in-flight job: the
 pipeline runs sequentially and the next poll only happens after the previous
-job finishes (or fails). Crash recovery and reachability checks gate the
-polling loop.
+job finishes (or fails). Crash recovery runs before the loop; reachability is
+advisory (logged, never blocks).
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ import asyncio
 import contextlib
 import logging
 import signal
-import sys
 from datetime import UTC, datetime
 
 from app.config import Settings, get_settings
@@ -67,7 +66,11 @@ def _maybe_run_retention_sweep(settings: Settings, last_sweep_day: str | None) -
         # takes effect on the next sweep without a worker restart.
         overlaid = runtime_settings.overlay(settings)
         retention.purge_older_than(overlaid, older_than_days=overlaid.RETENTION_DAYS)
+        retention.purge_expired_jobs(overlaid, older_than_days=overlaid.RETENTION_DAYS)
         retention.sweep_orphan_media(overlaid)
+        database.prune_backups(
+            overlaid.DATA_DIR, retention_days=overlaid.MIGRATION_BACKUP_RETENTION_DAYS
+        )
     except Exception:
         logger.exception(
             "Retention sweep failed; will retry next iteration",
@@ -83,7 +86,20 @@ async def _process_one(settings: Settings) -> bool:
     job = await _pickup_once(settings)
     if job is None:
         return False
-    await pipeline.process_job(job, settings)
+    # Apply runtime_settings DB overrides per job so Settings-UI edits
+    # (LLM/feed/chunk/cleanup tunables) take effect on the next submission
+    # without a worker restart -- the resolution chain the build plan promises.
+    # A transient overlay read failure must not fail an otherwise-runnable job;
+    # fall back to the env settings in that case.
+    try:
+        effective = runtime_settings.overlay(settings)
+    except Exception:
+        logger.exception(
+            "runtime_settings overlay failed; running job on env settings",
+            extra={"event": "overlay_failed", "job_id": job.id},
+        )
+        effective = settings
+    await pipeline.process_job(job, effective)
     return True
 
 
@@ -91,14 +107,10 @@ async def run() -> None:
     settings = get_settings()
     bootstrap(settings, process_label="worker")
 
-    try:
-        await reachability.run_all(settings)
-    except reachability.ReachabilityError as exc:
-        logger.error(
-            "Startup reachability checks failed; exiting",
-            extra={"event": "reachability_fatal", "stage": "startup", "error": str(exc)},
-        )
-        sys.exit(1)
+    # Advisory only: logs dependency status and a warning if any are down, but
+    # never blocks the worker from starting. Operators configure URLs/keys at
+    # runtime via the UI; a job that needs a down dependency fails that stage.
+    await reachability.run_all(settings)
 
     shutdown = asyncio.Event()
     loop = asyncio.get_running_loop()

@@ -1,4 +1,4 @@
-"""Hybrid text chunker per build-plan.md Chunking section.
+"""Hybrid text chunker.
 
 Order of fallback when a paragraph doesn't fit:
 

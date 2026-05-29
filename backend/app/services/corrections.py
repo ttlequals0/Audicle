@@ -4,7 +4,7 @@ Word-level overrides applied between LLM cleanup and chunking. The dictionary
 lives at ``backend/app/corrections/pronunciation.json`` (bind-mounted), is
 editable via ``PUT /api/v1/corrections``, and is re-read on every job.
 
-Substitution mechanics per build plan:
+Substitution mechanics:
 
 - Whole-word matches via lookarounds that treat letters/digits/underscores
   *and hyphens* as word characters: ``kubectl`` does not match inside

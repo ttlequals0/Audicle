@@ -90,11 +90,30 @@ async def test_check_firecrawl_reports_last_failure_when_all_endpoints_5xx(
     assert "502" in result.detail
 
 
-async def test_run_all_raises_when_any_check_fails(
+async def test_check_tts_ok_when_model_loaded_even_on_503(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Firecrawl: every endpoint candidate fails -> reachability error.
-    # LLM + TTS: succeed so the failure attribution names "firecrawl".
+    """A wrapper with the model up but no reference voice yet returns 503; it is
+    still reachable (the operator uploads a voice via the UI), so the worker
+    must not block on it."""
+
+    _patch_async_client(
+        monkeypatch,
+        _transport(
+            httpx.Response(503, json={"model_loaded": True, "reference_loaded": False}),
+        ),
+    )
+    result = await reachability.check_tts(get_settings())
+    assert result.ok is True
+    assert "model_loaded=true" in result.detail
+
+
+async def test_run_all_is_advisory_and_never_raises_when_a_check_fails(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A down dependency is logged + surfaced via /health/ready but must not
+    raise -- startup is de-gated (the worker enters its poll loop regardless)."""
+
     _patch_async_client(
         monkeypatch,
         _transport(
@@ -107,8 +126,11 @@ async def test_run_all_raises_when_any_check_fails(
             ),  # tts /health
         ),
     )
-    with pytest.raises(reachability.ReachabilityError, match="firecrawl"):
-        await reachability.run_all(get_settings())
+    results = await reachability.run_all(get_settings())
+    by_name = {r.name: r for r in results}
+    assert by_name["firecrawl"].ok is False
+    assert by_name["llm"].ok is True
+    assert by_name["tts"].ok is True
 
 
 async def test_run_all_returns_results_when_all_pass(

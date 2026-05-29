@@ -93,6 +93,10 @@ async def _call_openai_compatible(
     timeout: httpx.Timeout,
 ) -> str:
     base = (settings.OPENAI_BASE_URL or "").rstrip("/")
+    if not base:
+        # Unconfigured install: fail this stage with a clear message instead of
+        # letting httpx raise UnsupportedProtocol on the relative URL.
+        raise LLMRequestError("OPENAI_BASE_URL is not configured (set it in Settings)")
     endpoint = f"{base}/chat/completions"
     headers = {"Content-Type": "application/json"}
     if settings.OPENAI_API_KEY:

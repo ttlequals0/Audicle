@@ -43,6 +43,9 @@ def test_static_ui_mount_serves_index_and_falls_back_for_spa_routes(
     (target / "favicon.svg").write_text(
         "<svg xmlns='http://www.w3.org/2000/svg'/>", encoding="utf-8"
     )
+    # A real file that is NOT on the SPA root allowlist must NOT be served
+    # by the catch-all (it falls through to index.html instead).
+    (target / "secret.txt").write_text("TOPSECRET", encoding="utf-8")
 
     def _cleanup() -> None:
         shutil.rmtree(target.parent, ignore_errors=True)
@@ -59,6 +62,7 @@ def test_static_ui_mount_serves_index_and_falls_back_for_spa_routes(
             root = client.get("/")
             spa_route = client.get("/feed")
             favicon = client.get("/favicon.svg")
+            secret = client.get("/secret.txt")
         assert root.status_code == 200
         assert b"SPA" in root.content
         # Deep link returns the same index.html (SPA router will pick it up).
@@ -67,5 +71,9 @@ def test_static_ui_mount_serves_index_and_falls_back_for_spa_routes(
         # Real static file resolves as itself.
         assert favicon.status_code == 200
         assert favicon.content.startswith(b"<svg")
+        # Non-allowlisted real file is not exposed; it falls back to index.html.
+        assert secret.status_code == 200
+        assert b"SPA" in secret.content
+        assert b"TOPSECRET" not in secret.content
     finally:
         request_cleanup()

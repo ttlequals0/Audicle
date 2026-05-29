@@ -1,11 +1,9 @@
-# Phase 4 compose. Public-exposure container (Phase 12) gets added in its phase.
+# Audicle: app (UI/API/RSS + worker) plus the GPU TTS wrapper. Images come from
+# Docker Hub; add your own exposure layer (tunnel/reverse proxy) for the feed.
 
 services:
   app:
-    image: ghcr.io/ttlequals0/audicle:latest
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ttlequals0/audicle:latest
     ports:
       - "8000:8000"
     env_file: .env
@@ -13,15 +11,17 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/data
-      # Bind mounts target /app/app/* because the Dockerfile copies backend/app
-      # to /app/app (so `import app` works). Operator edits on the host are
-      # reflected at the package-relative path the code reads from.
+      # Bind mounts target /app/app/* (the Dockerfile copies backend/app there);
+      # host edits show up at the path the code reads from.
       - ./backend/app/prompts:/app/app/prompts
       - ./backend/app/corrections:/app/app/corrections
       - ./backend/app/reference:/app/app/reference
     depends_on:
+      # service_started, not service_healthy: the app boots and configures TTS
+      # at runtime (voice upload via the UI). Gating on wrapper readiness would
+      # deadlock -- the wrapper is 503 until a reference voice is committed.
       tts-wrapper:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
       interval: 30s
@@ -40,12 +40,9 @@ services:
         max-file: "3"
 
   tts-wrapper:
-    # Single in-flight job; one uvicorn worker; GPU-pinned. Override
-    # dockerfile to ``Dockerfile.cpu`` for CPU-only hosts (5-10x slower).
-    image: ghcr.io/ttlequals0/audicle-tts:latest
-    build:
-      context: ./tts-wrapper
-      dockerfile: Dockerfile
+    # GPU-pinned, one uvicorn worker. For CPU-only hosts use the
+    # ttlequals0/audicle-tts:*-cpu image and set TTS_DEVICE=cpu (5-10x slower).
+    image: ttlequals0/audicle-tts:latest
     environment:
       - TTS_DEVICE=${TTS_DEVICE:-cuda}
       - TTS_LANGUAGE=${TTS_LANGUAGE:-en}
@@ -58,8 +55,9 @@ services:
       - XTTS_TOP_P=${XTTS_TOP_P:-0.85}
     volumes:
       - ./data:/data
-      # Reference voice is operator-supplied; the wrapper exits non-zero at
-      # startup if voice.wav is missing or unreadable.
+      # Reference voice: read-only here; the app writes voice.wav (host edit or
+      # UI upload) and the wrapper reloads it. No voice yet just means /generate
+      # is unavailable until one is committed.
       - ./backend/app/reference:/app/reference:ro
       # ~2 GB of XTTS-v2 weights downloads on first run; cache the result.
       - hf_cache:/root/.cache/huggingface
@@ -71,7 +69,9 @@ services:
               device_ids: ['0']
               capabilities: [gpu]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      # Liveness (model loaded), not readiness: the app's depends_on gates on
+      # this, and a voice can be uploaded via the UI only after the app starts.
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
       interval: 30s
       timeout: 10s
       retries: 5

@@ -1,12 +1,13 @@
 """Key/value settings store backed by the SQLite ``settings`` table.
 
-Phase 7 uses this for ``podcast:guid`` (stable feed identifier per the
+Used for ``podcast:guid`` (stable feed identifier per the
 Podcasting 2.0 spec). Subsequent phases will pile on runtime knobs
 (retention overrides, auth tunables, etc).
 """
 
 from __future__ import annotations
 
+import secrets
 import sqlite3
 import uuid
 from urllib.parse import urlsplit
@@ -20,6 +21,13 @@ from urllib.parse import urlsplit
 # deduplication.
 _PODCAST_GUID_NAMESPACE = uuid.UUID("ead4c236-bf58-58c6-a2c6-a6b28d128cb6")
 PODCAST_GUID_KEY = "podcast_guid"
+
+# Auth (MinusPod pattern): the admin password bcrypt hash and the session
+# signing secret live in the settings table, set/auto-generated at runtime
+# rather than required as env vars. Presence of APP_PASSWORD_KEY enables auth;
+# absence = open convenience mode.
+APP_PASSWORD_KEY = "app_password"
+SESSION_SECRET_KEY_NAME = "session_secret"
 
 
 def get(conn: sqlite3.Connection, key: str) -> str | None:
@@ -56,6 +64,22 @@ def get_or_init_podcast_guid(conn: sqlite3.Connection, base_url: str) -> str:
         return existing
     fresh = str(uuid.uuid5(_PODCAST_GUID_NAMESPACE, _canonical_feed_url(base_url)))
     set_(conn, PODCAST_GUID_KEY, fresh)
+    return fresh
+
+
+def get_or_init_session_secret(conn: sqlite3.Connection) -> str:
+    """Return the persisted session signing secret, generating one on first use.
+
+    Auto-generated and stored so SessionMiddleware has a stable key across
+    restarts without requiring an env var. An explicit SESSION_SECRET_KEY env
+    override is applied by the caller before falling back to this.
+    """
+
+    existing = get(conn, SESSION_SECRET_KEY_NAME)
+    if existing:
+        return existing
+    fresh = secrets.token_urlsafe(64)
+    set_(conn, SESSION_SECRET_KEY_NAME, fresh)
     return fresh
 
 

@@ -9,19 +9,11 @@ from app.config import get_settings
 from app.core import database
 from app.services import auth
 
+IP = "203.0.113.7"
+
 
 @pytest.fixture
-def settings_with_auth(monkeypatch: pytest.MonkeyPatch, env: Path):
-    """Common fixture: enable auth, set ADMIN_PASSWORD_HASH to a known
-    bcrypt hash, and provide a SESSION_SECRET_KEY so the validator passes."""
-
-    monkeypatch.setenv("AUTH_ENABLED", "true")
-    monkeypatch.setenv("ADMIN_USERNAME", "admin")
-    monkeypatch.setenv(
-        "ADMIN_PASSWORD_HASH",
-        bcrypt.hashpw(b"correct-horse-battery", bcrypt.gensalt()).decode("ascii"),
-    )
-    monkeypatch.setenv("SESSION_SECRET_KEY", "x" * 64)
+def settings_(monkeypatch: pytest.MonkeyPatch, env: Path):
     monkeypatch.setenv("LOCKOUT_MAX_FAILED_ATTEMPTS", "3")
     monkeypatch.setenv("LOCKOUT_WINDOW_SECONDS", "900")
     get_settings.cache_clear()
@@ -38,164 +30,132 @@ def test_hash_password_round_trips() -> None:
     assert bcrypt.checkpw(b"hunter2", h.encode("ascii"))
 
 
-def test_verify_credentials_succeeds_with_correct_password(env: Path, settings_with_auth) -> None:
+def test_password_set_lifecycle(env: Path) -> None:
     conn = _conn(env)
     try:
-        auth.verify_credentials(
-            conn,
-            username="admin",
-            password="correct-horse-battery",
-            settings=settings_with_auth,
+        assert auth.is_password_set(conn) is False
+        auth.set_password(conn, "correct-horse-battery")
+        assert auth.is_password_set(conn) is True
+        auth.clear_password(conn)
+        assert auth.is_password_set(conn) is False
+    finally:
+        conn.close()
+
+
+def test_verify_login_succeeds_with_correct_password(env: Path, settings_) -> None:
+    conn = _conn(env)
+    try:
+        auth.set_password(conn, "correct-horse-battery")
+        auth.verify_login(
+            conn, password="correct-horse-battery", identifier=IP, settings=settings_
         )
     finally:
         conn.close()
 
 
-def test_verify_credentials_rejects_wrong_password(env: Path, settings_with_auth) -> None:
+def test_verify_login_rejects_wrong_password(env: Path, settings_) -> None:
     conn = _conn(env)
     try:
+        auth.set_password(conn, "correct-horse-battery")
         with pytest.raises(auth.InvalidCredentialsError):
-            auth.verify_credentials(
-                conn,
-                username="admin",
-                password="wrong",
-                settings=settings_with_auth,
-            )
+            auth.verify_login(conn, password="wrong", identifier=IP, settings=settings_)
     finally:
         conn.close()
 
 
-def test_verify_credentials_rejects_wrong_username(env: Path, settings_with_auth) -> None:
+def test_verify_login_rejects_when_no_password_set(env: Path, settings_) -> None:
+    """With no password stored, every login attempt is invalid (the endpoint
+    handles convenience mode separately; verify_login never grants access)."""
+
     conn = _conn(env)
     try:
         with pytest.raises(auth.InvalidCredentialsError):
-            auth.verify_credentials(
-                conn,
-                username="not-admin",
-                password="correct-horse-battery",
-                settings=settings_with_auth,
-            )
+            auth.verify_login(conn, password="anything", identifier=IP, settings=settings_)
     finally:
         conn.close()
 
 
-def test_lockout_triggers_after_threshold(env: Path, settings_with_auth) -> None:
-    """3 failures (per the fixture override) opens a lockout window so the
-    4th attempt raises LockedOutError instead of InvalidCredentialsError."""
-
+def test_lockout_triggers_after_threshold(env: Path, settings_) -> None:
     conn = _conn(env)
     try:
+        auth.set_password(conn, "correct-horse-battery")
         for _ in range(3):
             with pytest.raises(auth.InvalidCredentialsError):
-                auth.verify_credentials(
-                    conn,
-                    username="admin",
-                    password="wrong",
-                    settings=settings_with_auth,
-                )
+                auth.verify_login(conn, password="wrong", identifier=IP, settings=settings_)
         with pytest.raises(auth.LockedOutError):
-            auth.verify_credentials(
-                conn,
-                username="admin",
-                password="correct-horse-battery",
-                settings=settings_with_auth,
+            auth.verify_login(
+                conn, password="correct-horse-battery", identifier=IP, settings=settings_
             )
     finally:
         conn.close()
 
 
-def test_successful_login_clears_prior_lockout(env: Path, settings_with_auth) -> None:
-    """A bad password followed by a manual ``DELETE FROM auth_lockout``
-    must let the operator log in immediately (operator recovery path)."""
+def test_lockout_is_keyed_per_ip(env: Path, settings_) -> None:
+    """A locked-out IP must not block a different client IP."""
 
     conn = _conn(env)
     try:
+        auth.set_password(conn, "correct-horse-battery")
+        for _ in range(3):
+            with pytest.raises(auth.InvalidCredentialsError):
+                auth.verify_login(conn, password="wrong", identifier=IP, settings=settings_)
+        # Different IP is unaffected.
+        auth.verify_login(
+            conn, password="correct-horse-battery", identifier="198.51.100.2", settings=settings_
+        )
+    finally:
+        conn.close()
+
+
+def test_successful_login_clears_prior_lockout(env: Path, settings_) -> None:
+    conn = _conn(env)
+    try:
+        auth.set_password(conn, "correct-horse-battery")
         with pytest.raises(auth.InvalidCredentialsError):
-            auth.verify_credentials(
-                conn,
-                username="admin",
-                password="wrong",
-                settings=settings_with_auth,
-            )
-        # Operator clears the lockout row.
+            auth.verify_login(conn, password="wrong", identifier=IP, settings=settings_)
         conn.execute("DELETE FROM auth_lockout")
         conn.commit()
-        # Next call with the correct password succeeds.
-        auth.verify_credentials(
-            conn,
-            username="admin",
-            password="correct-horse-battery",
-            settings=settings_with_auth,
+        auth.verify_login(
+            conn, password="correct-horse-battery", identifier=IP, settings=settings_
         )
-        # And the lockout row is absent (would be auto-cleared too).
-        row = conn.execute("SELECT * FROM auth_lockout WHERE identifier = 'admin'").fetchone()
+        row = conn.execute(
+            "SELECT * FROM auth_lockout WHERE identifier = ?", (IP,)
+        ).fetchone()
         assert row is None
     finally:
         conn.close()
 
 
-def test_lockout_window_expires(
-    env: Path, settings_with_auth, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """After ``LOCKOUT_WINDOW_SECONDS`` the lockout no longer blocks."""
-
+def test_lockout_window_expires(env: Path, settings_) -> None:
     conn = _conn(env)
     try:
-        # Manually seed a lockout row whose window already expired.
+        auth.set_password(conn, "correct-horse-battery")
         past = (datetime.now(UTC) - timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
         conn.execute(
             """
             INSERT INTO auth_lockout (identifier, failed_attempts,
                 last_attempt_at, lockout_until)
-            VALUES ('admin', 5, ?, ?)
+            VALUES (?, 5, ?, ?)
             """,
-            (past, past),
+            (IP, past, past),
         )
         conn.commit()
-        # Correct password works because the window expired.
-        auth.verify_credentials(
-            conn,
-            username="admin",
-            password="correct-horse-battery",
-            settings=settings_with_auth,
+        auth.verify_login(
+            conn, password="correct-horse-battery", identifier=IP, settings=settings_
         )
     finally:
         conn.close()
 
 
-def test_verify_with_malformed_hash_returns_invalid_creds(
-    env: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """An operator mis-paste in ADMIN_PASSWORD_HASH must surface as 401,
-    not a 500."""
+def test_verify_with_malformed_hash_returns_invalid_creds(env: Path, settings_) -> None:
+    """A corrupt stored hash surfaces as invalid credentials, not a 500."""
 
-    monkeypatch.setenv("AUTH_ENABLED", "true")
-    monkeypatch.setenv("ADMIN_PASSWORD_HASH", "not-a-bcrypt-hash")
-    monkeypatch.setenv("SESSION_SECRET_KEY", "x" * 64)
-    get_settings.cache_clear()
-    settings = get_settings()
     conn = _conn(env)
     try:
+        from app.services import settings_store
+
+        settings_store.set_(conn, settings_store.APP_PASSWORD_KEY, "not-a-bcrypt-hash")
         with pytest.raises(auth.InvalidCredentialsError):
-            auth.verify_credentials(
-                conn,
-                username="admin",
-                password="anything",
-                settings=settings,
-            )
-    finally:
-        conn.close()
-
-
-def test_username_is_case_insensitive(env: Path, settings_with_auth) -> None:
-    conn = _conn(env)
-    try:
-        # Uppercase username should still match the lower-cased identifier.
-        auth.verify_credentials(
-            conn,
-            username="ADMIN",
-            password="correct-horse-battery",
-            settings=settings_with_auth,
-        )
+            auth.verify_login(conn, password="anything", identifier=IP, settings=settings_)
     finally:
         conn.close()

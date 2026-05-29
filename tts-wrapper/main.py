@@ -12,6 +12,7 @@ missing reference voice or model load error, and serve ``/generate`` /
 from __future__ import annotations
 
 import asyncio
+import importlib.metadata as _metadata
 import io
 import logging
 import os
@@ -31,7 +32,28 @@ from engine import Engine, GPUOutOfMemoryError, XTTSEngine
 logger = logging.getLogger("tts.main")
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 
-# Build-plan line 822: per-request inference budget. Without this a wedged
+# Wrapper's own version, surfaced in /health so the main app's
+# /health/ready can aggregate it into components.tts_wrapper.version.
+__version__ = "0.2.0"
+
+
+def _pkg_version(name: str) -> str | None:
+    """Installed distribution version, or None if the package isn't present
+    (e.g. the test environment runs without torch / coqui-tts)."""
+
+    try:
+        return _metadata.version(name)
+    except _metadata.PackageNotFoundError:
+        return None
+
+
+# Resolved once at import: installed versions never change for a running
+# process, and /health is polled every 30s by the docker healthcheck plus the
+# backend's readiness probe -- no point re-scanning dist metadata per request.
+_TORCH_VERSION = _pkg_version("torch")
+_COQUI_TTS_VERSION = _pkg_version("coqui-tts")
+
+# Per-request inference budget. Without this a wedged
 # torch call holds the lock forever and the wrapper stops serving anything.
 _REQUEST_INFERENCE_TIMEOUT_SECONDS = float(os.environ.get("TTS_REQUEST_TIMEOUT_SECONDS", "120"))
 
@@ -59,6 +81,11 @@ class HealthResponse(BaseModel):
     ok: bool
     model_loaded: bool
     reference_loaded: bool
+    version: str | None = None
+    torch: str | None = None
+    coqui_tts: str | None = None
+    device: str | None = None
+    sample_rate: int | None = None
 
 
 def _default_engine_factory() -> Engine:
@@ -115,6 +142,19 @@ def create_app(
     def get_lock(request: Request) -> asyncio.Lock:
         return request.app.state.lock
 
+    @app.get("/health/live")
+    async def health_live(engine: Engine = Depends(get_engine)) -> JSONResponse:
+        # Liveness for orchestration (docker healthcheck, compose
+        # depends_on). The wrapper is "up" once the model is loaded, even with
+        # no reference voice -- otherwise the app would never start (its
+        # depends_on gates on this) and the operator could never reach the UI
+        # to upload a voice. /health (readiness) stays 503 until a voice loads.
+        model_loaded = bool(engine.model_loaded)
+        return JSONResponse(
+            status_code=200 if model_loaded else 503,
+            content={"ok": model_loaded, "model_loaded": model_loaded},
+        )
+
     @app.get("/health")
     async def health(engine: Engine = Depends(get_engine)) -> JSONResponse:
         model_loaded = bool(engine.model_loaded)
@@ -124,9 +164,14 @@ def create_app(
             "ok": ok,
             "model_loaded": model_loaded,
             "reference_loaded": reference_loaded,
+            "version": __version__,
+            "torch": _TORCH_VERSION,
+            "coqui_tts": _COQUI_TTS_VERSION,
+            "device": engine.device,
+            "sample_rate": engine.sample_rate,
         }
         if not ok:
-            # Build-plan line 803 spec: 503 body includes a diagnostic "error".
+            # 503 body includes a diagnostic "error".
             reasons = []
             if not model_loaded:
                 reasons.append("model not loaded")
@@ -142,12 +187,13 @@ def create_app(
         engine: Engine = Depends(get_engine),
         lock: asyncio.Lock = Depends(get_lock),
     ) -> GenerateResponse:
-        # ``asyncio.Lock`` serializes the GPU inference; concurrent /generate
-        # requests queue cleanly at the inference boundary while /health
-        # stays responsive (the lock isn't taken on the health path AND
-        # engine.synthesize offloads the blocking torch call via
-        # asyncio.to_thread, so the event loop can service /health probes
-        # while a chunk is in flight).
+        if not engine.reference_loaded:
+            raise HTTPException(
+                status_code=503,
+                detail="no reference voice loaded; upload one via the UI first",
+            )
+        # The lock serializes GPU inference; /health never takes it, and
+        # synthesize offloads the blocking call, so /health stays responsive.
         async with lock:
             try:
                 wav_bytes = await asyncio.wait_for(
@@ -186,13 +232,17 @@ def create_app(
 
         out_dir = chosen_data_dir / "media"
         out_dir.mkdir(parents=True, exist_ok=True)
-        wav_path = out_dir / f"{body.episode_id}_chunk_{body.chunk_index}.wav"
-        # ``resolve(strict=False)`` so we can compare against the intended
-        # parent even though the file doesn't exist yet. Path traversal in
-        # episode_id is already blocked by the Pydantic pattern, but the
-        # belt-and-braces check guards against future regex regressions.
-        if out_dir.resolve() not in wav_path.resolve().parents:
+        # episode_id is already constrained by the Pydantic pattern; the
+        # realpath + commonpath containment check is belt-and-braces against a
+        # future regex regression and is the form static analysis recognizes as
+        # a path-injection sanitizer (the validated realpath is what gets
+        # written, not the raw user input).
+        filename = f"{body.episode_id}_chunk_{body.chunk_index}.wav"
+        out_real = os.path.realpath(out_dir)
+        wav_real = os.path.realpath(os.path.join(out_real, filename))
+        if os.path.commonpath([out_real, wav_real]) != out_real:
             raise HTTPException(status_code=400, detail="resolved wav_path escapes data dir")
+        wav_path = Path(wav_real)
         _atomic_write_bytes(wav_path, wav_bytes)
         duration = _wav_duration_seconds(wav_bytes)
 
@@ -225,7 +275,7 @@ def create_app(
             except Exception as exc:
                 logger.exception("reload failed", extra={"event": "tts_reload_failed"})
                 raise HTTPException(status_code=500, detail=f"reload failed: {exc}") from exc
-        # Build-plan line 805 spec: { ok: true }.
+        # { ok: true }.
         return {"ok": True}
 
     return app
@@ -244,7 +294,7 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
     """Write ``data`` to ``path`` via tempfile + os.replace so consumers can
     never observe a partial WAV.
 
-    Phase 5+ stitching reads each chunk file as soon as it appears; a
+    The audio stage reads each chunk file as soon as it appears; a
     non-atomic ``path.write_bytes`` exposes a racing reader to a truncated
     file. The backend already ships ``services/atomic_write.py``; we keep
     the wrapper's helper inline so the container has no cross-package import.

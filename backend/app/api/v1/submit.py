@@ -30,8 +30,9 @@ class SubmitRequest(BaseModel):
     reprocess: bool = Field(
         default=False,
         description=(
-            "When true and the URL already has an episode/job, wipe the prior "
-            "state and start fresh. Default is to return 409."
+            "When true and the URL already has an episode, re-run the pipeline "
+            "and update that episode in place (same episode_id, new pub_date). "
+            "Default is to return 409."
         ),
     )
 
@@ -52,7 +53,7 @@ class SubmitResponse(BaseModel):
     status: str
     replaced_previous: bool = Field(
         default=False,
-        description="True if reprocess=true and a prior episode/job was deleted.",
+        description="True if reprocess=true and a prior episode for this URL existed.",
     )
 
 

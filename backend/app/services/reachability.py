@@ -1,11 +1,9 @@
-"""Startup reachability checks.
+"""Startup reachability checks (advisory).
 
-Each external dependency the pipeline needs is probed before the worker begins
-processing. A failure here is fatal: the process exits non-zero so the
-container restart loop surfaces the problem instead of every job failing in
-the same way mid-stage.
-
-Phase 4: Firecrawl + LLM + TTS wrapper are all probed.
+Each external dependency the pipeline needs (Firecrawl + LLM + TTS wrapper) is
+probed when the worker starts. Results are logged and surfaced in /health/ready,
+but a failure never blocks startup: the worker enters its poll loop regardless,
+and a job that hits a down dependency fails that stage with a clear error.
 """
 
 from __future__ import annotations
@@ -20,10 +18,6 @@ import httpx
 from app.config import Settings
 
 logger = logging.getLogger("app.services.reachability")
-
-
-class ReachabilityError(RuntimeError):
-    """Raised when a required external dependency is unreachable at startup."""
 
 
 @dataclass(frozen=True)
@@ -112,7 +106,7 @@ async def check_tts(settings: Settings) -> CheckResult:
     """Probe the TTS wrapper's ``/health`` endpoint with a startup grace period.
 
     The wrapper takes 10-30s to load XTTS-v2 + compute speaker embeddings on a
-    cold container start. Per build plan line 1469, we poll for up to
+    cold container start. We poll for up to
     ``TTS_REACHABILITY_GRACE_SECONDS`` (default 60s) with a
     ``TTS_REACHABILITY_PROBE_TIMEOUT`` per attempt, returning the first
     ``model_loaded: true`` response.
@@ -134,26 +128,27 @@ async def check_tts(settings: Settings) -> CheckResult:
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
                 last_detail = f"unreachable ({exc.__class__.__name__}: {exc})"
             else:
-                if response.is_success:
-                    try:
-                        body = response.json()
-                    except ValueError:
-                        body = {}
-                    if isinstance(body, dict) and body.get("model_loaded"):
-                        return CheckResult(
-                            name="tts",
-                            ok=True,
-                            detail=(
-                                f"HTTP {response.status_code} after {attempt} probe(s); "
-                                f"model_loaded=true, reference_loaded={body.get('reference_loaded', False)}"
-                            ),
-                        )
-                    last_detail = (
-                        f"HTTP {response.status_code} but model_loaded=false "
-                        f"(reference_loaded={body.get('reference_loaded') if isinstance(body, dict) else 'n/a'})"
+                # The model being loaded is what makes TTS reachable. A 503 with
+                # model_loaded=true just means no reference voice is committed yet
+                # (the operator uploads one via the UI), so accept it rather than
+                # blocking the worker on a missing voice.
+                try:
+                    body = response.json()
+                except ValueError:
+                    body = {}
+                if isinstance(body, dict) and body.get("model_loaded"):
+                    return CheckResult(
+                        name="tts",
+                        ok=True,
+                        detail=(
+                            f"HTTP {response.status_code} after {attempt} probe(s); "
+                            f"model_loaded=true, reference_loaded={body.get('reference_loaded', False)}"
+                        ),
                     )
-                else:
-                    last_detail = f"HTTP {response.status_code}: {response.text[:120]}"
+                last_detail = (
+                    f"HTTP {response.status_code}, model_loaded=false "
+                    f"(reference_loaded={body.get('reference_loaded') if isinstance(body, dict) else 'n/a'})"
+                )
 
             # Per-probe debug log so a stalled cold-start is visible in Loki
             # instead of 60 silent seconds.
@@ -183,12 +178,13 @@ async def check_tts(settings: Settings) -> CheckResult:
 
 
 async def run_all(settings: Settings) -> list[CheckResult]:
-    """Run every Phase-appropriate check.
+    """Run every reachability check (advisory).
 
-    Logs each result and raises ``ReachabilityError`` if any check failed. The
-    worker bootstrap calls this; the FastAPI lifespan doesn't (so reviewers
-    using the API for /health while a dependency is down still get a useful
-    503 instead of a refusing-to-start container).
+    Logs each result and a summary warning if any dependency is down, but never
+    raises -- the worker enters its poll loop regardless so an unconfigured or
+    temporarily-unreachable dependency (Firecrawl/LLM/TTS) doesn't block the
+    whole stack from starting. A job that hits a down dependency fails that
+    stage with a clear error, and /health/ready reports the live status.
     """
 
     results: list[CheckResult] = [
@@ -214,5 +210,9 @@ async def run_all(settings: Settings) -> list[CheckResult]:
         )
     if failed:
         names = ", ".join(r.name for r in failed)
-        raise ReachabilityError(f"reachability checks failed: {names}")
+        logger.warning(
+            "Reachability: some dependencies are down; starting anyway "
+            "(jobs needing them will fail that stage until they recover)",
+            extra={"event": "reachability_degraded", "phase": "startup", "down": names},
+        )
     return results

@@ -1,4 +1,4 @@
-"""Audio post-processing pipeline per build-plan.md Audio Pipeline section.
+"""Audio post-processing pipeline.
 
 Inputs: per-chunk 24000 Hz mono WAV files written by the tts-wrapper to the
 shared ``/data`` volume. Output: a single MP3 at ``/data/media/{id}.mp3``

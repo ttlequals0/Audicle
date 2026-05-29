@@ -113,7 +113,7 @@ def purge_older_than(
 def sweep_orphan_media(settings: Settings) -> int:
     """Remove on-disk media files that have no matching ``episodes.id``.
 
-    Phase 13 hardening: a crash between ``audio.normalize_and_encode`` and
+    A crash between ``audio.normalize_and_encode`` and
     ``_stage_finalize`` can leave an mp3 + jpg on disk without an episodes
     row. This sweep walks ``media_dir`` and unlinks any ``{id}.mp3`` /
     ``{id}.jpg`` / ``{id}.vtt`` whose id doesn't match a live episode.
@@ -151,6 +151,49 @@ def sweep_orphan_media(settings: Settings) -> int:
             extra={"event": "retention_orphan_sweep", "files_removed": removed},
         )
     return removed
+
+
+def purge_expired_jobs(settings: Settings, older_than_days: int) -> int:
+    """Delete terminal job rows older than ``older_than_days``.
+
+    Expired job rows are swept alongside episodes.
+    Only ``done``/``failed`` rows are eligible so an old-but-still-queued job is
+    never dropped, and any job a live episode still references via its
+    ``job_id`` FK is preserved (deleting it would violate the foreign key and
+    orphan the episode's provenance). Reprocessing the same URL repeatedly is
+    the main source of superseded job rows this reaps. Returns the count
+    deleted.
+    """
+
+    if older_than_days <= 0:
+        return 0
+    cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
+    cutoff_iso = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
+    conn = database.connect(database.db_path(settings.DATA_DIR))
+    try:
+        cur = conn.execute(
+            """
+            DELETE FROM jobs
+            WHERE status IN ('done', 'failed')
+              AND created_at < ?
+              AND id NOT IN (SELECT job_id FROM episodes WHERE job_id IS NOT NULL)
+            """,
+            (cutoff_iso,),
+        )
+        deleted = cur.rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    if deleted:
+        logger.info(
+            "Expired job rows purged",
+            extra={
+                "event": "retention_jobs_purged",
+                "older_than_days": older_than_days,
+                "rows_deleted": deleted,
+            },
+        )
+    return deleted
 
 
 def _remove_path(path: Path, *, root_guard: Path | None = None) -> bool:

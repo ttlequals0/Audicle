@@ -96,7 +96,8 @@ class CreateJobResult:
     job: Job
     """The newly created job row."""
     replaced_previous: bool
-    """True if ``reprocess=True`` removed prior job rows / episode for this URL."""
+    """True if ``reprocess=True`` and a prior episode for this URL existed (it is
+    updated in place by the finalize stage, not deleted)."""
 
 
 class DuplicateSubmissionError(Exception):
@@ -112,16 +113,22 @@ class DuplicateSubmissionError(Exception):
 def create_job(conn: sqlite3.Connection, url: str, *, reprocess: bool = False) -> CreateJobResult:
     """Insert a new ``queued`` job for ``url``.
 
-    All the duplicate-detection + delete + insert runs inside a single
-    BEGIN IMMEDIATE transaction so two concurrent submits for the same URL can
-    only result in one INSERT, and a failure mid-DELETE in the reprocess path
-    leaves the DB exactly as it started.
+    Duplicate detection + the INSERT run inside a single BEGIN IMMEDIATE
+    transaction so two concurrent submits for the same URL can only result in
+    one INSERT.
 
-    Duplicate handling per build plan:
+    Duplicate handling:
     - If an episode already exists for this URL's episode_id, reject unless
-      reprocess=True (in which case wipe the prior episode + jobs and proceed).
+      reprocess=True (in which case proceed and update the row in place).
     - If a queued/processing job already exists for this episode_id, reject
       regardless of reprocess: don't race two pipelines against the same URL.
+
+    Reprocess intentionally does NOT delete the existing episode row. The
+    finalize stage upserts it in place (same episode_id, new pub_date,
+    original created_at preserved per the build plan's timestamp semantics).
+    Leaving the row in place also keeps the episode published if the
+    reprocess job fails partway -- the prior audio stays live rather than
+    vanishing from the feed.
     """
 
     episode_id = compute_episode_id(url)
@@ -137,16 +144,10 @@ def create_job(conn: sqlite3.Connection, url: str, *, reprocess: bool = False) -
             )
 
         has_episode = episode_exists(conn, episode_id)
-        replaced = False
         if has_episode and not reprocess:
             conn.execute("ROLLBACK")
             raise DuplicateSubmissionError(episode_id, "episode already exists")
-        if has_episode and reprocess:
-            # Episodes hold a FK to jobs(id); delete episodes first so the
-            # subsequent jobs DELETE can't trip the ON DELETE behavior.
-            conn.execute("DELETE FROM episodes WHERE id = ?", (episode_id,))
-            conn.execute("DELETE FROM jobs WHERE episode_id = ?", (episode_id,))
-            replaced = True
+        replaced = has_episode and reprocess
 
         conn.execute(
             "INSERT INTO jobs (id, url, episode_id, status) VALUES (?, ?, ?, 'queued')",
