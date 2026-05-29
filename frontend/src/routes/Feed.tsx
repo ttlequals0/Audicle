@@ -1,6 +1,37 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, Episode } from "../lib/api";
+
+/**
+ * Pull-to-refresh: track touchstart at the top of the document, and if
+ * the user drags down ~80 px before lifting, invalidate the episodes
+ * query so React Query refetches. Mobile-only by design; desktop users
+ * have the browser refresh button.
+ */
+function usePullToRefresh(onRefresh: () => void) {
+  const startY = useRef<number | null>(null);
+  useEffect(() => {
+    const onStart = (e: TouchEvent) => {
+      if (window.scrollY > 0) {
+        startY.current = null;
+        return;
+      }
+      startY.current = e.touches[0].clientY;
+    };
+    const onEnd = (e: TouchEvent) => {
+      if (startY.current === null) return;
+      const dy = e.changedTouches[0].clientY - startY.current;
+      startY.current = null;
+      if (dy > 80) onRefresh();
+    };
+    window.addEventListener("touchstart", onStart, { passive: true });
+    window.addEventListener("touchend", onEnd, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", onStart);
+      window.removeEventListener("touchend", onEnd);
+    };
+  }, [onRefresh]);
+}
 
 export default function Feed() {
   const [copied, setCopied] = useState(false);
@@ -10,6 +41,9 @@ export default function Feed() {
   const episodesQ = useQuery({
     queryKey: ["episodes"],
     queryFn: () => api<Episode[]>("/api/v1/episodes?per_page=50"),
+  });
+  usePullToRefresh(() => {
+    qc.invalidateQueries({ queryKey: ["episodes"] });
   });
 
   const deleteM = useMutation({

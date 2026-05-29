@@ -21,7 +21,22 @@ def test_health_live(env: Path) -> None:
     assert body["version"]
 
 
-def test_health_ready_ok(env: Path) -> None:
+def _stub_probes(monkeypatch) -> None:
+    """Health aggregation hits real network for TTS/Firecrawl/LLM; in tests
+    the configured URLs are sinkholes. Stub the probe + ffmpeg banner so the
+    happy-path assertion isolates the DB check."""
+
+    from app.api import health as health_mod
+
+    async def _ok(*_a, **_kw):
+        return "ok"
+
+    monkeypatch.setattr(health_mod, "_probe_http", _ok)
+    monkeypatch.setattr(health_mod, "_ffmpeg_version", lambda: "stub")
+
+
+def test_health_ready_ok(env: Path, monkeypatch) -> None:
+    _stub_probes(monkeypatch)
     with _client(env) as client:
         response = client.get("/health/ready")
     assert response.status_code == 200
@@ -32,7 +47,8 @@ def test_health_ready_ok(env: Path) -> None:
     assert body["components"]["python"]
 
 
-def test_health_alias_returns_same_shape(env: Path) -> None:
+def test_health_alias_returns_same_shape(env: Path, monkeypatch) -> None:
+    _stub_probes(monkeypatch)
     with _client(env) as client:
         ready = client.get("/health/ready").json()
         alias = client.get("/health").json()

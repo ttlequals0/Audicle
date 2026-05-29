@@ -10,7 +10,7 @@
 
 const CSRF_COOKIE = "audicle_csrf";
 
-function readCsrf(): string | null {
+export function readCsrf(): string | null {
   const prefix = `${CSRF_COOKIE}=`;
   for (const piece of document.cookie.split(";")) {
     const trimmed = piece.trim();

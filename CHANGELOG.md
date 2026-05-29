@@ -6,6 +6,42 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Gap-closure pass (`chore/close-real-gaps`)
+
+Plan-completion audit found 5 missing deliverables and 7 partially-shipped items left from earlier phases. This pass closes them and folds in the simplify + code-review fix lists.
+
+**Phase 13 deliverables newly shipped:**
+
+- `backend/app/api/v1/reference.py`: `GET /reference/preview`, `POST /reference/test`, `POST /reference/commit` for operator voice management. Streaming upload cap, `wave.open` validation (3-60 s, <= 5 MB), `asyncio.Lock`-serialised stage/restore for `/test`, atomic write + wrapper `/reload` for `/commit`.
+- `backend/app/reference/README.md`: voice clip spec table, sourcing playbook, ffprobe verification, CPML licence note.
+- `openapi.yaml`: generated via `uv run python scripts/dump_openapi.py`.
+- `backend/app/api/health.py`: `/health/ready` now aggregates DB + ffmpeg + TTS + Firecrawl + LLM probes. Sequential probes parallelised via `asyncio.gather(return_exceptions=True)` so one stuck upstream can't add its budget to the others. ffmpeg banner cached only on success so a late PATH fix becomes visible.
+
+**Web UI completed:**
+
+- `frontend/src/routes/Settings.tsx`: 5 grouped sections (Feed / TTS / Cleanup / Retention / RSS), prompt editor (PUT `/api/v1/prompt`), corrections table (PUT `/api/v1/corrections`), reference voice widget (preview/test/commit), system-info block.
+- `frontend/src/routes/Feed.tsx`: mobile pull-to-refresh on the episode list.
+
+**Correctness fixes from /simplify and /code-review:**
+
+- CSRF: `frontend/src/lib/api.ts` `readCsrf` exported; `Settings.tsx` now uses it instead of inline `split("=")[1]` parsing that truncated base64-padded tokens.
+- React state: `PromptEditor` and `CorrectionsTable` seed via lazy `useState` initializer + gate on `data !== undefined` at the parent so in-progress edits survive React Query refetches.
+- `CorrectionsTable` rows now have stable IDs (no more React array-index keys); focus and IME composition no longer jump when rows are deleted.
+- `URL.revokeObjectURL` cleanup added to the reference audition pane.
+- `reference.py`: removed `except BaseException` (was swallowing `CancelledError`); narrowed to `Exception`. Suppressed `/reload` errors now logged at WARN. Wrapper-supplied `wav_path` validated against `DATA_DIR` to prevent arbitrary local read.
+- `reference.py` `/test` no longer leaves the candidate as the live voice when no prior reference existed (`backup is None` branch now unlinks instead of preserving).
+- `_validate_wav` switched from `tempfile.NamedTemporaryFile` to `io.BytesIO`; saves a disk write per call.
+- `_read_upload_capped` rejects oversized uploads mid-stream instead of buffering the whole body first.
+- `Settings.tsx` reference widget: `postForm` wraps `fetch` with try/catch so transport errors surface as a user-visible message; file-input `onChange` clears stale audition.
+- `health.py` no-URL LLM path returns `"skipped"` via `_probe_http`'s existing empty-base branch; `_noop_skipped` helper removed.
+
+**Lint/imports cleanup:**
+
+- Inline `import subprocess` / `import httpx` / `from contextlib import contextmanager` lifted to module top in `health.py` and `reference.py` per `CLAUDE.md`.
+- `pyproject.toml`: added `python-multipart` for FastAPI `UploadFile`/`Form`.
+
+**Tests:** 6 new in `test_api_reference.py` (preview 404, preview serves, commit atomic swap + reload, reject too-short / oversized / non-WAV). 332 backend tests pass; ruff clean.
+
 ### Security + correctness (codebase-wide review)
 
 Multi-agent /simplify + /code-review sweep over the full backend (49 service modules + 38 test files), plus a background security finding (missing auth on `GET /api/v1/settings`).

@@ -7,14 +7,14 @@ Usage:
 from __future__ import annotations
 
 import json
-import sys
-from pathlib import Path
-
-import yaml
 
 # A few env vars are required by Settings; supply minimal placeholders so the
 # script can run outside a deployed environment.
 import os
+import sys
+from pathlib import Path
+
+import yaml
 
 os.environ.setdefault("BASE_URL", "https://example.test")
 os.environ.setdefault("UI_BASE_URL", "https://example.test")
