@@ -130,6 +130,22 @@ def test_generate_503_when_reference_not_loaded(tmp_path: Path) -> None:
     assert "no reference voice" in str(response.json()["detail"])
 
 
+def test_health_live_200_without_reference(tmp_path: Path) -> None:
+    """Liveness is satisfied by the model alone. A voice-less wrapper returns
+    503 on /health (readiness) but must be 200 on /health/live, or the app's
+    depends_on(service_healthy) deadlocks waiting for a voice that can only be
+    uploaded after the app starts."""
+
+    engine = FakeEngine()
+    with _client(engine, tmp_path) as client:
+        engine.reference_loaded = False
+        live = client.get("/health/live")
+        ready = client.get("/health")
+    assert live.status_code == 200
+    assert live.json()["model_loaded"] is True
+    assert ready.status_code == 503
+
+
 # --- /generate ------------------------------------------------------------
 
 

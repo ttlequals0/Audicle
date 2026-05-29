@@ -66,7 +66,9 @@ services:
               device_ids: ['0']
               capabilities: [gpu]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      # Liveness (model loaded), not readiness: the app's depends_on gates on
+      # this, and a voice can be uploaded via the UI only after the app starts.
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
       interval: 30s
       timeout: 10s
       retries: 5

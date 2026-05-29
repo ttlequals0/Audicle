@@ -36,7 +36,7 @@ RUN pip install --no-cache-dir "transformers>=4.43.0,<4.47" \
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=120s \
-    CMD curl -fsS http://localhost:8000/health || exit 1
+    CMD curl -fsS http://localhost:8000/health/live || exit 1
 
 # ``--factory`` so create_app() is called once with the default XTTS engine.
 # ``--workers 1`` because XTTS holds GPU resources that don't survive forking;

@@ -142,6 +142,19 @@ def create_app(
     def get_lock(request: Request) -> asyncio.Lock:
         return request.app.state.lock
 
+    @app.get("/health/live")
+    async def health_live(engine: Engine = Depends(get_engine)) -> JSONResponse:
+        # Liveness for orchestration (docker healthcheck, compose
+        # depends_on). The wrapper is "up" once the model is loaded, even with
+        # no reference voice -- otherwise the app would never start (its
+        # depends_on gates on this) and the operator could never reach the UI
+        # to upload a voice. /health (readiness) stays 503 until a voice loads.
+        model_loaded = bool(engine.model_loaded)
+        return JSONResponse(
+            status_code=200 if model_loaded else 503,
+            content={"ok": model_loaded, "model_loaded": model_loaded},
+        )
+
     @app.get("/health")
     async def health(engine: Engine = Depends(get_engine)) -> JSONResponse:
         model_loaded = bool(engine.model_loaded)

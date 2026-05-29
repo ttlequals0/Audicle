@@ -10,6 +10,7 @@ work lives under `[Unreleased]`.
 
 - TTS wrapper accepts the CPML terms non-interactively (`COQUI_TOS_AGREED=1` in both Dockerfiles): without it the first XTTS-v2 load blocks on an interactive y/n prompt that has no TTY in a container, so the wrapper crashed on startup.
 - The wrapper no longer fails to start when `voice.wav` is absent *or unreadable*. The model loads, a missing/undecodable reference is logged and skipped (`reference_loaded=false`), and `/generate` returns 503 until a usable voice is committed -- so an operator can bring the stack up and upload a reference voice through the Settings UI instead of crash-looping on a missing or corrupt pre-staged file. `reachability.check_tts` accepts `model_loaded=true` even on a 503 so the worker doesn't block on it.
+- TTS wrapper gains `/health/live` (200 once the model is loaded, voice or not); the docker healthcheck and `depends_on: service_healthy` now use it. Previously the healthcheck hit `/health` (readiness, 503 without a voice), which marked a voice-less wrapper unhealthy and deadlocked the app's startup -- the app gated on the wrapper being healthy, but the voice is uploaded through the app's UI. `/health` stays the readiness probe.
 - `docker-compose.yml`: dropped the `build:` blocks (images come from Docker Hub).
 - Comment cleanup: removed phase-specific and `build-plan line NNN` references across the codebase and trimmed verbose comments.
 

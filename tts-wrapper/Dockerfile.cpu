@@ -45,5 +45,5 @@ RUN pip install --no-cache-dir torch==2.4.1 torchaudio==2.4.1 \
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=120s \
-    CMD curl -fsS http://localhost:8000/health || exit 1
+    CMD curl -fsS http://localhost:8000/health/live || exit 1
 CMD ["uvicorn", "main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--timeout-keep-alive", "300"]
