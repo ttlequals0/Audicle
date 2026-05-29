@@ -1,0 +1,31 @@
+name: Dependency Review
+
+on:
+  pull_request:
+    branches: [main]
+
+# Top-level minimum; the job re-narrows.
+permissions: {}
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Review changed dependencies
+        uses: actions/dependency-review-action@v4
+        with:
+          # Block merges that introduce a high-severity CVE on a runtime dep.
+          fail-on-severity: high
+          # The MIT/BSD/Apache/PSF set covers what we already use; flag any
+          # GPL/AGPL drift so the team picks it deliberately.
+          allow-licenses: MIT, BSD-2-Clause, BSD-3-Clause, Apache-2.0, ISC, MPL-2.0, PSF-2.0, Python-2.0, Unlicense, CC0-1.0, BlueOak-1.0.0
+          comment-summary-in-pr: on-failure
