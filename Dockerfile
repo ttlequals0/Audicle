@@ -16,7 +16,7 @@ RUN npm run build
 FROM ghcr.io/astral-sh/uv:0.11.17 AS uv
 
 # ---- Stage 3: Python runtime ----
-FROM python:3.13-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

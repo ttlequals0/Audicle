@@ -1,0 +1,990 @@
+openapi: 3.1.0
+info:
+  title: Audicle
+  version: 0.1.0
+paths:
+  /health/live:
+    get:
+      tags:
+      - health
+      summary: Health Live
+      operationId: health_live_health_live_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Health Live Health Live Get
+  /health:
+    get:
+      tags:
+      - health
+      summary: Health Ready
+      operationId: health_ready_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Health Ready Health Get
+  /health/ready:
+    get:
+      tags:
+      - health
+      summary: Health Ready
+      operationId: health_ready_health_ready_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Health Ready Health Ready Get
+  /api/v1/submit:
+    post:
+      tags:
+      - jobs
+      summary: Submit an article URL for processing
+      operationId: submit_api_v1_submit_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitRequest'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmitResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/status/{job_id}:
+    get:
+      tags:
+      - jobs
+      summary: Fetch job status
+      operationId: status_api_v1_status__job_id__get
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/app__api__v1__status__StatusResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/prompt:
+    get:
+      tags:
+      - prompt
+      summary: Read the cleanup prompt
+      operationId: read_prompt_api_v1_prompt_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromptBody'
+    put:
+      tags:
+      - prompt
+      summary: Replace the cleanup prompt
+      operationId: write_prompt_api_v1_prompt_put
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromptBody'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromptBody'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/corrections:
+    get:
+      tags:
+      - corrections
+      summary: Read the pronunciation dictionary
+      operationId: read_corrections_api_v1_corrections_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+                title: Response Read Corrections Api V1 Corrections Get
+    put:
+      tags:
+      - corrections
+      summary: Replace the pronunciation dictionary
+      operationId: write_corrections_api_v1_corrections_put
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: true
+              type: object
+              title: Body
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Write Corrections Api V1 Corrections Put
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/purge:
+    post:
+      tags:
+      - maintenance
+      summary: Post Purge
+      operationId: post_purge_api_v1_purge_post
+      parameters:
+      - name: confirm
+        in: query
+        required: false
+        schema:
+          type: boolean
+          description: Must be true to acknowledge the destructive action.
+          default: false
+          title: Confirm
+        description: Must be true to acknowledge the destructive action.
+      - name: older_than_days
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100000
+          minimum: 0
+          description: Purge episodes older than N days. 0 wipes everything.
+          default: 0
+          title: Older Than Days
+        description: Purge episodes older than N days. 0 wipes everything.
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurgeResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/auth/login:
+    post:
+      tags:
+      - auth
+      summary: Post Login
+      operationId: post_login_api_v1_auth_login_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/auth/logout:
+    post:
+      tags:
+      - auth
+      summary: Post Logout
+      operationId: post_logout_api_v1_auth_logout_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: boolean
+                type: object
+                title: Response Post Logout Api V1 Auth Logout Post
+  /api/v1/auth/status:
+    get:
+      tags:
+      - auth
+      summary: Get Status
+      operationId: get_status_api_v1_auth_status_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/app__api__v1__auth__StatusResponse'
+  /api/v1/settings:
+    get:
+      tags:
+      - settings
+      summary: Get Settings Overrides
+      operationId: get_settings_overrides_api_v1_settings_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsResponse'
+    put:
+      tags:
+      - settings
+      summary: Put Settings Overrides
+      operationId: put_settings_overrides_api_v1_settings_put
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: true
+              type: object
+              title: Payload
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/episodes:
+    get:
+      tags:
+      - episodes
+      summary: List Episodes
+      operationId: list_episodes_api_v1_episodes_get
+      parameters:
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+          title: Page
+      - name: per_page
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          minimum: 1
+          default: 50
+          title: Per Page
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EpisodeListItem'
+                title: Response List Episodes Api V1 Episodes Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/episodes/{episode_id}:
+    delete:
+      tags:
+      - episodes
+      summary: Delete Episode
+      operationId: delete_episode_api_v1_episodes__episode_id__delete
+      parameters:
+      - name: episode_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Episode Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteEpisodeResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/jobs:
+    get:
+      tags:
+      - jobs
+      summary: List Jobs
+      operationId: list_jobs_api_v1_jobs_get
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - queued
+            - processing
+            - done
+            - failed
+            type: string
+          - type: 'null'
+          title: Status
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+          title: Page
+      - name: per_page
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          minimum: 1
+          default: 50
+          title: Per Page
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/JobListItem'
+                title: Response List Jobs Api V1 Jobs Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/reference/preview:
+    get:
+      tags:
+      - reference
+      summary: Preview
+      operationId: preview_api_v1_reference_preview_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /api/v1/reference/test:
+    post:
+      tags:
+      - reference
+      summary: Test Candidate
+      description: 'Synthesize ``sample_text`` using ``voice`` without committing
+        it.
+
+
+        The candidate is staged under a tempfile that the TTS wrapper reads
+
+        via the same bind-mounted reference path; we restore the committed
+
+        clip on return so a failed test never replaces the live voice.'
+      operationId: test_candidate_api_v1_reference_test_post
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_test_candidate_api_v1_reference_test_post'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/reference/commit:
+    post:
+      tags:
+      - reference
+      summary: Commit Candidate
+      description: 'Atomically replace ``backend/app/reference/voice.wav`` and ask
+        the
+
+        TTS wrapper to ``/reload`` so the next ``/generate`` picks it up.'
+      operationId: commit_candidate_api_v1_reference_commit_post
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_commit_candidate_api_v1_reference_commit_post'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  anyOf:
+                  - type: string
+                  - type: integer
+                type: object
+                title: Response Commit Candidate Api V1 Reference Commit Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /rss/rss.xml:
+    get:
+      tags:
+      - rss
+      summary: Get Rss
+      operationId: get_rss_rss_rss_xml_get
+      parameters:
+      - name: if-modified-since
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: If-Modified-Since
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /media/{episode_id}.mp3:
+    get:
+      tags:
+      - media
+      summary: Get Mp3
+      operationId: get_mp3_media__episode_id__mp3_get
+      parameters:
+      - name: episode_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Episode Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /media/{episode_id}.jpg:
+    get:
+      tags:
+      - media
+      summary: Get Jpg
+      operationId: get_jpg_media__episode_id__jpg_get
+      parameters:
+      - name: episode_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Episode Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /media/{episode_id}.vtt:
+    get:
+      tags:
+      - media
+      summary: Get Vtt
+      operationId: get_vtt_media__episode_id__vtt_get
+      parameters:
+      - name: episode_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Episode Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+components:
+  schemas:
+    Body_commit_candidate_api_v1_reference_commit_post:
+      properties:
+        voice:
+          type: string
+          contentMediaType: application/octet-stream
+          title: Voice
+          description: new voice WAV to install
+      type: object
+      required:
+      - voice
+      title: Body_commit_candidate_api_v1_reference_commit_post
+    Body_test_candidate_api_v1_reference_test_post:
+      properties:
+        voice:
+          type: string
+          contentMediaType: application/octet-stream
+          title: Voice
+          description: candidate voice WAV
+        sample_text:
+          type: string
+          maxLength: 400
+          minLength: 4
+          title: Sample Text
+          description: text to synthesize using the candidate clip
+          default: The quick brown fox jumps over the lazy dog.
+      type: object
+      required:
+      - voice
+      title: Body_test_candidate_api_v1_reference_test_post
+    DeleteEpisodeResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        files_removed:
+          type: integer
+          minimum: 0.0
+          title: Files Removed
+      additionalProperties: false
+      type: object
+      required:
+      - id
+      - files_removed
+      title: DeleteEpisodeResponse
+    EpisodeListItem:
+      properties:
+        id:
+          type: string
+          title: Id
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+        author:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Author
+        original_url:
+          type: string
+          title: Original Url
+        audio_path:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Audio Path
+        artwork_path:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Artwork Path
+        duration_secs:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Duration Secs
+        pub_date:
+          type: string
+          title: Pub Date
+        updated_at:
+          type: string
+          title: Updated At
+      additionalProperties: false
+      type: object
+      required:
+      - id
+      - title
+      - author
+      - original_url
+      - audio_path
+      - artwork_path
+      - duration_secs
+      - pub_date
+      - updated_at
+      title: EpisodeListItem
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    JobListItem:
+      properties:
+        id:
+          type: string
+          title: Id
+        url:
+          type: string
+          title: Url
+        episode_id:
+          type: string
+          title: Episode Id
+        status:
+          type: string
+          title: Status
+        stage:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Stage
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+        created_at:
+          type: string
+          title: Created At
+        updated_at:
+          type: string
+          title: Updated At
+      additionalProperties: false
+      type: object
+      required:
+      - id
+      - url
+      - episode_id
+      - status
+      - stage
+      - error
+      - created_at
+      - updated_at
+      title: JobListItem
+    LoginRequest:
+      properties:
+        username:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Username
+        password:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Password
+      additionalProperties: false
+      type: object
+      required:
+      - username
+      - password
+      title: LoginRequest
+    LoginResponse:
+      properties:
+        logged_in:
+          type: boolean
+          title: Logged In
+        username:
+          type: string
+          title: Username
+        csrf_token:
+          type: string
+          title: Csrf Token
+      additionalProperties: false
+      type: object
+      required:
+      - logged_in
+      - username
+      - csrf_token
+      title: LoginResponse
+    PromptBody:
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+          title: Prompt
+          description: Full cleanup prompt as a single string. Must contain at least
+            one non-whitespace character.
+      additionalProperties: false
+      type: object
+      required:
+      - prompt
+      title: PromptBody
+    PurgeResponse:
+      properties:
+        older_than_days:
+          type: integer
+          title: Older Than Days
+          description: Cutoff age in days
+        rows_deleted:
+          type: integer
+          title: Rows Deleted
+          description: Episode rows removed from the DB
+        files_removed:
+          type: integer
+          title: Files Removed
+          description: MP3/JPG/VTT files removed from disk
+        episode_ids:
+          items:
+            type: string
+          type: array
+          title: Episode Ids
+          description: IDs of removed episodes
+      additionalProperties: false
+      type: object
+      required:
+      - older_than_days
+      - rows_deleted
+      - files_removed
+      - episode_ids
+      title: PurgeResponse
+    SettingsResponse:
+      properties:
+        allowlist:
+          items:
+            type: string
+          type: array
+          title: Allowlist
+        values:
+          additionalProperties: true
+          type: object
+          title: Values
+      additionalProperties: false
+      type: object
+      required:
+      - allowlist
+      - values
+      title: SettingsResponse
+    SubmitRequest:
+      properties:
+        url:
+          type: string
+          maxLength: 2048
+          minLength: 1
+          title: Url
+          description: HTTP/HTTPS URL of the article to ingest.
+        reprocess:
+          type: boolean
+          title: Reprocess
+          description: When true and the URL already has an episode/job, wipe the
+            prior state and start fresh. Default is to return 409.
+          default: false
+      additionalProperties: false
+      type: object
+      required:
+      - url
+      title: SubmitRequest
+    SubmitResponse:
+      properties:
+        job_id:
+          type: string
+          title: Job Id
+        episode_id:
+          type: string
+          title: Episode Id
+        status:
+          type: string
+          title: Status
+        replaced_previous:
+          type: boolean
+          title: Replaced Previous
+          description: True if reprocess=true and a prior episode/job was deleted.
+          default: false
+      type: object
+      required:
+      - job_id
+      - episode_id
+      - status
+      title: SubmitResponse
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+        input:
+          title: Input
+        ctx:
+          type: object
+          title: Context
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+    app__api__v1__auth__StatusResponse:
+      properties:
+        auth_enabled:
+          type: boolean
+          title: Auth Enabled
+        logged_in:
+          type: boolean
+          title: Logged In
+        username:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Username
+        csrf_token:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Csrf Token
+      additionalProperties: false
+      type: object
+      required:
+      - auth_enabled
+      - logged_in
+      title: StatusResponse
+    app__api__v1__status__StatusResponse:
+      properties:
+        job_id:
+          type: string
+          title: Job Id
+        episode_id:
+          type: string
+          title: Episode Id
+        url:
+          type: string
+          title: Url
+        status:
+          type: string
+          title: Status
+        stage:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Stage
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+        created_at:
+          type: string
+          title: Created At
+        updated_at:
+          type: string
+          title: Updated At
+      type: object
+      required:
+      - job_id
+      - episode_id
+      - url
+      - status
+      - stage
+      - error
+      - created_at
+      - updated_at
+      title: StatusResponse
