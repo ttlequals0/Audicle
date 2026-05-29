@@ -37,6 +37,7 @@ dependencies = [
     "bcrypt>=4.2",
     "itsdangerous>=2.2",
     "slowapi>=0.1.9",
+    "pyyaml>=6.0.3",
 ]
 
 [tool.uv.sources]

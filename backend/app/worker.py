@@ -64,6 +64,7 @@ def _maybe_run_retention_sweep(settings: Settings, last_sweep_day: str | None) -
         return last_sweep_day
     try:
         retention.purge_older_than(settings, older_than_days=settings.RETENTION_DAYS)
+        retention.sweep_orphan_media(settings)
     except Exception:
         logger.exception(
             "Retention sweep failed; will retry next iteration",
