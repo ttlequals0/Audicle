@@ -29,6 +29,21 @@ _REQUIRED = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _reset_login_rate_limiter():
+    """The slowapi limiter on the login route is a module-level singleton;
+    its in-memory store accumulates hits across tests and eventually 429s.
+    Reset between each test so per-test counters start at zero."""
+
+    try:
+        from app.api.v1.auth import _LOGIN_LIMITER
+
+        _LOGIN_LIMITER.reset()
+    except ImportError:
+        pass
+    yield
+
+
 @pytest.fixture
 def env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Stand up a minimal valid env in tmp_path and reset the settings cache.

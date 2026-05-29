@@ -8,6 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.api.deps import require_admin
 from app.config import Settings, get_settings
 from app.services import prompt as prompt_service
 
@@ -43,7 +44,12 @@ def read_prompt() -> PromptBody:
     return PromptBody(prompt=content)
 
 
-@router.put("/prompt", response_model=PromptBody, summary="Replace the cleanup prompt")
+@router.put(
+    "/prompt",
+    response_model=PromptBody,
+    summary="Replace the cleanup prompt",
+    dependencies=[Depends(require_admin)],
+)
 def write_prompt(
     body: PromptBody,
     settings: Annotated[Settings, Depends(get_settings)],

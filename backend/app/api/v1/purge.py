@@ -12,6 +12,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.api.deps import require_admin
 from app.config import Settings, get_settings
 from app.services import retention
 
@@ -27,7 +28,11 @@ class PurgeResponse(BaseModel):
     episode_ids: list[str] = Field(description="IDs of removed episodes")
 
 
-@router.post("/purge", response_model=PurgeResponse)
+@router.post(
+    "/purge",
+    response_model=PurgeResponse,
+    dependencies=[Depends(require_admin)],
+)
 async def post_purge(
     settings: Annotated[Settings, Depends(get_settings)],
     confirm: Annotated[

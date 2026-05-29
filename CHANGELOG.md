@@ -6,6 +6,27 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Added (Phase 9 - Authentication)
+
+- **Optional single-admin auth**: `AUTH_ENABLED=false` (the default) leaves the admin endpoints open for a single-operator localhost install. Flipping `AUTH_ENABLED=true` requires `ADMIN_PASSWORD_HASH` (bcrypt) and `SESSION_SECRET_KEY` (validated at startup; missing values raise a Pydantic `ValueError` so the process exits rather than silently serving the admin UI unauthenticated).
+- `backend/app/services/auth.py`: bcrypt verify, lockout machinery against the new `auth_lockout` table. `LOCKOUT_MAX_FAILED_ATTEMPTS` failures opens a `LOCKOUT_WINDOW_SECONDS` ban for that identifier; the table is the source of truth so a manual `DELETE FROM auth_lockout WHERE identifier='admin'` is the documented operator-recovery path. Malformed hashes surface as 401 (not 500).
+- `backend/app/services/csrf.py`: double-submit cookie tokens. Login issues `audicle_csrf` (httpOnly=false so the UI can read it) plus a JSON `csrf_token` field; mutating endpoints require the same value echoed in `X-CSRF-Token`. Compared with `hmac.compare_digest`.
+- `backend/app/api/deps.py`: `require_admin` dependency. No-op when `AUTH_ENABLED=false`; otherwise asserts the session cookie carries `audicle_user` AND a matching CSRF header. Applied to `PUT /api/v1/prompt`, `PUT /api/v1/corrections`, `POST /api/v1/purge`.
+- `backend/app/api/v1/auth.py`: `POST /auth/login` (rate-limited by slowapi to `10/minute` per remote IP), `POST /auth/logout`, `GET /auth/status`. Login returns 401 on bad creds, 423 on lockout, 200 on success with the CSRF token in body + cookie. `GET /auth/status` is unauthenticated (so the UI can ask "should I show the login form?").
+- `backend/app/main.py`: wired Starlette's `SessionMiddleware` (signed with `SESSION_SECRET_KEY` when auth is on, an ephemeral key when off so `request.session` still exists). Registered slowapi's `RateLimitExceeded` handler so the rate-limit response carries the project's error envelope (`{"error": ..., "status": 429}`).
+- Migration `003_auth_lockout` appends `auth_lockout(identifier PRIMARY KEY, failed_attempts, last_attempt_at, lockout_until)`. Phase 1 + 2 + 3 schemas untouched.
+- Runtime deps: `bcrypt>=4.2`, `itsdangerous>=2.2`, `slowapi>=0.1.9`.
+
+Tests (26 new, 287 total)
+
+- `test_auth.py` (9): `hash_password` round-trip, correct password / wrong password / wrong username, lockout-after-threshold, manual lockout-row delete recovers, expired lockout window allows login, malformed hash returns invalid-creds not 500, case-insensitive username match.
+- `test_csrf.py` (6): token uniqueness and URL-safe alphabet, equal-string match, mismatch rejection, missing-header/cookie rejection, empty-string rejection.
+- `test_api_auth.py` (11): login 200 + CSRF cookie + session cookie, 401 on wrong password, 423 after threshold, logout clears session, status when logged-in / logged-out, login 400 when `AUTH_ENABLED=false`, `PUT /api/v1/prompt` returns 401 without session, 403 without CSRF, 200 with both, 200 without auth when `AUTH_ENABLED=false`.
+
+`conftest.py` adds an autouse `_reset_login_rate_limiter` so the slowapi singleton's in-memory store doesn't carry login hits across tests.
+
+Container smoke (`tmp/phase9_smoke.sh`) verified inside the runtime image: enable auth, log in with the bcrypt'd password, hit `PUT /api/v1/prompt` with the CSRF header (200), log out, confirm subsequent PUT returns 401, then 3 bad-password attempts open a lockout window and the 4th login returns 423 even with the correct password.
+
 ### Added (Phase 8 - Retention and Purge)
 
 - `backend/app/services/retention.py`: `purge_older_than(settings, older_than_days)` deletes episodes (DB row + on-disk mp3/jpg/vtt) older than the cutoff. `older_than_days=0` is the explicit "wipe everything" contract used by the purge endpoint; positive N filters strictly older than `now - N days`. Returns `PurgeResult(episode_ids, rows_deleted, files_removed)` so callers can log + surface a summary.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from app.api.v1 import auth as auth_routes
 from app.api.v1 import corrections as corrections_routes
 from app.api.v1 import prompt as prompt_routes
 from app.api.v1 import purge as purge_routes
@@ -16,3 +17,4 @@ router.include_router(status_routes.router)
 router.include_router(prompt_routes.router)
 router.include_router(corrections_routes.router)
 router.include_router(purge_routes.router)
+router.include_router(auth_routes.router)

@@ -31,6 +31,12 @@ dependencies = [
     # only ever reads feedgen's own output (no attacker input), but
     # defense-in-depth is cheap and the linter flags any stdlib XML parse.
     "defusedxml>=0.7",
+    # Phase 9 auth. bcrypt for password hashing; itsdangerous for the
+    # SessionMiddleware cookie signing; slowapi for the login-endpoint
+    # rate limiter.
+    "bcrypt>=4.2",
+    "itsdangerous>=2.2",
+    "slowapi>=0.1.9",
 ]
 
 [tool.uv.sources]
