@@ -21,7 +21,7 @@ jobs:
           persist-credentials: false
 
       - name: Review changed dependencies
-        uses: actions/dependency-review-action@v4
+        uses: actions/dependency-review-action@v5
         with:
           # Block merges that introduce a high-severity CVE on a runtime dep.
           fail-on-severity: high
