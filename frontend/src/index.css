@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body {
+    background: #040405;
+  }
+  body {
+    overflow-x: hidden;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-accent text-ink font-bold px-6 py-3 rounded-lg active:translate-y-[1px] transition;
+  }
+  .btn-ghost {
+    @apply bg-transparent text-fg border border-line px-3 py-2 rounded-md text-sm active:border-accent transition;
+  }
+  .field {
+    @apply w-full bg-surface border border-line text-fg px-3 py-3 rounded-lg outline-none focus:border-accent;
+  }
+  .label {
+    @apply block font-mono uppercase text-[11px] tracking-wide text-dim mb-2;
+  }
+  .card {
+    @apply bg-paper border border-line rounded-2xl p-4;
+  }
+  .tag {
+    @apply inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-wide px-2 py-1 rounded text-dim;
+  }
+}

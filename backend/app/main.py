@@ -7,8 +7,11 @@ import secrets
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -49,7 +52,56 @@ def create_app() -> FastAPI:
     app.include_router(rss_router)
     app.include_router(media_router)
     error_handlers.register(app)
+    _mount_static_ui(app)
     return app
+
+
+def _mount_static_ui(app: FastAPI) -> None:
+    """Serve the Vite-built SPA at ``/`` and fall back to ``index.html`` for
+    client-side routes so deep links work (``/feed``, ``/settings``, etc.).
+
+    The Dockerfile builds ``frontend/dist`` and copies it to
+    ``/app/static/ui`` inside the runtime image. In dev (``uv run uvicorn``
+    against a checkout) the directory may not exist -- skip the mount in
+    that case so the API alone still boots.
+    """
+
+    static_dir = Path(__file__).resolve().parent.parent / "static" / "ui"
+    if not static_dir.exists():
+        return
+    index_path = static_dir / "index.html"
+    # Serve the static files (with proper Cache-Control via StaticFiles).
+    app.mount(
+        "/assets",
+        StaticFiles(directory=static_dir / "assets"),
+        name="ui-assets",
+    )
+
+    @app.get("/", include_in_schema=False)
+    async def _ui_root() -> FileResponse:
+        return FileResponse(index_path)
+
+    # Catch-all for client-side routes that aren't ``/api/v1/*``,
+    # ``/rss/*``, ``/media/*``, ``/health/*``, or under ``/assets``. The
+    # router has already been mounted, so unmatched paths fall through to
+    # this handler.
+    @app.get("/{path:path}", include_in_schema=False)
+    async def _ui_fallback(path: str) -> FileResponse:
+        # If the requested path is a real static file (favicon, manifest,
+        # service worker, etc.), serve it; otherwise return index.html so
+        # the React router can pick up the route.
+        candidate = static_dir / path
+        if candidate.is_file() and _is_within(candidate, static_dir):
+            return FileResponse(candidate)
+        return FileResponse(index_path)
+
+
+def _is_within(candidate: Path, root: Path) -> bool:
+    try:
+        candidate.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
 
 
 def _attach_session_middleware(app: FastAPI, settings: Settings) -> None:
