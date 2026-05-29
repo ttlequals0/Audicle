@@ -1,4 +1,4 @@
-"""Consistent error envelope per build plan.
+"""Consistent error envelope.
 
 All 4xx/5xx responses use ``{error, status, details?}``. 5xx responses log
 the underlying exception with traceback but never leak internal detail to the

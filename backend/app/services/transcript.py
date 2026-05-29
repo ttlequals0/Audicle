@@ -1,4 +1,4 @@
-"""WebVTT transcript generation per build-plan.md Transcript Generation.
+"""WebVTT transcript generation.
 
 Inputs are chunks of cleaned narration text paired with the per-chunk
 duration the TTS wrapper reported, plus the silence padding the audio

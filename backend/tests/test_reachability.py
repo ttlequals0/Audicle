@@ -90,6 +90,24 @@ async def test_check_firecrawl_reports_last_failure_when_all_endpoints_5xx(
     assert "502" in result.detail
 
 
+async def test_check_tts_ok_when_model_loaded_even_on_503(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A wrapper with the model up but no reference voice yet returns 503; it is
+    still reachable (the operator uploads a voice via the UI), so the worker
+    must not block on it."""
+
+    _patch_async_client(
+        monkeypatch,
+        _transport(
+            httpx.Response(503, json={"model_loaded": True, "reference_loaded": False}),
+        ),
+    )
+    result = await reachability.check_tts(get_settings())
+    assert result.ok is True
+    assert "model_loaded=true" in result.detail
+
+
 async def test_run_all_raises_when_any_check_fails(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

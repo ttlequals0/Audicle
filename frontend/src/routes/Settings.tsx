@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, readCsrf, SettingsPayload } from "../lib/api";
 
 /**
- * Five operator-facing groups per build-plan Phase 11, plus the prompt
+ * Operator-facing setting groups, plus the prompt
  * editor (which talks to /api/v1/prompt), the corrections table (which
  * talks to /api/v1/corrections), and the reference voice widget
  * (preview/test/commit against /api/v1/reference). System info is a

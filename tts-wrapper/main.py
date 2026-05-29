@@ -53,7 +53,7 @@ def _pkg_version(name: str) -> str | None:
 _TORCH_VERSION = _pkg_version("torch")
 _COQUI_TTS_VERSION = _pkg_version("coqui-tts")
 
-# Build-plan line 822: per-request inference budget. Without this a wedged
+# Per-request inference budget. Without this a wedged
 # torch call holds the lock forever and the wrapper stops serving anything.
 _REQUEST_INFERENCE_TIMEOUT_SECONDS = float(os.environ.get("TTS_REQUEST_TIMEOUT_SECONDS", "120"))
 
@@ -158,7 +158,7 @@ def create_app(
             "sample_rate": engine.sample_rate,
         }
         if not ok:
-            # Build-plan line 803 spec: 503 body includes a diagnostic "error".
+            # 503 body includes a diagnostic "error".
             reasons = []
             if not model_loaded:
                 reasons.append("model not loaded")
@@ -174,12 +174,13 @@ def create_app(
         engine: Engine = Depends(get_engine),
         lock: asyncio.Lock = Depends(get_lock),
     ) -> GenerateResponse:
-        # ``asyncio.Lock`` serializes the GPU inference; concurrent /generate
-        # requests queue cleanly at the inference boundary while /health
-        # stays responsive (the lock isn't taken on the health path AND
-        # engine.synthesize offloads the blocking torch call via
-        # asyncio.to_thread, so the event loop can service /health probes
-        # while a chunk is in flight).
+        if not engine.reference_loaded:
+            raise HTTPException(
+                status_code=503,
+                detail="no reference voice loaded; upload one via the UI first",
+            )
+        # The lock serializes GPU inference; /health never takes it, and
+        # synthesize offloads the blocking call, so /health stays responsive.
         async with lock:
             try:
                 wav_bytes = await asyncio.wait_for(
@@ -261,7 +262,7 @@ def create_app(
             except Exception as exc:
                 logger.exception("reload failed", extra={"event": "tts_reload_failed"})
                 raise HTTPException(status_code=500, detail=f"reload failed: {exc}") from exc
-        # Build-plan line 805 spec: { ok: true }.
+        # { ok: true }.
         return {"ok": True}
 
     return app
@@ -280,7 +281,7 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
     """Write ``data`` to ``path`` via tempfile + os.replace so consumers can
     never observe a partial WAV.
 
-    Phase 5+ stitching reads each chunk file as soon as it appears; a
+    The audio stage reads each chunk file as soon as it appears; a
     non-atomic ``path.write_bytes`` exposes a racing reader to a truncated
     file. The backend already ships ``services/atomic_write.py``; we keep
     the wrapper's helper inline so the container has no cross-package import.

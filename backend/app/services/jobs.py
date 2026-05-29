@@ -117,7 +117,7 @@ def create_job(conn: sqlite3.Connection, url: str, *, reprocess: bool = False) -
     transaction so two concurrent submits for the same URL can only result in
     one INSERT.
 
-    Duplicate handling per build plan:
+    Duplicate handling:
     - If an episode already exists for this URL's episode_id, reject unless
       reprocess=True (in which case proceed and update the row in place).
     - If a queued/processing job already exists for this episode_id, reject

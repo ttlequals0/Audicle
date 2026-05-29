@@ -47,9 +47,10 @@ LibriTTS-derived; convert one with ffmpeg if you don't have a preferred clip:
 ffmpeg -i ref_audio/422-122949-0019.flac -ar 22050 -ac 1 -t 10 backend/app/reference/voice.wav
 ```
 
-If `voice.wav` is missing or unreadable, the container exits non-zero at
-startup so the restart loop surfaces the misconfig instead of serving 500s
-forever.
+The wrapper starts without a voice: the model loads, `/health` reports
+`reference_loaded=false`, and `/generate` returns 503 until a voice is
+committed (upload one via the app's Settings UI, or drop a `voice.wav` in and
+call `/reload`). Only a model-load failure exits the process.
 
 ## Local dev
 

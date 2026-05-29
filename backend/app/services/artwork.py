@@ -1,4 +1,4 @@
-"""Episode artwork pipeline per build-plan.md Artwork Processing section.
+"""Episode artwork pipeline.
 
 Source is the article's ``og:image`` from Firecrawl metadata. The image is
 downloaded under a size cap, validated, EXIF-rotated, center-cropped to
@@ -8,7 +8,7 @@ square, resized to ``ARTWORK_SIZE_PX``, saved as JPG quality
 
 Every failure mode falls back to feed-level artwork: the function returns
 ``None`` and emits a structured ``artwork_fallback`` WARN log so operators
-can spot patterns. The RSS feed (Phase 7) renders ``FEED_ARTWORK_URL`` for
+can spot patterns. The RSS feed renders ``FEED_ARTWORK_URL`` for
 episodes whose row has ``artwork_path = NULL``.
 """
 

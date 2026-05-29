@@ -1,7 +1,6 @@
 """Application configuration via Pydantic Settings.
 
-Resolution chain: code default -> env var -> runtime_settings DB row (added in Phase 10).
-Phase 1 covers code defaults and env vars only.
+Resolution chain: code default -> env var -> runtime_settings DB row.
 """
 
 from __future__ import annotations
@@ -48,13 +47,13 @@ class Settings(BaseSettings):
     FEED_CATEGORY: str = "News"
     FEED_EXPLICIT: bool = False
 
-    # LLM tunables (used from Phase 3 onward; defined here for completeness).
+    # LLM tunables.
     LLM_TEMPERATURE: float = 0.7
     LLM_MAX_TOKENS: int = 4000
     LLM_TIMEOUT_SECONDS: int = 300
     LLM_RETRY_COUNT: int = 3
 
-    # Extraction tunables (Phase 2).
+    # Extraction tunables.
     FIRECRAWL_RETRY_COUNT: int = 3
     FIRECRAWL_BACKOFF_BASE_SECONDS: int = 1
     FIRECRAWL_TIMEOUT_SECONDS: int = 30
@@ -81,7 +80,7 @@ class Settings(BaseSettings):
     # CORS.
     CORS_ORIGINS: str = ""
 
-    # Auth (Phase 9). When AUTH_ENABLED is false the admin endpoints accept
+    # Auth. When AUTH_ENABLED is false the admin endpoints accept
     # unauthenticated requests; this is the default for single-operator
     # localhost installs. Public-internet deployments must set
     # AUTH_ENABLED=true plus an admin password.
@@ -107,11 +106,11 @@ class Settings(BaseSettings):
     MAX_PROMPT_LENGTH_BYTES: int = 10240
     MAX_CORRECTIONS_ENTRIES: int = 500
 
-    # TTS wrapper (Phase 4).
+    # TTS wrapper.
     TTS_LANGUAGE: str = "en"
     TTS_DEVICE: Literal["cuda", "cpu"] = "cuda"
     TTS_HTTP_TIMEOUT_SECONDS: float = 120
-    # Wired into the per-chunk pipeline call site in Phase 5; defined here so
+    # Used by the per-chunk pipeline call site; defined here so
     # operators can tune .env now without a follow-up rebuild.
     TTS_RETRY_COUNT: int = 3
     TTS_REACHABILITY_GRACE_SECONDS: float = 60
@@ -122,13 +121,13 @@ class Settings(BaseSettings):
     XTTS_TOP_K: int = 50
     XTTS_TOP_P: float = 0.85
 
-    # Chunking (Phase 5).
+    # Chunking.
     TTS_CHUNK_TARGET_WORDS: int = 180
     TTS_CHUNK_MAX_WORDS: int = 220
     TTS_CHUNK_MAX_CHARS: int = 1100
     TTS_CHUNK_SILENCE_MS: int = 250
 
-    # Audio pipeline (Phase 5).
+    # Audio pipeline.
     AUDIO_SILENCE_THRESHOLD: float = 0.003
     AUDIO_SILENCE_BUFFER_MS: int = 5
     LOUDNORM_TARGET_LUFS: float = -14
@@ -138,7 +137,7 @@ class Settings(BaseSettings):
     MP3_SAMPLE_RATE: int = 24000
     MP3_CHANNELS: int = 2
 
-    # Artwork (Phase 6).
+    # Artwork.
     ARTWORK_SIZE_PX: int = 3000
     ARTWORK_JPG_QUALITY: int = 85
     ARTWORK_FETCH_TIMEOUT_SECONDS: float = 15

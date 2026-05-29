@@ -839,7 +839,7 @@ Re-reads `reference/voice.wav` and recomputes speaker embeddings. Called by the 
 
 - `idiap/coqui-ai-TTS` Python package via pip (active fork; original `coqui-ai/TTS` is unmaintained)
 - XTTS-v2 model: HuggingFace cache mounted as volume, first-run download, persistent cache
-- Reference WAV at `backend/app/reference/voice.wav` (operator-provided from LibriTTS or similar permissively-licensed source), mounted into wrapper. Wrapper exits non-zero at startup if the file is missing or unreadable; container restart loop surfaces the problem instead of failing per-request.
+- Reference WAV at `backend/app/reference/voice.wav` (operator-provided from LibriTTS or similar permissively-licensed source, or uploaded via the Settings UI), mounted into the wrapper. The wrapper starts even without a voice: the model loads, `/health` reports `reference_loaded=false`, and `/generate` returns 503 until a voice is committed (via the UI, which writes voice.wav and calls `/reload`). Only a model-load failure exits the process.
 - Pre-compute speaker embeddings at startup via `get_conditioning_latents()`, cache in memory, reuse every call
 - Single uvicorn worker. Async endpoints. `asyncio.Lock` around the GPU inference call. `/health` (read-only) does not acquire the lock; `/reload` does (can't swap reference embeddings mid-inference). The lock means concurrent `/generate` requests queue cleanly at the inference boundary while `/health` stays responsive.
 - Batch generation (no streaming)
@@ -858,6 +858,8 @@ Retries on `/generate` failures happen client-side in the main app (`TTS_RETRY_C
 XTTS-v2 model weights ship under the **Coqui Public Model License 1.0.0 (CPML)**. The license restricts use to non-commercial purposes. The paid commercial-license tier that Coqui formerly offered is gone -- Coqui AI shut down in January 2024 and no rights holder is currently selling commercial licenses.
 
 For personal self-hosted use this is fine. README must document the license so operators know. Audicle does not redistribute model weights; the wrapper downloads them from Hugging Face on first run.
+
+Coqui gates the first XTTS-v2 load behind an interactive y/n CPML agreement prompt. There is no TTY in a container, so the wrapper images set `COQUI_TOS_AGREED=1` to accept it non-interactively (deploying the wrapper is itself acceptance of the non-commercial CPML). Without it the model load hangs/fails at startup.
 
 Code: the original `coqui-ai/TTS` Python package is unmaintained. The active fork is **`idiap/coqui-ai-TTS`** (MPL 2.0). Audicle's TTS wrapper installs from the Idiap fork. The model weights are still CPML regardless of which code fork loads them.
 

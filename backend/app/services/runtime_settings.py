@@ -7,7 +7,7 @@ declared type via ``Settings.__class__.model_fields`` introspection.
 
 ``overlay(settings)`` returns a copy of ``Settings`` with the
 ``runtime_settings`` row values applied on top of the env defaults. This is
-the resolution chain Phase 10's docstring promises:
+the resolution chain:
 
     code default -> env var (Pydantic) -> runtime_settings DB row
 """

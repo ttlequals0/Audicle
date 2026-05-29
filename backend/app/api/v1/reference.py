@@ -33,7 +33,7 @@ from app.services.atomic_write import write_bytes_atomic
 logger = logging.getLogger("app.api.reference")
 router = APIRouter(prefix="/reference", tags=["reference"])
 
-# Voice clip spec per build-plan: mono, 24 kHz target (16-48 acceptable),
+# Voice clip spec: mono, 24 kHz target (16-48 acceptable),
 # 6-15 s, ~150 kB-1.5 MB. The caps below are deliberate floors/ceilings
 # that catch obvious mis-uploads without rejecting borderline-good clips.
 _MAX_REFERENCE_BYTES = 5 * 1024 * 1024

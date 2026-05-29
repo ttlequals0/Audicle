@@ -1,6 +1,6 @@
 """Single-admin authentication for the admin UI.
 
-Phase 9 ships a single ``ADMIN_USERNAME`` whose bcrypt hash lives in
+A single ``ADMIN_USERNAME`` whose bcrypt hash lives in
 ``ADMIN_PASSWORD_HASH``. The login flow:
 
 1. Operator POSTs username/password to ``/api/v1/auth/login``.

@@ -1,4 +1,4 @@
-"""RSS feed generation per build-plan.md Phase 7.
+"""RSS feed generation.
 
 feedgen renders the Atom + iTunes namespaces; the Podcasting 2.0 (``podcast:``)
 namespace is layered on via string-level XML construction afterwards because

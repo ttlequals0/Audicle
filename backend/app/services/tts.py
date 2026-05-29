@@ -8,7 +8,7 @@ The wrapper exposes three endpoints (build-plan TTS section):
 - ``POST /reload`` - re-reads ``reference/voice.wav`` and recomputes embeddings.
 
 Typed errors mirror the LLM client so the cleanup-stage retry classification
-extends naturally to the per-chunk TTS calls in Phase 5+:
+extends naturally to the per-chunk TTS calls:
 :class:`TTSTimeoutError` and :class:`TTSProviderError` are retryable, while
 :class:`TTSRequestError` (4xx, malformed response) propagates straight
 through.

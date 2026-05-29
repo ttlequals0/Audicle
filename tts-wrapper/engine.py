@@ -85,19 +85,25 @@ class XTTSEngine:
         device = self.config.device
         logger.info("Loading XTTS-v2 model", extra={"event": "tts_model_loading", "device": device})
 
-        ref_path = Path(self.config.reference_path)
-        if not ref_path.exists():
-            raise FileNotFoundError(
-                f"reference voice not found at {ref_path}; mount voice.wav to that path"
-            )
-
-        # ``progress_bar=False`` keeps the container log clean.
+        # progress_bar=False keeps the container log clean.
         self._model = TTS("tts_models/multilingual/multi-dataset/xtts_v2", progress_bar=False).to(
             device
         )
         self.model_loaded = True
 
-        self._compute_embeddings(ref_path)
+        # The reference voice is optional at startup: the operator can upload one
+        # later via the UI (which writes voice.wav and calls /reload). Compute
+        # embeddings now if it's already present; otherwise stay up and serve
+        # /health (reference_loaded=false) until a voice arrives.
+        ref_path = Path(self.config.reference_path)
+        if ref_path.exists():
+            self._compute_embeddings(ref_path)
+        else:
+            logger.warning(
+                "No reference voice yet; upload one via the UI. /generate is "
+                "unavailable until a voice is committed.",
+                extra={"event": "tts_reference_missing", "path": str(ref_path)},
+            )
 
     def _compute_embeddings(self, ref_path: Path) -> None:
         assert self._model is not None

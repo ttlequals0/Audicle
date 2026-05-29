@@ -6,6 +6,13 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Image polish + headless TTS (`chore/build-plan-audit-and-cleanup`)
+
+- TTS wrapper accepts the CPML terms non-interactively (`COQUI_TOS_AGREED=1` in both Dockerfiles): without it the first XTTS-v2 load blocks on an interactive y/n prompt that has no TTY in a container, so the wrapper crashed on startup.
+- The wrapper no longer fails to start when `voice.wav` is absent. The model loads, `/health` reports `reference_loaded=false`, and `/generate` returns 503 until a voice is committed -- so an operator can bring the stack up and upload a reference voice through the Settings UI. `reachability.check_tts` accepts `model_loaded=true` even on a 503 so the worker doesn't block on a missing voice.
+- `docker-compose.yml`: dropped the `build:` blocks (images come from Docker Hub).
+- Comment cleanup: removed phase-specific and `build-plan line NNN` references across the codebase and trimmed verbose comments.
+
 ### Build-plan audit + cleanup pass (`chore/build-plan-audit-and-cleanup`)
 
 Audited the whole codebase against `build-plan.md` for completeness and accuracy, ran /simplify and /code-review over the diff, fixed every finding, and normalized all docs to ASCII.

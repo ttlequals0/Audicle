@@ -10,7 +10,12 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     HF_HOME=/root/.cache/huggingface \
-    TTS_HOME=/root/.cache/huggingface/tts
+    TTS_HOME=/root/.cache/huggingface/tts \
+    # Coqui gates the first XTTS-v2 load behind an interactive y/n CPML prompt;
+    # in a container there is no TTY to answer it, so the load hangs/fails.
+    # Self-hosting the wrapper is acceptance of the non-commercial CPML (see the
+    # README license note); agree non-interactively so the model loads headless.
+    COQUI_TOS_AGREED=1
 
 # OS deps: curl for healthchecks; libsndfile for soundfile/coqui-tts WAV IO.
 RUN apt-get update \

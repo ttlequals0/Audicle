@@ -1,6 +1,6 @@
 """Key/value settings store backed by the SQLite ``settings`` table.
 
-Phase 7 uses this for ``podcast:guid`` (stable feed identifier per the
+Used for ``podcast:guid`` (stable feed identifier per the
 Podcasting 2.0 spec). Subsequent phases will pile on runtime knobs
 (retention overrides, auth tunables, etc).
 """

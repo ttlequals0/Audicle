@@ -5,7 +5,7 @@ processing. A failure here is fatal: the process exits non-zero so the
 container restart loop surfaces the problem instead of every job failing in
 the same way mid-stage.
 
-Phase 4: Firecrawl + LLM + TTS wrapper are all probed.
+Firecrawl + LLM + TTS wrapper are all probed.
 """
 
 from __future__ import annotations
@@ -112,7 +112,7 @@ async def check_tts(settings: Settings) -> CheckResult:
     """Probe the TTS wrapper's ``/health`` endpoint with a startup grace period.
 
     The wrapper takes 10-30s to load XTTS-v2 + compute speaker embeddings on a
-    cold container start. Per build plan line 1469, we poll for up to
+    cold container start. We poll for up to
     ``TTS_REACHABILITY_GRACE_SECONDS`` (default 60s) with a
     ``TTS_REACHABILITY_PROBE_TIMEOUT`` per attempt, returning the first
     ``model_loaded: true`` response.
@@ -134,26 +134,27 @@ async def check_tts(settings: Settings) -> CheckResult:
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
                 last_detail = f"unreachable ({exc.__class__.__name__}: {exc})"
             else:
-                if response.is_success:
-                    try:
-                        body = response.json()
-                    except ValueError:
-                        body = {}
-                    if isinstance(body, dict) and body.get("model_loaded"):
-                        return CheckResult(
-                            name="tts",
-                            ok=True,
-                            detail=(
-                                f"HTTP {response.status_code} after {attempt} probe(s); "
-                                f"model_loaded=true, reference_loaded={body.get('reference_loaded', False)}"
-                            ),
-                        )
-                    last_detail = (
-                        f"HTTP {response.status_code} but model_loaded=false "
-                        f"(reference_loaded={body.get('reference_loaded') if isinstance(body, dict) else 'n/a'})"
+                # The model being loaded is what makes TTS reachable. A 503 with
+                # model_loaded=true just means no reference voice is committed yet
+                # (the operator uploads one via the UI), so accept it rather than
+                # blocking the worker on a missing voice.
+                try:
+                    body = response.json()
+                except ValueError:
+                    body = {}
+                if isinstance(body, dict) and body.get("model_loaded"):
+                    return CheckResult(
+                        name="tts",
+                        ok=True,
+                        detail=(
+                            f"HTTP {response.status_code} after {attempt} probe(s); "
+                            f"model_loaded=true, reference_loaded={body.get('reference_loaded', False)}"
+                        ),
                     )
-                else:
-                    last_detail = f"HTTP {response.status_code}: {response.text[:120]}"
+                last_detail = (
+                    f"HTTP {response.status_code}, model_loaded=false "
+                    f"(reference_loaded={body.get('reference_loaded') if isinstance(body, dict) else 'n/a'})"
+                )
 
             # Per-probe debug log so a stalled cold-start is visible in Loki
             # instead of 60 silent seconds.
@@ -183,7 +184,7 @@ async def check_tts(settings: Settings) -> CheckResult:
 
 
 async def run_all(settings: Settings) -> list[CheckResult]:
-    """Run every Phase-appropriate check.
+    """Run every reachability check.
 
     Logs each result and raises ``ReachabilityError`` if any check failed. The
     worker bootstrap calls this; the FastAPI lifespan doesn't (so reviewers

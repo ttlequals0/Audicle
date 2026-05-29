@@ -112,8 +112,22 @@ def test_health_503_when_reference_not_loaded(tmp_path: Path) -> None:
     assert body["ok"] is False
     assert body["model_loaded"] is True
     assert body["reference_loaded"] is False
-    # Build-plan spec line 803: 503 body includes a diagnostic "error" string.
+    # 503 body includes a diagnostic "error" string.
     assert "reference voice not loaded" in body["error"]
+
+
+def test_generate_503_when_reference_not_loaded(tmp_path: Path) -> None:
+    """With the model up but no committed voice, /generate refuses rather than
+    synthesizing with no speaker; the operator uploads a voice via the UI first."""
+
+    engine = FakeEngine()
+    with _client(engine, tmp_path) as client:
+        engine.reference_loaded = False
+        response = client.post(
+            "/generate", json={"text": "hello there", "episode_id": "ep1", "chunk_index": 0}
+        )
+    assert response.status_code == 503
+    assert "no reference voice" in str(response.json()["detail"])
 
 
 # --- /generate ------------------------------------------------------------
