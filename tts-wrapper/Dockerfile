@@ -21,9 +21,12 @@ WORKDIR /app
 
 # Install Python deps from pyproject.toml so this image stays in lockstep with
 # the declared dependency set; no parallel hand-written list to drift.
+# The transformers cap (coqui-tts 0.24 breaks on transformers 5.x; see the note
+# in pyproject.toml) is applied here rather than in the manifest.
 COPY pyproject.toml ./
 COPY config.py engine.py main.py ./
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir "transformers>=4.43.0,<4.47" \
+    && pip install --no-cache-dir .
 
 EXPOSE 8000
 
