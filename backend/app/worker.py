@@ -13,10 +13,11 @@ import contextlib
 import logging
 import signal
 import sys
+from datetime import UTC, datetime
 
 from app.config import Settings, get_settings
 from app.core import database
-from app.services import jobs, pipeline, reachability
+from app.services import jobs, pipeline, reachability, retention
 from app.startup import bootstrap
 
 logger = logging.getLogger("app.worker")
@@ -43,6 +44,33 @@ async def _pickup_once(settings: Settings) -> jobs.Job | None:
         return jobs.claim_next_queued(conn)
     finally:
         conn.close()
+
+
+def _maybe_run_retention_sweep(settings: Settings, last_sweep_day: str | None) -> str | None:
+    """Run the retention sweep at most once per UTC day, at the configured
+    hour. Returns the new value of ``last_sweep_day`` so the caller can
+    persist the de-dup state across iterations.
+
+    Stateless across restarts (re-runs if the worker bounces past the sweep
+    hour without having run today); the operation is idempotent so a double
+    sweep just emits two `retention_sweep_complete` log lines.
+    """
+
+    now = datetime.now(UTC)
+    today = now.strftime("%Y-%m-%d")
+    if now.hour != settings.RETENTION_SWEEP_HOUR_UTC:
+        return last_sweep_day
+    if last_sweep_day == today:
+        return last_sweep_day
+    try:
+        retention.purge_older_than(settings, older_than_days=settings.RETENTION_DAYS)
+    except Exception:
+        logger.exception(
+            "Retention sweep failed; will retry next iteration",
+            extra={"event": "retention_sweep_failed"},
+        )
+        return last_sweep_day
+    return today
 
 
 async def _process_one(settings: Settings) -> bool:
@@ -86,7 +114,14 @@ async def run() -> None:
     await _crash_recovery(settings.DATA_DIR)
 
     poll_interval = settings.QUEUE_POLL_INTERVAL_SECONDS
+    last_sweep_day: str | None = None
     while not shutdown.is_set():
+        # The sweep is sync (SQLite + file unlinks); run it in a worker thread
+        # so a large purge doesn't block signal handling or the
+        # ``shutdown.wait()`` that lets SIGTERM exit cleanly.
+        last_sweep_day = await asyncio.to_thread(
+            _maybe_run_retention_sweep, settings, last_sweep_day
+        )
         # Anything that escapes process_job (DB locked during pickup, OSError
         # on the data dir, ...) must not kill the worker. Log it and back off
         # one poll interval so we don't spin against a hard failure.
