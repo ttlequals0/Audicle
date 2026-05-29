@@ -71,9 +71,9 @@ class Settings(BaseSettings):
     LOG_FORMAT: Literal["json", "text"] = "json"
 
     # Retention.
-    RETENTION_DAYS: int = 90
-    RETENTION_SWEEP_HOUR_UTC: int = 7
-    MIGRATION_BACKUP_RETENTION_DAYS: int = 30
+    RETENTION_DAYS: int = Field(default=90, ge=0, le=100_000)
+    RETENTION_SWEEP_HOUR_UTC: int = Field(default=7, ge=0, le=23)
+    MIGRATION_BACKUP_RETENTION_DAYS: int = Field(default=30, ge=0)
 
     # RSS.
     RSS_CACHE_MAX_AGE_SECONDS: int = 300

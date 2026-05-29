@@ -6,6 +6,38 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Added (Phase 8 - Retention and Purge)
+
+- `backend/app/services/retention.py`: `purge_older_than(settings, older_than_days)` deletes episodes (DB row + on-disk mp3/jpg/vtt) older than the cutoff. `older_than_days=0` is the explicit "wipe everything" contract used by the purge endpoint; positive N filters strictly older than `now - N days`. Returns `PurgeResult(episode_ids, rows_deleted, files_removed)` so callers can log + surface a summary.
+- **Defense-in-depth file removal**: `_remove_path` resolves the target with `path.resolve(strict=False)`, then `relative_to(media_dir.resolve())` to confirm the path stays under `DATA_DIR/media` before unlinking. A poisoned row pointing `audio_path` at `/etc/passwd` (manual DB edit, future migration accident) logs a WARN and is skipped. Missing files are silently treated as success (the sweep is idempotent).
+- `backend/app/worker.py`: daily retention sweep wired into the worker poll loop. `_maybe_run_retention_sweep` runs at most once per UTC day at `RETENTION_SWEEP_HOUR_UTC`, calling `purge_older_than(RETENTION_DAYS)`. Sweep failures are logged at ERROR (`retention_sweep_failed`) but do NOT mark the day as swept, so the next iteration retries. The sweep is stateless across restarts -- a worker bounce past the sweep hour without having run today will re-fire.
+- `backend/app/api/v1/purge.py`: `POST /api/v1/purge` for operator-initiated wipes. Requires `confirm=true` query param to acknowledge the destructive action (returns 400 otherwise). Accepts `older_than_days=N` for a partial purge (validated `ge=0`). Returns `{older_than_days, rows_deleted, files_removed, episode_ids: [...]}` so an operator script can confirm what got removed.
+- `backend/app/api/v1/router.py`: registered the purge route alongside the existing v1 routes.
+
+Tests (16 new, 261 total)
+
+- `test_retention.py` (7): old rows + files removed, full purge wipes everything (including future-dated rows), partial-cutoff no-op, missing files silently skipped, defense-in-depth rejects paths outside `media_dir` (verified via the `retention_unsafe_path` log assertion), negative `older_than_days` raises `ValueError`, `>100_000` days rejected before `timedelta` overflows the year-9999 ceiling.
+- `test_api_purge.py` (5): missing `confirm` returns 400, `confirm=true` wipes when `older_than_days=0`, partial purge keeps recent, negative days rejected at validation (400 via the custom error handler), response shape matches the documented schema.
+- `test_worker_retention.py` (4): sweep fires when the UTC hour matches and no run today; skips when already run today; skips when the hour doesn't match; sweep failure does NOT mark the day as swept and is logged with `retention_sweep_failed` event.
+
+### Code-review pass (multi-agent /simplify + /code-review for Phase 8)
+
+Findings surfaced and applied:
+
+- **`OverflowError` on huge `older_than_days`**: `datetime.now(UTC) - timedelta(days=N)` overflows past the year-9999 ceiling at ~2.9M days. The endpoint accepted any non-negative int and would 500 on `older_than_days=1_000_000`. Added `_MAX_OLDER_THAN_DAYS=100_000` cap in `purge_older_than` and `le=100_000` on the FastAPI Query so misuse fails with a clean 400 / `ValueError`.
+- **Sync purge blocked the async worker loop**: `_maybe_run_retention_sweep` is sync (SQLite + file unlinks). Wrapped the call in `asyncio.to_thread` so a large sweep doesn't stall signal handling or the `shutdown.wait()` that lets SIGTERM exit cleanly.
+- **Config bounds missing**: `RETENTION_DAYS` and `RETENTION_SWEEP_HOUR_UTC` accepted any int. A misconfigured `RETENTION_SWEEP_HOUR_UTC=25` would silently disable the sweep. Added `Field(ge=0, le=23)` / `Field(ge=0, le=100_000)` so startup fails loudly on a bad value.
+- **Docstring contradicted behavior for `older_than_days=0`**: old docstring claimed "every episode matching `pub_date < now`" but the implementation wipes unconditionally (including future-dated rows from clock skew or test fixtures). Updated to describe the actual wipe-everything contract.
+- **Simplified the zero-day branch**: collapsed the `if cutoff_iso is None` / separate SELECT into a single parameterized query that uses a year-9999 sentinel cutoff. One code path instead of two.
+- **`_remove_safe` was a one-line wrapper**: inlined into the single caller; saves a hop and clarifies the `path_str|None` guard at the call site.
+- **`_remove_path` swallowed unlink errors silently**: `IsADirectoryError`, `PermissionError`, and other `OSError` cases were eaten by a bare `suppress(OSError)` so operators had no breadcrumb to a stuck on-disk artifact after a sweep. Now logs `retention_unlink_failed` / `retention_resolve_failed` with the exception class.
+- **`test_purge_refuses_paths_outside_media_dir` didn't assert the WARN log**: added `caplog` assertion that the `retention_unsafe_path` event is emitted. Without this, a future change that silenced the log would still pass the test.
+- **Frozen-datetime helper was duplicated four times**: extracted `_freeze_now(monkeypatch, fake_now)` in `test_worker_retention.py`. Inheriting from the real `datetime` (rather than building a stub class with only `now`) means a future change in `worker.py` that adds `datetime.fromisoformat(...)` or constructs a `datetime(...)` no longer breaks every retention-sweep test with an `AttributeError`.
+- **`test_purge_negative_older_than_days_raises_value_error` missing `env` fixture**: would fail at `get_settings()` validation before hitting the negative branch. Added the fixture; the test now actually exercises the code path it documents.
+- **CHANGELOG test-count drift**: previous draft claimed 276 total. Re-checked against `pytest --collect-only`: 261. Updated.
+
+Container smoke (`tmp/phase8_smoke.sh`) verified inside the runtime image: build, seed a row + mp3/jpg under `/data/media`, `POST /api/v1/purge` without `confirm` returns 400, `POST /api/v1/purge?confirm=true` returns 200 with `rows_deleted=1` and `files_removed=2`, and re-querying the DB confirms the row is gone and the on-disk files are unlinked.
+
 ### Added (Phase 7 - RSS Feed and Media Serving)
 
 - Pipeline now runs **extract -> cleanup -> corrections -> chunk -> tts -> audio -> artwork -> transcript -> finalize**. Final `status=done` with `stage=finalize`. The finalize stage upserts a row into the `episodes` table that the RSS feed and media handlers read from.
