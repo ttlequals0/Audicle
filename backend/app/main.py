@@ -78,6 +78,18 @@ def _mount_static_ui(app: FastAPI) -> None:
         name="ui-assets",
     )
 
+    # Precompute, once at startup, the servable SPA root files as a
+    # name -> on-disk Path map built by listing the build output. The request
+    # path is only ever used as a dict KEY for lookup; the served Path comes
+    # from the directory listing, so user input never constructs a filesystem
+    # path (no traversal surface to guard).
+    root_files: dict[str, Path] = {
+        child.name: child
+        for child in static_dir.iterdir()
+        if child.is_file()
+        and (child.name in _ROOT_STATIC_FILES or _WORKBOX_FILE_RE.fullmatch(child.name))
+    }
+
     @app.get("/", include_in_schema=False)
     async def _ui_root() -> FileResponse:
         return FileResponse(index_path)
@@ -88,16 +100,11 @@ def _mount_static_ui(app: FastAPI) -> None:
     # this handler.
     @app.get("/{path:path}", include_in_schema=False)
     async def _ui_fallback(path: str) -> FileResponse:
-        # Serve the known SPA root static files (favicon, manifest, service
-        # worker, icons, and the hash-named workbox runtime imported by
-        # sw.js); every other path returns index.html so the React router
-        # handles it. Matching the request against a fixed allowlist / strict
-        # pattern keeps the user-supplied path off the filesystem entirely --
-        # there is no traversal surface to guard.
-        if path in _ROOT_STATIC_FILES or _WORKBOX_FILE_RE.fullmatch(path):
-            candidate = static_dir / path
-            if candidate.is_file():
-                return FileResponse(candidate)
+        # Serve a known SPA root file by exact-name lookup; every other path
+        # returns index.html so the React router handles it.
+        served = root_files.get(path)
+        if served is not None:
+            return FileResponse(served)
         return FileResponse(index_path)
 
 
