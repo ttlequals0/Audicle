@@ -36,6 +36,7 @@ from app.services import (
     extraction,
     jobs,
     llm,
+    seed_corrections,
     transcript,
     tts,
 )
@@ -560,16 +561,33 @@ def _coerce_str(value: Any) -> str | None:
 
 
 async def _stage_corrections(cleaned: str, settings: Settings) -> str:
-    """Apply the pronunciation dictionary. Re-reads the file every call."""
+    """Apply the built-in seed baseline plus the user dictionary in one pass.
 
-    dictionary_path = _corrections_path(settings)
-    dictionary = corrections.load(dictionary_path)
-    result = corrections.apply(cleaned, dictionary)
+    Both are re-read every call. The user dictionary wins on key collision
+    (``{**seed, **user}``). A malformed *bundled* seed CSV degrades to
+    user-only rather than failing every job; a malformed *user* file still
+    raises in ``corrections.load`` so the operator fixes their own file.
+    """
+
+    user_dict = corrections.load(_corrections_path(settings))
+    try:
+        seed_dict = seed_corrections.load_applicable_dict()
+    except Exception:
+        logger.error(
+            "Seed corrections failed to load; applying user corrections only",
+            extra={"event": "seed_corrections_load_failed"},
+            exc_info=True,
+        )
+        seed_dict = {}
+    merged = {**seed_dict, **user_dict}
+    result = corrections.apply(cleaned, merged)
     logger.info(
         "Corrections applied",
         extra={
             "event": "corrections_complete",
-            "entries_loaded": len(dictionary),
+            "entries_user": len(user_dict),
+            "entries_seed_applicable": len(seed_dict),
+            "entries_merged": len(merged),
             "delta_chars": len(result) - len(cleaned),
         },
     )

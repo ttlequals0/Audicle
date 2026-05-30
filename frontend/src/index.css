@@ -347,6 +347,44 @@
     grid-template-columns: 1fr 1fr auto;
     gap: 0.5rem;
   }
+
+  .builtin-note {
+    display: flex;
+    gap: 0.625rem;
+    align-items: flex-start;
+    background: #0d0f0e;
+    border: 1px solid #26262e;
+    border-left: 2px solid #1ce783;
+    border-radius: 8px;
+    padding: 0.625rem 0.75rem;
+  }
+  .builtin-note-tag {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.5625rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #1ce783;
+    border: 1px solid #1ce78340;
+    border-radius: 4px;
+    padding: 0.125rem 0.375rem;
+    flex-shrink: 0;
+    margin-top: 0.0625rem;
+  }
+  .builtin-note-body {
+    font-size: 0.75rem;
+    line-height: 1.5;
+    color: #9a9aaa;
+  }
+  .builtin-note-path {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.6875rem;
+    color: #c9c9d4;
+    background: #15151a;
+    border: 1px solid #26262e;
+    border-radius: 4px;
+    padding: 0.0625rem 0.25rem;
+    white-space: nowrap;
+  }
   @media (max-width: 480px) {
     .correction-row {
       grid-template-columns: 1fr 1fr 32px;

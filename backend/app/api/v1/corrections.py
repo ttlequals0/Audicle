@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -9,6 +10,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 
 from app.config import Settings, get_settings
 from app.services import corrections as corrections_service
+from app.services import seed_corrections
 
 router = APIRouter(tags=["corrections"])
 
@@ -53,3 +55,24 @@ def write_corrections(
         )
     corrections_service.save(_corrections_path(), body)
     return body
+
+
+@router.get(
+    "/corrections/seed",
+    summary="Read the built-in seed pronunciation corrections",
+)
+def read_seed_corrections() -> dict[str, Any]:
+    """Return the bundled baseline corrections (read-only).
+
+    These ship with Audicle, are not editable, and are applied beneath the
+    user's own corrections (which win on key collision). ``applicable`` marks
+    rows that are actually applied in the pipeline -- annotated homographs and
+    spelled-out acronyms are listed for reference but not applied.
+    """
+
+    entries = seed_corrections.load_seed(seed_corrections.seed_path())
+    return {
+        "entries": [asdict(e) for e in entries],
+        "count": len(entries),
+        "applicable_count": sum(e.applicable for e in entries),
+    }

@@ -1,0 +1,239 @@
+category,input_text,replacement_text,notes
+Tech Acronym,API,A P I,Spell out: ay pee eye
+Tech Acronym,URL,U R L,Spell out: you are el
+Tech Acronym,SDK,S D K,Spell out: es dee kay
+Tech Acronym,DNS,D N S,Spell out: dee en es
+Tech Acronym,TCP,T C P,Spell out: tee see pee
+Tech Acronym,UDP,U D P,Spell out: you dee pee
+Tech Acronym,IP,I P,Spell out: eye pee
+Tech Acronym,HTTP,H T T P,Spell out: aitch tee tee pee
+Tech Acronym,HTTPS,H T T P S,Spell out: aitch tee tee pee es
+Tech Acronym,SSH,S S H,Spell out: es es aitch
+Tech Acronym,VPN,V P N,Spell out: vee pee en
+Tech Acronym,CPU,C P U,Spell out: see pee you
+Tech Acronym,GPU,G P U,Spell out: jee pee you
+Tech Acronym,RAM,ram,Pronounce as word
+Tech Acronym,ROM,rom,Pronounce as word
+Tech Acronym,SSD,S S D,Spell out: es es dee
+Tech Acronym,CLI,C L I,Spell out: see el eye
+Tech Acronym,IDE,I D E,Spell out: eye dee ee
+Tech Acronym,BIOS,BY-oss,Pronounce as word
+Tech Acronym,IPMI,I P M I,Spell out: eye pee em eye
+Tech Acronym,BMC,B M C,Spell out: bee em see
+Tech Acronym,AI,A I,Spell out: ay eye — commonly mispronounced as single word
+Tech Acronym,ML,M L,Spell out: em el
+Tech Acronym,CI/CD,C I C D,Spell out: see eye see dee
+Tech Acronym,SQL,sequel,Pronounced as 'sequel' not 'S Q L' in most contexts
+Tech Acronym,GUI,gooey,Pronounced as 'gooey'
+Tech Acronym,regex,REH-jex,Pronounced as word
+Tech Acronym,chmod,ch-mod,Spoken as 'ch-mod'
+Tech Acronym,sudo,SOO-doh,Pronounced as word
+Tech Acronym,cron,kron,"Pronounced as word, hard c"
+Tech Acronym,nginx,engine-X,Pronounced 'engine-X'
+Tech Acronym,kubectl,kube-cuttle,Common pronunciation: kube-cuttle or kube-control
+Tech Acronym,GIF,jif,Debated but often 'jif'
+Tech Acronym,EOF,E O F,Spell out
+Tech Acronym,YAML,yam-el,Pronounced as word
+Tech Acronym,JSON,jay-son,Pronounced as name
+Tech Acronym,OAuth,oh-auth,Pronounced 'oh-auth'
+Tech Acronym,POSIX,POZ-iks,Pronounced as word
+Tech Acronym,MIME,mime,Pronounced as word
+Tech Acronym,ASCII,ASS-kee,Pronounced as word
+Tech Acronym,IEEE,I triple E,Spell out: eye triple ee
+Tech Acronym,IETF,I E T F,Spell out
+Tech Acronym,WYSIWYG,WIZ-ee-wig,Pronounced as word
+Tech Acronym,FIFO,FY-foh,Pronounced as word
+Tech Acronym,LIFO,LY-foh,Pronounced as word
+Tech Brand,AWS,A W S,Spell out: ay double-you es
+Tech Brand,GCP,G C P,Spell out: jee see pee
+Tech Brand,GKE,G K E,Spell out: jee kay ee
+Tech Brand,EKS,E K S,Spell out: ee kay es
+Tech Brand,AKS,A K S,Spell out: ay kay es
+Tech Brand,IAM,I A M,"Spell out, not 'I am'"
+Tech Brand,S3,S3,Spell out: es three
+Tech Brand,EC2,E C 2,Spell out: ee see two
+Tech Brand,PyTorch,pie-torch,Pronounced 'pie-torch'
+Tech Brand,Kubernetes,koo-BER-neh-tees,Commonly mispronounced
+Tech Brand,Grafana,gra-FAH-nah,Commonly mispronounced as 'GRAH-fah-nah'
+Tech Brand,Prometheus,proh-MEE-thee-us,Greek origin
+Tech Brand,Ansible,AN-sih-bul,Pronounced 'AN-sih-bul'
+Tech Brand,Terraform,TERRA-form,Pronounced 'TERRA-form'
+Tech Brand,Kafka,KAF-kah,Named after Franz Kafka
+Tech Brand,Nginx,engine-X,Pronounced 'engine-X'
+Tech Brand,Debian,DEB-ee-an,Named after Debra and Ian
+Tech Brand,Ubuntu,oo-BOON-too,Zulu origin
+Tech Brand,Linux,LIN-uks,Linus Torvalds' own pronunciation
+Tech Brand,FreeBSD,free B S D,Spell out BSD
+Tech Brand,macOS,mac O S,Spell out OS
+Tech Brand,iOS,eye O S,Spell out
+Tech Brand,Ollama,oh-LAH-mah,Commonly mispronounced
+Tech Brand,Hugging Face,HUG-ing face,Not 'hyoo-ging'
+Tech Brand,Mistral,MIS-tral,French wind name
+Tech Brand,LLaMA,LAH-mah,Acronym but pronounced as word
+Consumer Brand,Porsche,POR-shuh,"Two syllables, not 'Porsh'"
+Consumer Brand,Nike,NY-kee,Two syllables
+Consumer Brand,Adidas,ah-DEE-dahs,Not 'ADD-ih-das'
+Consumer Brand,Hyundai,HUN-day,Not 'high-un-die'
+Consumer Brand,Volkswagen,FOLKS-vah-gen,German pronunciation
+Consumer Brand,Audi,OW-dee,German pronunciation
+Consumer Brand,Hermes,air-MEZ,French brand
+Consumer Brand,Louis Vuitton,loo-ee vwee-TOHN,Silent T and N
+Consumer Brand,Givenchy,zhee-VOHN-shee,French pronunciation
+Consumer Brand,Versace,ver-SAH-chay,"Italian, three syllables"
+Consumer Brand,Moschino,mos-KEE-noh,Hard K
+Consumer Brand,Peugeot,PYOO-zhoh,Silent T
+Consumer Brand,Renault,reh-NOH,Silent LT
+Consumer Brand,Bvlgari,BOOL-gah-ree,Italian jeweler
+Consumer Brand,Huawei,WAH-way,Chinese pronunciation
+Consumer Brand,Samsung,SAM-soong,Korean pronunciation
+Consumer Brand,IKEA,ee-KEH-yah,Swedish pronunciation
+Consumer Brand,Adobe,ah-DOH-bee,Three syllables
+Consumer Brand,Nutella,noo-TELL-ah,Not 'nuh-TELL-ah'
+Consumer Brand,Sriracha,see-RAH-chah,Thai origin
+Consumer Brand,Yves Saint Laurent,EEV san loh-RAHN,French silent letters
+Consumer Brand,Balenciaga,bah-len-see-AH-gah,Spanish origin
+Consumer Brand,Tag Heuer,tag HOY-er,Swiss-German
+Consumer Brand,Miele,MEE-leh,German appliance brand
+Consumer Brand,Stella Artois,STELL-ah ar-TWAH,French/Belgian
+Consumer Brand,Chopard,shoh-PAR,"French, silent D"
+Consumer Brand,Laphroaig,lah-FROYG,Scottish Gaelic
+General Acronym,CEO,C E O,Spell out: see ee oh
+General Acronym,CFO,C F O,Spell out
+General Acronym,COO,C O O,Spell out: see oh oh — not 'coo'
+General Acronym,HR,H R,Spell out
+General Acronym,PR,P R,Spell out
+General Acronym,FAQ,F A Q,"Spell out, or 'fak' — context dependent"
+General Acronym,ETA,E T A,Spell out: ee tee ay
+General Acronym,ATM,A T M,Spell out
+General Acronym,FBI,F B I,Spell out
+General Acronym,CIA,C I A,Spell out
+General Acronym,NASA,NAH-sah,Pronounced as word
+General Acronym,NATO,NAY-toh,Pronounced as word
+General Acronym,RADAR,RAY-dar,Pronounced as word
+General Acronym,LASER,LAY-zer,Pronounced as word
+General Acronym,SCUBA,SKOO-bah,Pronounced as word
+General Acronym,GDPR,G D P R,Spell out: jee dee pee ar
+General Acronym,HIPAA,HIP-ah,Pronounced as word
+General Acronym,OSHA,OH-shah,Pronounced as word
+General Acronym,EULA,YOO-lah,Pronounced as word
+General Acronym,SLA,S L A,Spell out: es el ay
+General Acronym,KPI,K P I,Spell out: kay pee eye
+General Acronym,ROI,R O I,Spell out: ar oh eye
+General Acronym,NDA,N D A,Spell out
+General Acronym,RFP,R F P,Spell out
+General Acronym,TL;DR,too long didn't read,Expand abbreviation
+General Acronym,ICYMI,in case you missed it,Expand
+General Acronym,AFAIK,as far as I know,Expand
+General Acronym,IMHO,in my humble opinion,Expand
+General Acronym,ETA,E T A,Spell out
+Homograph,read (present),reed,Present tense: 'I read every day'
+Homograph,read (past),red,Past tense: 'She read the book'
+Homograph,lead (verb),leed,To guide: 'lead the team'
+Homograph,lead (metal),led,The metal: 'lead pipe'
+Homograph,wind (noun),wind,Moving air: 'the wind blew'
+Homograph,wind (verb),wynd,To coil: 'wind the clock'
+Homograph,wound (injury),woond,A cut: 'the wound healed'
+Homograph,wound (past of wind),wownd,Coiled: 'wound the wire'
+Homograph,tear (crying),teer,From eyes: 'a tear fell'
+Homograph,tear (rip),tair,To rip: 'tear the paper'
+Homograph,bow (weapon),boh,Arrow bow: 'bow and arrow'
+Homograph,bow (gesture),bow,Bend forward: 'take a bow'
+Homograph,close (adjective),klohs,Near: 'close to home'
+Homograph,close (verb),klohz,Shut: 'close the door'
+Homograph,row (argument),roh,Fight: 'had a row'
+Homograph,row (line),roh,Line of seats
+Homograph,object (noun),OB-jekt,A thing
+Homograph,object (verb),ob-JEKT,To protest
+Homograph,record (noun),REK-ord,A recording
+Homograph,record (verb),reh-KORD,To capture audio/video
+Homograph,invalid (disabled),IN-vah-lid,A sick person
+Homograph,invalid (incorrect),in-VAL-id,Not valid
+Homograph,minute (time),MIN-it,60 seconds
+Homograph,minute (tiny),my-NYOOT,Extremely small
+Homograph,present (gift),PREZ-ent,A gift or current time
+Homograph,present (verb),preh-ZENT,To show or introduce
+Homograph,refuse (trash),REF-yoos,Garbage
+Homograph,refuse (deny),reh-FYOOZ,To decline
+Homograph,desert (dry land),DEZ-ert,Dry landscape
+Homograph,desert (abandon),deh-ZERT,To abandon
+Homograph,content (satisfied),kon-TENT,Happy
+Homograph,content (material),KON-tent,"Material, subject matter"
+Homograph,conduct (noun),KON-dukt,Behavior
+Homograph,conduct (verb),kon-DUKT,To lead or manage
+Mispronounced Word,GIF,jif,Hard G vs soft G debate — 'jif' per creator
+Mispronounced Word,cache,kash,Not 'cash-ay'
+Mispronounced Word,queue,kyoo,Sounds like the letter Q
+Mispronounced Word,niche,neesh,"French origin, 'neesh' preferred in many regions"
+Mispronounced Word,meme,meem,Not 'meh-may'
+Mispronounced Word,hyperbole,hy-PER-boh-lee,Not 'HYPER-bowl'
+Mispronounced Word,quinoa,KEEN-wah,Not 'kwi-NOH-ah'
+Mispronounced Word,espresso,es-PRESS-oh,Not 'ex-press-oh'
+Mispronounced Word,asterisk,AS-teh-risk,Not 'as-ter-ik'
+Mispronounced Word,nuclear,NOO-klee-er,Not 'NOO-kyoo-ler'
+Mispronounced Word,February,FEB-roo-air-ee,Not 'Feb-yoo-air-ee'
+Mispronounced Word,library,LY-brer-ee,Not 'ly-berry'
+Mispronounced Word,et cetera,et SET-er-ah,Not 'ek SET-er-ah'
+Mispronounced Word,prescription,preh-SKRIP-shun,Not 'per-SKRIP-shun'
+Mispronounced Word,particularly,par-TIK-yoo-ler-lee,Often garbled by TTS
+Mispronounced Word,deteriorate,deh-TEER-ee-oh-rate,6 syllables
+Mispronounced Word,onomatopoeia,on-oh-mat-oh-PEE-ah,Often garbled
+Mispronounced Word,segue,SEG-way,Not 'seeg'
+Mispronounced Word,colonel,KER-nel,Irregular spelling
+Mispronounced Word,salmon,SAM-on,Silent L
+Mispronounced Word,often,OFF-en,T is often silent in natural speech
+Mispronounced Word,clothes,klohz,Not 'kloh-thes'
+Mispronounced Word,mischievous,MIS-chih-vus,Not 'mis-CHEEV-ee-us'
+Mispronounced Word,epitome,eh-PIT-oh-mee,Not 'EP-ih-tome'
+Mispronounced Word,chaos,KAY-oss,Not 'chay-oss'
+Mispronounced Word,awry,ah-RY,Not 'AW-ree'
+Mispronounced Word,worcestershire,WUS-ter-sher,British place name
+Mispronounced Word,paradigm,PAIR-ah-dyme,Silent G
+Mispronounced Word,coup,koo,"French loanword, silent P"
+Mispronounced Word,facade,fah-SAHD,Not 'FAY-kayd'
+Mispronounced Word,debris,deh-BREE,Silent S
+Mispronounced Word,genre,ZHON-ruh,French loanword
+Mispronounced Word,cache,kash,Computer cache — not cash-AY
+Mispronounced Word,chassis,CHAS-ee,Not 'CHAS-is'
+Mispronounced Word,pseudonym,SOO-doh-nim,Silent P
+Mispronounced Word,pneumonia,nyoo-MOH-nyah,Silent P
+Mispronounced Word,subtle,SUT-ul,Silent B
+Medical/Scientific,acetaminophen,ah-see-tah-MIN-oh-fen,Common pain reliever
+Medical/Scientific,Lisinopril,ly-SIN-oh-pril,ACE inhibitor
+Medical/Scientific,Omeprazole,oh-MEP-rah-zohl,PPI drug
+Medical/Scientific,Metoprolol,meh-TOH-proh-lol,Beta blocker
+Medical/Scientific,Ibuprofen,eye-byoo-PROH-fen,Not 'ib-yoo-pro-fen'
+Medical/Scientific,Psoriasis,soh-RY-ah-sis,Silent P
+Medical/Scientific,Anesthesia,an-es-THEE-zhah,Not 'an-es-THE-see-ah'
+Medical/Scientific,Eczema,EK-zeh-mah,Not 'ex-EE-mah'
+Medical/Scientific,Alzheimer's,AHLTS-hy-merz,Not 'ALZ-hy-merz'
+Medical/Scientific,Quinoa,KEEN-wah,"Grain, often mispronounced"
+Medical/Scientific,Homeopathy,hoh-mee-OP-ah-thee,Not 'homo-pathy'
+Medical/Scientific,Ophthalmologist,off-thal-MOL-oh-jist,Silent PH
+Medical/Scientific,Penicillin,pen-ih-SIL-in,Not 'peni-SILL-een'
+Medical/Scientific,Aneurysm,AN-yoo-riz-um,Not 'AN-yer-iz-um'
+Format,10:00,ten o'clock,Time normalization
+Format,10:00 AM,ten a m,Spell out AM
+Format,10kg,ten kilograms,Unit expansion
+Format,100%,one hundred percent,Symbol expansion
+Format,$100,one hundred dollars,Currency expansion
+Format,€100,one hundred euros,Currency expansion
+Format,£100,one hundred pounds,Currency expansion
+Format,#1,number one,Hash symbol
+Format,1st,first,Ordinal
+Format,2nd,second,Ordinal
+Format,3rd,third,Ordinal
+Format,4th,fourth,Ordinal
+Format,Jan.,January,Month abbreviation
+Format,Feb.,February,Month abbreviation
+Format,vs.,versus,Abbreviation
+Format,Dr.,Doctor,Title
+Format,Mr.,Mister,Title
+Format,Mrs.,Missus,Title
+Format,Jr.,Junior,Suffix
+Format,Sr.,Senior,Suffix
+Format,e.g.,for example,Latin abbreviation
+Format,i.e.,that is,Latin abbreviation
+Format,etc.,et cetera,Latin abbreviation
+Format,approx.,approximately,Abbreviation
+Format,v2.0,version two point oh,Version strings
+Format,v1.2.3,version one point two point three,Semantic version
