@@ -51,7 +51,7 @@ export default function Home() {
   const active = jobs
     .filter((j) => j.status === "queued" || j.status === "processing")
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
-  const history = jobs.filter((j) => j.status === "done" || j.status === "failed");
+  const history = jobs.filter((j) => j.status !== "queued" && j.status !== "processing");
 
   return (
     <div>

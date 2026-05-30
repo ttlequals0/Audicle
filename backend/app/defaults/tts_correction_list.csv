@@ -51,6 +51,7 @@ Tech Brand,EKS,E K S,Spell out: ee kay es
 Tech Brand,AKS,A K S,Spell out: ay kay es
 Tech Brand,IAM,I A M,"Spell out, not 'I am'"
 Tech Brand,S3,S 3,Spell out: es three
+Tech Brand,PostgreSQL,postgres,Pronounced post-gres
 Tech Brand,EC2,E C 2,Spell out: ee see two
 Tech Brand,PyTorch,pie-torch,Pronounced 'pie-torch'
 Tech Brand,Kubernetes,koo-BER-neh-tees,Commonly mispronounced
@@ -171,6 +172,7 @@ Mispronounced Word,espresso,es-PRESS-oh,Not 'ex-press-oh'
 Mispronounced Word,asterisk,AS-teh-risk,Not 'as-ter-ik'
 Mispronounced Word,nuclear,NOO-klee-er,Not 'NOO-kyoo-ler'
 Mispronounced Word,February,FEB-roo-air-ee,Not 'Feb-yoo-air-ee'
+Mispronounced Word,async,a-sync,Short for asynchronous
 Mispronounced Word,library,LY-brer-ee,Not 'ly-berry'
 Mispronounced Word,et cetera,et SET-er-ah,Not 'ek SET-er-ah'
 Mispronounced Word,prescription,preh-SKRIP-shun,Not 'per-SKRIP-shun'
