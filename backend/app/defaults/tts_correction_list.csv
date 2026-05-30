@@ -225,19 +225,6 @@ Format,1st,first,Ordinal
 Format,2nd,second,Ordinal
 Format,3rd,third,Ordinal
 Format,4th,fourth,Ordinal
-Format,Jan.,January,Month abbreviation
-Format,Jan,January,Month abbreviation
-Format,Feb,FEB-roo-air-ee,Month abbreviation (also matches Feb.)
-Format,Mar,March,Month abbreviation
-Format,Apr,April,Month abbreviation
-Format,Jun,June,Month abbreviation
-Format,Jul,July,Month abbreviation
-Format,Aug,August,Month abbreviation
-Format,Sept,September,Month abbreviation
-Format,Sep,September,Month abbreviation
-Format,Oct,October,Month abbreviation
-Format,Nov,November,Month abbreviation
-Format,Dec,December,Month abbreviation
 Format,vs.,versus,Abbreviation
 Format,Dr.,Doctor,Title
 Format,Mr.,Mister,Title
