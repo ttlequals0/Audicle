@@ -571,9 +571,7 @@ async def _stage_corrections(cleaned: str, settings: Settings) -> str:
 
     user_dict = corrections.load(_corrections_path(settings))
     try:
-        seed_dict = seed_corrections.applicable_dict(
-            seed_corrections.load_seed(seed_corrections.seed_path())
-        )
+        seed_dict = seed_corrections.load_applicable_dict()
     except Exception:
         logger.error(
             "Seed corrections failed to load; applying user corrections only",

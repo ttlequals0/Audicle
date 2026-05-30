@@ -37,20 +37,28 @@ def test_annotated_homograph_not_applicable() -> None:
     row = entries["read (present)"]
     assert row.category == "Homograph"
     assert row.applicable is False
-    assert row.match_key is None
 
 
 def test_multiword_brand_is_applicable() -> None:
     entries = _by_input(seed_corrections.load_seed(seed_corrections.seed_path()))
     row = entries["Louis Vuitton"]
     assert row.applicable is True
-    assert row.match_key == "Louis Vuitton"
 
 
 def test_spelled_out_acronym_not_applicable() -> None:
     entries = _by_input(seed_corrections.load_seed(seed_corrections.seed_path()))
     assert entries["API"].applicable is False  # 'A P I' -- LLM cleanup handles this
     assert entries["CEO"].applicable is False
+
+
+def test_spelled_out_acronym_excluded_regardless_of_category() -> None:
+    """A spelled-out acronym in a non-acronym category (Tech Brand 'AWS' ->
+    'A W S') must still be excluded -- the cleanup stage dots it anyway."""
+
+    entries = _by_input(seed_corrections.load_seed(seed_corrections.seed_path()))
+    aws = entries["AWS"]
+    assert aws.category == "Tech Brand"
+    assert aws.applicable is False
 
 
 def test_pronounce_as_word_acronym_is_applicable() -> None:
@@ -70,7 +78,7 @@ def test_applicable_dict_excludes_non_applicable_rows() -> None:
     assert applied["Louis Vuitton"] == "loo-ee vwee-TOHN"
     assert applied["SQL"] == "sequel"
     # Every applicable entry is present and nothing else.
-    expected = {e.match_key for e in entries if e.applicable}
+    expected = {e.input_text for e in entries if e.applicable}
     assert set(applied) == expected
 
 
@@ -79,8 +87,8 @@ def test_applicable_dict_excludes_non_applicable_rows() -> None:
 
 def test_applicable_dict_duplicate_key_first_wins() -> None:
     entries = [
-        SeedEntry("Tech Brand", "Acme", "ACK-mee", "", True, "Acme"),
-        SeedEntry("Tech Brand", "Acme", "ay-see-em-ee", "dup", True, "Acme"),
+        SeedEntry("Tech Brand", "Acme", "ACK-mee", "", True),
+        SeedEntry("Tech Brand", "Acme", "ay-see-em-ee", "dup", True),
     ]
     assert seed_corrections.applicable_dict(entries) == {"Acme": "ACK-mee"}
 
@@ -110,5 +118,4 @@ def test_load_seed_row_failing_validation_is_not_applicable(tmp_path: Path) -> N
     entries = seed_corrections.load_seed(path)
     assert len(entries) == 1
     assert entries[0].applicable is False
-    assert entries[0].match_key is None
     assert seed_corrections.applicable_dict(entries) == {}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -71,16 +72,7 @@ def read_seed_corrections() -> dict[str, Any]:
 
     entries = seed_corrections.load_seed(seed_corrections.seed_path())
     return {
-        "entries": [
-            {
-                "category": e.category,
-                "input_text": e.input_text,
-                "replacement_text": e.replacement_text,
-                "notes": e.notes,
-                "applicable": e.applicable,
-            }
-            for e in entries
-        ],
+        "entries": [asdict(e) for e in entries],
         "count": len(entries),
         "applicable_count": sum(e.applicable for e in entries),
     }

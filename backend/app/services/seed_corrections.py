@@ -12,11 +12,11 @@ the pipeline:
 - Annotated homographs whose input carries a parenthesized qualifier
   (``read (present)``) -- context-dependent, not matchable by whole-word
   substitution. A future contextual layer will handle them.
-- ALL-CAPS acronyms whose replacement is the spelled-out letters (``API`` ->
-  ``A P I``): the LLM cleanup stage already spells these out (to dotted form)
-  before corrections run, so the row would never match the cleaned text.
-  Pronounce-as-word acronyms (``RAM`` -> ``ram``) and expansions (``TL;DR`` ->
-  ``too long didn't read``) stay applicable.
+- ALL-CAPS tokens whose replacement is the spelled-out letters (``API`` ->
+  ``A P I``, ``AWS`` -> ``A W S``): the LLM cleanup stage already spells these
+  out (to dotted form) before corrections run, so the row would never match the
+  cleaned text. Pronounce-as-word forms (``RAM`` -> ``ram``) and expansions
+  (``TL;DR`` -> ``too long didn't read``) stay applicable.
 """
 
 from __future__ import annotations
@@ -34,7 +34,6 @@ logger = logging.getLogger("app.services.seed_corrections")
 _FIELDS = ("category", "input_text", "replacement_text", "notes")
 _ANNOTATION_RE = re.compile(r"\([^)]*\)")
 _ALLCAPS_TOKEN_RE = re.compile(r"^[A-Za-z0-9]{2,}$")
-_ACRONYM_CATEGORIES = frozenset({"Tech Acronym", "General Acronym"})
 
 
 @dataclass(frozen=True)
@@ -44,7 +43,6 @@ class SeedEntry:
     replacement_text: str
     notes: str
     applicable: bool  # True -> merged into the pipeline correction dictionary
-    match_key: str | None  # input_text when applicable, else None
 
 
 def seed_path() -> Path:
@@ -58,19 +56,16 @@ def _is_spelled_out(replacement: str) -> bool:
     return len(tokens) > 1 and all(len(tok) == 1 for tok in tokens)
 
 
-def _match_key(category: str, input_text: str, replacement_text: str) -> str | None:
-    """Return the key an applicable row matches on, or None when excluded."""
+def _is_applicable(input_text: str, replacement_text: str) -> bool:
+    """Whether a row is applied to text in the pipeline."""
 
     # Context-dependent annotated rows (homographs) can't be whole-word matched.
     if _ANNOTATION_RE.search(input_text):
-        return None
-    # Spelled-out ALL-CAPS acronyms duplicate what LLM cleanup already produces.
-    if (
-        category in _ACRONYM_CATEGORIES
-        and _ALLCAPS_TOKEN_RE.match(input_text)
-        and _is_spelled_out(replacement_text)
-    ):
-        return None
+        return False
+    # Spelled-out ALL-CAPS tokens duplicate what LLM cleanup already produces,
+    # regardless of category (Tech Brand acronyms like AWS land here too).
+    if _ALLCAPS_TOKEN_RE.match(input_text) and _is_spelled_out(replacement_text):
+        return False
     # Must pass the same per-entry rules the user dictionary enforces.
     result = corrections.validate({input_text: replacement_text}, max_entries=1)
     if not result.ok:
@@ -82,8 +77,8 @@ def _match_key(category: str, input_text: str, replacement_text: str) -> str | N
                 "reasons": [f.reason for f in result.failures],
             },
         )
-        return None
-    return input_text
+        return False
+    return True
 
 
 def load_seed(path: Path) -> list[SeedEntry]:
@@ -104,36 +99,38 @@ def load_seed(path: Path) -> list[SeedEntry]:
             )
         entries: list[SeedEntry] = []
         for raw in reader:
-            category = (raw.get("category") or "").strip()
             input_text = (raw.get("input_text") or "").strip()
             replacement_text = (raw.get("replacement_text") or "").strip()
-            notes = (raw.get("notes") or "").strip()
-            key = _match_key(category, input_text, replacement_text)
             entries.append(
                 SeedEntry(
-                    category=category,
+                    category=(raw.get("category") or "").strip(),
                     input_text=input_text,
                     replacement_text=replacement_text,
-                    notes=notes,
-                    applicable=key is not None,
-                    match_key=key,
+                    notes=(raw.get("notes") or "").strip(),
+                    applicable=_is_applicable(input_text, replacement_text),
                 )
             )
     return entries
 
 
 def applicable_dict(entries: list[SeedEntry]) -> dict[str, str]:
-    """``{match_key: replacement_text}`` for applicable rows; first row wins on dup."""
+    """``{input_text: replacement_text}`` for applicable rows; first row wins on dup."""
 
     result: dict[str, str] = {}
     for entry in entries:
-        if entry.match_key is None:
+        if not entry.applicable:
             continue
-        if entry.match_key in result:
+        if entry.input_text in result:
             logger.warning(
                 "Duplicate seed correction key; keeping first",
-                extra={"event": "seed_dup_key", "key": entry.match_key},
+                extra={"event": "seed_dup_key", "key": entry.input_text},
             )
             continue
-        result[entry.match_key] = entry.replacement_text
+        result[entry.input_text] = entry.replacement_text
     return result
+
+
+def load_applicable_dict() -> dict[str, str]:
+    """Load the bundled seed and return its applicable ``{key: replacement}`` map."""
+
+    return applicable_dict(load_seed(seed_path()))
