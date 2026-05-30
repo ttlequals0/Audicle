@@ -34,7 +34,7 @@
 - **Mono:** JetBrains Mono. Used for technical accents: IDs, timestamps, status tags, section labels (`// SECTION_NAME` style), version strings.
 - Inter is explicitly avoided.
 
-**Assets:** see `logo-spec.md` for full construction details. SVG sources, rasterized PNGs, and design tokens (`tokens.json`, `tokens.css`) live at `branding/` (single source of truth across backend and frontend).
+**Assets:** SVG sources, rasterized PNGs, and design tokens (`tokens.json`, `tokens.css`) live at `branding/` (single source of truth across backend and frontend); see `branding/README.md` for construction details.
 
 ## Overview
 
