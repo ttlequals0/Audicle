@@ -83,10 +83,10 @@ def render(
     # players.
     fg.link(href=f"{settings.BASE_URL.rstrip('/')}/rss/rss.xml", rel="self")
     fg.link(href=settings.BASE_URL, rel="alternate")
-    # Channel artwork: the operator's FEED_ARTWORK_URL when set, otherwise the
-    # bundled default served at /media/default.jpg (seeded on startup). Always
-    # emitted so a feed validates and shows art even before it's configured.
-    artwork_url = settings.FEED_ARTWORK_URL or f"{settings.BASE_URL.rstrip('/')}/media/default.jpg"
+    # Channel artwork precedence: operator FEED_ARTWORK_URL when set, otherwise
+    # the branded DEFAULT_ARTWORK_URL (raw-GitHub .jpg). Always emitted so the
+    # feed validates and shows art even before FEED_ARTWORK_URL is configured.
+    artwork_url = settings.FEED_ARTWORK_URL or settings.DEFAULT_ARTWORK_URL
     # Artwork URLs stay extension-clean (no ?v=): Apple requires the cover URL to
     # end in .jpg/.png, and apps that validate this drop a query-string URL.
     fg.image(url=artwork_url, title=title, link=settings.BASE_URL)
@@ -133,7 +133,7 @@ def render(
         if ep.duration_secs is not None:
             item.podcast.itunes_duration(_hms(ep.duration_secs))
         # Fall back to the same resolved channel artwork (operator URL or the
-        # seeded /media/default.jpg) rather than raw FEED_ARTWORK_URL: an unset
+        # branded DEFAULT_ARTWORK_URL) rather than raw FEED_ARTWORK_URL: an unset
         # FEED_ARTWORK_URL is "", which feedgen rejects with "Image file must be
         # png or jpg", crashing the whole feed render with a 500. The URL is
         # extension-clean (no ?v=) so Apple/podcast apps accept the cover.

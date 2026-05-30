@@ -63,3 +63,13 @@ def test_cors_origin_list_splits_and_trims(monkeypatch: pytest.MonkeyPatch, env:
     get_settings.cache_clear()
     settings = get_settings()
     assert settings.cors_origin_list == ["https://a.test", "https://b.test"]
+
+
+def test_default_artwork_url_points_at_branding_jpg():
+    from app.config import Settings
+
+    s = Settings()
+    assert s.DEFAULT_ARTWORK_URL == (
+        "https://raw.githubusercontent.com/ttlequals0/Audicle/main/"
+        "branding/podcast-artwork-3000.jpg"
+    )

@@ -10,6 +10,7 @@ Canonical brand assets for Audicle. Single source of truth across backend, front
 | `wordmark.svg`, `wordmark-mono.svg` | Mark + "audicle" text. |
 | `podcast-artwork.svg` | Source for podcast cover art. |
 | `podcast-artwork-3000.png` | Rasterized cover, 3000x3000, Apple Podcasts max size. |
+| `podcast-artwork-3000.jpg` | JPEG (RGB, 3000x3000) export of `podcast-artwork-3000.png`. Served as the default feed cover via its raw-GitHub URL so podcast apps cache a stable, extension-clean `.jpg` (`DEFAULT_ARTWORK_URL`). |
 | `podcast-artwork-1400.png` | Rasterized cover, 1400x1400, Apple Podcasts min size. |
 | `favicon.svg` | Optimized for small sizes (thicker strokes). |
 | `favicon-32.png`, `favicon-16.png` | Rasterized favicons. |
