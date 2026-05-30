@@ -677,9 +677,6 @@ def test_strip_heading_markers_removes_atx_headings_only() -> None:
     assert out == "Getting started\nBody.\nSub\ntext with C# inline\n#nospace"
 
 
-# --- corrections: date-context month expansion -----------------------------
-
-
 def test_normalize_date_months_only_in_date_context() -> None:
     assert pipeline._normalize_date_months("Jan 15 2026") == "January 15 2026"
     assert pipeline._normalize_date_months("Feb. 3, 2020") == "February 3, 2020"
@@ -689,15 +686,24 @@ def test_normalize_date_months_only_in_date_context() -> None:
     assert pipeline._normalize_date_months("Janet 5 ate") == "Janet 5 ate"
 
 
-def test_corrections_expands_date_months_then_applies_pronunciation(
+def test_normalize_for_tts_strips_headings_and_expands_dates() -> None:
+    out = pipeline._normalize_for_tts("### News\nShipped Jan 15 2026.")
+    assert out == "News\nShipped January 15 2026."
+
+
+# --- corrections: pronunciation after normalization ------------------------
+
+
+def test_corrections_voices_february_after_date_normalization(
     env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Cleanup normalizes 'Feb 3' -> 'February 3'; the corrections stage then
+    voices February via the seed pronunciation."""
+
     database.run_migrations(env)
     user_file = tmp_path / "pronunciation.json"
     monkeypatch.setattr(pipeline, "_corrections_path", lambda _s: user_file)
-    out = asyncio.run(
-        pipeline._stage_corrections("Posted Jan 15 2026 and Feb 3 2025.", get_settings())
-    )
+    normalized = pipeline._normalize_for_tts("Posted Jan 15 2026 and Feb 3 2025.")
+    out = asyncio.run(pipeline._stage_corrections(normalized, get_settings()))
     assert "January 15 2026" in out
-    # Feb -> February (regex) -> FEB-roo-air-ee (seed pronunciation).
     assert "FEB-roo-air-ee 3 2025" in out

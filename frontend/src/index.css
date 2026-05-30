@@ -386,6 +386,7 @@
     font-size: 0.75rem;
     line-height: 1.5;
     color: #9a9aaa;
+    min-width: 0;
   }
   .builtin-note-path {
     font-family: "JetBrains Mono", monospace;
@@ -395,7 +396,7 @@
     border: 1px solid #26262e;
     border-radius: 4px;
     padding: 0.0625rem 0.25rem;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
   }
   @media (max-width: 480px) {
     .correction-row {

@@ -334,6 +334,18 @@ def _normalize_date_months(text: str) -> str:
     return _DATE_MONTH_RE.sub(lambda m: _DATE_MONTHS[m.group(1)], text)
 
 
+def _normalize_for_tts(text: str) -> str:
+    """Deterministic fixups for things the cleanup prompt doesn't reliably catch.
+
+    One ordered pass so future rules have a single home: strip residual markdown
+    heading markers, then expand date-context month abbreviations. Runs at the
+    end of cleanup, before the pronunciation dictionary, so e.g. "Feb 3" becomes
+    "February 3" and the corrections dict can then voice it correctly.
+    """
+
+    return _normalize_date_months(_strip_heading_markers(text))
+
+
 async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
     """LLM cleanup with tenacity retry on transient provider failures.
 
@@ -375,7 +387,7 @@ async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
                 "output_chars": len(part),
             },
         )
-    cleaned = _strip_heading_markers("\n\n".join(p for p in cleaned_parts if p))
+    cleaned = _normalize_for_tts("\n\n".join(p for p in cleaned_parts if p))
     if len(cleaned) < settings.MIN_CLEANUP_CHARS:
         raise CleanupTooShortError(
             f"Cleanup output is {len(cleaned)} chars, below "
@@ -626,7 +638,7 @@ async def _stage_corrections(cleaned: str, settings: Settings) -> str:
         )
         seed_dict = {}
     merged = {**seed_dict, **user_dict}
-    result = corrections.apply(_normalize_date_months(cleaned), merged)
+    result = corrections.apply(cleaned, merged)
     logger.info(
         "Corrections applied",
         extra={

@@ -10,12 +10,14 @@ interface SubmitResponse {
 export default function Home() {
   const [url, setUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [recentOpen, setRecentOpen] = useState(false);
+  // null = follow the smart default (open when the queue is empty so finished
+  // and failed jobs stay visible); a bool means the user toggled it explicitly.
+  const [recentManual, setRecentManual] = useState<boolean | null>(null);
   const qc = useQueryClient();
 
   const jobsQ = useQuery({
     queryKey: ["jobs"],
-    queryFn: () => api<JobRow[]>("/api/v1/jobs?per_page=20"),
+    queryFn: () => api<JobRow[]>("/api/v1/jobs?per_page=50"),
     refetchInterval: 5000,
   });
 
@@ -52,6 +54,9 @@ export default function Home() {
     .filter((j) => j.status === "queued" || j.status === "processing")
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
   const history = jobs.filter((j) => j.status !== "queued" && j.status !== "processing");
+  // Default open when nothing is active, so a finished or failed job (and its
+  // error) is visible without a click; collapsed while a queue is running.
+  const recentOpen = recentManual ?? active.length === 0;
 
   return (
     <div>
@@ -113,7 +118,7 @@ export default function Home() {
         <section className="mt-8">
           <button
             className="mono-xs text-mute mb-3 flex items-center gap-1.5 hover:text-fg"
-            onClick={() => setRecentOpen((o) => !o)}
+            onClick={() => setRecentManual(!recentOpen)}
             aria-expanded={recentOpen}
           >
             <span className={`transition-transform ${recentOpen ? "rotate-90" : ""}`}>
@@ -136,7 +141,7 @@ export default function Home() {
                   <div className="flex flex-col items-end gap-1 flex-shrink-0">
                     <span className={`tag ${statusTag(j.status)}`}>{j.status}</span>
                     <time className="mono-xs text-mute" dateTime={j.updated_at}>
-                      {formatProcessedAt(j.updated_at)}
+                      {formatJobTime(j.updated_at)}
                     </time>
                   </div>
                 </li>
@@ -149,7 +154,7 @@ export default function Home() {
   );
 }
 
-function formatProcessedAt(iso: string): string {
+function formatJobTime(iso: string): string {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "";
   return d.toLocaleString(undefined, {
