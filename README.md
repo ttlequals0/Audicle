@@ -147,7 +147,7 @@ Backend:
 
 ```bash
 uv sync
-uv run pytest                              # 332 tests, ~30s
+uv run pytest                              # 382 tests, ~35s
 uv run uvicorn app.main:create_app --factory --reload --app-dir backend
 ```
 

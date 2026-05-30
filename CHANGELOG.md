@@ -6,6 +6,40 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-30
+
+### Per-chunk progress, app-wide pull-to-refresh, reprocess cache-bust, inline player
+
+- **Verbose pipeline progress.** Long stages now report how far along they are.
+  Migration 006 adds `progress_current`/`progress_total` to the jobs table; the
+  TTS stage writes its chunk index after each synthesized chunk and cleanup
+  writes its window index, so Home shows `stage: tts [57/162]` live (5s polling)
+  instead of just `stage: tts`. `set_stage` clears the counters so a new stage
+  starts clean.
+- **App-wide pull-to-refresh.** The pull-to-refresh hook moved out of Feed into
+  `usePullToRefresh` and is wired once in the app shell. A pull at the top of
+  any page (Home, Feed, Settings) invalidates every active query, so each page
+  refetches its own data. No refresh button.
+- **Reprocess cache-bust.** Podcast apps key audio and artwork on the media URL,
+  not the feed's `Last-Modified`, so a reprocessed episode kept serving the old
+  cached mp3 and a stale cover. The feed now appends `?v=<updated_at epoch>` to
+  every per-episode enclosure, `itunes:image`, and `podcast:transcript` URL, and
+  to the channel cover. The URL changes when content changes, so apps re-fetch;
+  the episode `guid` stays stable, so feed dedup is intact. The artwork
+  cache-buster is injected after feedgen renders, since feedgen rejects a query
+  string on `itunes:image`.
+- **Inline audio player + file size.** Each Feed card now has an inline player
+  (play/pause, seek scrubber, current/total time, 0.75x-2x speed) built on the
+  HTML5 `<audio>` element; starting one pauses any other. Cards also show the
+  episode's audio file size, exposed by `/api/v1/episodes` as `audio_size_bytes`
+  (shared with the RSS enclosure length via a single `file_size_or_zero`
+  helper).
+- **Tuning.** The Firecrawl readiness probe hits `/v0/health/liveness` (its
+  `/health` path 404s, which made `/health/ready` wrongly report Firecrawl
+  unreachable). `TTS_CHUNK_TARGET_WORDS` goes 40 -> 120: the wrapper already
+  splits each chunk into XTTS-safe pieces, so a long article is ~30 chunks
+  instead of ~160.
+
 ## [0.4.1] - 2026-05-30
 
 ### Prompt hardening, readiness overlay, XTTS chunk-size fix, reference audition

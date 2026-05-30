@@ -88,6 +88,7 @@ export default function Home() {
             </div>
             <div className="mono-xs text-mute mt-1.5">
               stage: {last.stage ?? "-"}
+              {progressSuffix(last)}
               {last.error && <span className="text-danger"> &middot; {last.error}</span>}
             </div>
           </div>
@@ -104,6 +105,7 @@ export default function Home() {
                   <p className="mono-xs text-mute truncate">{j.url}</p>
                   <p className="text-sm mt-1 truncate text-dim">
                     {j.episode_id} &middot; {j.stage ?? "-"}
+                    {progressSuffix(j)}
                     {j.error && <span className="text-danger"> &middot; {j.error}</span>}
                   </p>
                 </div>
@@ -115,6 +117,13 @@ export default function Home() {
       )}
     </div>
   );
+}
+
+function progressSuffix(j: JobRow): string {
+  if (j.progress_current != null && j.progress_total != null) {
+    return ` [${j.progress_current}/${j.progress_total}]`;
+  }
+  return "";
 }
 
 function statusTag(status: string): string {

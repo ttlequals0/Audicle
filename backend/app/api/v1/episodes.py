@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.api.deps import require_admin
 from app.config import Settings, get_settings
 from app.core import database
-from app.core.paths import media_dir
+from app.core.paths import file_size_or_zero, media_dir
 from app.services import episodes as episodes_service
 from app.services.retention import _remove_path
 
@@ -30,6 +30,7 @@ class EpisodeListItem(BaseModel):
     author: str | None
     original_url: str
     audio_path: str | None
+    audio_size_bytes: int | None
     artwork_path: str | None
     duration_secs: int | None
     pub_date: str
@@ -60,6 +61,7 @@ async def list_episodes(
             author=ep.author,
             original_url=ep.original_url,
             audio_path=ep.audio_path,
+            audio_size_bytes=file_size_or_zero(ep.audio_path) if ep.audio_path else None,
             artwork_path=ep.artwork_path,
             duration_secs=ep.duration_secs,
             pub_date=ep.pub_date,

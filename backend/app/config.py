@@ -132,12 +132,12 @@ class Settings(BaseSettings):
     XTTS_TOP_P: float = 0.85
 
     # Chunking.
-    # Target ~one sentence (~250 chars) per chunk: XTTS-v2 synthesizes best at
-    # sentence granularity and it makes transcript cues finer. The MAX values
-    # stay generous so a long single sentence still fits in one chunk rather
-    # than tripping UnsplittableSentenceError -- the tts-wrapper splits any
-    # oversized chunk into XTTS-safe pieces, so the max is not a hard TTS limit.
-    TTS_CHUNK_TARGET_WORDS: int = 40
+    # Chunk size = transcript-cue granularity + per-chunk TTS round-trips. The
+    # tts-wrapper splits each chunk into XTTS-safe sentence pieces internally, so
+    # chunks do NOT need to be sentence-sized; ~120 words keeps the cue/round-trip
+    # count sane (a long article is ~30 chunks, not ~160). MAX stays generous so a
+    # long single sentence doesn't trip UnsplittableSentenceError.
+    TTS_CHUNK_TARGET_WORDS: int = 120
     TTS_CHUNK_MAX_WORDS: int = 220
     TTS_CHUNK_MAX_CHARS: int = 1100
     TTS_CHUNK_SILENCE_MS: int = 250

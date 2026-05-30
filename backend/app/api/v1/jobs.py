@@ -29,6 +29,8 @@ class JobListItem(BaseModel):
     status: str
     stage: str | None
     error: str | None
+    progress_current: int | None
+    progress_total: int | None
     created_at: str
     updated_at: str
 
@@ -70,6 +72,8 @@ async def list_jobs(
             status=row["status"],
             stage=row["stage"],
             error=row["error"],
+            progress_current=row["progress_current"],
+            progress_total=row["progress_total"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
