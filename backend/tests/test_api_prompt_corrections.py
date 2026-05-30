@@ -163,7 +163,7 @@ def test_get_seed_corrections_returns_full_list_with_metadata(client: TestClient
         response = client.get("/api/v1/corrections/seed")
     assert response.status_code == 200
     body = response.json()
-    assert body["count"] == 238
+    assert body["count"] == len(body["entries"]) > 0
     assert 0 < body["applicable_count"] < body["count"]
     assert body["applicable_count"] == sum(e["applicable"] for e in body["entries"])
     sample = body["entries"][0]

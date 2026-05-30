@@ -33,7 +33,9 @@ logger = logging.getLogger("app.services.seed_corrections")
 
 _FIELDS = ("category", "input_text", "replacement_text", "notes")
 _ANNOTATION_RE = re.compile(r"\([^)]*\)")
-_ALLCAPS_TOKEN_RE = re.compile(r"^[A-Za-z0-9]{2,}$")
+# A bare alphanumeric token with no separators (so "CI/CD", "TL;DR" are excluded
+# and stay applicable -- the LLM's all-caps rule only fires on tokens like these).
+_SINGLE_TOKEN_RE = re.compile(r"^[A-Za-z0-9]{2,}$")
 
 
 @dataclass(frozen=True)
@@ -52,7 +54,7 @@ def seed_path() -> Path:
 def _is_spelled_out(replacement: str) -> bool:
     """True when the replacement is letter-by-letter spaced spelling (``A P I``)."""
 
-    tokens = replacement.split(" ")
+    tokens = replacement.split()
     return len(tokens) > 1 and all(len(tok) == 1 for tok in tokens)
 
 
@@ -64,7 +66,7 @@ def _is_applicable(input_text: str, replacement_text: str) -> bool:
         return False
     # Spelled-out ALL-CAPS tokens duplicate what LLM cleanup already produces,
     # regardless of category (Tech Brand acronyms like AWS land here too).
-    if _ALLCAPS_TOKEN_RE.match(input_text) and _is_spelled_out(replacement_text):
+    if _SINGLE_TOKEN_RE.match(input_text) and _is_spelled_out(replacement_text):
         return False
     # Must pass the same per-entry rules the user dictionary enforces.
     result = corrections.validate({input_text: replacement_text}, max_entries=1)

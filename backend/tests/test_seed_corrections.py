@@ -1,23 +1,23 @@
 from __future__ import annotations
 
-import collections
+import csv
 from pathlib import Path
 
 import pytest
 from app.services import seed_corrections
 from app.services.seed_corrections import SeedEntry
 
-# --- load_seed() against the bundled CSV -----------------------------------
-
-_EXPECTED_COUNTS = {
-    "Tech Acronym": 45,
-    "Mispronounced Word": 37,
-    "Homograph": 34,
-    "General Acronym": 29,
-    "Consumer Brand": 27,
-    "Tech Brand": 26,
-    "Format": 26,
-    "Medical/Scientific": 14,
+# The bundled list is expected to grow, so tests derive the row count from the
+# file rather than hardcoding it; the known categories are asserted as a subset.
+_KNOWN_CATEGORIES = {
+    "Tech Acronym",
+    "Mispronounced Word",
+    "Homograph",
+    "General Acronym",
+    "Consumer Brand",
+    "Tech Brand",
+    "Format",
+    "Medical/Scientific",
 }
 
 
@@ -25,11 +25,22 @@ def _by_input(entries: list[SeedEntry]) -> dict[str, SeedEntry]:
     return {e.input_text: e for e in entries}
 
 
-def test_load_seed_parses_all_rows_and_category_counts() -> None:
-    entries = seed_corrections.load_seed(seed_corrections.seed_path())
-    assert len(entries) == sum(_EXPECTED_COUNTS.values()) == 238
-    counts = collections.Counter(e.category for e in entries)
-    assert dict(counts) == _EXPECTED_COUNTS
+def _csv_row_count(path: Path) -> int:
+    with path.open(newline="", encoding="utf-8") as handle:
+        return sum(1 for _ in csv.DictReader(handle))
+
+
+def test_load_seed_parses_every_csv_row() -> None:
+    path = seed_corrections.seed_path()
+    entries = seed_corrections.load_seed(path)
+    # No rows dropped by parsing (catches quoting/column bugs as the list grows).
+    assert len(entries) == _csv_row_count(path) > 0
+    assert all(e.category and e.input_text and e.replacement_text for e in entries)
+
+
+def test_load_seed_known_categories_present() -> None:
+    cats = {e.category for e in seed_corrections.load_seed(seed_corrections.seed_path())}
+    assert cats >= _KNOWN_CATEGORIES
 
 
 def test_annotated_homograph_not_applicable() -> None:
