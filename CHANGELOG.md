@@ -6,6 +6,20 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-05-30
+
+### Fixed
+
+- Markdown heading markers (`###`) the cleanup step sometimes left in the text
+  are now stripped before narration, so the voice no longer reads the hashes
+  aloud.
+
+### Added
+
+- Month abbreviations are spoken in full: `Apr` becomes April, `Nov` becomes
+  November, and so on (`Feb` uses the corrected "February" pronunciation). Both
+  the bare and trailing-period forms are handled.
+
 ## [0.9.1] - 2026-05-30
 
 ### Home shows the whole queue

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
@@ -288,6 +289,17 @@ class CleanupTooShortError(Exception):
     """
 
 
+# Residual markdown ATX heading markers (``### ``) the LLM occasionally leaves
+# despite the plain-text prompt; the TTS would otherwise read the hashes aloud.
+_HEADING_MARKER_RE = re.compile(r"(?m)^[ \t]*#{1,6}[ \t]+")
+
+
+def _strip_heading_markers(text: str) -> str:
+    """Drop leading markdown heading hashes, keeping the heading text."""
+
+    return _HEADING_MARKER_RE.sub("", text)
+
+
 async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
     """LLM cleanup with tenacity retry on transient provider failures.
 
@@ -329,7 +341,7 @@ async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
                 "output_chars": len(part),
             },
         )
-    cleaned = "\n\n".join(p for p in cleaned_parts if p)
+    cleaned = _strip_heading_markers("\n\n".join(p for p in cleaned_parts if p))
     if len(cleaned) < settings.MIN_CLEANUP_CHARS:
         raise CleanupTooShortError(
             f"Cleanup output is {len(cleaned)} chars, below "
