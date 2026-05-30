@@ -56,6 +56,12 @@ RUN pip install --no-cache-dir "transformers>=4.48.0,<4.49" \
 
 EXPOSE 8000
 
+# Single-source version: the build passes the repo-root VERSION value here
+# (`--build-arg WRAPPER_VERSION=$(cat VERSION)`) since this build context is
+# tts-wrapper/ and can't read the root file. main.py reads AUDICLE_WRAPPER_VERSION.
+ARG WRAPPER_VERSION=0.0.0
+ENV AUDICLE_WRAPPER_VERSION=${WRAPPER_VERSION}
+
 HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=120s \
     CMD curl -fsS http://localhost:8000/health/live || exit 1
 

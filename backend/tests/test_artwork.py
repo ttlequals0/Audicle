@@ -108,6 +108,33 @@ async def test_process_artwork_center_crops_to_square(
     assert out.size[0] == out.size[1]
 
 
+async def test_process_artwork_pins_ip_but_sni_keeps_hostname(
+    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression: the SSRF guard pins the URL to the resolved IP, so without the
+    # sni_hostname extension httpx would send the IP as the TLS SNI and every
+    # SNI-based CDN host rejects the handshake (SSLV3_ALERT_HANDSHAKE_FAILURE).
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url_host"] = request.url.host
+        captured["sni"] = request.extensions.get("sni_hostname")
+        captured["host_header"] = request.headers.get("Host")
+        return httpx.Response(200, content=_png_bytes(800, 800))
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    result = await artwork.process_artwork(
+        metadata={"ogImage": "https://example.test/cover.jpg"},
+        episode_id="sni1",
+        output_dir=tmp_path,
+        settings=get_settings(),
+    )
+    assert result is not None
+    assert captured["url_host"] == "203.0.113.1"  # connection pinned to the IP
+    assert captured["sni"] == "example.test"  # TLS SNI carries the real name
+    assert captured["host_header"] == "example.test"
+
+
 # --- fallback paths -------------------------------------------------------
 
 

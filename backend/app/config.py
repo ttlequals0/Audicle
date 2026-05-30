@@ -60,7 +60,15 @@ class Settings(BaseSettings):
 
     # LLM tunables.
     LLM_TEMPERATURE: float = 0.7
-    LLM_MAX_TOKENS: int = 4000
+    # Per-call output cap. The cleanup stage processes the article in windows of
+    # LLM_CLEANUP_WINDOW_CHARS, so this only has to cover one window's cleaned
+    # output (a ~12K-char window cleans to <12K chars ~= <4K tokens); 16000
+    # leaves generous headroom and stops the old 4000 cap from truncating.
+    LLM_MAX_TOKENS: int = 16000
+    # Cleanup window size (chars). Long articles are split into windows on
+    # paragraph boundaries and each window is cleaned in its own LLM call, then
+    # concatenated -- so article length is never bottlenecked by the output cap.
+    LLM_CLEANUP_WINDOW_CHARS: int = 12000
     LLM_TIMEOUT_SECONDS: int = 300
     LLM_RETRY_COUNT: int = 3
 

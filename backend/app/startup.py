@@ -63,6 +63,7 @@ def _seed_defaults(settings: Settings, logger: logging.Logger) -> None:
     defaults = _APP_DIR / "defaults"
     for src, dst in (
         (defaults / "script.txt", _APP_DIR / "prompts" / "script.txt"),
+        (defaults / "summary.txt", _APP_DIR / "prompts" / "summary.txt"),
         (defaults / "pronunciation.json", _APP_DIR / "corrections" / "pronunciation.json"),
         (_APP_DIR / "assets" / "default-artwork.jpg", settings.DATA_DIR / "media" / "default.jpg"),
     ):

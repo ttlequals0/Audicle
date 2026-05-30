@@ -81,9 +81,14 @@ function Shell() {
                   login
                 </NavLink>
               )}
-              <span className="mono-xs text-mute">
+              <a
+                href="https://github.com/ttlequals0/Audicle"
+                target="_blank"
+                rel="noreferrer"
+                className="mono-xs text-mute hover:text-fg"
+              >
                 {healthQ.data ? `v${healthQ.data.version}` : ""}
-              </span>
+              </a>
             </div>
           </div>
           <nav className="flex">

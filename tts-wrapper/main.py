@@ -35,8 +35,22 @@ setup_logging()
 logger = logging.getLogger("tts.main")
 
 # Wrapper's own version, surfaced in /health so the main app's
-# /health/ready can aggregate it into components.tts_wrapper.version.
-__version__ = "0.3.2"
+# /health/ready can aggregate it into components.tts_wrapper.version. The repo
+# root VERSION file is the single source. In dev/tests we walk up to it; in the
+# image the wrapper build context is tts-wrapper/ (can't see the root file), so
+# the build passes it as AUDICLE_WRAPPER_VERSION (from `cat VERSION`).
+def _wrapper_version() -> str:
+    env = os.environ.get("AUDICLE_WRAPPER_VERSION")
+    if env:
+        return env.strip()
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "VERSION"
+        if candidate.is_file():
+            return candidate.read_text(encoding="utf-8").strip()
+    return "0.0.0"
+
+
+__version__ = _wrapper_version()
 
 
 def _pkg_version(name: str) -> str | None:

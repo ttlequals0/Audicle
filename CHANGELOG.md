@@ -6,6 +6,17 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-29
+
+### Windowed cleanup, episode show notes, artwork TLS fix, centralized version
+
+- **Windowed LLM cleanup (fixes truncated episodes).** The cleanup stage sent the whole article in one call capped at `LLM_MAX_TOKENS=4000`, so a 56K-char article was truncated to ~440 chars -- a ~30s episode with a near-empty transcript. Cleanup now splits the article into paragraph-bounded windows (`LLM_CLEANUP_WINDOW_CHARS`, default 12000), cleans each in its own call, and concatenates, so article length is never bottlenecked by the output cap. `LLM_MAX_TOKENS` default raised to 16000; both are tunable in Settings. Per-window `cleanup_window_done` log events.
+- **Episode show notes.** A new summary stage generates a short LLM summary of the cleaned article (graceful: never fails the job), stored on a new `episodes.summary` column (additive migration 005) and rendered into the feed `<description>` and `<itunes:summary>`. Old episodes (NULL summary) keep the prior title/author/source form.
+- **Artwork TLS SNI fix.** The SSRF guard pinned the og:image URL to the resolved IP, and httpx then used the IP as the TLS SNI -- so every CDN host rejected the handshake (`SSLV3_ALERT_HANDSHAKE_FAILURE`) and all episodes fell back to default art. The download now passes the real hostname via the `sni_hostname` request extension while still connecting to the validated IP.
+- **Feed owner email.** Trailing commas/whitespace in `FEED_EMAIL` are stripped before rendering `<itunes:email>` and the `podcast:locked` owner.
+- **Single-source version.** Version lives only in the repo-root `VERSION` file. Backend (`app/version.py`) and the tts-wrapper read it at runtime; `scripts/sync_version.py` propagates it into both `pyproject.toml` files and `--check` (run as a test) guards against drift.
+- **UI version links to the repo.** The header version is now a link to the GitHub repository.
+
 ## [0.3.2] - 2026-05-29
 
 ### tts-wrapper non-root cache fix, structured wrapper logs, and PWA route fallback

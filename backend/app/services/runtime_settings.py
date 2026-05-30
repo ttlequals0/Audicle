@@ -56,6 +56,7 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "OLLAMA_BASE_URL",
         "LLM_TEMPERATURE",
         "LLM_MAX_TOKENS",
+        "LLM_CLEANUP_WINDOW_CHARS",
         "LLM_TIMEOUT_SECONDS",
         "LLM_RETRY_COUNT",
     }

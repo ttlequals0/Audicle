@@ -15,6 +15,7 @@ def test_run_migrations_creates_tables(tmp_path: Path) -> None:
         "002_settings_kv",
         "003_auth_lockout",
         "004_runtime_settings",
+        "005_episode_summary",
     ]
 
     conn = database.connect(database.db_path(tmp_path))
@@ -35,6 +36,7 @@ def test_second_run_is_a_noop(tmp_path: Path) -> None:
         "002_settings_kv",
         "003_auth_lockout",
         "004_runtime_settings",
+        "005_episode_summary",
     ]
     assert second == []
 

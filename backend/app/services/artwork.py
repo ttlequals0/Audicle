@@ -330,9 +330,12 @@ async def _download(url: str, settings: Settings) -> bytes:
 
     # Closes the DNS-rebinding TOCTOU: a hostile DNS server could otherwise
     # answer the resolver check with a public IP and httpx's subsequent
-    # lookup with a private one. We pass the IP literal to httpx but
-    # preserve the original Host header so the upstream sees the
-    # operator-controlled name and TLS SNI still works.
+    # lookup with a private one. We pass the IP literal to httpx (so the TCP
+    # connection goes to the validated IP) but set the ``Host`` header AND the
+    # ``sni_hostname`` request extension to the original name -- httpx derives
+    # the TLS SNI from the URL host, which is now an IP, so without the extension
+    # the handshake carries no/wrong SNI and SNI-based hosts (every CDN) reject
+    # it with SSLV3_ALERT_HANDSHAKE_FAILURE.
     pinned_url = _pin_url_to_ip(url, pinned_ip)
 
     async def _check_redirect(request: httpx.Request) -> None:
@@ -352,7 +355,12 @@ async def _download(url: str, settings: Settings) -> bytes:
             follow_redirects=True,
             event_hooks={"request": [_check_redirect]},
         ) as client,
-        client.stream("GET", pinned_url, headers={"Host": host}) as response,
+        client.stream(
+            "GET",
+            pinned_url,
+            headers={"Host": host},
+            extensions={"sni_hostname": host},
+        ) as response,
     ):
         if not response.is_success:
             raise _HttpError(response.status_code)

@@ -58,6 +58,12 @@ RUN pip install --no-cache-dir torch==2.4.1 torchaudio==2.4.1 \
         "Brotli>=1.2.0" "setuptools>=78.1.1" "wheel>=0.46.2"
 
 EXPOSE 8000
+
+# Single-source version: the build passes the repo-root VERSION value here
+# (`--build-arg WRAPPER_VERSION=$(cat VERSION)`) since this build context is
+# tts-wrapper/ and can't read the root file. main.py reads AUDICLE_WRAPPER_VERSION.
+ARG WRAPPER_VERSION=0.0.0
+ENV AUDICLE_WRAPPER_VERSION=${WRAPPER_VERSION}
 HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=120s \
     CMD curl -fsS http://localhost:8000/health/live || exit 1
 CMD ["uvicorn", "main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--timeout-keep-alive", "300"]

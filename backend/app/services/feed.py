@@ -64,7 +64,7 @@ def render(
     title = settings.FEED_TITLE or "Audicle"
     author = {
         key: value
-        for key, value in (("name", settings.FEED_AUTHOR), ("email", settings.FEED_EMAIL))
+        for key, value in (("name", settings.FEED_AUTHOR), ("email", _clean_email(settings.FEED_EMAIL)))
         if value
     }
     fg.title(title)
@@ -144,16 +144,30 @@ def render(
     )
 
 
+def _clean_email(value: str) -> str:
+    """Trim whitespace and stray trailing separators from a configured email.
+
+    Operators sometimes leave a trailing comma in ``FEED_EMAIL``; without this
+    it renders straight into ``<itunes:email>`` and the ``podcast:locked``
+    owner attribute (e.g. ``you@example.com,``).
+    """
+
+    return value.strip().strip(",;").strip()
+
+
 def _episode_description_html(ep: Episode) -> str:
     """HTML body for the per-episode ``<description>``: title, author (when
-    known), and a link back to the source article. feedgen escapes the
-    string, so podcast clients receive renderable HTML."""
+    known), the show-notes summary (when present), and a link back to the
+    source article. feedgen escapes the string, so podcast clients receive
+    renderable HTML."""
 
     title = html.escape(ep.title or ep.original_url)
     url = html.escape(ep.original_url, quote=True)
     parts = [f"<p>{title}</p>"]
     if ep.author:
         parts.append(f"<p>By {html.escape(ep.author)}</p>")
+    if ep.summary:
+        parts.append(f"<p>{html.escape(ep.summary)}</p>")
     parts.append(f'<p>Source: <a href="{url}">{html.escape(ep.original_url)}</a></p>')
     return "".join(parts)
 
@@ -164,6 +178,8 @@ def _episode_summary(ep: Episode) -> str:
     lines = [ep.title or ep.original_url]
     if ep.author:
         lines.append(f"By {ep.author}")
+    if ep.summary:
+        lines.append(ep.summary)
     lines.append(f"Source: {ep.original_url}")
     return "\n".join(lines)
 
@@ -210,7 +226,7 @@ def _inject_pc2_tags(
 
     pc2_locked = ET.Element(f"{{{_PODCAST_NS}}}locked")
     pc2_locked.text = "yes"
-    pc2_locked.set("owner", settings.FEED_EMAIL)
+    pc2_locked.set("owner", _clean_email(settings.FEED_EMAIL))
     channel.insert(insert_at, pc2_locked)
     insert_at += 1
 
