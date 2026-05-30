@@ -605,6 +605,7 @@ function ReferenceVoiceWidget() {
   const [candidate, setCandidate] = useState<File | null>(null);
   const [sample, setSample] = useState("The quick brown fox jumps over the lazy dog.");
   const [testAudioUrl, setTestAudioUrl] = useState<string | null>(null);
+  const [auditionUrl, setAuditionUrl] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -615,6 +616,12 @@ function ReferenceVoiceWidget() {
       if (testAudioUrl) URL.revokeObjectURL(testAudioUrl);
     };
   }, [testAudioUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (auditionUrl) URL.revokeObjectURL(auditionUrl);
+    };
+  }, [auditionUrl]);
 
   const postForm = async (path: string, fd: FormData): Promise<Response | null> => {
     const headers: Record<string, string> = {};
@@ -651,6 +658,23 @@ function ReferenceVoiceWidget() {
     setTestAudioUrl(URL.createObjectURL(blob));
   };
 
+  const audition = async () => {
+    setMsg(null);
+    const fd = new FormData();
+    fd.append("sample_text", sample);
+    const r = await postForm("/api/v1/reference/audition", fd);
+    if (!r) {
+      setMsg("audition failed (network error)");
+      return;
+    }
+    if (!r.ok) {
+      setMsg(r.status === 503 ? "no voice committed yet" : `audition failed (${r.status})`);
+      return;
+    }
+    const blob = await r.blob();
+    setAuditionUrl(URL.createObjectURL(blob));
+  };
+
   const commit = async () => {
     if (!candidate) return;
     if (!confirm("Replace the current reference voice?")) return;
@@ -680,7 +704,7 @@ function ReferenceVoiceWidget() {
           id="ref-file"
           ref={fileRef}
           type="file"
-          accept="audio/wav"
+          accept=".wav,audio/wav,audio/x-wav,audio/wave,audio/vnd.wave"
           className="field"
           onChange={(e) => {
             setCandidate(e.target.files?.[0] ?? null);
@@ -691,7 +715,7 @@ function ReferenceVoiceWidget() {
       </div>
       <div>
         <label className="label" htmlFor="ref-sample">
-          sample text (for test only)
+          sample text (for test / audition)
         </label>
         <input
           id="ref-sample"
@@ -699,6 +723,17 @@ function ReferenceVoiceWidget() {
           value={sample}
           onChange={(e) => setSample(e.target.value)}
         />
+        <div className="flex gap-2 items-center flex-wrap mt-2">
+          <button className="btn-ghost" onClick={audition}>
+            audition current voice
+          </button>
+        </div>
+        {auditionUrl && (
+          <div className="mt-2">
+            <p className="label">current voice saying the sample</p>
+            <audio controls src={auditionUrl} className="w-full" />
+          </div>
+        )}
       </div>
       <div className="flex gap-2 items-center flex-wrap">
         <button className="btn-ghost" disabled={!candidate} onClick={test}>

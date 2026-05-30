@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 import time
 import wave
 from pathlib import Path
@@ -18,6 +19,35 @@ from typing import Protocol, runtime_checkable
 from config import Config
 
 logger = logging.getLogger("tts.engine")
+
+# XTTS-v2 can only synthesize ~400 tokens per inference() call and its tokenizer
+# warns above 250 chars for English. We split incoming text into pieces under
+# this budget and concatenate the audio, so the wrapper never 500s on a long
+# chunk regardless of how the backend chunked it.
+_XTTS_MAX_CHARS = 240
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+
+
+def _split_for_xtts(text: str, max_chars: int = _XTTS_MAX_CHARS) -> list[str]:
+    """Split ``text`` into pieces each <= ``max_chars`` (XTTS-safe).
+
+    Sentence boundaries first; an oversize sentence is cut at the last space
+    before the cap (a hard cut only if a single token exceeds the cap).
+    """
+
+    pieces: list[str] = []
+    for sentence in _SENTENCE_SPLIT.split(text.strip()):
+        sentence = sentence.strip()
+        while len(sentence) > max_chars:
+            cut = sentence.rfind(" ", 0, max_chars)
+            if cut <= 0:
+                cut = max_chars
+            head, sentence = sentence[:cut].strip(), sentence[cut:].strip()
+            if head:
+                pieces.append(head)
+        if sentence:
+            pieces.append(sentence)
+    return pieces
 
 
 class GPUOutOfMemoryError(RuntimeError):
@@ -180,6 +210,26 @@ class XTTSEngine:
         return self._wav_bytes(wav_array)
 
     def _run_inference(self, text: str):
+        import numpy as np  # noqa: PLC0415  (lazy: numpy comes from torch's wheel)
+
+        assert self._model is not None
+        # _split_for_xtts only returns non-empty pieces; an empty list means the
+        # text had no speakable content (e.g. a whitespace-only chunk). Return a
+        # short silence instead of feeding "" to XTTS, which crashes inference.
+        pieces = _split_for_xtts(text)
+        if not pieces:
+            return np.zeros(int(self.sample_rate * 0.05), dtype=np.float32)
+        wavs = [np.asarray(self._infer_piece(piece), dtype=np.float32) for piece in pieces]
+        if len(wavs) == 1:
+            return wavs[0]
+        # Join sentence pieces with a short silence so they don't slur together.
+        gap = np.zeros(int(self.sample_rate * 0.12), dtype=np.float32)
+        joined: list = [wavs[0]]
+        for wav in wavs[1:]:
+            joined += [gap, wav]
+        return np.concatenate(joined)
+
+    def _infer_piece(self, text: str):
         assert self._model is not None
         return self._model.synthesizer.tts_model.inference(
             text=text,

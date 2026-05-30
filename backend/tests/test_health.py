@@ -4,6 +4,7 @@ from pathlib import Path
 
 from app.core import database
 from app.main import create_app
+from app.services import runtime_settings
 from fastapi.testclient import TestClient
 
 
@@ -53,6 +54,19 @@ def test_health_ready_ok(env: Path, monkeypatch) -> None:
     assert body["checks"]["db"] == "ok"
     assert body["components"]["app"]
     assert body["components"]["python"]
+
+
+def test_health_ready_reflects_runtime_settings_overlay(env: Path, monkeypatch) -> None:
+    # Regression: /health/ready must report the operator's UI-set LLM model
+    # (stored in runtime_settings), not the empty env default. The bug read base
+    # settings without applying the runtime overlay.
+    _stub_probes(monkeypatch)
+    database.run_migrations(env)
+    with database.connection(env) as conn:
+        runtime_settings.set_value(conn, "LLM_MODEL", "operator-chosen-model")
+    with _client(env) as client:
+        body = client.get("/health/ready").json()
+    assert body["components"]["llm"]["model"] == "operator-chosen-model"
 
 
 def test_health_alias_returns_same_shape(env: Path, monkeypatch) -> None:

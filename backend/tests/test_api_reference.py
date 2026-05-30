@@ -103,6 +103,57 @@ def test_commit_atomically_swaps_voice_and_calls_reload(
     assert any("/reload" in url for url in reload_calls)
 
 
+def test_audition_503_when_no_voice_committed(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.api.v1 import reference
+
+    monkeypatch.setattr(reference, "_reference_path", lambda: env / "no_voice.wav")
+    with _client(env) as client:
+        response = client.post(
+            "/api/v1/reference/audition", data={"sample_text": "hello there friend"}
+        )
+    assert response.status_code == 503
+
+
+def test_audition_synthesizes_with_committed_voice(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.api.v1 import reference
+
+    voice = env / "voice.wav"
+    voice.write_bytes(_wav_bytes())
+    monkeypatch.setattr(reference, "_reference_path", lambda: voice)
+
+    # The wrapper writes the synthesized wav under DATA_DIR/media; point the
+    # mocked /generate at a real file there so the containment check passes.
+    media = env / "media"
+    media.mkdir(parents=True, exist_ok=True)
+    gen_wav = media / "audition_chunk_0.wav"
+    gen_wav.write_bytes(_wav_bytes(duration_secs=3.0))
+
+    def _handler(request):
+        assert request.url.path.endswith("/generate")
+        return httpx.Response(200, json={"wav_path": str(gen_wav)})
+
+    transport = httpx.MockTransport(_handler)
+    original = httpx.AsyncClient
+
+    def factory(*args, **kwargs):
+        kwargs.setdefault("transport", transport)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+
+    with _client(env) as client:
+        response = client.post(
+            "/api/v1/reference/audition", data={"sample_text": "hello there friend"}
+        )
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/wav"
+    assert response.content.startswith(b"RIFF")
+
+
 def test_commit_rejects_too_short_clip(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

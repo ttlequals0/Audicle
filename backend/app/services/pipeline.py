@@ -306,7 +306,15 @@ async def _stage_cleanup(markdown: str, settings: Settings) -> str:
     windows = chunker.pack_paragraphs(markdown, settings.LLM_CLEANUP_WINDOW_CHARS) or [markdown]
     cleaned_parts: list[str] = []
     for index, window in enumerate(windows):
-        part = await _llm_with_retry(system_prompt, window, settings)
+        # Repeat the directive in the user turn (many models weight it higher
+        # than the system prompt) and delimit the article so the model cleans it
+        # rather than replying conversationally to it.
+        user_message = (
+            "Clean the article below per your instructions. Return ONLY the "
+            "cleaned narration text -- no commentary, no greetings, no questions."
+            f"\n\n<article>\n{window}\n</article>"
+        )
+        part = await _llm_with_retry(system_prompt, user_message, settings)
         cleaned_parts.append(part.strip())
         logger.info(
             "Cleanup window done",
@@ -574,8 +582,13 @@ async def _stage_summary(text: str, settings: Settings) -> str | None:
     # as input tokens. (Intentionally not windowed like cleanup: the output is
     # tiny and the cap bounds the input.)
     head = text[:_SUMMARY_MAX_INPUT_CHARS]
+    user_message = (
+        "Summarize the article below per your instructions. Return ONLY the "
+        "summary sentences -- no commentary, no greetings, no questions."
+        f"\n\n<article>\n{head}\n</article>"
+    )
     try:
-        summary = (await _llm_with_retry(system_prompt, head, settings)).strip()
+        summary = (await _llm_with_retry(system_prompt, user_message, settings)).strip()
     except Exception:
         logger.warning(
             "Summary generation failed; episode publishes without show notes",
