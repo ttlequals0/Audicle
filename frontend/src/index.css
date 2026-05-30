@@ -179,11 +179,6 @@
     }
   }
 
-  .queue-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.75rem;
-  }
   .queue-row-active {
     border-left: 2px solid #1ce783;
   }

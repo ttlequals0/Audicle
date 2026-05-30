@@ -1,6 +1,6 @@
 import { useState, FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError, JobRow } from "../lib/api";
+import { api, ApiError, JobRow, JobStatus } from "../lib/api";
 
 interface SubmitResponse {
   job_id: string;
@@ -92,7 +92,7 @@ export default function Home() {
             {active.map((j, i) => (
               <li
                 key={j.id}
-                className={`card p-4 queue-row${j.status === "processing" ? " queue-row-active" : ""}`}
+                className={`card p-4 flex items-start gap-3${j.status === "processing" ? " queue-row-active" : ""}`}
               >
                 <span className="queue-index">{String(i + 1).padStart(2, "0")}</span>
                 <div className="min-w-0 flex-1">
@@ -151,7 +151,7 @@ function progressSuffix(j: JobRow): string {
   return "";
 }
 
-function statusTag(status: string): string {
+function statusTag(status: JobStatus): string {
   switch (status) {
     case "done":
       return "tag-done";
