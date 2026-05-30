@@ -6,6 +6,36 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-05-30
+
+### Prompt hardening, readiness overlay, XTTS chunk-size fix, reference audition
+
+- **Cleanup/summary prompt hardening.** Weak chat-tuned models ignored the
+  cleanup system prompt and replied conversationally ("Great article... what
+  would you like to do?") instead of reproducing the cleaned article, collapsing
+  each window to a few hundred chars. The cleanup and summary prompts are
+  rewritten MinusPod-style (forceful role, explicit "Return ONLY ..." output
+  contract, anti-conversational negatives, WRONG vs RIGHT example) and the
+  directive is repeated in the user turn with the article delimited. NOTE: the
+  live prompt is operator-editable and seeded only when missing, so an existing
+  install must reset/paste the new prompt in Settings for the system-prompt half
+  to apply; the user-turn directive applies on deploy.
+- **`/health/ready` overlay.** The probe read base env settings, so it reported
+  an empty `LLM_MODEL` / unreachable Firecrawl even when the operator had
+  configured them in the UI. It now applies the `runtime_settings` overlay (like
+  the pipeline and RSS), reflecting the real config.
+- **XTTS chunk-size fix.** XTTS-v2 caps a single `inference()` at ~400 tokens
+  (~250 chars); a larger chunk crashed the wrapper with a 500 and failed the tts
+  stage. The wrapper now splits any input into XTTS-safe sentence pieces and
+  concatenates the audio, so it never 500s on a long chunk. The backend chunk
+  target is also lowered (`TTS_CHUNK_TARGET_WORDS` 180 -> 40) for sentence-level
+  cues; the max stays generous so long sentences don't trip the chunker.
+- **Reference-voice test + audition.** The candidate file picker used
+  `accept="audio/wav"`, which greyed out many valid WAVs (`audio/x-wav` etc.) so
+  the test button was never clickable; broadened the accept list. Added
+  `POST /api/v1/reference/audition` + an "audition current voice" button to
+  synthesize sample text with the already-committed voice (no upload needed).
+
 ## [0.4.0] - 2026-05-29
 
 ### Windowed cleanup, episode show notes, artwork TLS fix, centralized version

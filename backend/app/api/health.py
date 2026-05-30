@@ -19,7 +19,7 @@ from fastapi import APIRouter, Request, Response, status
 
 from app.config import get_settings
 from app.core import database
-from app.services import llm
+from app.services import llm, runtime_settings
 from app.version import __version__
 
 logger = logging.getLogger("app.api.health")
@@ -43,7 +43,14 @@ def health_live(request: Request) -> dict[str, Any]:
 @router.get("/health/ready")
 @router.get("/health")
 async def health_ready(request: Request, response: Response) -> dict[str, Any]:
-    settings = get_settings()
+    # Apply the runtime_settings overlay (same as the pipeline / RSS) so the
+    # probe reflects the operator's UI-set LLM model, Firecrawl/TTS URLs, etc. --
+    # not the empty env defaults. Guarded: a DB failure here must not 500 the
+    # health endpoint (the db check below records the failure instead).
+    try:
+        settings = runtime_settings.overlay(get_settings())
+    except Exception:
+        settings = get_settings()
     checks: dict[str, str] = {}
 
     try:

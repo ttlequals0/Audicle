@@ -162,22 +162,7 @@ async def test_candidate(
                         "chunk_index": 0,
                     },
                 )
-                if response.status_code != 200:
-                    raise HTTPException(
-                        status_code=502,
-                        detail=f"tts wrapper /generate returned {response.status_code}",
-                    )
-                wav_path = Path(response.json()["wav_path"]).resolve()
-                # Wrapper-supplied path is constrained to DATA_DIR so a
-                # compromised or misconfigured wrapper can't trick the
-                # backend into reading arbitrary files.
-                data_root = Path(settings.DATA_DIR).resolve()
-                if not wav_path.is_relative_to(data_root) or not wav_path.is_file():
-                    raise HTTPException(
-                        status_code=502,
-                        detail="tts wrapper returned an invalid wav path",
-                    )
-                body = wav_path.read_bytes()
+                body = _read_generated_wav(response, settings)
                 # Restore (or remove if there was nothing committed) and
                 # reload BEFORE releasing the lock so the next /generate
                 # never sees the candidate.
@@ -193,6 +178,47 @@ async def test_candidate(
             ) as cleanup_client:
                 await _reload_silently(cleanup_client, settings)
             raise
+
+
+@router.post("/audition", dependencies=[Depends(require_admin)])
+async def audition_committed(
+    settings: Annotated[Settings, Depends(get_settings)],
+    sample_text: Annotated[
+        str,
+        Form(
+            min_length=4,
+            max_length=400,
+            description="text to synthesize using the committed voice",
+        ),
+    ] = "The quick brown fox jumps over the lazy dog.",
+) -> Response:
+    """Synthesize ``sample_text`` with the currently-committed reference voice.
+
+    Unlike ``/test`` there is no upload and no staging -- it just exercises the
+    wrapper's ``/generate`` against the voice it already conditions on. Returns
+    503 if no voice is committed. Takes the reference lock so a concurrent
+    ``/test`` (which temporarily stages a candidate) can't make the audition use
+    the wrong voice.
+    """
+
+    if not _reference_path().is_file():
+        raise HTTPException(
+            status_code=503, detail="no reference voice committed; commit one first"
+        )
+    async with _reference_lock, httpx.AsyncClient(
+        timeout=settings.TTS_HTTP_TIMEOUT_SECONDS
+    ) as client:
+        try:
+            response = await client.post(
+                f"{settings.TTS_URL.rstrip('/')}/generate",
+                json={"text": sample_text, "episode_id": "audition", "chunk_index": 0},
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=502, detail=f"tts wrapper /generate failed: {exc}"
+            ) from exc
+        body = _read_generated_wav(response, settings)
+    return Response(content=body, media_type="audio/wav")
 
 
 @router.post("/commit", dependencies=[Depends(require_admin)])
@@ -235,6 +261,25 @@ async def commit_candidate(
         "sample_rate": sample_rate,
         "duration_secs": round(duration_secs),
     }
+
+
+def _read_generated_wav(response: httpx.Response, settings: Settings) -> bytes:
+    """Validate the wrapper ``/generate`` response and read the produced WAV.
+
+    The wrapper-supplied path is constrained to ``DATA_DIR`` so a compromised or
+    misconfigured wrapper can't trick the backend into reading arbitrary files.
+    """
+
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"tts wrapper /generate returned {response.status_code}",
+        )
+    wav_path = Path(response.json()["wav_path"]).resolve()
+    data_root = Path(settings.DATA_DIR).resolve()
+    if not wav_path.is_relative_to(data_root) or not wav_path.is_file():
+        raise HTTPException(status_code=502, detail="tts wrapper returned an invalid wav path")
+    return wav_path.read_bytes()
 
 
 def _restore_or_clear(reference: Path, backup: bytes | None) -> None:

@@ -17,6 +17,9 @@ def test_packaged_defaults_match_shipped_live_files() -> None:
     assert (app_dir / "defaults" / "script.txt").read_text() == (
         app_dir / "prompts" / "script.txt"
     ).read_text()
+    assert (app_dir / "defaults" / "summary.txt").read_text() == (
+        app_dir / "prompts" / "summary.txt"
+    ).read_text()
     assert (app_dir / "defaults" / "pronunciation.json").read_text() == (
         app_dir / "corrections" / "pronunciation.json"
     ).read_text()
