@@ -796,7 +796,7 @@ function ReferenceVoiceWidget() {
           className="btn-ghost"
           disabled={!candidate || testPending}
           onClick={test}
-          title={candidate ? "" : "upload a candidate WAV first"}
+          title={candidate ? undefined : "upload a candidate WAV first"}
         >
           {testPending ? "previewing..." : "preview this upload"}
         </button>
