@@ -56,7 +56,9 @@ If you don't have a CUDA GPU, override the wrapper to use CPU:
 TTS_DEVICE=cpu docker compose up -d
 ```
 
-First-run model download is ~2 GB and lives in a named volume (`hf_cache`).
+First-run model download is ~2 GB and persists on the `./data` volume under
+`hf_cache/` and `tts_home/` (the wrapper sets `HF_HOME`/`TTS_HOME` there), so
+restarts load from disk instantly.
 
 ## Required env vars
 

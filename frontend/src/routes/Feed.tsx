@@ -121,14 +121,7 @@ export default function Feed() {
         {episodes.map((ep) => (
           <article key={ep.id} className="card p-4">
             <div className="flex gap-3">
-              {ep.artwork_path ? (
-                <img src={`/media/${ep.id}.jpg`} alt="" className="artwork" />
-              ) : (
-                <div
-                  className="artwork"
-                  style={{ background: "linear-gradient(135deg, #1ce783, #16d076)" }}
-                />
-              )}
+              <EpisodeArtwork ep={ep} />
               <div className="flex-1 min-w-0">
                 <div className="flex items-start gap-2 mb-1">
                   <a
@@ -182,6 +175,25 @@ export default function Feed() {
       </div>
     </div>
   );
+}
+
+/**
+ * Per-episode artwork: the episode's own JPG when present, else the seeded
+ * default podcast art at /media/default.jpg. Falls back to a gradient tile only
+ * if that image fails to load (e.g. default not seeded yet).
+ */
+function EpisodeArtwork({ ep }: { ep: Episode }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <div
+        className="artwork"
+        style={{ background: "linear-gradient(135deg, #1ce783, #16d076)" }}
+      />
+    );
+  }
+  const src = ep.artwork_path ? `/media/${ep.id}.jpg` : "/media/default.jpg";
+  return <img src={src} alt="" className="artwork" onError={() => setFailed(true)} />;
 }
 
 function sourceDomain(url: string): string {

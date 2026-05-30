@@ -6,11 +6,21 @@
 # ``TTS_DEVICE=cpu``.
 FROM pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime AS runtime
 
+# Cache locations target writable paths so the image runs as a non-root user
+# (the compose ``user: 1000:1000``). The model caches live on the persistent
+# ``/data`` volume (multi-GB XTTS/HF weights survive container recreation);
+# the rest go to image-local ``/tmp``. The old ``/root/.cache`` defaults are
+# mode-700 root-owned and crash uid 1000 -- Numba "no locator available" and
+# Coqui "Permission denied: '/root/.cache'" both trace back to that.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    HF_HOME=/root/.cache/huggingface \
-    TTS_HOME=/root/.cache/huggingface/tts \
+    HF_HOME=/data/hf_cache \
+    TTS_HOME=/data/tts_home \
+    HOME=/tmp \
+    XDG_CACHE_HOME=/tmp/.cache \
+    NUMBA_CACHE_DIR=/tmp/numba_cache \
+    MPLCONFIGDIR=/tmp/mpl \
     # Coqui gates the first XTTS-v2 load behind an interactive y/n CPML prompt;
     # in a container there is no TTY to answer it, so the load hangs/fails.
     # Self-hosting the wrapper is acceptance of the non-commercial CPML (see the
@@ -37,7 +47,7 @@ WORKDIR /app
 # breaks XTTS checkpoint loading, and the CVE is a torch.load RCE unreachable
 # with Audicle's trusted XTTS model + WAV inputs.
 COPY pyproject.toml ./
-COPY config.py engine.py main.py ./
+COPY config.py engine.py log_setup.py main.py ./
 RUN pip install --no-cache-dir "transformers>=4.48.0,<4.49" \
     && pip install --no-cache-dir . \
     && pip install --no-cache-dir -U \

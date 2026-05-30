@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import logging
+import time
 import wave
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -86,10 +87,19 @@ class XTTSEngine:
         logger.info("Loading XTTS-v2 model", extra={"event": "tts_model_loading", "device": device})
 
         # progress_bar=False keeps the container log clean.
+        load_started = time.perf_counter()
         self._model = TTS("tts_models/multilingual/multi-dataset/xtts_v2", progress_bar=False).to(
             device
         )
         self.model_loaded = True
+        logger.info(
+            "XTTS-v2 model loaded",
+            extra={
+                "event": "tts_model_loaded",
+                "device": device,
+                "load_ms": int((time.perf_counter() - load_started) * 1000),
+            },
+        )
 
         # The reference voice is optional at startup: the operator can upload one
         # later via the UI (which writes voice.wav and calls /reload). Compute

@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
@@ -100,12 +100,15 @@ def _mount_static_ui(app: FastAPI) -> None:
     async def _ui_root() -> FileResponse:
         return FileResponse(index_path)
 
-    # Catch-all for client-side routes that aren't ``/api/v1/*``,
-    # ``/rss/*``, ``/media/*``, ``/health/*``, or under ``/assets``. The
-    # router has already been mounted, so unmatched paths fall through to
-    # this handler.
+    # Catch-all for client-side routes. The routers are mounted first, so an
+    # EXISTING /api/v1, /rss, /media, /health route is matched before this.
+    # An UNKNOWN path under those namespaces must 404 as an API error -- not
+    # fall through to index.html, which the React router would then bounce to
+    # "/" (making a mistyped API call look like a redirect to the home page).
     @app.get("/{path:path}", include_in_schema=False)
     async def _ui_fallback(path: str) -> FileResponse:
+        if path.startswith(("api/", "rss/", "media/", "health/")) or path == "health":
+            raise HTTPException(status_code=404, detail="not found")
         # Serve a known SPA root file by exact-name lookup; every other path
         # returns index.html so the React router handles it.
         served = root_files.get(path)

@@ -186,6 +186,23 @@ def test_item_artwork_falls_back_to_feed_when_no_jpg(env: Path) -> None:
     assert image.get("href") == get_settings().FEED_ARTWORK_URL
 
 
+def test_item_artwork_falls_back_to_default_when_feed_url_unset(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression: an unset FEED_ARTWORK_URL is "", which feedgen rejects with
+    # "Image file must be png or jpg", crashing the whole render with a 500. The
+    # per-item image must fall back to the seeded /media/default.jpg instead.
+    monkeypatch.setenv("FEED_ARTWORK_URL", "")
+    get_settings.cache_clear()
+    ep = _episode(artwork_path=None)
+    body = _render([ep], env=env)
+    root = DET.fromstring(body)
+    image = root.find(f"channel/item/{{{_ITUNES_NS}}}image")
+    assert image is not None
+    base = get_settings().BASE_URL.rstrip("/")
+    assert image.get("href") == f"{base}/media/default.jpg"
+
+
 def test_item_artwork_links_per_episode_jpg_when_present(env: Path) -> None:
     ep = _episode(artwork_path="/data/media/abc.jpg")
     body = _render([ep], env=env)

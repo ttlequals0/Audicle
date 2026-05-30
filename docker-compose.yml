@@ -66,8 +66,10 @@ services:
       # UI upload) and the wrapper reloads it. No voice yet just means /generate
       # is unavailable until one is committed.
       - ./backend/app/reference:/app/reference:ro
-      # ~2 GB of XTTS-v2 weights downloads on first run; cache the result.
-      - hf_cache:/root/.cache/huggingface
+      # ~2 GB of XTTS-v2 weights download on first run. HF_HOME/TTS_HOME point
+      # at /data/hf_cache and /data/tts_home (see the wrapper Dockerfile), so
+      # the ./data bind mount above already persists them across recreation --
+      # no separate cache volume needed.
     deploy:
       resources:
         reservations:
@@ -96,6 +98,3 @@ services:
       options:
         max-size: "50m"
         max-file: "3"
-
-volumes:
-  hf_cache:

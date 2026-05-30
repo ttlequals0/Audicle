@@ -6,6 +6,18 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-05-29
+
+### tts-wrapper non-root cache fix, structured wrapper logs, and PWA route fallback
+
+- **Non-root cache paths:** both wrapper Dockerfiles defaulted `HF_HOME`/`TTS_HOME` to `/root/.cache`, which is mode-700 root-owned and crashes the `user: 1000:1000` container on startup -- the Numba "no locator available" error and the Coqui "Permission denied: '/root/.cache'" model-download error both trace back to it. Caches now default to writable paths: model weights on the persistent `/data` volume (`HF_HOME=/data/hf_cache`, `TTS_HOME=/data/tts_home`), and `HOME`/`XDG_CACHE_HOME`/`NUMBA_CACHE_DIR`/`MPLCONFIGDIR` under image-local `/tmp`. The image now boots as uid 1000 without per-deploy env overrides.
+- **Structured wrapper logs:** the wrapper used `logging.basicConfig`, which rendered records as plain `INFO:tts.main:...` text and dropped every `extra={...}` field, so pipeline steps were invisible and multi-line tracebacks broke Loki's JSON parser. A JSON formatter (matching the backend's shape) now emits one structured line per record, with uvicorn's loggers routed through it; `/health` access spam is quieted to keep pipeline steps legible.
+- **More TTS step detail:** added `tts_model_loaded` (with `load_ms`), `tts_request_received` (episode/chunk/`text_chars`), and per-chunk `inference_ms` on `tts_chunk_done`, so a single `/generate` is traceable end to end in log analysis.
+- **PWA route fallback:** the service worker's navigate-fallback served `index.html` for any navigation, so visiting `/api/v1/docs` (or `/rss`, `/media`, `/health`) returned the SPA shell and the router redirected to `/`. Added a `navigateFallbackDenylist` so these server-owned routes hit the network directly. (Browsers with the old service worker cached still need a one-time unregister/hard-reload.)
+- **RSS 500 fix:** the per-episode `itunes:image` fell back to the raw `FEED_ARTWORK_URL`, which is `""` when unset -- feedgen rejects that ("Image file must be png or jpg") and the whole feed render returned a 500 for any episode without its own artwork. It now falls back to the same resolved channel artwork (`/media/default.jpg`), matching the channel image. Regression test added.
+- **Default podcast artwork:** the seeded default art (`/media/default.jpg`, used by the feed and the Feed UI when an episode has no image) is now the project branding image (`branding/podcast-artwork-3000.png`, 3000x3000).
+- **Feed UI artwork:** episodes without their own image now show the default podcast art instead of a flat gradient tile; the gradient remains only as a load-failure fallback.
+
 ## [0.3.1] - 2026-05-29
 
 ### tts-wrapper CVE remediation

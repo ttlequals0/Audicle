@@ -40,11 +40,10 @@ the authoritative version):
 - <= 5 MB
 - Clean speech (no background music, low noise)
 
-LibriTTS clips work well. The four files in this repo's `ref_audio/` are
-LibriTTS-derived; convert one with ffmpeg if you don't have a preferred clip:
+LibriTTS clips work well. Convert any clean ~10 s clip with ffmpeg:
 
 ```
-ffmpeg -i ref_audio/422-122949-0019.flac -ar 22050 -ac 1 -t 10 backend/app/reference/voice.wav
+ffmpeg -i your-clip.flac -ar 22050 -ac 1 -t 10 backend/app/reference/voice.wav
 ```
 
 The wrapper starts without a voice: the model loads, `/health` reports
@@ -65,10 +64,15 @@ docker build -t audicle-tts:cpu -f tts-wrapper/Dockerfile.cpu tts-wrapper/
 Then set `TTS_DEVICE=cpu` in `.env` and pin the image name in
 `docker-compose.yml` (or run the container manually).
 
-## HF cache
+## Model cache
 
-The XTTS-v2 weights (~2 GB) download on first run and persist in the
-`hf_cache` named volume so subsequent restarts load from disk instantly.
+The XTTS-v2 weights (~2 GB) download on first run. `HF_HOME` and `TTS_HOME`
+default to `/data/hf_cache` and `/data/tts_home`, so the weights persist on the
+mounted `/data` volume and subsequent restarts load from disk instantly. These
+paths are writable by a non-root container user (uid 1000); the old
+`/root/.cache` defaults were root-only and crashed the wrapper under
+`user: 1000:1000`. Throwaway compile caches (`NUMBA_CACHE_DIR`, `MPLCONFIGDIR`,
+`XDG_CACHE_HOME`, `HOME`) point at `/tmp`.
 
 ## Tunable generation params
 

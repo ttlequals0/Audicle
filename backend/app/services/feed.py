@@ -124,10 +124,14 @@ def render(
             )
         if ep.duration_secs is not None:
             item.podcast.itunes_duration(_hms(ep.duration_secs))
+        # Fall back to the same resolved channel artwork (operator URL or the
+        # seeded /media/default.jpg) rather than raw FEED_ARTWORK_URL: an unset
+        # FEED_ARTWORK_URL is "", which feedgen rejects with "Image file must be
+        # png or jpg", crashing the whole feed render with a 500.
         item.podcast.itunes_image(
             _media_url(settings.BASE_URL, ep.id, "jpg")
             if ep.artwork_path
-            else settings.FEED_ARTWORK_URL
+            else artwork_url
         )
         item.podcast.itunes_explicit("yes" if settings.FEED_EXPLICIT else "no")
 
