@@ -269,9 +269,11 @@ export default function SettingsRoute() {
   );
 }
 
-// Live preview of the feed cover. Empty value falls back to /media/default.jpg
-// (the branding art seeded on startup) -- the same fallback the RSS feed uses --
-// so the operator always sees the cover the feed will actually serve.
+// Live preview of the feed cover. An empty value previews the locally-seeded
+// /media/default.jpg branding art. The published feed falls back to the same
+// branding cover served from DEFAULT_ARTWORK_URL (a stable external .jpg) when
+// no FEED_ARTWORK_URL is set; the preview uses the local copy so it always
+// renders in-app without depending on the external URL.
 function ArtworkPreview({ value }: { value: string }) {
   const src = value.trim() || "/media/default.jpg";
   const [failed, setFailed] = useState(false);

@@ -83,10 +83,17 @@ def render(
     # players.
     fg.link(href=f"{settings.BASE_URL.rstrip('/')}/rss/rss.xml", rel="self")
     fg.link(href=settings.BASE_URL, rel="alternate")
-    # Channel artwork precedence: operator FEED_ARTWORK_URL when set, otherwise
-    # the branded DEFAULT_ARTWORK_URL (raw-GitHub .jpg). Always emitted so the
-    # feed validates and shows art even before FEED_ARTWORK_URL is configured.
-    artwork_url = settings.FEED_ARTWORK_URL or settings.DEFAULT_ARTWORK_URL
+    # Channel artwork precedence: operator FEED_ARTWORK_URL when set, then the
+    # branded DEFAULT_ARTWORK_URL (raw-GitHub .jpg), then the server-local
+    # /media/default.jpg seed as a final non-empty backstop. Both URL fields are
+    # env-overridable and may be set to "", which would make feedgen reject an
+    # empty cover ("Image file must be png or jpg"); the local seed guarantees a
+    # non-empty .jpg so the feed always renders.
+    artwork_url = (
+        settings.FEED_ARTWORK_URL
+        or settings.DEFAULT_ARTWORK_URL
+        or f"{settings.BASE_URL.rstrip('/')}/media/default.jpg"
+    )
     # Artwork URLs stay extension-clean (no ?v=): Apple requires the cover URL to
     # end in .jpg/.png, and apps that validate this drop a query-string URL.
     fg.image(url=artwork_url, title=title, link=settings.BASE_URL)

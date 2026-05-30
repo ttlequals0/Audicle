@@ -222,6 +222,27 @@ def test_item_artwork_falls_back_to_default_when_feed_url_unset(
     assert image.get("href") == get_settings().DEFAULT_ARTWORK_URL
 
 
+def test_artwork_falls_back_to_local_default_when_both_urls_unset(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Both operator and branded defaults empty -> feed must still emit a
+    # non-empty .jpg (the seeded /media/default.jpg) rather than crash feedgen
+    # with "Image file must be png or jpg".
+    monkeypatch.setenv("FEED_ARTWORK_URL", "")
+    monkeypatch.setenv("DEFAULT_ARTWORK_URL", "")
+    get_settings.cache_clear()
+    assert get_settings().DEFAULT_ARTWORK_URL == ""
+    ep = _episode(artwork_path=None)
+    body = _render([ep], env=env)
+    root = DET.fromstring(body)
+    channel_image = root.find("channel/image/url")
+    assert channel_image is not None
+    assert channel_image.text.endswith("/media/default.jpg")
+    item_image = root.find(f"channel/item/{{{_ITUNES_NS}}}image")
+    assert item_image is not None
+    assert item_image.get("href").endswith("/media/default.jpg")
+
+
 def test_item_artwork_links_per_episode_jpg_when_present(env: Path) -> None:
     ep = _episode(artwork_path="/data/media/abc.jpg")
     body = _render([ep], env=env)

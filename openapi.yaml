@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.8.0
+  version: 0.8.1
 paths:
   /health/live:
     get:
@@ -820,7 +820,10 @@ components:
           minLength: 4
           title: Sample Text
           description: text to synthesize using the committed voice
-          default: The quick brown fox jumps over the lazy dog.
+          default: But I must explain to you how all this mistaken idea of denouncing
+            of a pleasure and praising pain was born and I will give you a complete
+            account of the system, and expound the actual teachings of the great explorer
+            of the truth, the master-builder of human happiness.
       type: object
       title: Body_audition_committed_api_v1_reference_audition_post
     Body_commit_candidate_api_v1_reference_commit_post:
@@ -847,7 +850,10 @@ components:
           minLength: 4
           title: Sample Text
           description: text to synthesize using the candidate clip
-          default: The quick brown fox jumps over the lazy dog.
+          default: But I must explain to you how all this mistaken idea of denouncing
+            of a pleasure and praising pain was born and I will give you a complete
+            account of the system, and expound the actual teachings of the great explorer
+            of the truth, the master-builder of human happiness.
       type: object
       required:
       - voice
