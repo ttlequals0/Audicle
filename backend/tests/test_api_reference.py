@@ -202,3 +202,15 @@ def test_commit_rejects_non_wav_payload(
             files={"voice": ("nope.txt", b"not a wav file at all", "audio/wav")},
         )
     assert response.status_code == 400
+
+
+def test_default_sample_text_is_cicero_passage():
+    from app.api.v1.reference import DEFAULT_SAMPLE_TEXT
+
+    assert DEFAULT_SAMPLE_TEXT == (
+        "But I must explain to you how all this mistaken idea of denouncing "
+        "of a pleasure and praising pain was born and I will give you a "
+        "complete account of the system, and expound the actual teachings of "
+        "the great explorer of the truth, the master-builder of human happiness."
+    )
+    assert 4 <= len(DEFAULT_SAMPLE_TEXT) <= 400

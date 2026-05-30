@@ -642,7 +642,9 @@ function CorrectionsTable({ initial }: { initial: Record<string, string> }) {
 
 function ReferenceVoiceWidget() {
   const [candidate, setCandidate] = useState<File | null>(null);
-  const [sample, setSample] = useState("The quick brown fox jumps over the lazy dog.");
+  const [sample, setSample] = useState(
+    "But I must explain to you how all this mistaken idea of denouncing of a pleasure and praising pain was born and I will give you a complete account of the system, and expound the actual teachings of the great explorer of the truth, the master-builder of human happiness.",
+  );
   const [testAudioUrl, setTestAudioUrl] = useState<string | null>(null);
   const [auditionUrl, setAuditionUrl] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
