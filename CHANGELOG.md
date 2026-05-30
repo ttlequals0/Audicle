@@ -6,6 +6,21 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-05-30
+
+### Changed
+
+- Month abbreviations now expand only in date context. `Jan 15 2026` becomes
+  `January 15 2026`, but a bare `Jan`, `Mar`, or `Aug` (often a name) is left
+  alone. This replaces the previous always-on expansion, which renamed people.
+  Both bare and trailing-period forms are handled; `Feb` still maps to the
+  corrected "February" pronunciation.
+
+### Added
+
+- The Home RECENT list shows when each job was processed, so finished items
+  carry a timestamp.
+
 ## [0.9.2] - 2026-05-30
 
 ### Fixed

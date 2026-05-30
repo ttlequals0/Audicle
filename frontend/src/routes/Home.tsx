@@ -133,7 +133,12 @@ export default function Home() {
                       {j.error && <span className="text-danger"> &middot; {j.error}</span>}
                     </p>
                   </div>
-                  <span className={`tag ${statusTag(j.status)}`}>{j.status}</span>
+                  <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                    <span className={`tag ${statusTag(j.status)}`}>{j.status}</span>
+                    <time className="mono-xs text-mute" dateTime={j.updated_at}>
+                      {formatProcessedAt(j.updated_at)}
+                    </time>
+                  </div>
                 </li>
               ))}
             </ul>
@@ -142,6 +147,17 @@ export default function Home() {
       )}
     </div>
   );
+}
+
+function formatProcessedAt(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 function progressSuffix(j: JobRow): string {

@@ -300,6 +300,40 @@ def _strip_heading_markers(text: str) -> str:
     return _HEADING_MARKER_RE.sub("", text)
 
 
+# Month abbreviations expanded only in date context (followed by a day/year
+# number) so plain "Jan"/"Mar"/"Aug" used as names are left untouched. February
+# resolves to its corrected pronunciation via the corrections dictionary.
+_DATE_MONTHS = {
+    "Jan": "January",
+    "Feb": "February",
+    "Mar": "March",
+    "Apr": "April",
+    "Jun": "June",
+    "Jul": "July",
+    "Aug": "August",
+    "Sept": "September",
+    "Sep": "September",
+    "Oct": "October",
+    "Nov": "November",
+    "Dec": "December",
+}
+# Longest alternatives first so "Sept" wins over "Sep"; optional trailing period
+# is consumed; lookahead requires whitespace then a digit (the date's day/year).
+_DATE_MONTH_RE = re.compile(
+    r"\b(" + "|".join(sorted(_DATE_MONTHS, key=len, reverse=True)) + r")\.?(?=\s+\d)"
+)
+
+
+def _normalize_date_months(text: str) -> str:
+    """Expand a month abbreviation to its full name when it heads a date.
+
+    "Jan 15 2026" -> "January 15 2026"; "Feb. 3" -> "February 3". A bare
+    abbreviation not followed by a number (often a name) is left as-is.
+    """
+
+    return _DATE_MONTH_RE.sub(lambda m: _DATE_MONTHS[m.group(1)], text)
+
+
 async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
     """LLM cleanup with tenacity retry on transient provider failures.
 
@@ -592,7 +626,7 @@ async def _stage_corrections(cleaned: str, settings: Settings) -> str:
         )
         seed_dict = {}
     merged = {**seed_dict, **user_dict}
-    result = corrections.apply(cleaned, merged)
+    result = corrections.apply(_normalize_date_months(cleaned), merged)
     logger.info(
         "Corrections applied",
         extra={
