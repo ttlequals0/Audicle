@@ -108,11 +108,13 @@ export interface Episode {
   has_cleaned_text: boolean;
 }
 
+export type JobStatus = "queued" | "processing" | "done" | "failed";
+
 export interface JobRow {
   id: string;
   url: string;
   episode_id: string;
-  status: string;
+  status: JobStatus;
   stage: string | null;
   error: string | null;
   progress_current: number | null;

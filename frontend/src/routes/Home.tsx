@@ -1,6 +1,6 @@
 import { useState, FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError, JobRow } from "../lib/api";
+import { api, ApiError, JobRow, JobStatus } from "../lib/api";
 
 interface SubmitResponse {
   job_id: string;
@@ -47,7 +47,11 @@ export default function Home() {
   };
 
   const jobs = jobsQ.data ?? [];
-  const last = jobs[0];
+  // FIFO queue order: oldest first, so the job actually processing leads.
+  const active = jobs
+    .filter((j) => j.status === "queued" || j.status === "processing")
+    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const history = jobs.filter((j) => j.status !== "queued" && j.status !== "processing");
 
   return (
     <div>
@@ -76,27 +80,36 @@ export default function Home() {
         </form>
         {error && <p className="text-danger text-xs font-mono mt-2 break-words">{error}</p>}
 
-        {!last && jobsQ.data && (
+        {!jobs.length && jobsQ.data && (
           <p className="mono-xs text-mute mt-8">// no submissions yet -- paste a URL above</p>
-        )}
-
-        {last && (
-          <div className="mt-8 pt-6 border-t border-line">
-            <div className="mono-xs text-mute mb-2">// LAST SUBMISSION</div>
-            <div className="flex items-center justify-between gap-3">
-              <div className="mono text-dim truncate flex-1">{last.url}</div>
-              <span className={`tag ${statusTag(last.status)}`}>{last.status}</span>
-            </div>
-            <div className="mono-xs text-mute mt-1.5">
-              stage: {last.stage ?? "-"}
-              {progressSuffix(last)}
-              {last.error && <span className="text-danger"> &middot; {last.error}</span>}
-            </div>
-          </div>
         )}
       </div>
 
-      {jobs.length > 1 && (
+      {active.length > 0 && (
+        <section className="mt-8">
+          <div className="mono-xs text-accent mb-3">// QUEUE ({active.length})</div>
+          <ul className="space-y-2">
+            {active.map((j, i) => (
+              <li
+                key={j.id}
+                className={`card p-4 flex items-start gap-3${j.status === "processing" ? " queue-row-active" : ""}`}
+              >
+                <span className="queue-index">{String(i + 1).padStart(2, "0")}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="mono text-dim truncate">{j.url}</p>
+                  <p className="mono-xs text-mute mt-1 truncate">
+                    stage: {j.stage ?? "-"}
+                    {progressSuffix(j)}
+                  </p>
+                </div>
+                <span className={`tag ${statusTag(j.status)}`}>{j.status}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {history.length > 0 && (
         <section className="mt-8">
           <button
             className="mono-xs text-mute mb-3 flex items-center gap-1.5 hover:text-fg"
@@ -106,11 +119,11 @@ export default function Home() {
             <span className={`transition-transform ${recentOpen ? "rotate-90" : ""}`}>
               &rsaquo;
             </span>
-            // RECENT ({jobs.length - 1})
+            // RECENT ({history.length})
           </button>
           {recentOpen && (
             <ul className="space-y-2">
-              {jobs.slice(1).map((j) => (
+              {history.map((j) => (
                 <li key={j.id} className="card p-4 flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="mono-xs text-mute truncate">{j.url}</p>
@@ -138,7 +151,7 @@ function progressSuffix(j: JobRow): string {
   return "";
 }
 
-function statusTag(status: string): string {
+function statusTag(status: JobStatus): string {
   switch (status) {
     case "done":
       return "tag-done";

@@ -6,6 +6,26 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-05-30
+
+### Home shows the whole queue
+
+- The Home page now leads with a QUEUE of every active job (processing and
+  queued) in the order they'll run, each with its stage and progress. Before,
+  it showed only the most recent submission and hid the rest in a collapsed
+  list, so submitting several articles looked like only one was tracked.
+  Finished jobs move to a collapsed RECENT section.
+
+### Seed correction fixes
+
+- Removed a self-mapping row (`S3` to `S3`) and two entries that only resolved
+  through a second pass (`Feb.` to `February`, `etc.` to `et cetera`); each now
+  resolves directly to its pronunciation in one pass.
+- Fresh installs start with an empty user corrections editor. The built-in seed
+  list and the cleanup step already cover pronunciation, so the old bootstrap
+  entries are no longer copied into the editable dictionary. Existing
+  deployments keep whatever they already have.
+
 ## [0.9.0] - 2026-05-30
 
 ### Built-in pronunciation corrections

@@ -179,6 +179,18 @@
     }
   }
 
+  .queue-row-active {
+    border-left: 2px solid #1ce783;
+  }
+  .queue-index {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.6875rem;
+    color: #4a4a55;
+    padding-top: 0.125rem;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
   .ptr-host {
     position: fixed;
     top: 0;
