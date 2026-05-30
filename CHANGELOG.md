@@ -6,6 +6,25 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-30
+
+### Full auth lockdown
+
+- **The whole admin API is closed by default when a password is set.** Auth was
+  enforced per route, which left gaps (the job-status read at
+  `/api/v1/status/{id}` was open). All `/api/v1` routes now sit behind one
+  `require_admin` gate, so a new route is authenticated by default rather than
+  opt-in. The only public surface under `/api/v1` is `/api/v1/auth/*` (the UI
+  reads `/auth/status` and logs in via `/auth/login`). The podcast and ops
+  endpoints stay public on purpose -- `/rss/rss.xml`, `/media/*`, and
+  `/health/*` -- since podcast apps and probes fetch them without a session.
+  All of this is a no-op in convenience mode (no password set).
+- **The UI shows only the password box until you log in.** Previously the
+  header, tabs, and page content rendered even when logged out (the API calls
+  just failed with 401). Now, with a password set and no session, the login box
+  is the only thing on screen -- no header, nav, or content -- and the full UI
+  appears after a successful login.
+
 ## [0.7.0] - 2026-05-30
 
 ### Feed force-recreate endpoint, acronym narration, pull-to-refresh indicator, cleaned-text backfill

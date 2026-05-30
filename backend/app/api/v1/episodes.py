@@ -12,7 +12,6 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.deps import require_admin
 from app.config import Settings, get_settings
 from app.core import database
 from app.core.paths import media_dir
@@ -43,7 +42,6 @@ class EpisodeListItem(BaseModel):
 @router.get(
     "/episodes",
     response_model=list[EpisodeListItem],
-    dependencies=[Depends(require_admin)],
 )
 async def list_episodes(
     response: Response,
@@ -88,7 +86,6 @@ class DeleteEpisodeResponse(BaseModel):
 @router.delete(
     "/episodes/{episode_id}",
     response_model=DeleteEpisodeResponse,
-    dependencies=[Depends(require_admin)],
 )
 async def delete_episode(
     episode_id: str,

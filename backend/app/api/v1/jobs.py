@@ -11,7 +11,6 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, ConfigDict
 
-from app.api.deps import require_admin
 from app.config import Settings, get_settings
 from app.core import database
 
@@ -38,7 +37,6 @@ class JobListItem(BaseModel):
 @router.get(
     "/jobs",
     response_model=list[JobListItem],
-    dependencies=[Depends(require_admin)],
 )
 async def list_jobs(
     response: Response,

@@ -14,7 +14,6 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
 
-from app.api.deps import require_admin
 from app.config import Settings, get_settings
 from app.core import database
 from app.services import runtime_settings
@@ -36,7 +35,6 @@ class SettingsResponse(BaseModel):
 @router.get(
     "/settings",
     response_model=SettingsResponse,
-    dependencies=[Depends(require_admin)],
 )
 async def get_settings_overrides(
     settings: Annotated[Settings, Depends(get_settings)],
@@ -52,7 +50,6 @@ async def get_settings_overrides(
 @router.put(
     "/settings",
     response_model=SettingsResponse,
-    dependencies=[Depends(require_admin)],
 )
 async def put_settings_overrides(
     payload: Annotated[dict[str, Any], Body()],

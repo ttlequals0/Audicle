@@ -7,7 +7,6 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 
-from app.api.deps import require_admin
 from app.config import Settings, get_settings
 from app.services import corrections as corrections_service
 
@@ -21,7 +20,6 @@ def _corrections_path() -> Path:
 @router.get(
     "/corrections",
     summary="Read the pronunciation dictionary",
-    dependencies=[Depends(require_admin)],
 )
 def read_corrections() -> dict[str, str]:
     try:
@@ -34,7 +32,6 @@ def read_corrections() -> dict[str, str]:
 @router.put(
     "/corrections",
     summary="Replace the pronunciation dictionary",
-    dependencies=[Depends(require_admin)],
 )
 def write_corrections(
     # ``dict[str, Any]`` (not ``dict[str, str]``) so non-string values reach

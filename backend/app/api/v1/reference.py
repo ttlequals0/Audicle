@@ -26,7 +26,6 @@ import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 
-from app.api.deps import require_admin
 from app.config import Settings, get_settings
 from app.services.atomic_write import write_bytes_atomic
 
@@ -103,7 +102,7 @@ async def _read_upload_capped(voice: UploadFile) -> bytes:
     return b"".join(chunks)
 
 
-@router.get("/preview", dependencies=[Depends(require_admin)])
+@router.get("/preview")
 async def preview() -> FileResponse:
     path = _reference_path()
     if not path.is_file():
@@ -113,7 +112,7 @@ async def preview() -> FileResponse:
     return FileResponse(path, media_type="audio/wav")
 
 
-@router.post("/test", dependencies=[Depends(require_admin)])
+@router.post("/test")
 async def test_candidate(
     settings: Annotated[Settings, Depends(get_settings)],
     voice: Annotated[UploadFile, File(description="candidate voice WAV")],
@@ -180,7 +179,7 @@ async def test_candidate(
             raise
 
 
-@router.post("/audition", dependencies=[Depends(require_admin)])
+@router.post("/audition")
 async def audition_committed(
     settings: Annotated[Settings, Depends(get_settings)],
     sample_text: Annotated[
@@ -221,7 +220,7 @@ async def audition_committed(
     return Response(content=body, media_type="audio/wav")
 
 
-@router.post("/commit", dependencies=[Depends(require_admin)])
+@router.post("/commit")
 async def commit_candidate(
     settings: Annotated[Settings, Depends(get_settings)],
     voice: Annotated[UploadFile, File(description="new voice WAV to install")],

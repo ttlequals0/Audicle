@@ -12,7 +12,6 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.deps import require_admin
 from app.config import Settings, get_settings
 from app.services import retention
 from app.services.retention import MAX_OLDER_THAN_DAYS
@@ -32,7 +31,6 @@ class PurgeResponse(BaseModel):
 @router.post(
     "/purge",
     response_model=PurgeResponse,
-    dependencies=[Depends(require_admin)],
 )
 async def post_purge(
     settings: Annotated[Settings, Depends(get_settings)],

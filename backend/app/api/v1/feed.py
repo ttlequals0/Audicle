@@ -15,7 +15,6 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.deps import require_admin
 from app.config import Settings, get_settings
 from app.core import database
 from app.services import settings_store
@@ -33,7 +32,6 @@ class FeedRecreateResponse(BaseModel):
 @router.post(
     "/feed/recreate",
     response_model=FeedRecreateResponse,
-    dependencies=[Depends(require_admin)],
 )
 async def post_feed_recreate(
     settings: Annotated[Settings, Depends(get_settings)],

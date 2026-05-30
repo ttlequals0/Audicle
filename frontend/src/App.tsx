@@ -52,7 +52,7 @@ const TABS: [string, string][] = [
 ];
 
 function Shell() {
-  const { status, refresh } = useAuth();
+  const { status, loading, refresh } = useAuth();
   const healthQ = useHealthLive();
   const qc = useQueryClient();
   // App-wide pull-to-refresh: a no-arg invalidate refetches every active
@@ -62,6 +62,19 @@ function Shell() {
     mutationFn: () => api("/api/v1/auth/logout", { method: "POST" }),
     onSuccess: () => refresh(),
   });
+
+  // Hold a neutral splash until auth status resolves so protected UI never
+  // flashes before the gate decides.
+  if (loading) return <div className="min-h-screen bg-ink" />;
+  // Full lockdown: with a password set and no session, the password box is the
+  // only thing rendered -- no header, nav, or page content.
+  if (status?.password_set && !status.authenticated) {
+    return (
+      <main className="min-h-screen px-4">
+        <Login />
+      </main>
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -82,11 +95,6 @@ function Shell() {
                 >
                   logout
                 </button>
-              )}
-              {status?.password_set && !status?.authenticated && (
-                <NavLink to="/login" className="mono-xs text-mute hover:text-fg">
-                  login
-                </NavLink>
               )}
               <a
                 href="https://github.com/ttlequals0/Audicle"
@@ -119,7 +127,6 @@ function Shell() {
           <Route path="/" element={<Home />} />
           <Route path="/feed" element={<Feed />} />
           <Route path="/settings" element={<SettingsRoute />} />
-          <Route path="/login" element={<Login />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

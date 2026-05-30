@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.7.0
+  version: 0.8.0
 paths:
   /health/live:
     get:
@@ -48,6 +48,85 @@ paths:
                 additionalProperties: true
                 type: object
                 title: Response Health Ready Health Ready Get
+  /api/v1/auth/status:
+    get:
+      tags:
+      - auth
+      summary: Get Status
+      operationId: get_status_api_v1_auth_status_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/app__api__v1__auth__StatusResponse'
+  /api/v1/auth/login:
+    post:
+      tags:
+      - auth
+      summary: Post Login
+      operationId: post_login_api_v1_auth_login_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthActionResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/auth/logout:
+    post:
+      tags:
+      - auth
+      summary: Post Logout
+      operationId: post_logout_api_v1_auth_logout_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: boolean
+                type: object
+                title: Response Post Logout Api V1 Auth Logout Post
+  /api/v1/auth/password:
+    put:
+      tags:
+      - auth
+      summary: Put Password
+      operationId: put_password_api_v1_auth_password_put
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthActionResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/submit:
     post:
       tags:
@@ -243,85 +322,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FeedRecreateResponse'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /api/v1/auth/status:
-    get:
-      tags:
-      - auth
-      summary: Get Status
-      operationId: get_status_api_v1_auth_status_get
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/app__api__v1__auth__StatusResponse'
-  /api/v1/auth/login:
-    post:
-      tags:
-      - auth
-      summary: Post Login
-      operationId: post_login_api_v1_auth_login_post
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/LoginRequest'
-        required: true
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AuthActionResponse'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /api/v1/auth/logout:
-    post:
-      tags:
-      - auth
-      summary: Post Logout
-      operationId: post_logout_api_v1_auth_logout_post
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                additionalProperties:
-                  type: boolean
-                type: object
-                title: Response Post Logout Api V1 Auth Logout Post
-  /api/v1/auth/password:
-    put:
-      tags:
-      - auth
-      summary: Put Password
-      operationId: put_password_api_v1_auth_password_put
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PasswordRequest'
-        required: true
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AuthActionResponse'
         '422':
           description: Validation Error
           content:
