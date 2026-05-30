@@ -6,6 +6,22 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-05-30
+
+### Fixed
+
+- The Home RECENT list now opens on its own when nothing is in the queue, so a
+  finished or failed job and its error are visible without a click. While a
+  queue is running it stays collapsed and the page leads with the live queue.
+- The Home view fetches more jobs (50) so a long queue shows its real order
+  instead of dropping the oldest, currently-processing item off the page.
+
+### Changed
+
+- The deterministic text fixups applied before narration (markdown heading
+  stripping and date-context month expansion) are consolidated into one
+  normalization step. No change to the narrated text.
+
 ## [0.9.3] - 2026-05-30
 
 ### Changed
