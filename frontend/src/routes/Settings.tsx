@@ -648,6 +648,8 @@ function ReferenceVoiceWidget() {
   const [testAudioUrl, setTestAudioUrl] = useState<string | null>(null);
   const [auditionUrl, setAuditionUrl] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [testPending, setTestPending] = useState(false);
+  const [auditionPending, setAuditionPending] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const previewUrl = "/api/v1/reference/preview";
@@ -683,37 +685,49 @@ function ReferenceVoiceWidget() {
   const test = async () => {
     if (!candidate) return;
     setMsg(null);
-    const fd = new FormData();
-    fd.append("voice", candidate);
-    fd.append("sample_text", sample);
-    const r = await postForm("/api/v1/reference/test", fd);
-    if (!r) {
-      setMsg("test failed (network error)");
-      return;
+    setTestPending(true);
+    try {
+      const fd = new FormData();
+      fd.append("voice", candidate);
+      fd.append("sample_text", sample);
+      const r = await postForm("/api/v1/reference/test", fd);
+      if (!r) {
+        setMsg("preview failed (network error)");
+        return;
+      }
+      if (!r.ok) {
+        setMsg(`preview failed (${r.status})`);
+        return;
+      }
+      const blob = await r.blob();
+      setTestAudioUrl(URL.createObjectURL(blob));
+      setMsg("preview ready");
+    } finally {
+      setTestPending(false);
     }
-    if (!r.ok) {
-      setMsg(`test failed (${r.status})`);
-      return;
-    }
-    const blob = await r.blob();
-    setTestAudioUrl(URL.createObjectURL(blob));
   };
 
   const audition = async () => {
     setMsg(null);
-    const fd = new FormData();
-    fd.append("sample_text", sample);
-    const r = await postForm("/api/v1/reference/audition", fd);
-    if (!r) {
-      setMsg("audition failed (network error)");
-      return;
+    setAuditionPending(true);
+    try {
+      const fd = new FormData();
+      fd.append("sample_text", sample);
+      const r = await postForm("/api/v1/reference/audition", fd);
+      if (!r) {
+        setMsg("audition failed (network error)");
+        return;
+      }
+      if (!r.ok) {
+        setMsg(r.status === 503 ? "no voice committed yet" : `audition failed (${r.status})`);
+        return;
+      }
+      const blob = await r.blob();
+      setAuditionUrl(URL.createObjectURL(blob));
+      setMsg("audition ready");
+    } finally {
+      setAuditionPending(false);
     }
-    if (!r.ok) {
-      setMsg(r.status === 503 ? "no voice committed yet" : `audition failed (${r.status})`);
-      return;
-    }
-    const blob = await r.blob();
-    setAuditionUrl(URL.createObjectURL(blob));
   };
 
   const commit = async () => {
@@ -756,7 +770,7 @@ function ReferenceVoiceWidget() {
       </div>
       <div>
         <label className="label" htmlFor="ref-sample">
-          sample text (for test / audition)
+          sample text (for preview / audition)
         </label>
         <input
           id="ref-sample"
@@ -765,9 +779,10 @@ function ReferenceVoiceWidget() {
           onChange={(e) => setSample(e.target.value)}
         />
         <div className="flex gap-2 items-center flex-wrap mt-2">
-          <button className="btn-ghost" onClick={audition}>
-            audition current voice
+          <button className="btn-ghost" onClick={audition} disabled={auditionPending}>
+            {auditionPending ? "auditioning..." : "play current voice"}
           </button>
+          <span className="label">synthesize the sample with the saved voice</span>
         </div>
         {auditionUrl && (
           <div className="mt-2">
@@ -777,8 +792,13 @@ function ReferenceVoiceWidget() {
         )}
       </div>
       <div className="flex gap-2 items-center flex-wrap">
-        <button className="btn-ghost" disabled={!candidate} onClick={test}>
-          test
+        <button
+          className="btn-ghost"
+          disabled={!candidate || testPending}
+          onClick={test}
+          title={candidate ? "" : "upload a candidate WAV first"}
+        >
+          {testPending ? "previewing..." : "preview this upload"}
         </button>
         <button className="btn-primary" disabled={!candidate} onClick={commit}>
           commit
@@ -787,7 +807,7 @@ function ReferenceVoiceWidget() {
       </div>
       {testAudioUrl && (
         <div>
-          <p className="label">audition</p>
+          <p className="label">candidate upload saying the sample</p>
           <audio controls src={testAudioUrl} className="w-full" />
         </div>
       )}
