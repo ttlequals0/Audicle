@@ -591,6 +591,15 @@ function CorrectionsTable({ initial }: { initial: Record<string, string> }) {
 
   return (
     <section className="space-y-3">
+      <div className="builtin-note">
+        <span className="builtin-note-tag">built-in</span>
+        <p className="builtin-note-body">
+          Audicle applies a built-in set of pronunciation fixes on every episode.
+          They are not listed here, and anything you add below overrides them. The
+          full set is available from the API at{" "}
+          <code className="builtin-note-path">GET /api/v1/corrections/seed</code>.
+        </p>
+      </div>
       <p className="text-mute text-xs">
         left column: source word; right column: the spelling the TTS should narrate.
       </p>

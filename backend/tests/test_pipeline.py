@@ -609,3 +609,58 @@ async def test_pipeline_audio_stage_cleans_up_intermediate_wavs(
     # The combined wav + at least one chunk wav must have been passed in.
     assert any(p.name.endswith("_combined.wav") for p in seen)
     assert any(p.name.endswith("_chunk_0.wav") for p in seen)
+
+
+# --- corrections stage: seed + user merge ----------------------------------
+
+
+def test_corrections_applies_seed_brand_phrase(
+    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An applicable seed row (a brand phrase) is corrected even with no user
+    dictionary present."""
+
+    database.run_migrations(env)
+    user_file = tmp_path / "pronunciation.json"  # missing -> empty user dict
+    monkeypatch.setattr(pipeline, "_corrections_path", lambda _s: user_file)
+    out = asyncio.run(
+        pipeline._stage_corrections("I bought a Louis Vuitton bag.", get_settings())
+    )
+    assert "loo-ee vwee-TOHN" in out
+
+
+def test_corrections_user_override_beats_seed(
+    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A user correction whose key also exists in the seed wins."""
+
+    import json
+
+    database.run_migrations(env)
+    user_file = tmp_path / "pronunciation.json"
+    user_file.write_text(json.dumps({"Louis Vuitton": "ELL VEE"}), encoding="utf-8")
+    monkeypatch.setattr(pipeline, "_corrections_path", lambda _s: user_file)
+    out = asyncio.run(pipeline._stage_corrections("My Louis Vuitton bag.", get_settings()))
+    assert "ELL VEE" in out
+    assert "loo-ee vwee-TOHN" not in out
+
+
+def test_corrections_malformed_seed_falls_back_to_user_only(
+    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A malformed bundled seed CSV must not fail the job; user corrections
+    still apply."""
+
+    import json
+
+    from app.services import seed_corrections
+
+    database.run_migrations(env)
+    user_file = tmp_path / "pronunciation.json"
+    user_file.write_text(json.dumps({"widget": "wid jet"}), encoding="utf-8")
+    monkeypatch.setattr(pipeline, "_corrections_path", lambda _s: user_file)
+    bad_seed = tmp_path / "bad_seed.csv"
+    bad_seed.write_text("wrong,columns\na,b\n", encoding="utf-8")
+    monkeypatch.setattr(seed_corrections, "seed_path", lambda: bad_seed)
+    out = asyncio.run(pipeline._stage_corrections("a widget here", get_settings()))
+    assert "wid jet" in out

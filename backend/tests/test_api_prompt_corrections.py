@@ -153,3 +153,33 @@ def test_put_corrections_typed_failure_envelope_on_non_string_value(
     assert body["error"] == "Corrections validation failed"
     failure_keys = {f["key"] for f in body["details"]["failures"]}
     assert {"kubectl", "PostgreSQL"}.issubset(failure_keys)
+
+
+# --- /api/v1/corrections/seed (read-only) ----------------------------------
+
+
+def test_get_seed_corrections_returns_full_list_with_metadata(client: TestClient) -> None:
+    with client:
+        response = client.get("/api/v1/corrections/seed")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["count"] == 238
+    assert 0 < body["applicable_count"] < body["count"]
+    assert body["applicable_count"] == sum(e["applicable"] for e in body["entries"])
+    sample = body["entries"][0]
+    assert set(sample) == {"category", "input_text", "replacement_text", "notes", "applicable"}
+
+
+def test_get_seed_corrections_is_separate_from_user_dictionary(client: TestClient) -> None:
+    """The seed list must not leak into the user GET/PUT dictionary."""
+
+    with client:
+        client.put("/api/v1/corrections", json={"widget": "wid jet"})
+        user = client.get("/api/v1/corrections").json()
+    assert user == {"widget": "wid jet"}  # only the user entry, no seed rows
+
+
+def test_seed_corrections_has_no_put(client: TestClient) -> None:
+    with client:
+        response = client.put("/api/v1/corrections/seed", json={"anything": "x"})
+    assert response.status_code == 405
