@@ -6,6 +6,29 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-05-30
+
+### Reference-audio defaults and audition UX
+
+- **New default sample text for voice auditions.** The reference-voice
+  preview/audition now defaults to a passage from Cicero's "de Finibus" (the
+  "explorer of the truth" text) instead of "the quick brown fox". Both the
+  `/api/v1/reference/test` and `/api/v1/reference/audition` endpoints share a
+  single `DEFAULT_SAMPLE_TEXT` constant, and the Settings field is prefilled to
+  match.
+- **Branded default podcast cover art.** When no per-episode image and no
+  operator `FEED_ARTWORK_URL` are set, the feed now points at a branded JPG
+  served from the project's raw-GitHub URL (`DEFAULT_ARTWORK_URL`) rather than
+  the server-local `/media/default.jpg`. The extension-clean external URL gives
+  podcast apps a stable cover to cache across deploys. Operator art and
+  per-episode article images still take precedence; the local default seed
+  stays as a backstop.
+- **Clearer reference-voice controls.** The two synthesis buttons were
+  relabeled "preview this upload" (synthesizes an uploaded candidate before you
+  commit it) and "play current voice" (synthesizes the saved voice), and both
+  now show an in-progress state and a ready/error message so the action visibly
+  does something.
+
 ## [0.8.0] - 2026-05-30
 
 ### Full auth lockdown
