@@ -17,6 +17,7 @@ def test_run_migrations_creates_tables(tmp_path: Path) -> None:
         "004_runtime_settings",
         "005_episode_summary",
         "006_job_progress",
+        "007_episode_cleaned_text_size",
     ]
 
     conn = database.connect(database.db_path(tmp_path))
@@ -39,6 +40,7 @@ def test_second_run_is_a_noop(tmp_path: Path) -> None:
         "004_runtime_settings",
         "005_episode_summary",
         "006_job_progress",
+        "007_episode_cleaned_text_size",
     ]
     assert second == []
 

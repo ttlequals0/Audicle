@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.5.0
+  version: 0.6.0
 paths:
   /health/live:
     get:
@@ -733,6 +733,35 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /media/{episode_id}.txt:
+    get:
+      tags:
+      - media
+      summary: Get Cleaned Text
+      description: 'The cleaned article text (the exact input to TTS), served from
+        the
+
+        ``cleaned_text`` column. 404 for episodes processed before 0.6.0 (NULL).'
+      operationId: get_cleaned_text_media__episode_id__txt_get
+      parameters:
+      - name: episode_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Episode Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
     AuthActionResponse:
@@ -853,6 +882,9 @@ components:
         updated_at:
           type: string
           title: Updated At
+        has_cleaned_text:
+          type: boolean
+          title: Has Cleaned Text
       additionalProperties: false
       type: object
       required:
@@ -866,6 +898,7 @@ components:
       - duration_secs
       - pub_date
       - updated_at
+      - has_cleaned_text
       title: EpisodeListItem
     HTTPValidationError:
       properties:

@@ -6,6 +6,38 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-30
+
+### Artwork fix, cleaned-text download, collapsible recents, size in DB, torch CVE
+
+- **Artwork shows in podcast apps again.** 0.5.0 appended `?v=<epoch>` to the
+  `itunes:image` URLs to bust caches, but that left the cover URL ending in a
+  query string instead of `.jpg`. Apple requires the artwork URL to end in
+  `.jpg`/`.png`, and apps that validate this dropped the image (audio and
+  transcripts, which aren't extension-checked, kept working). The channel and
+  per-episode artwork URLs are now extension-clean; the audio enclosure keeps
+  its `?v=` so reprocessed episodes still re-download.
+- **Settings artwork preview.** The Feed artwork field now shows an image
+  preview -- the configured cover, or the seeded branding default
+  (`/media/default.jpg`) when the field is empty -- instead of a blank box.
+- **Download the cleaned article per episode.** The pipeline used to discard the
+  cleaned text (the exact input to TTS) after chunking; it's now stored and
+  served at `/media/{id}.txt`. Each Feed card links to it once available
+  (episodes processed before 0.6.0 have no cleaned text and show no link).
+- **Collapsible Recents.** The Home "recent" list is collapsed by default and
+  expands on click, so the page leads with the submit box.
+- **Audio size stored at finalize.** `audio_size_bytes` is recorded on the
+  episode row, so the episodes list and RSS enclosure no longer stat() the file
+  per request (older rows still fall back to a stat()).
+- **torch 2.4 -> 2.6 (CVE-2025-32434).** The wrapper moves to the pytorch 2.6
+  CUDA base / torch 2.6 CPU, clearing the `torch.load` RCE. torch 2.6 defaults
+  `torch.load` to `weights_only=True`, which would break XTTS checkpoint
+  loading, so the wrapper registers the XTTS config classes as safe globals
+  before loading the model.
+- **Note:** changing feed fields in Settings takes effect on the next feed
+  fetch -- the RSS is rendered on demand with the runtime-settings overlay, so
+  no regeneration or restart is needed (apps pick it up on their next poll).
+
 ## [0.5.0] - 2026-05-30
 
 ### Per-chunk progress, app-wide pull-to-refresh, reprocess cache-bust, inline player

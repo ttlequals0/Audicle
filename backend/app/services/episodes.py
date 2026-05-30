@@ -11,6 +11,8 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
+from app.core.paths import file_size_or_zero
+
 
 @dataclass(frozen=True)
 class Episode:
@@ -26,14 +28,22 @@ class Episode:
     pub_date: str
     created_at: str
     updated_at: str
-    # Added last with a default so existing positional/kwarg constructors keep
-    # working; NULL for episodes finalized before the summary feature.
+    # Added last with defaults so existing positional/kwarg constructors keep
+    # working; NULL for episodes finalized before the feature that added them.
+    # (cleaned_text is write-only here -- it's fetched via get_cleaned_text(), not
+    # carried on the row, so it isn't a dataclass field.)
     summary: str | None = None
+    audio_size_bytes: int | None = None
 
 
+# cleaned_text is intentionally NOT in the default select: it's a large text
+# body (the full article) needed only by the /media/{id}.txt route, which fetches
+# it on demand via get_cleaned_text(). Loading it on every list/RSS read would
+# pull megabytes the feed never uses, so it isn't an Episode field either.
 _SELECT_COLUMNS = (
     "id, job_id, title, author, original_url, audio_path, artwork_path, "
-    "transcript_vtt, duration_secs, pub_date, created_at, updated_at, summary"
+    "transcript_vtt, duration_secs, pub_date, created_at, updated_at, summary, "
+    "audio_size_bytes"
 )
 
 
@@ -52,7 +62,47 @@ def _row_to_episode(row: sqlite3.Row) -> Episode:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         summary=row["summary"],
+        audio_size_bytes=row["audio_size_bytes"],
     )
+
+
+def audio_size(ep: Episode) -> int | None:
+    """Byte size of the episode audio: the value stamped at finalize (0.6.0+),
+    falling back to a stat() only for older rows whose column is NULL. Shared by
+    the episodes API (``audio_size_bytes``) and the RSS enclosure length so they
+    agree and neither stat()s the file on the hot path for new episodes."""
+
+    if ep.audio_size_bytes is not None:
+        return ep.audio_size_bytes
+    return file_size_or_zero(ep.audio_path) if ep.audio_path else None
+
+
+def ids_with_cleaned_text(conn: sqlite3.Connection, ids: list[str]) -> set[str]:
+    """Subset of ``ids`` whose ``cleaned_text`` is present, without loading the
+    text bodies -- used to gate the per-episode cleaned-text download link."""
+
+    if not ids:
+        return set()
+    placeholders = ",".join("?" * len(ids))
+    # ``!= ''`` matches the /media/{id}.txt route's ``if not cleaned_text`` 404
+    # guard, so the list flag never promises a link the route would refuse.
+    rows = conn.execute(
+        f"SELECT id FROM episodes "
+        f"WHERE cleaned_text IS NOT NULL AND cleaned_text != '' AND id IN ({placeholders})",
+        ids,
+    ).fetchall()
+    return {row["id"] for row in rows}
+
+
+def get_cleaned_text(conn: sqlite3.Connection, episode_id: str) -> str | None:
+    """Fetch just the cleaned article text for one episode (the /media/{id}.txt
+    body). Kept separate from the default select so the large text isn't loaded
+    on every list/RSS read."""
+
+    row = conn.execute(
+        "SELECT cleaned_text FROM episodes WHERE id = ?", (episode_id,)
+    ).fetchone()
+    return row["cleaned_text"] if row is not None else None
 
 
 def upsert(
@@ -68,6 +118,8 @@ def upsert(
     transcript_vtt: str | None,
     duration_secs: int | None,
     summary: str | None = None,
+    cleaned_text: str | None = None,
+    audio_size_bytes: int | None = None,
 ) -> Episode:
     """Insert a new episode row, or update the existing one keyed by id.
 
@@ -83,21 +135,24 @@ def upsert(
         """
         INSERT INTO episodes (
             id, job_id, title, author, original_url, audio_path,
-            artwork_path, transcript_vtt, duration_secs, summary
+            artwork_path, transcript_vtt, duration_secs, summary,
+            cleaned_text, audio_size_bytes
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
-            job_id          = excluded.job_id,
-            title           = excluded.title,
-            author          = excluded.author,
-            original_url    = excluded.original_url,
-            audio_path      = excluded.audio_path,
-            artwork_path    = excluded.artwork_path,
-            transcript_vtt  = excluded.transcript_vtt,
-            duration_secs   = excluded.duration_secs,
-            summary         = excluded.summary,
-            pub_date        = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-            updated_at      = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+            job_id           = excluded.job_id,
+            title            = excluded.title,
+            author           = excluded.author,
+            original_url     = excluded.original_url,
+            audio_path       = excluded.audio_path,
+            artwork_path     = excluded.artwork_path,
+            transcript_vtt   = excluded.transcript_vtt,
+            duration_secs    = excluded.duration_secs,
+            summary          = excluded.summary,
+            cleaned_text     = excluded.cleaned_text,
+            audio_size_bytes = excluded.audio_size_bytes,
+            pub_date         = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+            updated_at       = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
         """,
         (
             id,
@@ -110,6 +165,8 @@ def upsert(
             transcript_vtt,
             duration_secs,
             summary,
+            cleaned_text,
+            audio_size_bytes,
         ),
     )
     conn.commit()

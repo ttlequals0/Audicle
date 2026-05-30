@@ -4,7 +4,7 @@
 # Operators on CPU-only hosts should use ``Dockerfile.cpu`` (which builds on a
 # plain Python base, since there is no ``pytorch/pytorch:*-cpu`` tag) and set
 # ``TTS_DEVICE=cpu``.
-FROM pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime AS runtime
+FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime AS runtime
 
 # Cache locations target writable paths so the image runs as a non-root user
 # (the compose ``user: 1000:1000``). The model caches live on the persistent
@@ -42,10 +42,11 @@ WORKDIR /app
 # we pin the 4.48.x line -- >=4.48.0 clears CVE-2024-11392/-11393/-11394 while
 # staying well under the 5.x break. The trailing -U upgrades patch transitive
 # deps the base image / resolver pin to vulnerable versions (urllib3,
-# cryptography, pillow, Brotli, setuptools, wheel). torch stays at the base
-# image's 2.4.0: the only torch fix is 2.6.0, whose weights_only=True default
-# breaks XTTS checkpoint loading, and the CVE is a torch.load RCE unreachable
-# with Audicle's trusted XTTS model + WAV inputs.
+# cryptography, pillow, Brotli, setuptools, wheel). torch is the base image's
+# 2.6.0, which clears CVE-2025-32434 (torch.load RCE). torch 2.6 defaults
+# torch.load to weights_only=True, which would break XTTS checkpoint loading;
+# engine.py registers the XTTS config classes via torch.serialization.
+# add_safe_globals before load so the trusted checkpoint deserializes.
 COPY pyproject.toml ./
 COPY config.py engine.py log_setup.py main.py ./
 RUN pip install --no-cache-dir "transformers>=4.48.0,<4.49" \

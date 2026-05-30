@@ -105,6 +105,7 @@ export interface Episode {
   duration_secs: number | null;
   pub_date: string;
   updated_at: string;
+  has_cleaned_text: boolean;
 }
 
 export interface JobRow {

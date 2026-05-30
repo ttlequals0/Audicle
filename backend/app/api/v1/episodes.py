@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.api.deps import require_admin
 from app.config import Settings, get_settings
 from app.core import database
-from app.core.paths import file_size_or_zero, media_dir
+from app.core.paths import media_dir
 from app.services import episodes as episodes_service
 from app.services.retention import _remove_path
 
@@ -35,6 +35,9 @@ class EpisodeListItem(BaseModel):
     duration_secs: int | None
     pub_date: str
     updated_at: str
+    # True once the cleaned article text exists (0.6.0+); the UI gates the
+    # /media/{id}.txt download link on it so older episodes show no dead link.
+    has_cleaned_text: bool
 
 
 @router.get(
@@ -53,6 +56,9 @@ async def list_episodes(
         page_rows = episodes_service.list_published_page(
             conn, limit=per_page, offset=(page - 1) * per_page
         )
+        with_text = episodes_service.ids_with_cleaned_text(
+            conn, [ep.id for ep in page_rows]
+        )
     response.headers["X-Total-Count"] = str(total)
     return [
         EpisodeListItem(
@@ -61,11 +67,12 @@ async def list_episodes(
             author=ep.author,
             original_url=ep.original_url,
             audio_path=ep.audio_path,
-            audio_size_bytes=file_size_or_zero(ep.audio_path) if ep.audio_path else None,
+            audio_size_bytes=episodes_service.audio_size(ep),
             artwork_path=ep.artwork_path,
             duration_secs=ep.duration_secs,
             pub_date=ep.pub_date,
             updated_at=ep.updated_at,
+            has_cleaned_text=ep.id in with_text,
         )
         for ep in page_rows
     ]

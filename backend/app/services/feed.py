@@ -21,9 +21,8 @@ import defusedxml.ElementTree as DET
 from feedgen.feed import FeedGenerator
 
 from app.config import Settings
-from app.core.paths import file_size_or_zero
 from app.core.timestamps import parse_iso
-from app.services.episodes import Episode
+from app.services.episodes import Episode, audio_size
 
 logger = logging.getLogger("app.services.feed")
 
@@ -83,9 +82,8 @@ def render(
     # bundled default served at /media/default.jpg (seeded on startup). Always
     # emitted so a feed validates and shows art even before it's configured.
     artwork_url = settings.FEED_ARTWORK_URL or f"{settings.BASE_URL.rstrip('/')}/media/default.jpg"
-    # Bare URL here: feedgen rejects a ?v= cache-buster on itunes:image ("Image
-    # file must be png or jpg"). The cache-buster is appended later in the ET
-    # post-processing (_inject_pc2_tags), which feedgen doesn't validate.
+    # Artwork URLs stay extension-clean (no ?v=): Apple requires the cover URL to
+    # end in .jpg/.png, and apps that validate this drop a query-string URL.
     fg.image(url=artwork_url, title=title, link=settings.BASE_URL)
     fg.podcast.itunes_image(artwork_url)
     fg.lastBuildDate(last_build)
@@ -123,7 +121,7 @@ def render(
             audio_url = _media_url(settings.BASE_URL, ep.id, "mp3", bust)
             item.enclosure(
                 url=audio_url,
-                length=str(file_size_or_zero(ep.audio_path)),
+                length=str(audio_size(ep) or 0),
                 type="audio/mpeg",
             )
         if ep.duration_secs is not None:
@@ -131,9 +129,8 @@ def render(
         # Fall back to the same resolved channel artwork (operator URL or the
         # seeded /media/default.jpg) rather than raw FEED_ARTWORK_URL: an unset
         # FEED_ARTWORK_URL is "", which feedgen rejects with "Image file must be
-        # png or jpg", crashing the whole feed render with a 500.
-        # Bare URL (feedgen validates the .jpg suffix); the ?v= cache-buster is
-        # appended in _inject_pc2_tags below.
+        # png or jpg", crashing the whole feed render with a 500. The URL is
+        # extension-clean (no ?v=) so Apple/podcast apps accept the cover.
         item.podcast.itunes_image(
             _media_url(settings.BASE_URL, ep.id, "jpg")
             if ep.artwork_path
@@ -147,7 +144,6 @@ def render(
         podcast_guid=podcast_guid,
         episodes=episodes,
         settings=settings,
-        last_build=last_build,
     )
 
 
@@ -197,7 +193,6 @@ def _inject_pc2_tags(
     podcast_guid: str,
     episodes: list[Episode],
     settings: Settings,
-    last_build: datetime,
 ) -> bytes:
     """Append the PC2 namespace + channel-level + per-item PC2 elements.
 
@@ -246,18 +241,14 @@ def _inject_pc2_tags(
     pc2_txt.set("purpose", "ai-content")
     channel.insert(insert_at, pc2_txt)
 
-    # Cache-bust the channel/show cover (itunes:image href + legacy <image><url>)
-    # with last_build (the max episode updated_at, not the newest-by-pub_date one),
-    # so reprocessing ANY episode -- including a back-catalog one -- refreshes a
-    # stale cover a podcast app cached. Done here (not via feedgen) because feedgen
-    # rejects a ?v= query on itunes:image.
-    channel_version = int(last_build.timestamp())
-    channel_image = channel.find(f"{{{_ITUNES_NS}}}image")
-    if channel_image is not None:
-        channel_image.set("href", _append_version(channel_image.get("href"), channel_version) or "")
-    legacy_url = channel.find("image/url")
-    if legacy_url is not None:
-        legacy_url.text = _append_version(legacy_url.text, channel_version)
+    # NOTE: artwork URLs (channel itunes:image, legacy <image><url>, per-item
+    # itunes:image) are left EXTENSION-CLEAN -- no ?v= cache-buster. Apple's spec
+    # requires the artwork URL to end in .jpg/.png, and podcast apps that
+    # validate/normalize this drop an image whose URL ends in a query string
+    # (observed: audio/VTT loaded but artwork stayed blank). The audio enclosure
+    # keeps its ?v= (it isn't extension-validated and re-download on reprocess is
+    # the real need). Reprocessing changes the artwork file in place; apps refresh
+    # it on their own cache cycle rather than via a URL change.
 
     items = channel.findall("item")
     # ``strict=True`` makes the assertion ``items align with episodes`` a
@@ -265,15 +256,9 @@ def _inject_pc2_tags(
     # the build fails loudly rather than silently shipping wrong-episode
     # transcripts.
     for item_el, ep in zip(items, episodes, strict=True):
-        bust = _cache_bust(ep.updated_at)
-        # Cache-bust the per-episode itunes:image so apps re-fetch artwork after
-        # a reprocess (feedgen wrote a bare URL; rewrite the href here).
-        item_image = item_el.find(f"{{{_ITUNES_NS}}}image")
-        if item_image is not None:
-            item_image.set("href", _append_version(item_image.get("href"), bust) or "")
         if not ep.transcript_vtt:
             continue
-        transcript_url = _media_url(settings.BASE_URL, ep.id, "vtt", bust)
+        transcript_url = _media_url(settings.BASE_URL, ep.id, "vtt", _cache_bust(ep.updated_at))
         ET.SubElement(
             item_el,
             f"{{{_PODCAST_NS}}}transcript",

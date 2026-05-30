@@ -244,6 +244,15 @@
     border-radius: inherit;
   }
 
+  .artwork-preview {
+    width: 96px;
+    height: 96px;
+    border-radius: 8px;
+    object-fit: cover;
+    flex-shrink: 0;
+    border: 1px solid #26262e;
+  }
+
   .hero-input {
     background: #0a0a0c;
     border: 2px solid #26262e;

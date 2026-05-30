@@ -68,7 +68,8 @@ def test_channel_contains_required_fields(env: Path) -> None:
     assert channel.find("title").text == get_settings().FEED_TITLE
     assert channel.find("description").text == get_settings().FEED_DESCRIPTION
     assert channel.find("language").text == get_settings().FEED_LANGUAGE
-    assert channel.find("image/url").text.startswith(get_settings().FEED_ARTWORK_URL)
+    # Channel cover is extension-clean (no ?v=) so podcast apps accept it.
+    assert channel.find("image/url").text == get_settings().FEED_ARTWORK_URL
 
 
 def test_channel_contains_podcast_namespace_tags(env: Path) -> None:
@@ -185,7 +186,7 @@ def test_item_artwork_falls_back_to_feed_when_no_jpg(env: Path) -> None:
     root = DET.fromstring(body)
     image = root.find(f"channel/item/{{{_ITUNES_NS}}}image")
     assert image is not None
-    assert image.get("href").startswith(get_settings().FEED_ARTWORK_URL)
+    assert image.get("href") == get_settings().FEED_ARTWORK_URL
 
 
 def test_item_description_and_summary_include_show_notes(env: Path) -> None:
@@ -219,7 +220,7 @@ def test_item_artwork_falls_back_to_default_when_feed_url_unset(
     image = root.find(f"channel/item/{{{_ITUNES_NS}}}image")
     assert image is not None
     base = get_settings().BASE_URL.rstrip("/")
-    assert image.get("href").startswith(f"{base}/media/default.jpg")
+    assert image.get("href") == f"{base}/media/default.jpg"
 
 
 def test_item_artwork_links_per_episode_jpg_when_present(env: Path) -> None:
@@ -227,17 +228,19 @@ def test_item_artwork_links_per_episode_jpg_when_present(env: Path) -> None:
     body = _render([ep], env=env)
     root = DET.fromstring(body)
     image = root.find(f"channel/item/{{{_ITUNES_NS}}}image")
-    assert f"/media/{ep.id}.jpg?v=" in image.get("href")
+    # Extension-clean (no ?v=): Apple/podcast apps require the URL to end in .jpg.
+    assert image.get("href").endswith(f"/media/{ep.id}.jpg")
 
 
 def test_media_cache_buster_tracks_updated_at(env: Path, tmp_path: Path) -> None:
-    """Each per-item media URL (mp3/jpg/vtt) carries ?v=<epoch> and the value
-    changes when updated_at changes, so podcast apps re-fetch after a reprocess."""
+    """The audio enclosure and transcript carry ?v=<epoch> that changes when
+    updated_at changes (so apps re-download after a reprocess), while the artwork
+    URL stays extension-clean (no ?v=) so apps accept it."""
 
     mp3 = tmp_path / "abc.mp3"
     mp3.write_bytes(b"x")
 
-    def _versions(updated_at: str) -> tuple[str, str, str]:
+    def _urls(updated_at: str) -> tuple[str, str, str]:
         ep = Episode(
             id="abc",
             job_id="job1",
@@ -259,22 +262,23 @@ def test_media_cache_buster_tracks_updated_at(env: Path, tmp_path: Path) -> None
         vtt = root.find(f"channel/item/{{{_PODCAST_NS}}}transcript").get("url")
         return enc, img, vtt
 
-    first = _versions("2026-05-28T18:00:00Z")
-    second = _versions("2026-05-28T19:30:00Z")
-    for url in first:
-        assert "?v=" in url
-    assert first != second
+    enc1, img1, vtt1 = _urls("2026-05-28T18:00:00Z")
+    enc2, img2, vtt2 = _urls("2026-05-28T19:30:00Z")
+    assert "?v=" in enc1 and "?v=" in vtt1
+    assert "?v=" not in img1 and img1.endswith("/media/abc.jpg")
+    assert enc1 != enc2 and vtt1 != vtt2  # audio/transcript bust on reprocess
+    assert img1 == img2  # artwork URL stable + extension-clean
 
 
-def test_channel_cover_cache_bust_uses_last_build(env: Path) -> None:
-    """The channel cover ?v= tracks last_build (max updated_at), not the
-    newest-by-pub_date episode, so reprocessing a back-catalog episode still
-    refreshes a cached show cover."""
+def test_channel_cover_is_extension_clean(env: Path) -> None:
+    """The channel cover itunes:image must end in .jpg/.png with NO ?v= query;
+    Apple and several apps reject artwork URLs that end in a query string."""
 
     body = _render([_episode()], env=env)
     root = DET.fromstring(body)
     href = root.find(f"channel/{{{_ITUNES_NS}}}image").get("href")
-    assert f"?v={int(_last_build().timestamp())}" in href
+    assert "?v=" not in href
+    assert href.rsplit(".", 1)[-1] in {"jpg", "png"}
 
 
 def test_self_link_points_at_rss_endpoint(env: Path) -> None:

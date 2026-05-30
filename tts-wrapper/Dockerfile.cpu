@@ -47,9 +47,9 @@ COPY config.py engine.py log_setup.py main.py ./
 # transformers pinned to the 4.48.x line: coqui-tts 0.24 requires >=4.43.0
 # unbounded but breaks on 5.x; >=4.48.0 clears CVE-2024-11392/-11393/-11394.
 # The trailing -U patches transitive deps pinned to vulnerable versions. torch
-# stays at 2.4.1 (the 2.6.0 fix flips torch.load to weights_only=True, breaking
-# XTTS checkpoint loading; the CVE is unreachable with trusted model inputs).
-RUN pip install --no-cache-dir torch==2.4.1 torchaudio==2.4.1 \
+# 2.6.0 clears CVE-2025-32434 (torch.load RCE); its weights_only=True default is
+# handled in engine.py via torch.serialization.add_safe_globals before load.
+RUN pip install --no-cache-dir torch==2.6.0 torchaudio==2.6.0 \
         --index-url https://download.pytorch.org/whl/cpu \
     && pip install --no-cache-dir "transformers>=4.48.0,<4.49" \
     && pip install --no-cache-dir . \
