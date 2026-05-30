@@ -1,38 +1,8 @@
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, Episode } from "../lib/api";
 import { useHealthLive } from "../lib/useHealthLive";
-
-/**
- * Pull-to-refresh: track touchstart at the top of the document, and if
- * the user drags down ~80 px before lifting, invalidate the episodes
- * query so React Query refetches. Mobile-only by design; desktop users
- * have the browser refresh button.
- */
-function usePullToRefresh(onRefresh: () => void) {
-  const startY = useRef<number | null>(null);
-  useEffect(() => {
-    const onStart = (e: TouchEvent) => {
-      if (window.scrollY > 0) {
-        startY.current = null;
-        return;
-      }
-      startY.current = e.touches[0].clientY;
-    };
-    const onEnd = (e: TouchEvent) => {
-      if (startY.current === null) return;
-      const dy = e.changedTouches[0].clientY - startY.current;
-      startY.current = null;
-      if (dy > 80) onRefresh();
-    };
-    window.addEventListener("touchstart", onStart, { passive: true });
-    window.addEventListener("touchend", onEnd, { passive: true });
-    return () => {
-      window.removeEventListener("touchstart", onStart);
-      window.removeEventListener("touchend", onEnd);
-    };
-  }, [onRefresh]);
-}
+import AudioPlayer from "../components/AudioPlayer";
 
 export default function Feed() {
   const [copied, setCopied] = useState(false);
@@ -58,9 +28,6 @@ export default function Feed() {
   const episodesQ = useQuery({
     queryKey: ["episodes"],
     queryFn: () => api<Episode[]>("/api/v1/episodes?per_page=50"),
-  });
-  usePullToRefresh(() => {
-    qc.invalidateQueries({ queryKey: ["episodes"] });
   });
 
   const deleteM = useMutation({
@@ -140,13 +107,14 @@ export default function Feed() {
                 </div>
                 <div className="mono-xs text-mute mt-0.5">
                   {ep.pub_date} &middot; {formatDuration(ep.duration_secs)}
+                  {ep.audio_size_bytes ? ` · ${formatBytes(ep.audio_size_bytes)}` : ""}
                 </div>
               </div>
             </div>
-            <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-line">
-              <a className="btn-ghost" href={`/media/${ep.id}.mp3`} target="_blank" rel="noreferrer">
-                MP3
-              </a>
+            <div className="mt-3 pt-3 border-t border-line">
+              <AudioPlayer src={`/media/${ep.id}.mp3`} />
+            </div>
+            <div className="flex flex-wrap gap-2 mt-3">
               <a className="btn-ghost" href={`/media/${ep.id}.vtt`} target="_blank" rel="noreferrer">
                 Transcript
               </a>
@@ -202,6 +170,13 @@ function sourceDomain(url: string): string {
   } catch {
     return url;
   }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const mb = bytes / (1024 * 1024);
+  if (mb < 1) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${mb.toFixed(1)} MB`;
 }
 
 function formatDuration(secs: number | null): string {

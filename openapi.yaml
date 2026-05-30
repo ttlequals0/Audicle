@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.2.0
+  version: 0.5.0
 paths:
   /health/live:
     get:
@@ -503,6 +503,43 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/reference/audition:
+    post:
+      tags:
+      - reference
+      summary: Audition Committed
+      description: 'Synthesize ``sample_text`` with the currently-committed reference
+        voice.
+
+
+        Unlike ``/test`` there is no upload and no staging -- it just exercises the
+
+        wrapper''s ``/generate`` against the voice it already conditions on. Returns
+
+        503 if no voice is committed. Takes the reference lock so a concurrent
+
+        ``/test`` (which temporarily stages a candidate) can''t make the audition
+        use
+
+        the wrong voice.'
+      operationId: audition_committed_api_v1_reference_audition_post
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Body_audition_committed_api_v1_reference_audition_post'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/reference/commit:
     post:
       tags:
@@ -717,6 +754,17 @@ components:
       - authenticated
       - password_set
       title: AuthActionResponse
+    Body_audition_committed_api_v1_reference_audition_post:
+      properties:
+        sample_text:
+          type: string
+          maxLength: 400
+          minLength: 4
+          title: Sample Text
+          description: text to synthesize using the committed voice
+          default: The quick brown fox jumps over the lazy dog.
+      type: object
+      title: Body_audition_committed_api_v1_reference_audition_post
     Body_commit_candidate_api_v1_reference_commit_post:
       properties:
         voice:
@@ -784,6 +832,11 @@ components:
           - type: string
           - type: 'null'
           title: Audio Path
+        audio_size_bytes:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Audio Size Bytes
         artwork_path:
           anyOf:
           - type: string
@@ -808,6 +861,7 @@ components:
       - author
       - original_url
       - audio_path
+      - audio_size_bytes
       - artwork_path
       - duration_secs
       - pub_date
@@ -846,6 +900,16 @@ components:
           - type: string
           - type: 'null'
           title: Error
+        progress_current:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Progress Current
+        progress_total:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Progress Total
         created_at:
           type: string
           title: Created At
@@ -861,6 +925,8 @@ components:
       - status
       - stage
       - error
+      - progress_current
+      - progress_total
       - created_at
       - updated_at
       title: JobListItem

@@ -169,7 +169,7 @@ async def _run_stages(job: jobs.Job, settings: Settings) -> None:
     )
     cleaned = await _run_stage(
         "cleanup",
-        lambda: _stage_cleanup(extraction_result.markdown, settings),
+        lambda: _stage_cleanup(job.id, extraction_result.markdown, settings),
         job.id,
         settings,
     )
@@ -286,7 +286,7 @@ class CleanupTooShortError(Exception):
     """
 
 
-async def _stage_cleanup(markdown: str, settings: Settings) -> str:
+async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
     """LLM cleanup with tenacity retry on transient provider failures.
 
     Re-reads the prompt file every call so operator edits take effect on the
@@ -316,6 +316,7 @@ async def _stage_cleanup(markdown: str, settings: Settings) -> str:
         )
         part = await _llm_with_retry(system_prompt, user_message, settings)
         cleaned_parts.append(part.strip())
+        _set_progress(job_id, index + 1, len(windows), settings)
         logger.info(
             "Cleanup window done",
             extra={
@@ -374,6 +375,7 @@ async def _stage_tts(
     stage can read the per-chunk WAVs."""
 
     results: list[tts.GenerateResult] = []
+    total = len(chunks)
     for index, text in enumerate(chunks):
         result = await tts.generate_chunk_with_retry(
             text=text,
@@ -382,6 +384,7 @@ async def _stage_tts(
             settings=settings,
         )
         results.append(result)
+        _set_progress(job.id, index + 1, total, settings)
         logger.info(
             "Chunk synthesized",
             extra={
@@ -654,6 +657,14 @@ def _set_stage(job_id: str, stage: str, settings: Settings) -> None:
     conn = database.connect(database.db_path(settings.DATA_DIR))
     try:
         jobs.set_stage(conn, job_id, stage)
+    finally:
+        conn.close()
+
+
+def _set_progress(job_id: str, current: int, total: int, settings: Settings) -> None:
+    conn = database.connect(database.db_path(settings.DATA_DIR))
+    try:
+        jobs.set_progress(conn, job_id, current, total)
     finally:
         conn.close()
 

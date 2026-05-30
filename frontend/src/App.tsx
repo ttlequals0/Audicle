@@ -1,8 +1,10 @@
+import { useCallback } from "react";
 import { Routes, Route, NavLink, Navigate } from "react-router-dom";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { api } from "./lib/api";
 import { useHealthLive } from "./lib/useHealthLive";
+import { usePullToRefresh } from "./lib/usePullToRefresh";
 import Home from "./routes/Home";
 import Feed from "./routes/Feed";
 import SettingsRoute from "./routes/Settings";
@@ -52,6 +54,10 @@ const TABS: [string, string][] = [
 function Shell() {
   const { status, refresh } = useAuth();
   const healthQ = useHealthLive();
+  const qc = useQueryClient();
+  // App-wide pull-to-refresh: a no-arg invalidate refetches every active
+  // query, so a pull on Home/Feed/Settings refreshes whatever that page shows.
+  usePullToRefresh(useCallback(() => qc.invalidateQueries(), [qc]));
   const logoutM = useMutation({
     mutationFn: () => api("/api/v1/auth/logout", { method: "POST" }),
     onSuccess: () => refresh(),

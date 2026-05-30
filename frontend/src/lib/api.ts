@@ -100,6 +100,7 @@ export interface Episode {
   author: string | null;
   original_url: string;
   audio_path: string | null;
+  audio_size_bytes: number | null;
   artwork_path: string | null;
   duration_secs: number | null;
   pub_date: string;
@@ -113,6 +114,8 @@ export interface JobRow {
   status: string;
   stage: string | null;
   error: string | null;
+  progress_current: number | null;
+  progress_total: number | null;
   created_at: string;
   updated_at: string;
 }

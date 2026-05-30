@@ -63,6 +63,20 @@ def test_list_episodes_second_page(env: Path) -> None:
     assert len(response.json()) == 2
 
 
+def test_list_episodes_reports_audio_size_bytes(env: Path) -> None:
+    _seed(env, id_="sized", with_files=True)  # 4-byte FAKE mp3
+    with _client(env) as client:
+        response = client.get("/api/v1/episodes")
+    assert response.json()[0]["audio_size_bytes"] == 4
+
+
+def test_list_episodes_audio_size_zero_when_file_missing(env: Path) -> None:
+    _seed(env, id_="ghost")  # row present, no file on disk
+    with _client(env) as client:
+        response = client.get("/api/v1/episodes")
+    assert response.json()[0]["audio_size_bytes"] == 0
+
+
 def test_delete_episode_removes_row_and_files(env: Path) -> None:
     _seed(env, id_="del", with_files=True)
     media = media_dir(get_settings())

@@ -81,7 +81,9 @@ async def health_ready(request: Request, response: Response) -> dict[str, Any]:
             llm_headers["Authorization"] = f"Bearer {api_key}"
     tts_result, firecrawl_result, llm_result = await asyncio.gather(
         _probe_tts_wrapper(settings.TTS_URL, 2.0),
-        _probe_http(settings.FIRECRAWL_URL, "/health", 2.0),
+        # Firecrawl's liveness is /v0/health/liveness (its /health path 404s);
+        # the scrape API the pipeline uses is /v1/scrape on the same base.
+        _probe_http(settings.FIRECRAWL_URL, "/v0/health/liveness", 2.0),
         _probe_http(llm_url, "/models", 2.0, llm_headers),
         return_exceptions=True,
     )

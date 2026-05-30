@@ -15,13 +15,13 @@ from __future__ import annotations
 import html
 import logging
 from datetime import datetime
-from pathlib import Path
 from xml.etree import ElementTree as ET
 
 import defusedxml.ElementTree as DET
 from feedgen.feed import FeedGenerator
 
 from app.config import Settings
+from app.core.paths import file_size_or_zero
 from app.core.timestamps import parse_iso
 from app.services.episodes import Episode
 
@@ -83,6 +83,9 @@ def render(
     # bundled default served at /media/default.jpg (seeded on startup). Always
     # emitted so a feed validates and shows art even before it's configured.
     artwork_url = settings.FEED_ARTWORK_URL or f"{settings.BASE_URL.rstrip('/')}/media/default.jpg"
+    # Bare URL here: feedgen rejects a ?v= cache-buster on itunes:image ("Image
+    # file must be png or jpg"). The cache-buster is appended later in the ET
+    # post-processing (_inject_pc2_tags), which feedgen doesn't validate.
     fg.image(url=artwork_url, title=title, link=settings.BASE_URL)
     fg.podcast.itunes_image(artwork_url)
     fg.lastBuildDate(last_build)
@@ -115,11 +118,12 @@ def render(
         item.description(_episode_description_html(ep))
         item.podcast.itunes_summary(_episode_summary(ep))
         item.pubDate(_parse_iso(ep.pub_date) or last_build)
+        bust = _cache_bust(ep.updated_at)
         if ep.audio_path:
-            audio_url = _media_url(settings.BASE_URL, ep.id, "mp3")
+            audio_url = _media_url(settings.BASE_URL, ep.id, "mp3", bust)
             item.enclosure(
                 url=audio_url,
-                length=str(_safe_filesize(ep.audio_path)),
+                length=str(file_size_or_zero(ep.audio_path)),
                 type="audio/mpeg",
             )
         if ep.duration_secs is not None:
@@ -128,6 +132,8 @@ def render(
         # seeded /media/default.jpg) rather than raw FEED_ARTWORK_URL: an unset
         # FEED_ARTWORK_URL is "", which feedgen rejects with "Image file must be
         # png or jpg", crashing the whole feed render with a 500.
+        # Bare URL (feedgen validates the .jpg suffix); the ?v= cache-buster is
+        # appended in _inject_pc2_tags below.
         item.podcast.itunes_image(
             _media_url(settings.BASE_URL, ep.id, "jpg")
             if ep.artwork_path
@@ -141,6 +147,7 @@ def render(
         podcast_guid=podcast_guid,
         episodes=episodes,
         settings=settings,
+        last_build=last_build,
     )
 
 
@@ -190,6 +197,7 @@ def _inject_pc2_tags(
     podcast_guid: str,
     episodes: list[Episode],
     settings: Settings,
+    last_build: datetime,
 ) -> bytes:
     """Append the PC2 namespace + channel-level + per-item PC2 elements.
 
@@ -238,15 +246,34 @@ def _inject_pc2_tags(
     pc2_txt.set("purpose", "ai-content")
     channel.insert(insert_at, pc2_txt)
 
+    # Cache-bust the channel/show cover (itunes:image href + legacy <image><url>)
+    # with last_build (the max episode updated_at, not the newest-by-pub_date one),
+    # so reprocessing ANY episode -- including a back-catalog one -- refreshes a
+    # stale cover a podcast app cached. Done here (not via feedgen) because feedgen
+    # rejects a ?v= query on itunes:image.
+    channel_version = int(last_build.timestamp())
+    channel_image = channel.find(f"{{{_ITUNES_NS}}}image")
+    if channel_image is not None:
+        channel_image.set("href", _append_version(channel_image.get("href"), channel_version) or "")
+    legacy_url = channel.find("image/url")
+    if legacy_url is not None:
+        legacy_url.text = _append_version(legacy_url.text, channel_version)
+
     items = channel.findall("item")
     # ``strict=True`` makes the assertion ``items align with episodes`` a
     # hard contract: if a future feedgen change drops or reorders entries
     # the build fails loudly rather than silently shipping wrong-episode
     # transcripts.
     for item_el, ep in zip(items, episodes, strict=True):
+        bust = _cache_bust(ep.updated_at)
+        # Cache-bust the per-episode itunes:image so apps re-fetch artwork after
+        # a reprocess (feedgen wrote a bare URL; rewrite the href here).
+        item_image = item_el.find(f"{{{_ITUNES_NS}}}image")
+        if item_image is not None:
+            item_image.set("href", _append_version(item_image.get("href"), bust) or "")
         if not ep.transcript_vtt:
             continue
-        transcript_url = _media_url(settings.BASE_URL, ep.id, "vtt")
+        transcript_url = _media_url(settings.BASE_URL, ep.id, "vtt", bust)
         ET.SubElement(
             item_el,
             f"{{{_PODCAST_NS}}}transcript",
@@ -273,8 +300,25 @@ def _first_item_index(channel: ET.Element) -> int:
     return len(channel)
 
 
-def _media_url(base_url: str, episode_id: str, ext: str) -> str:
-    return f"{base_url.rstrip('/')}/media/{episode_id}.{ext}"
+def _media_url(base_url: str, episode_id: str, ext: str, version: int | None = None) -> str:
+    url = f"{base_url.rstrip('/')}/media/{episode_id}.{ext}"
+    return _append_version(url, version) or url
+
+
+def _cache_bust(updated_at: str | None) -> int | None:
+    """An epoch derived from ``updated_at`` to append as ``?v=`` so podcast apps
+    re-fetch media after a reprocess (the path -- and thus the guid -- is stable,
+    but the URL changes, defeating the app's URL-keyed media cache)."""
+
+    dt = _parse_iso(updated_at) if updated_at else None
+    return int(dt.timestamp()) if dt else None
+
+
+def _append_version(url: str | None, version: int | None) -> str | None:
+    if not url or version is None:
+        return url
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}v={version}"
 
 
 def _hms(seconds: int) -> str:
@@ -299,11 +343,3 @@ def _parse_iso(value: str) -> datetime | None:
     return parsed
 
 
-def _safe_filesize(path_str: str) -> int:
-    """Best-effort enclosure length. Missing files report 0 so the feed
-    still validates rather than 500-ing on a stale row."""
-
-    try:
-        return Path(path_str).stat().st_size
-    except OSError:
-        return 0

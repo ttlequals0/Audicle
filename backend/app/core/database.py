@@ -240,12 +240,24 @@ def _m005_episode_summary(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE episodes ADD COLUMN summary TEXT")
 
 
+def _m006_job_progress(conn: sqlite3.Connection) -> None:
+    """Add per-stage progress counters so the UI can show "chunk X of Y".
+
+    Additive (NULL for existing/older jobs and for stages that don't report
+    progress). Populated by the tts/cleanup stages; reset on each stage change.
+    """
+
+    conn.execute("ALTER TABLE jobs ADD COLUMN progress_current INTEGER")
+    conn.execute("ALTER TABLE jobs ADD COLUMN progress_total INTEGER")
+
+
 MIGRATIONS: list[tuple[str, Migration]] = [
     ("001_initial_schema", _m001_initial_schema),
     ("002_settings_kv", _m002_settings_kv),
     ("003_auth_lockout", _m003_auth_lockout),
     ("004_runtime_settings", _m004_runtime_settings),
     ("005_episode_summary", _m005_episode_summary),
+    ("006_job_progress", _m006_job_progress),
 ]
 
 

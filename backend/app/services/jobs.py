@@ -31,6 +31,19 @@ class Job:
     error: str | None
     created_at: str
     updated_at: str
+    # Per-stage progress for long stages (tts chunks, cleanup windows); NULL when
+    # the current stage doesn't report progress. Added last with defaults so
+    # existing constructors keep working.
+    progress_current: int | None = None
+    progress_total: int | None = None
+
+
+# Shared column list so every Job SELECT returns the progress fields _row_to_job
+# reads. ``SELECT *`` is used by the list API, which maps columns explicitly.
+_JOB_COLUMNS = (
+    "id, url, episode_id, status, stage, error, created_at, updated_at, "
+    "progress_current, progress_total"
+)
 
 
 def compute_episode_id(url: str) -> str:
@@ -55,13 +68,15 @@ def _row_to_job(row: sqlite3.Row) -> Job:
         error=row["error"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        progress_current=row["progress_current"],
+        progress_total=row["progress_total"],
     )
 
 
 def get_job(conn: sqlite3.Connection, job_id: str) -> Job | None:
     row = conn.execute(
-        "SELECT id, url, episode_id, status, stage, error, created_at, updated_at "
-        "FROM jobs WHERE id = ?",
+        # _JOB_COLUMNS is a fixed module constant -- no user input.
+        "SELECT " + _JOB_COLUMNS + " FROM jobs WHERE id = ?",
         (job_id,),
     ).fetchone()
     return _row_to_job(row) if row else None
@@ -73,8 +88,8 @@ def get_job_by_episode_id(
     """Return the most recent job for ``episode_id``, optionally filtered by status."""
 
     base = (
-        "SELECT id, url, episode_id, status, stage, error, created_at, updated_at "
-        "FROM jobs WHERE episode_id = ?"
+        # _JOB_COLUMNS is a fixed module constant -- no user input.
+        "SELECT " + _JOB_COLUMNS + " FROM jobs WHERE episode_id = ?"
     )
     params: tuple = (episode_id,)
     if statuses:
@@ -209,10 +224,22 @@ def claim_next_queued(conn: sqlite3.Connection) -> Job | None:
 
 
 def set_stage(conn: sqlite3.Connection, job_id: str, stage: JobStage) -> None:
+    # Reset progress so a counter from the prior stage (e.g. tts) doesn't leak
+    # onto the next one. The stage that has progress sets it via set_progress.
     conn.execute(
-        "UPDATE jobs SET stage = ?, "
+        "UPDATE jobs SET stage = ?, progress_current = NULL, progress_total = NULL, "
         "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
         (stage, job_id),
+    )
+
+
+def set_progress(conn: sqlite3.Connection, job_id: str, current: int, total: int) -> None:
+    """Record "current/total" progress for the active long stage (tts, cleanup)."""
+
+    conn.execute(
+        "UPDATE jobs SET progress_current = ?, progress_total = ?, "
+        "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
+        (current, total, job_id),
     )
 
 

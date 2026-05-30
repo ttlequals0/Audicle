@@ -68,7 +68,7 @@ def test_channel_contains_required_fields(env: Path) -> None:
     assert channel.find("title").text == get_settings().FEED_TITLE
     assert channel.find("description").text == get_settings().FEED_DESCRIPTION
     assert channel.find("language").text == get_settings().FEED_LANGUAGE
-    assert channel.find("image/url").text == get_settings().FEED_ARTWORK_URL
+    assert channel.find("image/url").text.startswith(get_settings().FEED_ARTWORK_URL)
 
 
 def test_channel_contains_podcast_namespace_tags(env: Path) -> None:
@@ -140,7 +140,7 @@ def test_item_enclosure_uses_audio_path_filesize(env: Path, tmp_path: Path) -> N
     assert enclosure is not None
     assert enclosure.get("type") == "audio/mpeg"
     assert int(enclosure.get("length")) == 13
-    assert enclosure.get("url").endswith("/media/abc.mp3")
+    assert "/media/abc.mp3?v=" in enclosure.get("url")
 
 
 def test_item_enclosure_missing_file_reports_zero_length(env: Path) -> None:
@@ -169,7 +169,7 @@ def test_item_includes_podcast_transcript_when_vtt_present(env: Path) -> None:
     assert transcript.get("type") == "text/vtt"
     assert transcript.get("language") == get_settings().FEED_LANGUAGE
     assert transcript.get("rel") == "captions"
-    assert transcript.get("url").endswith(f"/media/{ep.id}.vtt")
+    assert f"/media/{ep.id}.vtt?v=" in transcript.get("url")
 
 
 def test_item_omits_podcast_transcript_when_no_vtt(env: Path) -> None:
@@ -185,7 +185,7 @@ def test_item_artwork_falls_back_to_feed_when_no_jpg(env: Path) -> None:
     root = DET.fromstring(body)
     image = root.find(f"channel/item/{{{_ITUNES_NS}}}image")
     assert image is not None
-    assert image.get("href") == get_settings().FEED_ARTWORK_URL
+    assert image.get("href").startswith(get_settings().FEED_ARTWORK_URL)
 
 
 def test_item_description_and_summary_include_show_notes(env: Path) -> None:
@@ -219,7 +219,7 @@ def test_item_artwork_falls_back_to_default_when_feed_url_unset(
     image = root.find(f"channel/item/{{{_ITUNES_NS}}}image")
     assert image is not None
     base = get_settings().BASE_URL.rstrip("/")
-    assert image.get("href") == f"{base}/media/default.jpg"
+    assert image.get("href").startswith(f"{base}/media/default.jpg")
 
 
 def test_item_artwork_links_per_episode_jpg_when_present(env: Path) -> None:
@@ -227,7 +227,54 @@ def test_item_artwork_links_per_episode_jpg_when_present(env: Path) -> None:
     body = _render([ep], env=env)
     root = DET.fromstring(body)
     image = root.find(f"channel/item/{{{_ITUNES_NS}}}image")
-    assert image.get("href").endswith(f"/media/{ep.id}.jpg")
+    assert f"/media/{ep.id}.jpg?v=" in image.get("href")
+
+
+def test_media_cache_buster_tracks_updated_at(env: Path, tmp_path: Path) -> None:
+    """Each per-item media URL (mp3/jpg/vtt) carries ?v=<epoch> and the value
+    changes when updated_at changes, so podcast apps re-fetch after a reprocess."""
+
+    mp3 = tmp_path / "abc.mp3"
+    mp3.write_bytes(b"x")
+
+    def _versions(updated_at: str) -> tuple[str, str, str]:
+        ep = Episode(
+            id="abc",
+            job_id="job1",
+            title="T",
+            author="A",
+            original_url="https://example.test/abc",
+            audio_path=str(mp3),
+            artwork_path="/data/media/abc.jpg",
+            transcript_vtt="WEBVTT\n",
+            duration_secs=10,
+            pub_date="2026-05-28T18:00:00Z",
+            created_at="2026-05-28T18:00:00Z",
+            updated_at=updated_at,
+            summary=None,
+        )
+        root = DET.fromstring(_render([ep], env=env))
+        enc = root.find("channel/item/enclosure").get("url")
+        img = root.find(f"channel/item/{{{_ITUNES_NS}}}image").get("href")
+        vtt = root.find(f"channel/item/{{{_PODCAST_NS}}}transcript").get("url")
+        return enc, img, vtt
+
+    first = _versions("2026-05-28T18:00:00Z")
+    second = _versions("2026-05-28T19:30:00Z")
+    for url in first:
+        assert "?v=" in url
+    assert first != second
+
+
+def test_channel_cover_cache_bust_uses_last_build(env: Path) -> None:
+    """The channel cover ?v= tracks last_build (max updated_at), not the
+    newest-by-pub_date episode, so reprocessing a back-catalog episode still
+    refreshes a cached show cover."""
+
+    body = _render([_episode()], env=env)
+    root = DET.fromstring(body)
+    href = root.find(f"channel/{{{_ITUNES_NS}}}image").get("href")
+    assert f"?v={int(_last_build().timestamp())}" in href
 
 
 def test_self_link_points_at_rss_endpoint(env: Path) -> None:
