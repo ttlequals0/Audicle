@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from app.api.v1 import auth as auth_routes
 from app.api.v1 import corrections as corrections_routes
 from app.api.v1 import episodes as episodes_routes
+from app.api.v1 import feed as feed_routes
 from app.api.v1 import jobs as jobs_routes
 from app.api.v1 import llm as llm_routes
 from app.api.v1 import prompt as prompt_routes
@@ -22,6 +23,7 @@ router.include_router(status_routes.router)
 router.include_router(prompt_routes.router)
 router.include_router(corrections_routes.router)
 router.include_router(purge_routes.router)
+router.include_router(feed_routes.router)
 router.include_router(auth_routes.router)
 router.include_router(settings_routes.router)
 router.include_router(episodes_routes.router)

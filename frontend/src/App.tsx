@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { api } from "./lib/api";
 import { useHealthLive } from "./lib/useHealthLive";
-import { usePullToRefresh } from "./lib/usePullToRefresh";
+import PullToRefresh from "./components/PullToRefresh";
 import Home from "./routes/Home";
 import Feed from "./routes/Feed";
 import SettingsRoute from "./routes/Settings";
@@ -57,7 +57,7 @@ function Shell() {
   const qc = useQueryClient();
   // App-wide pull-to-refresh: a no-arg invalidate refetches every active
   // query, so a pull on Home/Feed/Settings refreshes whatever that page shows.
-  usePullToRefresh(useCallback(() => qc.invalidateQueries(), [qc]));
+  const refreshAll = useCallback(() => qc.invalidateQueries(), [qc]);
   const logoutM = useMutation({
     mutationFn: () => api("/api/v1/auth/logout", { method: "POST" }),
     onSuccess: () => refresh(),
@@ -65,6 +65,7 @@ function Shell() {
 
   return (
     <div className="min-h-screen flex flex-col">
+      <PullToRefresh onRefresh={refreshAll} />
       <header className="safe-top sticky top-0 z-20 bg-ink/95 backdrop-blur-md border-b border-line">
         <div className="max-w-2xl mx-auto px-4">
           <div className="flex items-center justify-between py-3.5">

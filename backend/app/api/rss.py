@@ -38,6 +38,7 @@ async def get_rss(
         rows = episodes.list_published(conn)
         latest = episodes.latest_updated_at(conn)
         guid = settings_store.get_or_init_podcast_guid(conn, settings.BASE_URL)
+        guid_epoch = settings_store.get_feed_guid_epoch(conn)
 
     last_build = _last_build_datetime(latest)
     not_modified = _is_not_modified(if_modified_since, last_build)
@@ -53,6 +54,7 @@ async def get_rss(
         settings=settings,
         podcast_guid=guid,
         last_build=last_build,
+        feed_guid_epoch=guid_epoch,
     )
     return Response(
         content=body,

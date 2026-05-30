@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.6.0
+  version: 0.7.0
 paths:
   /health/live:
     get:
@@ -214,6 +214,35 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PurgeResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/feed/recreate:
+    post:
+      tags:
+      - maintenance
+      summary: Post Feed Recreate
+      operationId: post_feed_recreate_api_v1_feed_recreate_post
+      parameters:
+      - name: confirm
+        in: query
+        required: false
+        schema:
+          type: boolean
+          description: Must be true to acknowledge the disruptive action.
+          default: false
+          title: Confirm
+        description: Must be true to acknowledge the disruptive action.
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedRecreateResponse'
         '422':
           description: Validation Error
           content:
@@ -900,6 +929,22 @@ components:
       - updated_at
       - has_cleaned_text
       title: EpisodeListItem
+    FeedRecreateResponse:
+      properties:
+        podcast_guid:
+          type: string
+          title: Podcast Guid
+          description: The new channel-level podcast:guid
+        guid_epoch:
+          type: integer
+          title: Guid Epoch
+          description: Counter now appended to every episode <guid>
+      additionalProperties: false
+      type: object
+      required:
+      - podcast_guid
+      - guid_epoch
+      title: FeedRecreateResponse
     HTTPValidationError:
       properties:
         detail:

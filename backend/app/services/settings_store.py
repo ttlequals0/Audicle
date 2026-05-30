@@ -21,6 +21,11 @@ from urllib.parse import urlsplit
 # deduplication.
 _PODCAST_GUID_NAMESPACE = uuid.UUID("ead4c236-bf58-58c6-a2c6-a6b28d128cb6")
 PODCAST_GUID_KEY = "podcast_guid"
+# Monotonic counter bumped by the force-recreate endpoint. When > 0 it is
+# appended to every episode <guid> in the feed so podcast apps treat the
+# episodes as new and re-download them; the channel podcast:guid is rotated
+# in lockstep. Absent/0 means the original (unsalted) guids.
+FEED_GUID_EPOCH_KEY = "feed_guid_epoch"
 
 # Auth (MinusPod pattern): the admin password bcrypt hash and the session
 # signing secret live in the settings table, set/auto-generated at runtime
@@ -65,6 +70,35 @@ def get_or_init_podcast_guid(conn: sqlite3.Connection, base_url: str) -> str:
     fresh = str(uuid.uuid5(_PODCAST_GUID_NAMESPACE, _canonical_feed_url(base_url)))
     set_(conn, PODCAST_GUID_KEY, fresh)
     return fresh
+
+
+def get_feed_guid_epoch(conn: sqlite3.Connection) -> int:
+    """Current feed-guid epoch (0 when never rotated or unparseable)."""
+
+    raw = get(conn, FEED_GUID_EPOCH_KEY)
+    if raw is None:
+        return 0
+    try:
+        return int(raw)
+    except ValueError:
+        return 0
+
+
+def rotate_feed_guids(conn: sqlite3.Connection, base_url: str) -> tuple[str, int]:
+    """Force a new feed identity: bump the epoch and rotate the channel guid.
+
+    The new channel ``podcast:guid`` stays a spec-shaped UUIDv5 (same namespace
+    and canonical feed URL) but is salted with the new epoch so it differs from
+    the prior value -- a plain re-derivation would reproduce the identical guid.
+    Returns ``(new_podcast_guid, new_epoch)``.
+    """
+
+    new_epoch = get_feed_guid_epoch(conn) + 1
+    salted = f"{_canonical_feed_url(base_url)}#{new_epoch}"
+    new_guid = str(uuid.uuid5(_PODCAST_GUID_NAMESPACE, salted))
+    set_(conn, PODCAST_GUID_KEY, new_guid)
+    set_(conn, FEED_GUID_EPOCH_KEY, str(new_epoch))
+    return new_guid, new_epoch
 
 
 def get_or_init_session_secret(conn: sqlite3.Connection) -> str:

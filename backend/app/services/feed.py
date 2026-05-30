@@ -45,12 +45,17 @@ def render(
     settings: Settings,
     podcast_guid: str,
     last_build: datetime,
+    feed_guid_epoch: int = 0,
 ) -> bytes:
     """Render the full RSS document (channel + items + PC2 tags) as bytes.
 
     ``last_build`` is the timestamp the operator wants to advertise as
     ``<lastBuildDate>``; the caller derives it from the newest episode's
     ``updated_at`` (and falls back to ``now``).
+
+    ``feed_guid_epoch`` (when > 0) is appended to each episode ``<guid>`` so a
+    force-recreate makes podcast apps re-download every episode. It only salts
+    the RSS guid -- media/transcript URLs keep the bare episode id (real files).
     """
 
     fg = FeedGenerator()
@@ -106,8 +111,9 @@ def render(
 
     for ep in episodes:
         item = fg.add_entry(order="append")
-        item.id(ep.id)
-        item.guid(ep.id, permalink=False)
+        guid_value = f"{ep.id}-{feed_guid_epoch}" if feed_guid_epoch else ep.id
+        item.id(guid_value)
+        item.guid(guid_value, permalink=False)
         if ep.title:
             item.title(ep.title)
         if ep.author:

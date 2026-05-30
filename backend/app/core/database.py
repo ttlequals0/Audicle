@@ -265,6 +265,32 @@ def _m007_episode_cleaned_text_size(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE episodes ADD COLUMN audio_size_bytes INTEGER")
 
 
+def _m008_backfill_cleaned_text_from_vtt(conn: sqlite3.Connection) -> None:
+    """Backfill ``cleaned_text`` from the existing VTT for pre-0.6.0 episodes.
+
+    Migration 007 added ``cleaned_text`` as NULL for existing rows, so
+    ``/media/{id}.txt`` 404s for episodes processed before 0.6.0 even though
+    their transcript still holds the narrated words. Reconstruct the text from
+    the VTT. Additive UPDATE only -- rows without a usable VTT stay NULL -- and
+    idempotent, since it only touches rows still NULL.
+    """
+
+    # Local import: keep core->services dependency at call time, not module load.
+    from app.services import transcript
+
+    rows = conn.execute(
+        "SELECT id, transcript_vtt FROM episodes "
+        "WHERE cleaned_text IS NULL AND transcript_vtt IS NOT NULL AND transcript_vtt != ''"
+    ).fetchall()
+    for row in rows:
+        text = transcript.text_from_vtt(row["transcript_vtt"])
+        if text:
+            conn.execute(
+                "UPDATE episodes SET cleaned_text = ? WHERE id = ?",
+                (text, row["id"]),
+            )
+
+
 MIGRATIONS: list[tuple[str, Migration]] = [
     ("001_initial_schema", _m001_initial_schema),
     ("002_settings_kv", _m002_settings_kv),
@@ -273,6 +299,7 @@ MIGRATIONS: list[tuple[str, Migration]] = [
     ("005_episode_summary", _m005_episode_summary),
     ("006_job_progress", _m006_job_progress),
     ("007_episode_cleaned_text_size", _m007_episode_cleaned_text_size),
+    ("008_backfill_cleaned_text_from_vtt", _m008_backfill_cleaned_text_from_vtt),
 ]
 
 

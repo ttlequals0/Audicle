@@ -6,6 +6,39 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-30
+
+### Feed force-recreate endpoint, acronym narration, pull-to-refresh indicator, cleaned-text backfill
+
+- **Force-recreate the feed to bust stale app caches.** A new API-only
+  `POST /api/v1/feed/recreate?confirm=true` rotates the channel `podcast:guid`
+  and bumps a stored epoch that is appended to every episode `<guid>`, so a
+  podcast app treats the feed and all its episodes as new and re-downloads them.
+  It is admin-only and not surfaced in the UI; the `confirm=true` gate matches
+  `/purge`. Use it when a client is stuck on a long-cached copy of the feed. It
+  disrupts existing subscribers, so reach for it to troubleshoot, not routinely.
+  Media and transcript URLs keep the bare episode id, so the files themselves
+  are untouched.
+- **Acronyms are read letter by letter.** The cleanup prompt now spells out
+  tokens written in all capital letters (`API` becomes `A.P.I.`, `CDMA` becomes
+  `C.D.M.A.`) and tokens that mix capitals with digits (`SSE2` becomes
+  `S.S.E. two`), so the narrator says the letters instead of a non-word. This is
+  a general rule rather than a maintained list. Acronyms normally spoken as a
+  word are left alone (`NASA`, `SCUBA`), as are the special pronunciations the
+  `pronunciation.json` dictionary still owns (`SQL` -> `sequel`, `JSON` ->
+  `jason`, and so on).
+- **Pull-to-refresh now shows itself.** The app-wide pull-to-refresh gesture
+  (added in 0.5.0) was invisible: it fired with no on-screen feedback. A pill
+  now drops from behind the header tracking the pull, reads "release to refresh"
+  past the threshold, and spins until the data finishes reloading. The page also
+  sets `overscroll-behavior-y: contain` so the browser's own pull-to-refresh
+  does not fight the gesture.
+- **Cleaned-text download works for older episodes.** `/media/{id}.txt` returned
+  404 for episodes processed before 0.6.0 because the `cleaned_text` column was
+  added empty. A migration backfills it from each episode's existing transcript,
+  so the download works for those episodes too. Episodes without a transcript
+  stay without cleaned text.
+
 ## [0.6.0] - 2026-05-30
 
 ### Artwork fix, cleaned-text download, collapsible recents, size in DB, torch CVE

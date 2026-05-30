@@ -18,6 +18,7 @@ def test_run_migrations_creates_tables(tmp_path: Path) -> None:
         "005_episode_summary",
         "006_job_progress",
         "007_episode_cleaned_text_size",
+        "008_backfill_cleaned_text_from_vtt",
     ]
 
     conn = database.connect(database.db_path(tmp_path))
@@ -41,6 +42,7 @@ def test_second_run_is_a_noop(tmp_path: Path) -> None:
         "005_episode_summary",
         "006_job_progress",
         "007_episode_cleaned_text_size",
+        "008_backfill_cleaned_text_from_vtt",
     ]
     assert second == []
 
@@ -210,6 +212,39 @@ def test_reset_processing_to_queued_bumps_updated_at_and_preserves_prior_error(
         assert err["status"] == "queued"
         assert err["error"] == "llm_timeout after 300s"
         assert err["updated_at"] > "2020-01-01T00:00:00Z"
+    finally:
+        conn.close()
+
+
+def test_m008_backfills_cleaned_text_from_vtt(tmp_path: Path) -> None:
+    """Pre-0.6.0 episodes (cleaned_text NULL) get text reconstructed from their
+    VTT; episodes without a VTT stay NULL."""
+
+    database.run_migrations(tmp_path)
+    conn = database.connect(database.db_path(tmp_path))
+    try:
+        vtt = (
+            "WEBVTT\n\n"
+            "1\n00:00:00.000 --> 00:00:02.000\nHello world.\n\n"
+            "2\n00:00:02.000 --> 00:00:04.000\nThe A.P.I. is fast &amp; clean.\n"
+        )
+        conn.execute(
+            "INSERT INTO episodes (id, original_url, transcript_vtt, cleaned_text) "
+            "VALUES (?, ?, ?, NULL)",
+            ("ep-old", "https://x.test/old", vtt),
+        )
+        conn.execute(
+            "INSERT INTO episodes (id, original_url, transcript_vtt, cleaned_text) "
+            "VALUES (?, ?, NULL, NULL)",
+            ("ep-novtt", "https://x.test/novtt"),
+        )
+
+        database._m008_backfill_cleaned_text_from_vtt(conn)
+
+        old = conn.execute("SELECT cleaned_text FROM episodes WHERE id='ep-old'").fetchone()
+        assert old["cleaned_text"] == "Hello world.\n\nThe A.P.I. is fast & clean."
+        novtt = conn.execute("SELECT cleaned_text FROM episodes WHERE id='ep-novtt'").fetchone()
+        assert novtt["cleaned_text"] is None
     finally:
         conn.close()
 

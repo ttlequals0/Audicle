@@ -76,6 +76,39 @@ def build_vtt(chunks: list[TranscriptChunk], silence_ms: int) -> str:
     return "\n".join(lines) + "\n"
 
 
+def text_from_vtt(vtt: str) -> str:
+    """Reconstruct plain narration text from a WebVTT transcript.
+
+    Used to backfill ``cleaned_text`` for episodes processed before 0.6.0, when
+    the column did not exist. Drops the WEBVTT header, NOTE blocks, cue-number
+    lines, and timestamp lines; un-escapes the cue payloads; joins cues with a
+    blank line. Paragraph structure is approximate -- cues mirror TTS chunks,
+    not the source paragraphs -- but the words match what the audio says.
+    """
+
+    cues: list[str] = []
+    current: list[str] = []
+    in_cue = False
+    for raw in vtt.splitlines():
+        line = raw.strip()
+        if not line:
+            if current:
+                cues.append(" ".join(current))
+                current = []
+            in_cue = False
+            continue
+        if "-->" in line:
+            in_cue = True
+            continue
+        if not in_cue:
+            # WEBVTT header, NOTE blocks, or a standalone cue-number line.
+            continue
+        current.append(html.unescape(line))
+    if current:
+        cues.append(" ".join(current))
+    return "\n\n".join(cues)
+
+
 def _format_ts(total_ms: int) -> str:
     """Render ``total_ms`` as ``HH:MM:SS.mmm``."""
 
