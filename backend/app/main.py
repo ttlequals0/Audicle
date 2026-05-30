@@ -10,13 +10,14 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.api import errors as error_handlers
+from app.api.access_log import AccessLogMiddleware
 from app.api.errors import envelope
 from app.api.health import router as health_router
 from app.api.media import router as media_router
@@ -50,6 +51,9 @@ def create_app() -> FastAPI:
     )
     _attach_session_middleware(app, settings)
     _attach_rate_limiter(app, settings)
+    # Always on, added last so it wraps the others: request_id is set + the timer
+    # starts before any inner middleware/handler runs.
+    app.add_middleware(AccessLogMiddleware)
     app.include_router(health_router)
     app.include_router(v1_router)
     app.include_router(rss_router)
@@ -96,12 +100,15 @@ def _mount_static_ui(app: FastAPI) -> None:
     async def _ui_root() -> FileResponse:
         return FileResponse(index_path)
 
-    # Catch-all for client-side routes that aren't ``/api/v1/*``,
-    # ``/rss/*``, ``/media/*``, ``/health/*``, or under ``/assets``. The
-    # router has already been mounted, so unmatched paths fall through to
-    # this handler.
+    # Catch-all for client-side routes. The routers are mounted first, so an
+    # EXISTING /api/v1, /rss, /media, /health route is matched before this.
+    # An UNKNOWN path under those namespaces must 404 as an API error -- not
+    # fall through to index.html, which the React router would then bounce to
+    # "/" (making a mistyped API call look like a redirect to the home page).
     @app.get("/{path:path}", include_in_schema=False)
     async def _ui_fallback(path: str) -> FileResponse:
+        if path.startswith(("api/", "rss/", "media/", "health/")) or path == "health":
+            raise HTTPException(status_code=404, detail="not found")
         # Serve a known SPA root file by exact-name lookup; every other path
         # returns index.html so the React router handles it.
         served = root_files.get(path)

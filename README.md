@@ -30,17 +30,25 @@ build-plan.md   the design document the implementation tracks against
 
 ## Quickstart
 
-You need Docker, docker-compose, a `voice.wav` file (3-60s of clean speech), and an LLM key.
+You need Docker and docker-compose. The app boots unconfigured -- set the LLM
+provider/model, feed metadata, admin password, and upload a reference voice from
+the Settings UI after it starts (no env or `voice.wav` required up front).
 
 ```bash
 git clone https://github.com/ttlequals0/Audicle && cd Audicle
-cp .env.example .env
-# edit .env, see "Required env vars" below
-cp /path/to/your/voice.wav backend/app/reference/voice.wav
+cp .env.example .env   # optional: pre-set BASE_URL and any defaults
 docker compose up -d
 ```
 
 The web UI is at `http://localhost:8000/`. The RSS feed is `http://localhost:8000/rss/rss.xml` -- paste that into any podcatcher.
+
+The container runs as a non-root user (uid 1000). If you bind-mount host
+directories (or set `user:` in compose), make them writable by uid 1000 so the
+app can write the database, media, and seed the default prompt/corrections:
+
+```bash
+chown -R 1000:1000 ./data ./backend/app/prompts ./backend/app/corrections ./backend/app/reference
+```
 
 If you don't have a CUDA GPU, override the wrapper to use CPU:
 
@@ -48,7 +56,9 @@ If you don't have a CUDA GPU, override the wrapper to use CPU:
 TTS_DEVICE=cpu docker compose up -d
 ```
 
-First-run model download is ~2 GB and lives in a named volume (`hf_cache`).
+First-run model download is ~2 GB and persists on the `./data` volume under
+`hf_cache/` and `tts_home/` (the wrapper sets `HF_HOME`/`TTS_HOME` there), so
+restarts load from disk instantly.
 
 ## Required env vars
 
@@ -61,10 +71,12 @@ First-run model download is ~2 GB and lives in a named volume (`hf_cache`).
 | `FEED_CATEGORY` | iTunes category (see list below) | `Technology` |
 | `FEED_LANGUAGE` | RFC 5646 tag | `en-US` |
 | `FIRECRAWL_URL` | Self-hosted Firecrawl base URL | `http://firecrawl:3002` |
-| `LLM_PROVIDER` | `openai-compatible` or `anthropic` | `openai-compatible` |
-| `OPENAI_BASE_URL` | for openai-compatible only | `http://llm:8080/v1` |
+| `LLM_PROVIDER` | `openai-compatible`, `anthropic`, `openrouter`, or `ollama` | `openai-compatible` |
+| `OPENAI_BASE_URL` | for openai-compatible | `http://llm:8080/v1` |
 | `OPENAI_API_KEY` | for openai-compatible | `sk-...` |
 | `ANTHROPIC_API_KEY` | for anthropic | `sk-ant-...` |
+| `OPENROUTER_API_KEY` | for openrouter (base URL is fixed) | `sk-or-...` |
+| `OLLAMA_BASE_URL` | for ollama | `http://host.docker.internal:11434/v1` |
 | `SESSION_SECRET_KEY` | Optional session-signing key; auto-generated and persisted to the DB when blank | `openssl rand -hex 32` |
 | `SESSION_COOKIE_SECURE` | Require HTTPS for the session cookie; true by default | `false` for localhost dev |
 

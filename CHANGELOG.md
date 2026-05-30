@@ -6,6 +6,55 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-29
+
+### Windowed cleanup, episode show notes, artwork TLS fix, centralized version
+
+- **Windowed LLM cleanup (fixes truncated episodes).** The cleanup stage sent the whole article in one call capped at `LLM_MAX_TOKENS=4000`, so a 56K-char article was truncated to ~440 chars -- a ~30s episode with a near-empty transcript. Cleanup now splits the article into paragraph-bounded windows (`LLM_CLEANUP_WINDOW_CHARS`, default 12000), cleans each in its own call, and concatenates, so article length is never bottlenecked by the output cap. `LLM_MAX_TOKENS` default raised to 16000; both are tunable in Settings. Per-window `cleanup_window_done` log events.
+- **Episode show notes.** A new summary stage generates a short LLM summary of the cleaned article (graceful: never fails the job), stored on a new `episodes.summary` column (additive migration 005) and rendered into the feed `<description>` and `<itunes:summary>`. Old episodes (NULL summary) keep the prior title/author/source form.
+- **Artwork TLS SNI fix.** The SSRF guard pinned the og:image URL to the resolved IP, and httpx then used the IP as the TLS SNI -- so every CDN host rejected the handshake (`SSLV3_ALERT_HANDSHAKE_FAILURE`) and all episodes fell back to default art. The download now passes the real hostname via the `sni_hostname` request extension while still connecting to the validated IP.
+- **Feed owner email.** Trailing commas/whitespace in `FEED_EMAIL` are stripped before rendering `<itunes:email>` and the `podcast:locked` owner.
+- **Single-source version.** Version lives only in the repo-root `VERSION` file. Backend (`app/version.py`) and the tts-wrapper read it at runtime; `scripts/sync_version.py` propagates it into both `pyproject.toml` files and `--check` (run as a test) guards against drift.
+- **UI version links to the repo.** The header version is now a link to the GitHub repository.
+
+## [0.3.2] - 2026-05-29
+
+### tts-wrapper non-root cache fix, structured wrapper logs, and PWA route fallback
+
+- **Non-root cache paths:** both wrapper Dockerfiles defaulted `HF_HOME`/`TTS_HOME` to `/root/.cache`, which is mode-700 root-owned and crashes the `user: 1000:1000` container on startup -- the Numba "no locator available" error and the Coqui "Permission denied: '/root/.cache'" model-download error both trace back to it. Caches now default to writable paths: model weights on the persistent `/data` volume (`HF_HOME=/data/hf_cache`, `TTS_HOME=/data/tts_home`), and `HOME`/`XDG_CACHE_HOME`/`NUMBA_CACHE_DIR`/`MPLCONFIGDIR` under image-local `/tmp`. The image now boots as uid 1000 without per-deploy env overrides.
+- **Structured wrapper logs:** the wrapper used `logging.basicConfig`, which rendered records as plain `INFO:tts.main:...` text and dropped every `extra={...}` field, so pipeline steps were invisible and multi-line tracebacks broke Loki's JSON parser. A JSON formatter (matching the backend's shape) now emits one structured line per record, with uvicorn's loggers routed through it; `/health` access spam is quieted to keep pipeline steps legible.
+- **More TTS step detail:** added `tts_model_loaded` (with `load_ms`), `tts_request_received` (episode/chunk/`text_chars`), and per-chunk `inference_ms` on `tts_chunk_done`, so a single `/generate` is traceable end to end in log analysis.
+- **PWA route fallback:** the service worker's navigate-fallback served `index.html` for any navigation, so visiting `/api/v1/docs` (or `/rss`, `/media`, `/health`) returned the SPA shell and the router redirected to `/`. Added a `navigateFallbackDenylist` so these server-owned routes hit the network directly. (Browsers with the old service worker cached still need a one-time unregister/hard-reload.)
+- **RSS 500 fix:** the per-episode `itunes:image` fell back to the raw `FEED_ARTWORK_URL`, which is `""` when unset -- feedgen rejects that ("Image file must be png or jpg") and the whole feed render returned a 500 for any episode without its own artwork. It now falls back to the same resolved channel artwork (`/media/default.jpg`), matching the channel image. Regression test added.
+- **Default podcast artwork:** the seeded default art (`/media/default.jpg`, used by the feed and the Feed UI when an episode has no image) is now the project branding image (`branding/podcast-artwork-3000.png`, 3000x3000).
+- **Feed UI artwork:** episodes without their own image now show the default podcast art instead of a flat gradient tile; the gradient remains only as a load-failure fallback.
+
+## [0.3.1] - 2026-05-29
+
+### tts-wrapper CVE remediation
+
+Patches the fixable HIGH/CRITICAL CVEs in the tts-wrapper image (16 of 17; the
+78 `linux-libc-dev` findings are kernel-header noise, not exploitable in a container).
+
+- Bump transitive deps to their patched versions in both wrapper Dockerfiles: `urllib3>=2.7.0`, `cryptography>=46.0.5`, `pillow>=12.2.0`, `Brotli>=1.2.0`, `setuptools>=78.1.1`, `wheel>=0.46.2`.
+- `transformers` pinned to the 4.48.x line (`>=4.48.0,<4.49`) -- clears CVE-2024-11392/-11393/-11394; coqui-tts 0.24 requires `>=4.43.0` unbounded and only breaks on the 5.x line, so 4.48 is safe.
+- `gpgv` upgraded to the patched base-image package (CVE-2025-68973).
+- `torch` left at 2.4.x: the only fix (2.6.0) flips `torch.load` to `weights_only=True`, which breaks XTTS checkpoint loading, and CVE-2025-32434 is a `torch.load` RCE unreachable with Audicle's trusted model + WAV inputs.
+- Versions bumped to 0.3.1 (app + wrapper) so `BUILD_VERSION=0.3.1` resolves for both images.
+
+## [0.3.0] - 2026-05-29
+
+### Settings UX overhaul, multi-provider LLM, and bind-mount-safe defaults
+
+- **Providers:** `LLM_PROVIDER` now supports `openrouter` (fixed base `https://openrouter.ai/api/v1` + `HTTP-Referer`/`X-Title` headers + `OPENROUTER_API_KEY`) and `ollama` (`OLLAMA_BASE_URL`, no key) alongside `openai-compatible` and `anthropic`. The openai-compatible family shares one call path via `openai_compatible_connection()`; `/api/v1/llm/models` lists models for each. The Settings dropdown shows all four and reveals only the relevant connection fields per provider.
+- **Editable defaults:** `GET /api/v1/settings` returns a `defaults` map (effective env/code value per allowlisted key, secrets masked); the UI seeds fields from `values[k] ?? defaults[k]` so LLM/TTS/Cleanup/Feed show editable defaults instead of blanks, and only operator-changed keys are persisted.
+- **Bind-mount-safe defaults:** the shipped prompt and a curated default pronunciation set are seeded into the prompt/corrections locations on first boot from a packaged `app/defaults/` dir, so an empty bind-mount no longer hides them. Default podcast artwork (from branding) is seeded to `DATA_DIR/media/default.jpg`; the feed channel image falls back to `{BASE_URL}/media/default.jpg` when `FEED_ARTWORK_URL` is unset.
+- **Feed URL:** the Feed page's subscribe URL is built from the configured `BASE_URL` (exposed via `/health/live`), not the browser origin.
+- **Non-root:** documented that the image runs as uid 1000 and host bind-mounts must be `chown`ed to 1000:1000 (README + compose comment + optional `user:` line).
+- **UI:** rebuilt to the branding/mockup design system -- logo mark, JetBrains Mono + Satoshi, Home hero, Feed cards with status tags, and collapsible Settings sections. System info shows version + uptime (replacing the `allowlist_keys` row) and a link to the API docs (`/api/v1/docs`); `/health/live` now returns `uptime_seconds` + `base_url`.
+- **Access logging:** a structured HTTP access log, always enabled (one `http_access` record per request: method, path, status, duration, client) with a per-request `request_id` stamped onto every log emitted during the request.
+- **Reachability/health:** `reachability.check_llm` and `/health/ready` now probe the selected provider's endpoint (openrouter/ollama included) with the right base + key, instead of assuming `OPENAI_BASE_URL`.
+
 ## [0.2.0] - 2026-05-29
 
 ### De-gate startup + runtime-configurable auth and model selection

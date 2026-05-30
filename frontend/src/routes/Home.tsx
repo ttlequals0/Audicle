@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, JobRow } from "../lib/api";
 
@@ -32,9 +32,7 @@ export default function Home() {
     onError: (e) => {
       if (e instanceof ApiError) {
         setError(
-          typeof e.detail === "object" && e.detail
-            ? JSON.stringify(e.detail)
-            : String(e.detail)
+          typeof e.detail === "object" && e.detail ? JSON.stringify(e.detail) : String(e.detail)
         );
       } else {
         setError((e as Error).message);
@@ -42,74 +40,92 @@ export default function Home() {
     },
   });
 
-  return (
-    <div className="space-y-6">
-      <section className="card">
-        <label className="label" htmlFor="url-input">
-          submit an article
-        </label>
-        <input
-          id="url-input"
-          className="field"
-          placeholder="https://example.com/article"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && url) submitM.mutate(url);
-          }}
-        />
-        <div className="flex gap-2 items-center mt-3">
-          <button
-            className="btn-primary"
-            disabled={!url || submitM.isPending}
-            onClick={() => submitM.mutate(url)}
-          >
-            {submitM.isPending ? "enqueuing..." : "enqueue"}
-          </button>
-          {error && (
-            <span className="text-danger text-xs font-mono">{error}</span>
-          )}
-        </div>
-      </section>
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (url) submitM.mutate(url);
+  };
 
-      <section>
-        <h2 className="font-mono uppercase text-xs text-dim mb-3">
-          recent jobs
-        </h2>
-        {jobsQ.isLoading && (
-          <p className="text-mute text-sm">loading...</p>
+  const jobs = jobsQ.data ?? [];
+  const last = jobs[0];
+
+  return (
+    <div>
+      <div className="pt-10 pb-2">
+        <div className="mono-xs text-accent mb-3">// SUBMIT_ARTICLE</div>
+        <h1 className="text-4xl font-black tracking-tight mb-2 leading-tight">
+          Drop a link.
+          <br />
+          <span className="text-accent">Get a podcast.</span>
+        </h1>
+        <p className="text-dim text-sm mb-8 leading-relaxed">
+          Audicle reads articles aloud. Paste a URL and it joins your feed.
+        </p>
+        <form onSubmit={submit} className="space-y-3">
+          <input
+            type="url"
+            className="hero-input"
+            placeholder="https://"
+            autoComplete="off"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+          />
+          <button type="submit" className="btn-primary w-full" disabled={!url || submitM.isPending}>
+            {submitM.isPending ? "Submitting..." : "Submit"}
+          </button>
+        </form>
+        {error && <p className="text-danger text-xs font-mono mt-2 break-words">{error}</p>}
+
+        {!last && jobsQ.data && (
+          <p className="mono-xs text-mute mt-8">// no submissions yet -- paste a URL above</p>
         )}
-        {jobsQ.data && jobsQ.data.length === 0 && (
-          <p className="text-mute text-sm">no jobs yet - submit a URL above.</p>
+
+        {last && (
+          <div className="mt-8 pt-6 border-t border-line">
+            <div className="mono-xs text-mute mb-2">// LAST SUBMISSION</div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="mono text-dim truncate flex-1">{last.url}</div>
+              <span className={`tag ${statusTag(last.status)}`}>{last.status}</span>
+            </div>
+            <div className="mono-xs text-mute mt-1.5">
+              stage: {last.stage ?? "-"}
+              {last.error && <span className="text-danger"> &middot; {last.error}</span>}
+            </div>
+          </div>
         )}
-        <ul className="space-y-2">
-          {(jobsQ.data ?? []).map((j) => (
-            <li key={j.id} className="card flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="font-mono text-[11px] text-mute truncate">{j.url}</p>
-                <p className="text-sm mt-1 truncate">
-                  {j.episode_id} &middot; {j.stage ?? "-"}
-                  {j.error && <span className="text-danger"> &middot; {j.error}</span>}
-                </p>
-              </div>
-              <span className={`tag ${statusColor(j.status)}`}>{j.status}</span>
-            </li>
-          ))}
-        </ul>
-      </section>
+      </div>
+
+      {jobs.length > 1 && (
+        <section className="mt-8">
+          <div className="mono-xs text-mute mb-3">// RECENT</div>
+          <ul className="space-y-2">
+            {jobs.slice(1).map((j) => (
+              <li key={j.id} className="card p-4 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="mono-xs text-mute truncate">{j.url}</p>
+                  <p className="text-sm mt-1 truncate text-dim">
+                    {j.episode_id} &middot; {j.stage ?? "-"}
+                    {j.error && <span className="text-danger"> &middot; {j.error}</span>}
+                  </p>
+                </div>
+                <span className={`tag ${statusTag(j.status)}`}>{j.status}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }
 
-function statusColor(status: string): string {
+function statusTag(status: string): string {
   switch (status) {
     case "done":
-      return "text-accent";
+      return "tag-done";
     case "failed":
-      return "text-danger";
+      return "tag-failed";
     case "processing":
-      return "text-fg";
+      return "tag-processing";
     default:
-      return "text-mute";
+      return "tag-queued";
   }
 }

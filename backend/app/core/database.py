@@ -229,11 +229,23 @@ def _m004_runtime_settings(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m005_episode_summary(conn: sqlite3.Connection) -> None:
+    """Add the episode show-notes summary column.
+
+    Additive ALTER (NULL for existing rows); the feed falls back to the
+    title/author/source description when ``summary`` is NULL, so old episodes
+    keep rendering unchanged.
+    """
+
+    conn.execute("ALTER TABLE episodes ADD COLUMN summary TEXT")
+
+
 MIGRATIONS: list[tuple[str, Migration]] = [
     ("001_initial_schema", _m001_initial_schema),
     ("002_settings_kv", _m002_settings_kv),
     ("003_auth_lockout", _m003_auth_lockout),
     ("004_runtime_settings", _m004_runtime_settings),
+    ("005_episode_summary", _m005_episode_summary),
 ]
 
 

@@ -10,11 +10,19 @@
 # reuses it instead of pulling the much larger CUDA build.
 FROM python:3.11-slim AS runtime
 
+# Cache locations target writable paths so the image runs as a non-root user
+# (the compose ``user: 1000:1000``). Model caches live on the persistent
+# ``/data`` volume; the rest go to image-local ``/tmp``. The old
+# ``/root/.cache`` defaults are mode-700 root-owned and crash uid 1000.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    HF_HOME=/root/.cache/huggingface \
-    TTS_HOME=/root/.cache/huggingface/tts \
+    HF_HOME=/data/hf_cache \
+    TTS_HOME=/data/tts_home \
+    HOME=/tmp \
+    XDG_CACHE_HOME=/tmp/.cache \
+    NUMBA_CACHE_DIR=/tmp/numba_cache \
+    MPLCONFIGDIR=/tmp/mpl \
     # Coqui gates the first XTTS-v2 load behind an interactive y/n CPML prompt;
     # in a container there is no TTY to answer it, so the load hangs/fails.
     # Self-hosting the wrapper is acceptance of the non-commercial CPML (see the
@@ -26,24 +34,36 @@ ENV PYTHONUNBUFFERED=1 \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
          curl ca-certificates libsndfile1 build-essential \
+    && apt-get install -y --only-upgrade gpgv \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY pyproject.toml ./
-COPY config.py engine.py main.py ./
+COPY config.py engine.py log_setup.py main.py ./
 # Install torch AND torchaudio together from the CPU index with matching
 # versions. coqui-tts imports torchaudio; if it comes from PyPI while torch is
 # the CPU-index build, the torchaudio native extension fails to load against
 # torch (ABI mismatch). Pinning both from the same CPU index keeps them in step.
-# Cap transformers below 4.47: coqui-tts 0.24 pins it unbounded (>=4.43) but
-# breaks on transformers 5.x (see tts-wrapper/pyproject.toml note). Installed
-# here rather than in the manifest so it stays a transitive constraint.
+# transformers pinned to the 4.48.x line: coqui-tts 0.24 requires >=4.43.0
+# unbounded but breaks on 5.x; >=4.48.0 clears CVE-2024-11392/-11393/-11394.
+# The trailing -U patches transitive deps pinned to vulnerable versions. torch
+# stays at 2.4.1 (the 2.6.0 fix flips torch.load to weights_only=True, breaking
+# XTTS checkpoint loading; the CVE is unreachable with trusted model inputs).
 RUN pip install --no-cache-dir torch==2.4.1 torchaudio==2.4.1 \
         --index-url https://download.pytorch.org/whl/cpu \
-    && pip install --no-cache-dir "transformers>=4.43.0,<4.47" \
-    && pip install --no-cache-dir .
+    && pip install --no-cache-dir "transformers>=4.48.0,<4.49" \
+    && pip install --no-cache-dir . \
+    && pip install --no-cache-dir -U \
+        "urllib3>=2.7.0" "cryptography>=46.0.5" "pillow>=12.2.0" \
+        "Brotli>=1.2.0" "setuptools>=78.1.1" "wheel>=0.46.2"
 
 EXPOSE 8000
+
+# Single-source version: the build passes the repo-root VERSION value here
+# (`--build-arg WRAPPER_VERSION=$(cat VERSION)`) since this build context is
+# tts-wrapper/ and can't read the root file. main.py reads AUDICLE_WRAPPER_VERSION.
+ARG WRAPPER_VERSION=0.0.0
+ENV AUDICLE_WRAPPER_VERSION=${WRAPPER_VERSION}
 HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=120s \
     CMD curl -fsS http://localhost:8000/health/live || exit 1
 CMD ["uvicorn", "main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--timeout-keep-alive", "300"]

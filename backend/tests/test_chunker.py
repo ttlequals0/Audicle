@@ -16,6 +16,30 @@ def test_chunk_empty_returns_empty(env: Path) -> None:
     assert chunker.chunk("", get_settings()) == []
 
 
+def test_pack_paragraphs_empty_returns_empty() -> None:
+    assert chunker.pack_paragraphs("", 1000) == []
+
+
+def test_pack_paragraphs_groups_under_limit() -> None:
+    # Three ~100-char paragraphs into a 250-char window: 2 + 1.
+    paras = ["A" * 100, "B" * 100, "C" * 100]
+    windows = chunker.pack_paragraphs("\n\n".join(paras), 250)
+    assert len(windows) == 2
+    assert windows[0] == f"{'A' * 100}\n\n{'B' * 100}"
+    assert windows[1] == "C" * 100
+    # No content lost: every paragraph survives across the windows.
+    joined = "\n\n".join(windows)
+    for para in paras:
+        assert para in joined
+
+
+def test_pack_paragraphs_oversize_paragraph_is_own_window() -> None:
+    big = "X" * 5000
+    windows = chunker.pack_paragraphs(f"{big}\n\nsmall", 1000)
+    assert windows[0] == big
+    assert windows[1] == "small"
+
+
 def test_chunk_single_short_paragraph_returns_one_chunk(env: Path) -> None:
     text = "One short sentence. Another short sentence."
     result = chunker.chunk(text, get_settings())

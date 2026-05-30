@@ -27,6 +27,8 @@ router = APIRouter(prefix="/media", tags=["media"])
 # jobs.py generates episode_ids as short hex tokens. This pattern enforces
 # the contract at the route boundary so a malformed id 404s before any
 # filesystem lookup -- defence-in-depth against path traversal.
+# NOTE: the default podcast artwork is served as ``/media/default.jpg`` (seeded
+# to DATA_DIR/media on startup); "default" must remain matchable by this pattern.
 _EPISODE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 

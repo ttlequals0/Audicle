@@ -19,6 +19,10 @@ def test_health_live(env: Path) -> None:
     body = response.json()
     assert body["ok"] is True
     assert body["version"]
+    # uptime + base_url power the Settings system-info / feed URL display.
+    assert isinstance(body["uptime_seconds"], int)
+    assert body["uptime_seconds"] >= 0
+    assert body["base_url"] == "https://audifeed.example.test"
 
 
 def _stub_probes(monkeypatch) -> None:

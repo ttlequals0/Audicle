@@ -15,6 +15,7 @@ from functools import cache
 from typing import Any
 
 # Context fields that should be stamped onto every log record while set.
+request_id_ctx: ContextVar[str | None] = ContextVar("request_id_ctx", default=None)
 job_id_ctx: ContextVar[str | None] = ContextVar("job_id_ctx", default=None)
 episode_id_ctx: ContextVar[str | None] = ContextVar("episode_id_ctx", default=None)
 stage_ctx: ContextVar[str | None] = ContextVar("stage_ctx", default=None)
@@ -96,6 +97,7 @@ def _context_payload(record: logging.LogRecord) -> dict[str, Any]:
 
 
 _CTX_VARS: tuple[tuple[str, ContextVar[str | None]], ...] = (
+    ("request_id", request_id_ctx),
     ("job_id", job_id_ctx),
     ("episode_id", episode_id_ctx),
     ("stage", stage_ctx),

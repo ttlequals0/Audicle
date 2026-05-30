@@ -33,6 +33,49 @@ def _transport(*responses) -> httpx.MockTransport:
     return httpx.MockTransport(handler)
 
 
+async def test_check_llm_ollama_probes_ollama_base(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """provider=ollama must probe OLLAMA_BASE_URL, not OPENAI_BASE_URL."""
+
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test:11434/v1")
+    get_settings.cache_clear()
+
+    captured: dict[str, httpx.Request] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["request"] = request
+        return httpx.Response(200, text='{"data": []}')
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    result = await reachability.check_llm(get_settings())
+    assert result.ok is True
+    assert captured["request"].url.host == "ollama.test"
+
+
+async def test_check_llm_openrouter_sends_key_and_headers(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    get_settings.cache_clear()
+
+    captured: dict[str, httpx.Request] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["request"] = request
+        return httpx.Response(200, text='{"data": []}')
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    result = await reachability.check_llm(get_settings())
+    assert result.ok is True
+    req = captured["request"]
+    assert req.url.host == "openrouter.ai"
+    assert req.headers.get("authorization") == "Bearer or-key"
+    assert req.headers.get("x-title")
+
+
 async def test_check_firecrawl_ok_on_2xx(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_async_client(monkeypatch, _transport(httpx.Response(200, text='{"ok":true}')))
     result = await reachability.check_firecrawl(get_settings())

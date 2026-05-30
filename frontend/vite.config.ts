@@ -8,6 +8,14 @@ export default defineConfig({
     VitePWA({
       registerType: "autoUpdate",
       includeAssets: ["favicon.svg"],
+      workbox: {
+        // Without this, the SW's navigate-fallback serves index.html for ANY
+        // navigation -- including /api/v1/docs, /rss, /media, /health -- so the
+        // browser gets the SPA shell and the router bounces unknown paths to /.
+        // Keep these server-owned routes off the SPA fallback so they hit the
+        // network directly.
+        navigateFallbackDenylist: [/^\/api\//, /^\/rss\//, /^\/media\//, /^\/health\b/],
+      },
       manifest: {
         name: "Audicle",
         short_name: "Audicle",

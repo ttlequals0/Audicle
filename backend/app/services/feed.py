@@ -64,7 +64,7 @@ def render(
     title = settings.FEED_TITLE or "Audicle"
     author = {
         key: value
-        for key, value in (("name", settings.FEED_AUTHOR), ("email", settings.FEED_EMAIL))
+        for key, value in (("name", settings.FEED_AUTHOR), ("email", _clean_email(settings.FEED_EMAIL)))
         if value
     }
     fg.title(title)
@@ -79,11 +79,12 @@ def render(
     # players.
     fg.link(href=f"{settings.BASE_URL.rstrip('/')}/rss/rss.xml", rel="self")
     fg.link(href=settings.BASE_URL, rel="alternate")
-    # Legacy ``<image>`` needs ``<title>`` and ``<link>`` per RSS 2.0 to
-    # validate; only emit it when artwork is configured.
-    if settings.FEED_ARTWORK_URL:
-        fg.image(url=settings.FEED_ARTWORK_URL, title=title, link=settings.BASE_URL)
-        fg.podcast.itunes_image(settings.FEED_ARTWORK_URL)
+    # Channel artwork: the operator's FEED_ARTWORK_URL when set, otherwise the
+    # bundled default served at /media/default.jpg (seeded on startup). Always
+    # emitted so a feed validates and shows art even before it's configured.
+    artwork_url = settings.FEED_ARTWORK_URL or f"{settings.BASE_URL.rstrip('/')}/media/default.jpg"
+    fg.image(url=artwork_url, title=title, link=settings.BASE_URL)
+    fg.podcast.itunes_image(artwork_url)
     fg.lastBuildDate(last_build)
     if settings.FEED_AUTHOR:
         fg.podcast.itunes_author(settings.FEED_AUTHOR)
@@ -123,10 +124,14 @@ def render(
             )
         if ep.duration_secs is not None:
             item.podcast.itunes_duration(_hms(ep.duration_secs))
+        # Fall back to the same resolved channel artwork (operator URL or the
+        # seeded /media/default.jpg) rather than raw FEED_ARTWORK_URL: an unset
+        # FEED_ARTWORK_URL is "", which feedgen rejects with "Image file must be
+        # png or jpg", crashing the whole feed render with a 500.
         item.podcast.itunes_image(
             _media_url(settings.BASE_URL, ep.id, "jpg")
             if ep.artwork_path
-            else settings.FEED_ARTWORK_URL
+            else artwork_url
         )
         item.podcast.itunes_explicit("yes" if settings.FEED_EXPLICIT else "no")
 
@@ -139,16 +144,30 @@ def render(
     )
 
 
+def _clean_email(value: str) -> str:
+    """Trim whitespace and stray trailing separators from a configured email.
+
+    Operators sometimes leave a trailing comma in ``FEED_EMAIL``; without this
+    it renders straight into ``<itunes:email>`` and the ``podcast:locked``
+    owner attribute (e.g. ``you@example.com,``).
+    """
+
+    return value.strip().strip(",;").strip()
+
+
 def _episode_description_html(ep: Episode) -> str:
     """HTML body for the per-episode ``<description>``: title, author (when
-    known), and a link back to the source article. feedgen escapes the
-    string, so podcast clients receive renderable HTML."""
+    known), the show-notes summary (when present), and a link back to the
+    source article. feedgen escapes the string, so podcast clients receive
+    renderable HTML."""
 
     title = html.escape(ep.title or ep.original_url)
     url = html.escape(ep.original_url, quote=True)
     parts = [f"<p>{title}</p>"]
     if ep.author:
         parts.append(f"<p>By {html.escape(ep.author)}</p>")
+    if ep.summary:
+        parts.append(f"<p>{html.escape(ep.summary)}</p>")
     parts.append(f'<p>Source: <a href="{url}">{html.escape(ep.original_url)}</a></p>')
     return "".join(parts)
 
@@ -159,6 +178,8 @@ def _episode_summary(ep: Episode) -> str:
     lines = [ep.title or ep.original_url]
     if ep.author:
         lines.append(f"By {ep.author}")
+    if ep.summary:
+        lines.append(ep.summary)
     lines.append(f"Source: {ep.original_url}")
     return "\n".join(lines)
 
@@ -205,7 +226,7 @@ def _inject_pc2_tags(
 
     pc2_locked = ET.Element(f"{{{_PODCAST_NS}}}locked")
     pc2_locked.text = "yes"
-    pc2_locked.set("owner", settings.FEED_EMAIL)
+    pc2_locked.set("owner", _clean_email(settings.FEED_EMAIL))
     channel.insert(insert_at, pc2_locked)
     insert_at += 1
 

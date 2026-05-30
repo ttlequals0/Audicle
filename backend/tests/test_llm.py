@@ -50,6 +50,45 @@ def _anthropic_ok(text: str = "cleaned") -> httpx.Response:
     )
 
 
+# --- provider dispatch (openrouter / ollama) --------------------------------
+
+
+async def test_openrouter_uses_fixed_base_and_identifying_headers(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    get_settings.cache_clear()
+    transport, captured = _capture_transport(response=_openai_ok())
+    _patch_async_client(monkeypatch, transport)
+
+    await llm.generate("s", "u", get_settings())
+
+    req = captured["request"]
+    assert req.url.host == "openrouter.ai"
+    assert req.url.path.endswith("/chat/completions")
+    assert req.headers.get("authorization") == "Bearer or-key"
+    assert req.headers.get("http-referer") == llm.OPENROUTER_HTTP_REFERER
+    assert req.headers.get("x-title") == llm.OPENROUTER_APP_TITLE
+
+
+async def test_ollama_uses_ollama_base_url_without_auth(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test:11434/v1")
+    get_settings.cache_clear()
+    transport, captured = _capture_transport(response=_openai_ok())
+    _patch_async_client(monkeypatch, transport)
+
+    await llm.generate("s", "u", get_settings())
+
+    req = captured["request"]
+    assert req.url.host == "ollama.test"
+    assert req.url.path.endswith("/chat/completions")
+    assert "authorization" not in req.headers
+
+
 # --- openai-compatible ------------------------------------------------------
 
 
@@ -260,5 +299,5 @@ async def test_openai_compatible_empty_base_url_raises_request_error(
 
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     get_settings.cache_clear()
-    with pytest.raises(llm.LLMRequestError, match="OPENAI_BASE_URL"):
+    with pytest.raises(llm.LLMRequestError, match="base URL"):
         await llm.generate("s", "u", get_settings())

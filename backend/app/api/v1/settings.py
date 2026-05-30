@@ -26,7 +26,11 @@ class SettingsResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     allowlist: list[str]
+    # Stored operator overrides only (empty until something is saved).
     values: dict[str, Any]
+    # Effective env/code default for each allowlisted key, so the UI can show
+    # editable defaults instead of blank fields. Secret keys are masked.
+    defaults: dict[str, Any]
 
 
 @router.get(
@@ -93,7 +97,26 @@ def _masked_response(stored: dict[str, str], settings: Settings) -> SettingsResp
         )
         for key, value in stored.items()
     }
-    return SettingsResponse(allowlist=sorted(runtime_settings.ALLOWED_KEYS), values=values)
+    return SettingsResponse(
+        allowlist=sorted(runtime_settings.ALLOWED_KEYS),
+        values=values,
+        defaults=_defaults_map(settings),
+    )
+
+
+def _defaults_map(settings: Settings) -> dict[str, Any]:
+    """The effective env/code value for each allowlisted key (what the app uses
+    when there is no override). Secret keys are masked so an env-set credential
+    is never echoed -- the sentinel just signals 'a key is configured'."""
+
+    defaults: dict[str, Any] = {}
+    for key in runtime_settings.ALLOWED_KEYS:
+        value = getattr(settings, key, None)
+        if key in runtime_settings.MASKED_KEYS:
+            defaults[key] = runtime_settings.MASK_SENTINEL if value else ""
+        else:
+            defaults[key] = value
+    return defaults
 
 
 def _coerce(key: str, value: str, settings: Settings) -> Any:

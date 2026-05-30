@@ -120,4 +120,12 @@ export interface JobRow {
 export interface SettingsPayload {
   allowlist: string[];
   values: Record<string, unknown>;
+  defaults: Record<string, unknown>;
+}
+
+export interface HealthLive {
+  ok: boolean;
+  version: string;
+  uptime_seconds: number;
+  base_url: string;
 }

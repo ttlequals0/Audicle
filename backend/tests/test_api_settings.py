@@ -21,6 +21,22 @@ def test_get_settings_returns_empty_values_initially(env: Path) -> None:
     assert body["values"] == {}
 
 
+def test_get_returns_effective_defaults(env: Path) -> None:
+    """The GET response carries a `defaults` map so the UI shows editable
+    effective defaults; secret keys are masked, not leaked."""
+
+    with _client(env) as client:
+        body = client.get("/api/v1/settings").json()
+    defaults = body["defaults"]
+    assert defaults["LLM_PROVIDER"] == "openai-compatible"
+    assert defaults["LLM_TEMPERATURE"] == 0.7
+    assert defaults["RETENTION_DAYS"] == 90
+    assert defaults["OLLAMA_BASE_URL"].startswith("http")
+    # Secret keys are masked even in defaults (env sets OPENAI_API_KEY).
+    assert defaults["OPENAI_API_KEY"] in ("", "********")
+    assert defaults["OPENROUTER_API_KEY"] in ("", "********")
+
+
 def test_connection_urls_are_allowlisted_and_round_trip(env: Path) -> None:
     """FIRECRAWL_URL + TTS_URL are operator-tunable so an external Firecrawl/TTS
     can be configured without an env edit + restart."""

@@ -17,6 +17,7 @@ import io
 import logging
 import os
 import tempfile
+import time
 import wave
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -28,13 +29,28 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from config import Config
 from engine import Engine, GPUOutOfMemoryError, XTTSEngine
+from log_setup import setup_logging
 
+setup_logging()
 logger = logging.getLogger("tts.main")
-logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 
 # Wrapper's own version, surfaced in /health so the main app's
-# /health/ready can aggregate it into components.tts_wrapper.version.
-__version__ = "0.2.0"
+# /health/ready can aggregate it into components.tts_wrapper.version. The repo
+# root VERSION file is the single source. In dev/tests we walk up to it; in the
+# image the wrapper build context is tts-wrapper/ (can't see the root file), so
+# the build passes it as AUDICLE_WRAPPER_VERSION (from `cat VERSION`).
+def _wrapper_version() -> str:
+    env = os.environ.get("AUDICLE_WRAPPER_VERSION")
+    if env:
+        return env.strip()
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "VERSION"
+        if candidate.is_file():
+            return candidate.read_text(encoding="utf-8").strip()
+    return "0.0.0"
+
+
+__version__ = _wrapper_version()
 
 
 def _pkg_version(name: str) -> str | None:
@@ -192,9 +208,19 @@ def create_app(
                 status_code=503,
                 detail="no reference voice loaded; upload one via the UI first",
             )
+        logger.info(
+            "Generate request received",
+            extra={
+                "event": "tts_request_received",
+                "episode_id": body.episode_id,
+                "chunk_index": body.chunk_index,
+                "text_chars": len(body.text),
+            },
+        )
         # The lock serializes GPU inference; /health never takes it, and
         # synthesize offloads the blocking call, so /health stays responsive.
         async with lock:
+            inference_started = time.perf_counter()
             try:
                 wav_bytes = await asyncio.wait_for(
                     engine.synthesize(body.text),
@@ -230,6 +256,8 @@ def create_app(
                     status_code=500, detail={"error": "GPU OOM", "cause": str(exc)}
                 ) from exc
 
+        inference_ms = int((time.perf_counter() - inference_started) * 1000)
+
         out_dir = chosen_data_dir / "media"
         out_dir.mkdir(parents=True, exist_ok=True)
         # episode_id is already constrained by the Pydantic pattern; the
@@ -252,6 +280,7 @@ def create_app(
                 "event": "tts_chunk_done",
                 "episode_id": body.episode_id,
                 "chunk_index": body.chunk_index,
+                "inference_ms": inference_ms,
                 "duration_secs": duration,
                 "wav_path": str(wav_path),
             },

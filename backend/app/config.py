@@ -32,7 +32,9 @@ class Settings(BaseSettings):
     DATA_DIR: Path = Path("/data")
     FIRECRAWL_URL: str = "http://firecrawl:3002"
     TTS_URL: str = "http://tts-wrapper:8000"
-    LLM_PROVIDER: Literal["openai-compatible", "anthropic"] = "openai-compatible"
+    LLM_PROVIDER: Literal["openai-compatible", "anthropic", "openrouter", "ollama"] = (
+        "openai-compatible"
+    )
     LLM_MODEL: str = ""
     FEED_TITLE: str = "Audicle"
     FEED_DESCRIPTION: str = ""
@@ -45,6 +47,11 @@ class Settings(BaseSettings):
     OPENAI_BASE_URL: str | None = None
     OPENAI_API_KEY: str | None = None
     ANTHROPIC_API_KEY: str | None = None
+    # OpenRouter: fixed base URL (set in services/llm.py); only the key is tunable.
+    OPENROUTER_API_KEY: str | None = None
+    # Ollama: openai-compatible against a local Ollama daemon. Its own base URL
+    # so it can be selected without clobbering OPENAI_BASE_URL.
+    OLLAMA_BASE_URL: str = "http://host.docker.internal:11434/v1"
 
     # Feed metadata defaults.
     FEED_LANGUAGE: str = "en-us"
@@ -53,7 +60,15 @@ class Settings(BaseSettings):
 
     # LLM tunables.
     LLM_TEMPERATURE: float = 0.7
-    LLM_MAX_TOKENS: int = 4000
+    # Per-call output cap. The cleanup stage processes the article in windows of
+    # LLM_CLEANUP_WINDOW_CHARS, so this only has to cover one window's cleaned
+    # output (a ~12K-char window cleans to <12K chars ~= <4K tokens); 16000
+    # leaves generous headroom and stops the old 4000 cap from truncating.
+    LLM_MAX_TOKENS: int = 16000
+    # Cleanup window size (chars). Long articles are split into windows on
+    # paragraph boundaries and each window is cleaned in its own LLM call, then
+    # concatenated -- so article length is never bottlenecked by the output cap.
+    LLM_CLEANUP_WINDOW_CHARS: int = 12000
     LLM_TIMEOUT_SECONDS: int = 300
     LLM_RETRY_COUNT: int = 3
 

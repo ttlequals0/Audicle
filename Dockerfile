@@ -44,6 +44,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --no-dev --frozen
 
 COPY backend/app ./app
+COPY VERSION ./
 COPY --from=frontend /build/dist ./static/ui
 COPY entrypoint.sh ./
 RUN chmod +x entrypoint.sh && chown -R audicle:audicle /app

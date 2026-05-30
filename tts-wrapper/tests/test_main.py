@@ -95,7 +95,11 @@ def test_health_200_when_model_and_reference_loaded(tmp_path: Path) -> None:
     assert body["ok"] is True
     assert body["model_loaded"] is True
     assert body["reference_loaded"] is True
-    assert body["version"] == "0.2.0"
+    # Version is read from the repo-root VERSION file (or AUDICLE_WRAPPER_VERSION
+    # in the image); assert against that file so the test never hard-codes a
+    # literal that drifts on every release.
+    version_file = Path(__file__).resolve().parents[2] / "VERSION"
+    assert body["version"] == version_file.read_text(encoding="utf-8").strip()
     for key in ("torch", "coqui_tts", "device", "sample_rate"):
         assert key in body
 

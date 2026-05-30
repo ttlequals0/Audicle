@@ -52,7 +52,7 @@ Green mark on rich-black background. Used for podcast artwork, README header, an
 
 Custom letter "A" with a five-bar audio waveform replacing the crossbar. Bars are symmetric, center-tallest: 12 / 26 / 38 / 26 / 12 units at 160-unit icon scale.
 
-See `../logo-spec.md` at repo root for full construction reference, stroke weights at different scales, and usage rules.
+Stroke weights scale linearly with the viewBox: at the 160-unit icon scale the A outline is 10 and the waveform bars are 6, thickened to 14 / 10 for the 16 px favicon. The SVG sources in this directory are the canonical construction reference.
 
 ## Trademark
 

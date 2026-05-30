@@ -26,11 +26,14 @@ class Episode:
     pub_date: str
     created_at: str
     updated_at: str
+    # Added last with a default so existing positional/kwarg constructors keep
+    # working; NULL for episodes finalized before the summary feature.
+    summary: str | None = None
 
 
 _SELECT_COLUMNS = (
     "id, job_id, title, author, original_url, audio_path, artwork_path, "
-    "transcript_vtt, duration_secs, pub_date, created_at, updated_at"
+    "transcript_vtt, duration_secs, pub_date, created_at, updated_at, summary"
 )
 
 
@@ -48,6 +51,7 @@ def _row_to_episode(row: sqlite3.Row) -> Episode:
         pub_date=row["pub_date"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        summary=row["summary"],
     )
 
 
@@ -63,6 +67,7 @@ def upsert(
     artwork_path: str | None,
     transcript_vtt: str | None,
     duration_secs: int | None,
+    summary: str | None = None,
 ) -> Episode:
     """Insert a new episode row, or update the existing one keyed by id.
 
@@ -78,9 +83,9 @@ def upsert(
         """
         INSERT INTO episodes (
             id, job_id, title, author, original_url, audio_path,
-            artwork_path, transcript_vtt, duration_secs
+            artwork_path, transcript_vtt, duration_secs, summary
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             job_id          = excluded.job_id,
             title           = excluded.title,
@@ -90,6 +95,7 @@ def upsert(
             artwork_path    = excluded.artwork_path,
             transcript_vtt  = excluded.transcript_vtt,
             duration_secs   = excluded.duration_secs,
+            summary         = excluded.summary,
             pub_date        = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
             updated_at      = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
         """,
@@ -103,6 +109,7 @@ def upsert(
             artwork_path,
             transcript_vtt,
             duration_secs,
+            summary,
         ),
     )
     conn.commit()

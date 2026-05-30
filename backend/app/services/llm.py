@@ -27,6 +27,20 @@ logger = logging.getLogger("app.services.llm")
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
 
+# OpenRouter is openai-compatible at a fixed base URL; it asks integrators to
+# send identifying headers (used for its rankings + abuse handling).
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_HTTP_REFERER = "https://github.com/ttlequals0/Audicle"
+OPENROUTER_APP_TITLE = "Audicle"
+
+# Providers that speak the OpenAI chat-completions + /models wire format and so
+# share openai_compatible_connection(). Anthropic is the only one that doesn't.
+_OPENAI_COMPATIBLE_PROVIDERS = frozenset({"openai-compatible", "openrouter", "ollama"})
+
+
+def is_openai_compatible_provider(provider: str) -> bool:
+    return provider in _OPENAI_COMPATIBLE_PROVIDERS
+
 
 class LLMError(Exception):
     """Base class so callers can do a single except for any LLM failure."""
@@ -62,15 +76,6 @@ async def generate(
     effective_max = max_tokens if max_tokens is not None else settings.LLM_MAX_TOKENS
     timeout = httpx.Timeout(settings.LLM_TIMEOUT_SECONDS)
 
-    if settings.LLM_PROVIDER == "openai-compatible":
-        return await _call_openai_compatible(
-            system_prompt,
-            user_message,
-            settings,
-            temperature=effective_temp,
-            max_tokens=effective_max,
-            timeout=timeout,
-        )
     if settings.LLM_PROVIDER == "anthropic":
         return await _call_anthropic(
             system_prompt,
@@ -80,29 +85,68 @@ async def generate(
             max_tokens=effective_max,
             timeout=timeout,
         )
+    if is_openai_compatible_provider(settings.LLM_PROVIDER):
+        base, api_key, extra_headers = openai_compatible_connection(settings)
+        return await _call_openai_compatible(
+            system_prompt,
+            user_message,
+            base=base,
+            api_key=api_key,
+            model=settings.LLM_MODEL,
+            extra_headers=extra_headers,
+            temperature=effective_temp,
+            max_tokens=effective_max,
+            timeout=timeout,
+        )
     raise LLMRequestError(f"Unknown LLM_PROVIDER={settings.LLM_PROVIDER!r}")
+
+
+def openai_compatible_connection(
+    settings: Settings, provider: str | None = None
+) -> tuple[str, str | None, dict[str, str]]:
+    """Resolve (base_url, api_key, extra_headers) for the openai-compatible
+    family of providers (openai-compatible, openrouter, ollama).
+
+    Shared by ``generate`` and the model-listing endpoint so both hit the same
+    endpoint with the same auth. ``provider`` overrides ``settings.LLM_PROVIDER``
+    so the Settings UI can preview a provider before saving it.
+    """
+
+    provider = provider or settings.LLM_PROVIDER
+    if provider == "openrouter":
+        return (
+            OPENROUTER_BASE_URL,
+            settings.OPENROUTER_API_KEY,
+            {"HTTP-Referer": OPENROUTER_HTTP_REFERER, "X-Title": OPENROUTER_APP_TITLE},
+        )
+    if provider == "ollama":
+        return (settings.OLLAMA_BASE_URL, None, {})
+    return (settings.OPENAI_BASE_URL or "", settings.OPENAI_API_KEY, {})
 
 
 async def _call_openai_compatible(
     system_prompt: str,
     user_message: str,
-    settings: Settings,
     *,
+    base: str,
+    api_key: str | None,
+    model: str,
+    extra_headers: dict[str, str] | None = None,
     temperature: float,
     max_tokens: int,
     timeout: httpx.Timeout,
 ) -> str:
-    base = (settings.OPENAI_BASE_URL or "").rstrip("/")
+    base = base.rstrip("/")
     if not base:
         # Unconfigured install: fail this stage with a clear message instead of
         # letting httpx raise UnsupportedProtocol on the relative URL.
-        raise LLMRequestError("OPENAI_BASE_URL is not configured (set it in Settings)")
+        raise LLMRequestError("LLM base URL is not configured (set it in Settings)")
     endpoint = f"{base}/chat/completions"
-    headers = {"Content-Type": "application/json"}
-    if settings.OPENAI_API_KEY:
-        headers["Authorization"] = f"Bearer {settings.OPENAI_API_KEY}"
+    headers = {"Content-Type": "application/json", **(extra_headers or {})}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     payload: dict[str, Any] = {
-        "model": settings.LLM_MODEL,
+        "model": model,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},

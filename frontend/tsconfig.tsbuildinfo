@@ -1,1 +1,1 @@
-{"root":["./src/App.tsx","./src/main.tsx","./src/lib/api.ts","./src/lib/auth.tsx","./src/routes/Feed.tsx","./src/routes/Home.tsx","./src/routes/Login.tsx","./src/routes/Settings.tsx","./vite.config.ts"],"version":"5.9.3"}
+{"root":["./src/App.tsx","./src/main.tsx","./src/components/CollapsibleSection.tsx","./src/lib/api.ts","./src/lib/auth.tsx","./src/lib/useHealthLive.ts","./src/routes/Feed.tsx","./src/routes/Home.tsx","./src/routes/Login.tsx","./src/routes/Settings.tsx","./vite.config.ts"],"version":"5.9.3"}

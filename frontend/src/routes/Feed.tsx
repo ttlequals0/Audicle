@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, Episode } from "../lib/api";
+import { useHealthLive } from "../lib/useHealthLive";
 
 /**
  * Pull-to-refresh: track touchstart at the top of the document, and if
@@ -36,8 +37,13 @@ function usePullToRefresh(onRefresh: () => void) {
 export default function Feed() {
   const [copied, setCopied] = useState(false);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
-  const feedUrl = `${window.location.origin}/rss/rss.xml`;
   const qc = useQueryClient();
+  // Build the subscribe URL from the configured BASE_URL (the public feed host),
+  // not the browser origin -- the app is often reached on a different host
+  // (LAN IP, localhost) than the one podcast clients use.
+  const healthQ = useHealthLive();
+  const base = (healthQ.data?.base_url || window.location.origin).replace(/\/$/, "");
+  const feedUrl = `${base}/rss/rss.xml`;
 
   const onActionError = (verb: string) => (err: unknown) => {
     const status = (err as { status?: number })?.status;
@@ -84,113 +90,110 @@ export default function Feed() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  return (
-    <div className="space-y-6">
-      <section className="card">
-        <p className="label">feed url</p>
-        <div className="flex gap-2 items-center">
-          <code className="flex-1 font-mono text-xs text-fg bg-surface px-3 py-2 rounded border border-line truncate">
-            {feedUrl}
-          </code>
-          <button className="btn-ghost" onClick={copy}>
-            {copied ? "copied" : "copy"}
-          </button>
-        </div>
-        <p className="text-mute text-xs mt-2">
-          paste into any podcast client (Pocket Casts, Overcast, Apple Podcasts) to subscribe.
-        </p>
-      </section>
+  const episodes = episodesQ.data ?? [];
 
-      <section>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="font-mono uppercase text-xs text-dim">episodes</h2>
-          {actionMsg && (
-            <span className="font-mono text-[11px] text-accent">{actionMsg}</span>
-          )}
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-3">
+        <h1 className="text-2xl font-black tracking-tight">Feed</h1>
+        <div className="mono-xs text-mute">
+          {episodes.length} episode{episodes.length === 1 ? "" : "s"}
         </div>
-        {episodesQ.isLoading && <p className="text-mute text-sm">loading...</p>}
-        {episodesQ.data && episodesQ.data.length === 0 && (
-          <p className="text-mute text-sm">no episodes yet.</p>
-        )}
-        <ul className="space-y-2">
-          {(episodesQ.data ?? []).map((ep) => (
-            <li key={ep.id} className="card">
-              <div className="flex items-start gap-3">
-                {ep.artwork_path ? (
-                  <img
-                    src={`/media/${ep.id}.jpg`}
-                    alt=""
-                    className="h-16 w-16 flex-none rounded border border-line object-cover"
-                  />
-                ) : (
-                  <div className="h-16 w-16 flex-none rounded border border-line bg-surface" />
-                )}
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-[10px] uppercase text-accent border border-line rounded px-1.5 py-0.5">
-                      done
-                    </span>
-                    <span className="font-mono text-[11px] text-mute truncate">
-                      {ep.id} &middot; {formatDuration(ep.duration_secs)}
-                    </span>
-                  </div>
+      </div>
+
+      <button
+        className="btn-ghost w-full mb-2 flex items-center justify-center gap-2"
+        onClick={copy}
+      >
+        {copied ? "✓ Copied" : "⧉ Copy feed URL"}
+      </button>
+      <p className="mono-xs text-mute truncate mb-5" title={feedUrl}>
+        {feedUrl}
+      </p>
+
+      {actionMsg && <p className="mono-xs text-accent mb-3">{actionMsg}</p>}
+      {episodesQ.isLoading && <p className="text-mute text-sm">loading...</p>}
+      {episodes.length === 0 && !episodesQ.isLoading && (
+        <p className="text-mute text-sm">no episodes yet.</p>
+      )}
+
+      <div className="space-y-3">
+        {episodes.map((ep) => (
+          <article key={ep.id} className="card p-4">
+            <div className="flex gap-3">
+              <EpisodeArtwork ep={ep} />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-start gap-2 mb-1">
                   <a
                     href={ep.original_url}
                     target="_blank"
                     rel="noreferrer"
-                    className="block text-sm mt-1 line-clamp-2 hover:text-accent"
+                    className="text-sm font-bold leading-snug hover:text-accent line-clamp-2 flex-1"
                   >
                     {ep.title ?? ep.original_url}
                   </a>
-                  <p className="font-mono text-[11px] text-mute truncate mt-1">
-                    {ep.author ? <>{ep.author} &middot; </> : ""}
-                    {sourceDomain(ep.original_url)} &middot; {ep.pub_date}
-                  </p>
-                  <div className="flex flex-wrap gap-1 mt-2">
-                    <a
-                      className="btn-ghost"
-                      href={`/media/${ep.id}.mp3`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      mp3
-                    </a>
-                    <a
-                      className="btn-ghost"
-                      href={`/media/${ep.id}.vtt`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      transcript
-                    </a>
-                    <button
-                      className="btn-ghost"
-                      disabled={reprocessM.isPending}
-                      onClick={() => {
-                        if (confirm(`Reprocess "${ep.title ?? ep.original_url}"?`))
-                          reprocessM.mutate(ep.original_url);
-                      }}
-                    >
-                      reprocess
-                    </button>
-                    <button
-                      className="btn-ghost btn-danger text-danger border-line"
-                      disabled={deleteM.isPending}
-                      onClick={() => {
-                        if (confirm(`Delete episode ${ep.id}?`)) deleteM.mutate(ep.id);
-                      }}
-                    >
-                      delete
-                    </button>
-                  </div>
+                  <span className="tag tag-done">done</span>
+                </div>
+                <div className="mono-xs text-mute">
+                  {ep.author ? `${ep.author} · ` : ""}
+                  {sourceDomain(ep.original_url)}
+                </div>
+                <div className="mono-xs text-mute mt-0.5">
+                  {ep.pub_date} &middot; {formatDuration(ep.duration_secs)}
                 </div>
               </div>
-            </li>
-          ))}
-        </ul>
-      </section>
+            </div>
+            <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-line">
+              <a className="btn-ghost" href={`/media/${ep.id}.mp3`} target="_blank" rel="noreferrer">
+                MP3
+              </a>
+              <a className="btn-ghost" href={`/media/${ep.id}.vtt`} target="_blank" rel="noreferrer">
+                Transcript
+              </a>
+              <button
+                className="btn-ghost"
+                disabled={reprocessM.isPending}
+                onClick={() => {
+                  if (confirm(`Reprocess "${ep.title ?? ep.original_url}"?`))
+                    reprocessM.mutate(ep.original_url);
+                }}
+              >
+                &#8635; Reprocess
+              </button>
+              <button
+                className="btn-ghost btn-danger ml-auto"
+                disabled={deleteM.isPending}
+                onClick={() => {
+                  if (confirm(`Delete episode ${ep.id}?`)) deleteM.mutate(ep.id);
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </article>
+        ))}
+      </div>
     </div>
   );
+}
+
+/**
+ * Per-episode artwork: the episode's own JPG when present, else the seeded
+ * default podcast art at /media/default.jpg. Falls back to a gradient tile only
+ * if that image fails to load (e.g. default not seeded yet).
+ */
+function EpisodeArtwork({ ep }: { ep: Episode }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <div
+        className="artwork"
+        style={{ background: "linear-gradient(135deg, #1ce783, #16d076)" }}
+      />
+    );
+  }
+  const src = ep.artwork_path ? `/media/${ep.id}.jpg` : "/media/default.jpg";
+  return <img src={src} alt="" className="artwork" onError={() => setFailed(true)} />;
 }
 
 function sourceDomain(url: string): string {

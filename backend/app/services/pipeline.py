@@ -44,6 +44,11 @@ from app.utils.logging import episode_id_ctx, job_id_ctx, stage_ctx
 
 logger = logging.getLogger("app.services.pipeline")
 
+# Upper bound on the cleaned-article text fed to the show-notes summary call.
+# A topic-level blurb doesn't need the whole body; this bounds the input tokens
+# while leaving typical articles (under the cap) summarized in full.
+_SUMMARY_MAX_INPUT_CHARS = 16000
+
 
 @contextmanager
 def _job_context(job: jobs.Job):
@@ -155,9 +160,9 @@ def _finalize_failure(
 
 
 async def _run_stages(job: jobs.Job, settings: Settings) -> None:
-    """Run the stages in order: extract -> cleanup -> corrections -> chunk ->
-    tts -> audio -> artwork -> transcript -> finalize (finalize inserts/updates
-    the episodes row)."""
+    """Run the stages in order: extract -> cleanup -> corrections -> summary ->
+    chunk -> tts -> audio -> artwork -> transcript -> finalize (finalize
+    inserts/updates the episodes row)."""
 
     extraction_result = await _run_stage(
         "extract", lambda: _stage_extract(job, settings), job.id, settings
@@ -171,6 +176,12 @@ async def _run_stages(job: jobs.Job, settings: Settings) -> None:
     corrected = await _run_stage(
         "corrections",
         lambda: _stage_corrections(cleaned, settings),
+        job.id,
+        settings,
+    )
+    summary = await _run_stage(
+        "summary",
+        lambda: _stage_summary(corrected, settings),
         job.id,
         settings,
     )
@@ -212,6 +223,7 @@ async def _run_stages(job: jobs.Job, settings: Settings) -> None:
             audio_result=audio_result,
             artwork_result=artwork_result,
             vtt=vtt,
+            summary=summary,
             settings=settings,
         ),
         job.id,
@@ -286,7 +298,27 @@ async def _stage_cleanup(markdown: str, settings: Settings) -> str:
 
     prompt_path = _prompt_path(settings)
     system_prompt = prompt_service.load(prompt_path)
-    cleaned = await _llm_with_retry(system_prompt, markdown, settings)
+
+    # Process the article in paragraph-bounded windows, one LLM call each, then
+    # concatenate. A single giant call capped the output at LLM_MAX_TOKENS and
+    # truncated long articles to the first paragraph; windowing keeps each call's
+    # output well under the cap so article length is never the bottleneck.
+    windows = chunker.pack_paragraphs(markdown, settings.LLM_CLEANUP_WINDOW_CHARS) or [markdown]
+    cleaned_parts: list[str] = []
+    for index, window in enumerate(windows):
+        part = await _llm_with_retry(system_prompt, window, settings)
+        cleaned_parts.append(part.strip())
+        logger.info(
+            "Cleanup window done",
+            extra={
+                "event": "cleanup_window_done",
+                "window_index": index,
+                "window_count": len(windows),
+                "input_chars": len(window),
+                "output_chars": len(part),
+            },
+        )
+    cleaned = "\n\n".join(p for p in cleaned_parts if p)
     if len(cleaned) < settings.MIN_CLEANUP_CHARS:
         raise CleanupTooShortError(
             f"Cleanup output is {len(cleaned)} chars, below "
@@ -298,6 +330,7 @@ async def _stage_cleanup(markdown: str, settings: Settings) -> str:
             "event": "cleanup_complete",
             "input_chars": len(markdown),
             "output_chars": len(cleaned),
+            "window_count": len(windows),
         },
     )
     return cleaned
@@ -453,6 +486,7 @@ async def _stage_finalize(
     audio_result: audio.EncodeResult,
     artwork_result: artwork.ArtworkResult | None,
     vtt: str,
+    summary: str | None,
     settings: Settings,
 ) -> None:
     """Upsert the ``episodes`` row that the RSS feed and media handlers read.
@@ -481,6 +515,7 @@ async def _stage_finalize(
             artwork_path=artwork_path,
             transcript_vtt=vtt,
             duration_secs=duration_secs,
+            summary=summary,
         )
     finally:
         conn.close()
@@ -522,6 +557,39 @@ async def _stage_corrections(cleaned: str, settings: Settings) -> str:
     return result
 
 
+async def _stage_summary(text: str, settings: Settings) -> str | None:
+    """Generate a short show-notes summary of the cleaned narration text.
+
+    Never fails the job: show notes are non-essential, so any error returns None
+    and the episode still publishes with the minimal title/author/source
+    description. The exception is logged with its traceback (exc_info), so a real
+    bug stays visible in the logs rather than being silently lost.
+    """
+
+    prompt_path = _summary_prompt_path(settings)
+    system_prompt = prompt_service.load(prompt_path)
+    # A 2-4 sentence show-notes blurb only needs the article opening, so cap the
+    # input -- most articles fit under the cap (no change), and a very long one
+    # is summarized from its first ~16K chars instead of billing the full body
+    # as input tokens. (Intentionally not windowed like cleanup: the output is
+    # tiny and the cap bounds the input.)
+    head = text[:_SUMMARY_MAX_INPUT_CHARS]
+    try:
+        summary = (await _llm_with_retry(system_prompt, head, settings)).strip()
+    except Exception:
+        logger.warning(
+            "Summary generation failed; episode publishes without show notes",
+            extra={"event": "summary_failed"},
+            exc_info=True,
+        )
+        return None
+    logger.info(
+        "Summary generated",
+        extra={"event": "summary_complete", "summary_chars": len(summary)},
+    )
+    return summary or None
+
+
 async def _llm_with_retry(system: str, user: str, settings: Settings) -> str:
     """Call llm.generate with tenacity retry on transient errors only."""
 
@@ -553,6 +621,10 @@ async def _llm_with_retry(system: str, user: str, settings: Settings) -> str:
 
 def _prompt_path(_settings: Settings) -> Path:
     return Path(__file__).parent.parent / "prompts" / "script.txt"
+
+
+def _summary_prompt_path(_settings: Settings) -> Path:
+    return Path(__file__).parent.parent / "prompts" / "summary.txt"
 
 
 def _corrections_path(_settings: Settings) -> Path:

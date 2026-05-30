@@ -16,6 +16,7 @@ from dataclasses import dataclass
 import httpx
 
 from app.config import Settings
+from app.services import llm
 
 logger = logging.getLogger("app.services.reachability")
 
@@ -75,14 +76,18 @@ async def check_llm(settings: Settings, *, timeout: float = 5.0) -> CheckResult:
             return CheckResult(name="llm", ok=False, detail="ANTHROPIC_API_KEY is not set")
         return CheckResult(name="llm", ok=True, detail="anthropic provider; API key present")
 
-    base = (settings.OPENAI_BASE_URL or "").rstrip("/")
+    # openai-compatible / openrouter / ollama all expose {base}/models; resolve
+    # the base + auth the same way the pipeline does so each provider probes its
+    # own endpoint with its own key/headers.
+    base_url, api_key, extra_headers = llm.openai_compatible_connection(settings)
+    base = base_url.rstrip("/")
     if not base:
-        return CheckResult(name="llm", ok=False, detail="OPENAI_BASE_URL is not set")
+        return CheckResult(name="llm", ok=False, detail="LLM base URL is not set")
 
     endpoint = f"{base}/models"
-    headers = {}
-    if settings.OPENAI_API_KEY:
-        headers["Authorization"] = f"Bearer {settings.OPENAI_API_KEY}"
+    headers = dict(extra_headers)
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:

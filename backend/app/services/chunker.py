@@ -88,6 +88,33 @@ def _split_paragraphs(text: str) -> list[str]:
     return [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
 
 
+def pack_paragraphs(text: str, max_chars: int) -> list[str]:
+    """Greedy-pack paragraphs into windows no larger than ``max_chars``.
+
+    Used by the cleanup stage to process long articles in bounded windows so a
+    single LLM call's output never hits the token cap. Reuses the paragraph
+    splitter. A lone paragraph that exceeds ``max_chars`` becomes its own window
+    (we don't sub-split prose mid-paragraph here; the LLM call still handles it).
+    Empty input returns an empty list.
+    """
+
+    windows: list[str] = []
+    current: list[str] = []
+    current_chars = 0
+    for paragraph in _split_paragraphs(text):
+        sep = 2 if current else 0  # the "\n\n" rejoin between paragraphs
+        if current and current_chars + sep + len(paragraph) > max_chars:
+            windows.append("\n\n".join(current))
+            current = []
+            current_chars = 0
+            sep = 0
+        current.append(paragraph)
+        current_chars += sep + len(paragraph)
+    if current:
+        windows.append("\n\n".join(current))
+    return windows
+
+
 def _chunk_paragraph(paragraph: str, limits: ChunkerLimits, *, base_chunk_index: int) -> list[str]:
     word_count = len(paragraph.split())
     char_count = len(paragraph)

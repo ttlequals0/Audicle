@@ -6,11 +6,21 @@
 # ``TTS_DEVICE=cpu``.
 FROM pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime AS runtime
 
+# Cache locations target writable paths so the image runs as a non-root user
+# (the compose ``user: 1000:1000``). The model caches live on the persistent
+# ``/data`` volume (multi-GB XTTS/HF weights survive container recreation);
+# the rest go to image-local ``/tmp``. The old ``/root/.cache`` defaults are
+# mode-700 root-owned and crash uid 1000 -- Numba "no locator available" and
+# Coqui "Permission denied: '/root/.cache'" both trace back to that.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    HF_HOME=/root/.cache/huggingface \
-    TTS_HOME=/root/.cache/huggingface/tts \
+    HF_HOME=/data/hf_cache \
+    TTS_HOME=/data/tts_home \
+    HOME=/tmp \
+    XDG_CACHE_HOME=/tmp/.cache \
+    NUMBA_CACHE_DIR=/tmp/numba_cache \
+    MPLCONFIGDIR=/tmp/mpl \
     # Coqui gates the first XTTS-v2 load behind an interactive y/n CPML prompt;
     # in a container there is no TTY to answer it, so the load hangs/fails.
     # Self-hosting the wrapper is acceptance of the non-commercial CPML (see the
@@ -18,22 +28,39 @@ ENV PYTHONUNBUFFERED=1 \
     COQUI_TOS_AGREED=1
 
 # OS deps: curl for healthchecks; libsndfile for soundfile/coqui-tts WAV IO.
+# --only-upgrade gpgv pulls the patched base-image package (CVE-2025-68973).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates libsndfile1 \
+    && apt-get install -y --only-upgrade gpgv \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 # Install Python deps from pyproject.toml so this image stays in lockstep with
 # the declared dependency set; no parallel hand-written list to drift.
-# The transformers cap (coqui-tts 0.24 breaks on transformers 5.x; see the note
-# in pyproject.toml) is applied here rather than in the manifest.
+# transformers: coqui-tts 0.24 requires >=4.43.0 unbounded but breaks on 5.x, so
+# we pin the 4.48.x line -- >=4.48.0 clears CVE-2024-11392/-11393/-11394 while
+# staying well under the 5.x break. The trailing -U upgrades patch transitive
+# deps the base image / resolver pin to vulnerable versions (urllib3,
+# cryptography, pillow, Brotli, setuptools, wheel). torch stays at the base
+# image's 2.4.0: the only torch fix is 2.6.0, whose weights_only=True default
+# breaks XTTS checkpoint loading, and the CVE is a torch.load RCE unreachable
+# with Audicle's trusted XTTS model + WAV inputs.
 COPY pyproject.toml ./
-COPY config.py engine.py main.py ./
-RUN pip install --no-cache-dir "transformers>=4.43.0,<4.47" \
-    && pip install --no-cache-dir .
+COPY config.py engine.py log_setup.py main.py ./
+RUN pip install --no-cache-dir "transformers>=4.48.0,<4.49" \
+    && pip install --no-cache-dir . \
+    && pip install --no-cache-dir -U \
+        "urllib3>=2.7.0" "cryptography>=46.0.5" "pillow>=12.2.0" \
+        "Brotli>=1.2.0" "setuptools>=78.1.1" "wheel>=0.46.2"
 
 EXPOSE 8000
+
+# Single-source version: the build passes the repo-root VERSION value here
+# (`--build-arg WRAPPER_VERSION=$(cat VERSION)`) since this build context is
+# tts-wrapper/ and can't read the root file. main.py reads AUDICLE_WRAPPER_VERSION.
+ARG WRAPPER_VERSION=0.0.0
+ENV AUDICLE_WRAPPER_VERSION=${WRAPPER_VERSION}
 
 HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=120s \
     CMD curl -fsS http://localhost:8000/health/live || exit 1
