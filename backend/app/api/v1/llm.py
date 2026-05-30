@@ -20,7 +20,6 @@ import httpx
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict
 
-from app.api.deps import require_admin
 from app.config import Settings, get_settings
 from app.services import llm, runtime_settings
 
@@ -145,7 +144,7 @@ async def _models_response(overlaid: Settings, provider: str | None) -> ModelsRe
     return ModelsResponse(provider=selected, models=[ModelEntry(**m) for m in models])
 
 
-@router.get("/models", response_model=ModelsResponse, dependencies=[Depends(require_admin)])
+@router.get("/models", response_model=ModelsResponse)
 async def list_models(
     settings: Annotated[Settings, Depends(get_settings)],
     provider: str | None = None,
@@ -153,7 +152,7 @@ async def list_models(
     return await _models_response(runtime_settings.overlay(settings), provider)
 
 
-@router.post("/models/refresh", response_model=ModelsResponse, dependencies=[Depends(require_admin)])
+@router.post("/models/refresh", response_model=ModelsResponse)
 async def refresh_models(
     settings: Annotated[Settings, Depends(get_settings)],
     provider: str | None = None,

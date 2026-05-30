@@ -9,6 +9,9 @@
   }
   body {
     overflow-x: hidden;
+    /* Keep the custom pull-to-refresh from also triggering the browser/PWA's
+       native pull-to-refresh on Android Chrome. */
+    overscroll-behavior-y: contain;
   }
   /* Subtle green fractal-noise texture over the whole viewport. */
   body::before {
@@ -174,6 +177,54 @@
     50% {
       opacity: 0.3;
     }
+  }
+
+  .ptr-host {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 30;
+    display: flex;
+    justify-content: center;
+    pointer-events: none;
+  }
+  .ptr-pill {
+    margin-top: -44px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 14px;
+    border-radius: 999px;
+    background: rgba(10, 10, 12, 0.92);
+    border: 1px solid #26262e;
+    backdrop-filter: blur(8px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  }
+  .ptr-spinner {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid #26262e;
+    border-top-color: #1ce783;
+  }
+  .ptr-spinning {
+    animation: ptr-spin 0.7s linear infinite;
+  }
+  @keyframes ptr-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  .ptr-label {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #9a9aaa;
+  }
+  .ptr-label-armed {
+    color: #1ce783;
   }
 
   .card {

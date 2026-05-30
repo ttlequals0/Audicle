@@ -297,6 +297,31 @@ def test_hms_handles_zero_and_negative(env: Path) -> None:
     assert feed._hms(86399) == "23:59:59"
 
 
+def test_item_guid_is_bare_episode_id_without_epoch(env: Path) -> None:
+    """Back-compat: epoch 0 (never rotated) leaves item guids as the bare id."""
+
+    body = _render([_episode(id="abc123")], env=env)
+    item = DET.fromstring(body).find("channel").find("item")
+    assert item.find("guid").text == "abc123"
+
+
+def test_item_guid_salted_with_feed_guid_epoch(env: Path) -> None:
+    """After a force-recreate the item guid carries the epoch suffix so apps
+    treat the episode as new; the media enclosure URL keeps the bare id."""
+
+    body = feed.render(
+        [_episode(id="abc123", audio_path="/data/media/abc123.mp3")],
+        settings=get_settings(),
+        podcast_guid="g",
+        last_build=_last_build(),
+        feed_guid_epoch=3,
+    )
+    item = DET.fromstring(body).find("channel").find("item")
+    assert item.find("guid").text == "abc123-3"
+    # Enclosure still points at the real file (bare id, not salted).
+    assert "abc123.mp3" in item.find("enclosure").get("url")
+
+
 def test_parse_iso_handles_z_suffix() -> None:
     result = feed._parse_iso("2026-05-28T18:00:00Z")
     assert result is not None

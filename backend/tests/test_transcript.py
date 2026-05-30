@@ -139,3 +139,27 @@ def test_cumulative_drift_stays_integer_ms() -> None:
 def test_output_terminates_with_newline() -> None:
     vtt = transcript.build_vtt(_chunks(("a", 1.0)), silence_ms=0)
     assert vtt.endswith("\n") and not vtt.endswith("\n\n")
+
+
+def test_text_from_vtt_strips_structure_and_unescapes() -> None:
+    vtt = (
+        "WEBVTT\n\n"
+        "1\n00:00:00.000 --> 00:00:02.500\nFirst line &amp; more.\n\n"
+        "2\n00:00:02.500 --> 00:00:05.000\nSecond <cue> line.\n"
+    )
+    assert transcript.text_from_vtt(vtt) == "First line & more.\n\nSecond <cue> line."
+
+
+def test_text_from_vtt_round_trips_build_vtt() -> None:
+    chunks = _chunks(
+        ("The CDMA network is up.", 2.0),
+        ("Latency dropped by 30 percent.", 2.0),
+    )
+    vtt = transcript.build_vtt(chunks, silence_ms=200)
+    assert transcript.text_from_vtt(vtt) == (
+        "The CDMA network is up.\n\nLatency dropped by 30 percent."
+    )
+
+
+def test_text_from_vtt_empty_doc() -> None:
+    assert transcript.text_from_vtt("WEBVTT\n") == ""

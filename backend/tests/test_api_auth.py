@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -95,6 +96,52 @@ def test_status_when_logged_in(auth_env) -> None:
     assert body["password_set"] is True
     assert body["authenticated"] is True
     assert body["csrf_token"]
+
+
+def test_lockdown_gates_all_admin_routes_when_password_set(auth_env) -> None:
+    """With a password set and no session, every /api/v1 route except the auth
+    bootstrap is closed -- including the read-only job status that used to be
+    open. The auth status endpoint stays reachable so the UI can bootstrap."""
+
+    with _client() as client:
+        assert client.get("/api/v1/status/job-xyz").status_code == 401
+        assert client.get("/api/v1/jobs").status_code == 401
+        assert client.get("/api/v1/episodes").status_code == 401
+        assert client.get("/api/v1/auth/status").status_code == 200
+
+
+def test_every_v1_get_route_is_gated_when_password_set(auth_env) -> None:
+    """Default-closed guarantee: every GET under /api/v1 -- except the auth
+    bootstrap and FastAPI's own docs/schema -- requires a session. Walks the
+    live route table so a future router added outside the require_admin group
+    fails here instead of silently shipping unauthenticated."""
+
+    exempt = {"/api/v1/openapi.json", "/api/v1/docs", "/api/v1/docs/oauth2-redirect", "/api/v1/redoc"}
+    app = create_app()
+    get_paths = {
+        route.path
+        for route in app.routes
+        if getattr(route, "path", "").startswith("/api/v1/")
+        and "GET" in (getattr(route, "methods", None) or set())
+        and not route.path.startswith("/api/v1/auth")
+        and route.path not in exempt
+    }
+    assert get_paths, "no /api/v1 GET routes discovered -- introspection broke"
+    with _client() as client:
+        for path in get_paths:
+            concrete = re.sub(r"\{[^}]+\}", "x", path)
+            assert client.get(concrete).status_code == 401, f"{concrete} is not gated"
+
+
+def test_lockdown_keeps_public_podcast_and_ops_routes_open(auth_env) -> None:
+    """The feed, media, and health surfaces must stay public even with a
+    password set, or podcast apps and probes break. A missing media file 404s
+    (not 401), proving the route is reachable without a session."""
+
+    with _client() as client:
+        assert client.get("/rss/rss.xml").status_code == 200
+        assert client.get("/health/live").status_code == 200
+        assert client.get("/media/nope.mp3").status_code == 404
 
 
 def test_status_convenience_mode_reports_authenticated(open_env) -> None:

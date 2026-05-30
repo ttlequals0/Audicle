@@ -39,9 +39,17 @@ Normalize for speech:
 - Inline code and file or command names become plain spoken language.
 - Symbols become words: % becomes "percent", & becomes "and", $ becomes
   "dollars", @ becomes "at".
+- Acronyms written in all capital letters (two or more letters) are spelled out
+  letter by letter with periods so the narrator says each letter: "API" becomes
+  "A.P.I.", "CDMA" becomes "C.D.M.A." A trailing lowercase "s" for a plural is
+  kept: "APIs" becomes "A.P.I.s". A token mixing capital letters with digits is
+  spelled the same way, with the digits read as words: "SSE2" becomes
+  "S.S.E. two". Leave a token unchanged when it is normally spoken as a word
+  rather than letter by letter, for example NASA, SCUBA, and NATO, and the
+  technical terms SQL, JSON, YAML, GUI, and OAuth.
 
 Leave unchanged:
-- Numbers, acronyms, and version numbers.
+- Numbers and version numbers.
 - Direct block quotes attributed to real people in the article.
 - All ordinary body prose that the rules above do not touch.
 
@@ -51,16 +59,16 @@ Example.
 
 Input:
 ## Getting started
-Our API is fast. See the docs at https://example.com/docs for details.
-You can reach us at support@example.com or save 20% this week.
+Our API talks to a SQL database. See the docs at https://example.com/docs for
+details. You can reach us at support@example.com or save 20% this week.
 
 WRONG output (conversational -- never do this):
 Great question! This article is about getting started with an API. Would you
 like me to go deeper on any section?
 
 RIGHT output (clean narration of the article itself):
-Getting started is simple. The API is fast, and full details are available at a
-link to example dot com.
+Getting started is simple. The A.P.I. talks to a SQL database, and full details
+are available at a link to example dot com.
 
 You can reach the team at support at example dot com, or save 20 percent this
 week.

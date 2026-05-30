@@ -8,7 +8,6 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.api.deps import require_admin
 from app.config import Settings, get_settings
 from app.services import prompt as prompt_service
 
@@ -38,7 +37,6 @@ class PromptBody(BaseModel):
     "/prompt",
     response_model=PromptBody,
     summary="Read the cleanup prompt",
-    dependencies=[Depends(require_admin)],
 )
 def read_prompt() -> PromptBody:
     path = _prompt_path()
@@ -53,7 +51,6 @@ def read_prompt() -> PromptBody:
     "/prompt",
     response_model=PromptBody,
     summary="Replace the cleanup prompt",
-    dependencies=[Depends(require_admin)],
 )
 def write_prompt(
     body: PromptBody,
