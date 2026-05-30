@@ -39,6 +39,13 @@ _MAX_REFERENCE_BYTES = 5 * 1024 * 1024
 _MIN_DURATION_SECS = 3.0
 _MAX_DURATION_SECS = 60.0
 
+DEFAULT_SAMPLE_TEXT = (
+    "But I must explain to you how all this mistaken idea of denouncing "
+    "of a pleasure and praising pain was born and I will give you a "
+    "complete account of the system, and expound the actual teachings of "
+    "the great explorer of the truth, the master-builder of human happiness."
+)
+
 # Serialises /test against itself so two operators auditioning candidates
 # can't race on the shared reference path. /commit doesn't need the lock
 # (atomic rename) but takes it anyway to prevent /test seeing a half-
@@ -123,7 +130,7 @@ async def test_candidate(
             max_length=400,
             description="text to synthesize using the candidate clip",
         ),
-    ] = "The quick brown fox jumps over the lazy dog.",
+    ] = DEFAULT_SAMPLE_TEXT,
 ) -> Response:
     """Synthesize ``sample_text`` using ``voice`` without committing.
 
@@ -189,7 +196,7 @@ async def audition_committed(
             max_length=400,
             description="text to synthesize using the committed voice",
         ),
-    ] = "The quick brown fox jumps over the lazy dog.",
+    ] = DEFAULT_SAMPLE_TEXT,
 ) -> Response:
     """Synthesize ``sample_text`` with the currently-committed reference voice.
 

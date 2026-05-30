@@ -41,6 +41,14 @@ class Settings(BaseSettings):
     FEED_AUTHOR: str = ""
     FEED_EMAIL: str = ""
     FEED_ARTWORK_URL: str = ""
+    # Branded default cover used when neither a per-episode og:image nor the
+    # operator's FEED_ARTWORK_URL is set. Served from the repo's raw-GitHub URL
+    # (extension-clean .jpg) so podcast apps cache a stable cover across deploys
+    # rather than the server-local /media/default.jpg.
+    DEFAULT_ARTWORK_URL: str = (
+        "https://raw.githubusercontent.com/ttlequals0/Audicle/main/"
+        "branding/podcast-artwork-3000.jpg"
+    )
 
     # LLM provider connection (UI-settable). Missing values surface at job time
     # and in /health/ready rather than blocking startup.

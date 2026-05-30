@@ -211,7 +211,7 @@ def test_item_artwork_falls_back_to_default_when_feed_url_unset(
 ) -> None:
     # Regression: an unset FEED_ARTWORK_URL is "", which feedgen rejects with
     # "Image file must be png or jpg", crashing the whole render with a 500. The
-    # per-item image must fall back to the seeded /media/default.jpg instead.
+    # per-item image must fall back to the branded DEFAULT_ARTWORK_URL instead.
     monkeypatch.setenv("FEED_ARTWORK_URL", "")
     get_settings.cache_clear()
     ep = _episode(artwork_path=None)
@@ -219,8 +219,28 @@ def test_item_artwork_falls_back_to_default_when_feed_url_unset(
     root = DET.fromstring(body)
     image = root.find(f"channel/item/{{{_ITUNES_NS}}}image")
     assert image is not None
-    base = get_settings().BASE_URL.rstrip("/")
-    assert image.get("href") == f"{base}/media/default.jpg"
+    assert image.get("href") == get_settings().DEFAULT_ARTWORK_URL
+
+
+def test_artwork_falls_back_to_local_default_when_both_urls_unset(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Both operator and branded defaults empty -> feed must still emit a
+    # non-empty .jpg (the seeded /media/default.jpg) rather than crash feedgen
+    # with "Image file must be png or jpg".
+    monkeypatch.setenv("FEED_ARTWORK_URL", "")
+    monkeypatch.setenv("DEFAULT_ARTWORK_URL", "")
+    get_settings.cache_clear()
+    assert get_settings().DEFAULT_ARTWORK_URL == ""
+    ep = _episode(artwork_path=None)
+    body = _render([ep], env=env)
+    root = DET.fromstring(body)
+    channel_image = root.find("channel/image/url")
+    assert channel_image is not None
+    assert channel_image.text.endswith("/media/default.jpg")
+    item_image = root.find(f"channel/item/{{{_ITUNES_NS}}}image")
+    assert item_image is not None
+    assert item_image.get("href").endswith("/media/default.jpg")
 
 
 def test_item_artwork_links_per_episode_jpg_when_present(env: Path) -> None:
