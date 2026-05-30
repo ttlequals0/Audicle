@@ -50,7 +50,7 @@ Tech Brand,GKE,G K E,Spell out: jee kay ee
 Tech Brand,EKS,E K S,Spell out: ee kay es
 Tech Brand,AKS,A K S,Spell out: ay kay es
 Tech Brand,IAM,I A M,"Spell out, not 'I am'"
-Tech Brand,S3,S3,Spell out: es three
+Tech Brand,S3,S 3,Spell out: es three
 Tech Brand,EC2,E C 2,Spell out: ee see two
 Tech Brand,PyTorch,pie-torch,Pronounced 'pie-torch'
 Tech Brand,Kubernetes,koo-BER-neh-tees,Commonly mispronounced
@@ -224,7 +224,7 @@ Format,2nd,second,Ordinal
 Format,3rd,third,Ordinal
 Format,4th,fourth,Ordinal
 Format,Jan.,January,Month abbreviation
-Format,Feb.,February,Month abbreviation
+Format,Feb.,FEB-roo-air-ee,Month abbreviation
 Format,vs.,versus,Abbreviation
 Format,Dr.,Doctor,Title
 Format,Mr.,Mister,Title
@@ -233,7 +233,7 @@ Format,Jr.,Junior,Suffix
 Format,Sr.,Senior,Suffix
 Format,e.g.,for example,Latin abbreviation
 Format,i.e.,that is,Latin abbreviation
-Format,etc.,et cetera,Latin abbreviation
+Format,etc.,et SET-er-ah,Latin abbreviation
 Format,approx.,approximately,Abbreviation
 Format,v2.0,version two point oh,Version strings
 Format,v1.2.3,version one point two point three,Semantic version
