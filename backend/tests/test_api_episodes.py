@@ -71,10 +71,73 @@ def test_list_episodes_reports_audio_size_bytes(env: Path) -> None:
 
 
 def test_list_episodes_audio_size_zero_when_file_missing(env: Path) -> None:
-    _seed(env, id_="ghost")  # row present, no file on disk
+    _seed(env, id_="ghost")  # row present, no file on disk, no stored size
     with _client(env) as client:
         response = client.get("/api/v1/episodes")
     assert response.json()[0]["audio_size_bytes"] == 0
+
+
+def test_list_episodes_prefers_stored_audio_size_over_stat(env: Path) -> None:
+    # A stored audio_size_bytes (0.6.0+) is returned verbatim, even when the file
+    # on disk is a different size -- proving no stat() happens for new rows.
+    database.run_migrations(env)
+    conn = database.connect(database.db_path(env))
+    try:
+        episodes.upsert(
+            conn,
+            id="sized",
+            job_id=None,
+            original_url="https://example.test/sized",
+            title="t",
+            author="a",
+            audio_path="/data/media/sized.mp3",
+            artwork_path=None,
+            transcript_vtt=None,
+            duration_secs=10,
+            audio_size_bytes=123456,
+        )
+    finally:
+        conn.close()
+    with _client(env) as client:
+        response = client.get("/api/v1/episodes")
+    assert response.json()[0]["audio_size_bytes"] == 123456
+
+
+def test_list_episodes_has_cleaned_text_flag(env: Path) -> None:
+    database.run_migrations(env)
+    conn = database.connect(database.db_path(env))
+    try:
+        episodes.upsert(
+            conn,
+            id="withtext",
+            job_id=None,
+            original_url="https://example.test/withtext",
+            title="t",
+            author="a",
+            audio_path="/data/media/withtext.mp3",
+            artwork_path=None,
+            transcript_vtt=None,
+            duration_secs=10,
+            cleaned_text="cleaned article body",
+        )
+        episodes.upsert(
+            conn,
+            id="notext",
+            job_id=None,
+            original_url="https://example.test/notext",
+            title="t",
+            author="a",
+            audio_path="/data/media/notext.mp3",
+            artwork_path=None,
+            transcript_vtt=None,
+            duration_secs=10,
+        )
+    finally:
+        conn.close()
+    with _client(env) as client:
+        rows = client.get("/api/v1/episodes").json()
+    flags = {r["id"]: r["has_cleaned_text"] for r in rows}
+    assert flags == {"withtext": True, "notext": False}
 
 
 def test_delete_episode_removes_row_and_files(env: Path) -> None:

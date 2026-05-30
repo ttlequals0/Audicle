@@ -118,6 +118,11 @@ export default function Feed() {
               <a className="btn-ghost" href={`/media/${ep.id}.vtt`} target="_blank" rel="noreferrer">
                 Transcript
               </a>
+              {ep.has_cleaned_text && (
+                <a className="btn-ghost" href={`/media/${ep.id}.txt`} target="_blank" rel="noreferrer">
+                  Cleaned text
+                </a>
+              )}
               <button
                 className="btn-ghost"
                 disabled={reprocessM.isPending}

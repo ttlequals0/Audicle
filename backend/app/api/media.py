@@ -99,3 +99,26 @@ async def get_vtt(
         media_type="text/vtt; charset=utf-8",
         headers={"Cache-Control": "public, max-age=86400"},
     )
+
+
+@router.get("/{episode_id}.txt")
+async def get_cleaned_text(
+    episode_id: str,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> Response:
+    """The cleaned article text (the exact input to TTS), served from the
+    ``cleaned_text`` column. 404 for episodes processed before 0.6.0 (NULL)."""
+
+    _validate_episode_id(episode_id)
+    conn = database.connect(database.db_path(settings.DATA_DIR))
+    try:
+        cleaned_text = episodes.get_cleaned_text(conn, episode_id)
+    finally:
+        conn.close()
+    if not cleaned_text:
+        raise HTTPException(status_code=404, detail="not found")
+    return Response(
+        content=cleaned_text,
+        media_type="text/plain; charset=utf-8",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )

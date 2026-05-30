@@ -167,6 +167,11 @@ export default function SettingsRoute() {
         if (visible.length === 0) return null;
         return (
           <CollapsibleSection key={group} title={group} defaultOpen={group === "LLM"}>
+            {group === "Feed" && (
+              <p className="mono-xs text-mute mb-3">
+                // saved feed changes apply on the next podcast-app refresh -- no rebuild
+              </p>
+            )}
             {visible.map((key) => (
               <div key={key}>
                 <label className="label" htmlFor={key}>
@@ -204,6 +209,9 @@ export default function SettingsRoute() {
                       setDraft((p) => ({ ...p, [key]: e.target.value }))
                     }
                   />
+                )}
+                {key === "FEED_ARTWORK_URL" && (
+                  <ArtworkPreview value={draft[key] ?? ""} />
                 )}
               </div>
             ))}
@@ -257,6 +265,37 @@ export default function SettingsRoute() {
           </a>
         </div>
       </CollapsibleSection>
+    </div>
+  );
+}
+
+// Live preview of the feed cover. Empty value falls back to /media/default.jpg
+// (the branding art seeded on startup) -- the same fallback the RSS feed uses --
+// so the operator always sees the cover the feed will actually serve.
+function ArtworkPreview({ value }: { value: string }) {
+  const src = value.trim() || "/media/default.jpg";
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [src]);
+  return (
+    <div className="mt-2 flex items-center gap-3">
+      {failed ? (
+        <div
+          className="artwork-preview grid place-items-center mono-xs text-mute"
+          style={{ background: "#15151a" }}
+        >
+          no image
+        </div>
+      ) : (
+        <img
+          src={src}
+          alt="feed cover preview"
+          className="artwork-preview"
+          onError={() => setFailed(true)}
+        />
+      )}
+      <span className="mono-xs text-mute">
+        {value.trim() ? "custom cover" : "branding default (/media/default.jpg)"}
+      </span>
     </div>
   );
 }

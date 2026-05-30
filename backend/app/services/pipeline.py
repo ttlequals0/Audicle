@@ -26,7 +26,7 @@ from typing import Any
 
 from app.config import Settings
 from app.core import database
-from app.core.paths import media_dir
+from app.core.paths import file_size_or_zero, media_dir
 from app.services import (
     artwork,
     audio,
@@ -224,6 +224,7 @@ async def _run_stages(job: jobs.Job, settings: Settings) -> None:
             artwork_result=artwork_result,
             vtt=vtt,
             summary=summary,
+            cleaned_text=corrected,
             settings=settings,
         ),
         job.id,
@@ -498,6 +499,7 @@ async def _stage_finalize(
     artwork_result: artwork.ArtworkResult | None,
     vtt: str,
     summary: str | None,
+    cleaned_text: str | None,
     settings: Settings,
 ) -> None:
     """Upsert the ``episodes`` row that the RSS feed and media handlers read.
@@ -505,13 +507,17 @@ async def _stage_finalize(
     Title and author come from the extraction metadata (Firecrawl populates
     both when the article has them); ``original_url`` is the job's input
     URL; durations come from the audio stage; ``transcript_vtt`` is the
-    in-memory VTT rendered in the prior stage.
+    in-memory VTT rendered in the prior stage. ``cleaned_text`` is the
+    post-corrections article (the exact text fed to chunking/TTS), persisted so
+    the API can serve it; ``audio_size_bytes`` is stamped here to avoid stat()
+    per request on the feed/episodes hot paths.
     """
 
     title = _coerce_str(metadata.get("title"))
     author = _coerce_str(metadata.get("author")) or settings.FEED_AUTHOR
     artwork_path = str(artwork_result.jpg_path) if artwork_result else None
     duration_secs = round(audio_result.duration_secs)
+    audio_size_bytes = file_size_or_zero(str(audio_result.mp3_path))
 
     conn = database.connect(database.db_path(settings.DATA_DIR))
     try:
@@ -527,6 +533,8 @@ async def _stage_finalize(
             transcript_vtt=vtt,
             duration_secs=duration_secs,
             summary=summary,
+            cleaned_text=cleaned_text,
+            audio_size_bytes=audio_size_bytes,
         )
     finally:
         conn.close()

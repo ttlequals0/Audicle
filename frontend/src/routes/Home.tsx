@@ -10,6 +10,7 @@ interface SubmitResponse {
 export default function Home() {
   const [url, setUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [recentOpen, setRecentOpen] = useState(false);
   const qc = useQueryClient();
 
   const jobsQ = useQuery({
@@ -97,22 +98,33 @@ export default function Home() {
 
       {jobs.length > 1 && (
         <section className="mt-8">
-          <div className="mono-xs text-mute mb-3">// RECENT</div>
-          <ul className="space-y-2">
-            {jobs.slice(1).map((j) => (
-              <li key={j.id} className="card p-4 flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="mono-xs text-mute truncate">{j.url}</p>
-                  <p className="text-sm mt-1 truncate text-dim">
-                    {j.episode_id} &middot; {j.stage ?? "-"}
-                    {progressSuffix(j)}
-                    {j.error && <span className="text-danger"> &middot; {j.error}</span>}
-                  </p>
-                </div>
-                <span className={`tag ${statusTag(j.status)}`}>{j.status}</span>
-              </li>
-            ))}
-          </ul>
+          <button
+            className="mono-xs text-mute mb-3 flex items-center gap-1.5 hover:text-fg"
+            onClick={() => setRecentOpen((o) => !o)}
+            aria-expanded={recentOpen}
+          >
+            <span className={`transition-transform ${recentOpen ? "rotate-90" : ""}`}>
+              &rsaquo;
+            </span>
+            // RECENT ({jobs.length - 1})
+          </button>
+          {recentOpen && (
+            <ul className="space-y-2">
+              {jobs.slice(1).map((j) => (
+                <li key={j.id} className="card p-4 flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="mono-xs text-mute truncate">{j.url}</p>
+                    <p className="text-sm mt-1 truncate text-dim">
+                      {j.episode_id} &middot; {j.stage ?? "-"}
+                      {progressSuffix(j)}
+                      {j.error && <span className="text-danger"> &middot; {j.error}</span>}
+                    </p>
+                  </div>
+                  <span className={`tag ${statusTag(j.status)}`}>{j.status}</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       )}
     </div>

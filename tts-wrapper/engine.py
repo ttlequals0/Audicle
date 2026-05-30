@@ -113,6 +113,13 @@ class XTTSEngine:
         from TTS.api import TTS  # noqa: PLC0415
 
         self._torch = torch
+        # torch 2.6 flipped torch.load's default to weights_only=True, which
+        # refuses to unpickle XTTS's custom config classes and breaks model
+        # loading. The checkpoint is the trusted, bundled XTTS-v2 model (not user
+        # input), so allowlist its config classes as safe globals rather than
+        # forcing weights_only=False. Best-effort: tolerate coqui-tts layouts
+        # that don't expose every class.
+        self._register_xtts_safe_globals(torch)
         device = self.config.device
         logger.info("Loading XTTS-v2 model", extra={"event": "tts_model_loading", "device": device})
 
@@ -155,6 +162,34 @@ class XTTSEngine:
                 extra={"event": "tts_reference_invalid", "path": str(ref_path)},
                 exc_info=True,
             )
+
+    @staticmethod
+    def _register_xtts_safe_globals(torch) -> None:
+        """Allowlist XTTS config classes for torch 2.6's weights_only loader.
+
+        Imports are best-effort: coqui-tts versions differ in where these live,
+        and on torch < 2.6 ``add_safe_globals`` may be absent -- a missing class
+        or API just means we skip it (older torch ignores weights_only anyway).
+        """
+
+        add_safe_globals = getattr(torch.serialization, "add_safe_globals", None)
+        if add_safe_globals is None:
+            return
+        safe: list[type] = []
+        try:
+            from TTS.config.shared_configs import BaseDatasetConfig  # noqa: PLC0415
+            from TTS.tts.configs.xtts_config import XttsConfig  # noqa: PLC0415
+            from TTS.tts.models.xtts import XttsArgs, XttsAudioConfig  # noqa: PLC0415
+
+            safe = [XttsConfig, XttsAudioConfig, XttsArgs, BaseDatasetConfig]
+        except ImportError:
+            logger.warning(
+                "Could not import all XTTS config classes for safe-globals; "
+                "model load may need weights_only handling.",
+                extra={"event": "tts_safe_globals_partial"},
+            )
+        if safe:
+            add_safe_globals(safe)
 
     def _compute_embeddings(self, ref_path: Path) -> None:
         assert self._model is not None

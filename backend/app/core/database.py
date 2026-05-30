@@ -251,6 +251,20 @@ def _m006_job_progress(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE jobs ADD COLUMN progress_total INTEGER")
 
 
+def _m007_episode_cleaned_text_size(conn: sqlite3.Connection) -> None:
+    """Store the cleaned article text (the TTS input) and the audio file size.
+
+    ``cleaned_text`` lets the API serve the cleaned article per episode (it was
+    previously discarded after chunking). ``audio_size_bytes`` is recorded at
+    finalize so the episodes list and RSS enclosure no longer stat() the file per
+    request. Both are additive/NULL for episodes processed before 0.6.0; readers
+    fall back (stat the file, or 404 the text) when NULL.
+    """
+
+    conn.execute("ALTER TABLE episodes ADD COLUMN cleaned_text TEXT")
+    conn.execute("ALTER TABLE episodes ADD COLUMN audio_size_bytes INTEGER")
+
+
 MIGRATIONS: list[tuple[str, Migration]] = [
     ("001_initial_schema", _m001_initial_schema),
     ("002_settings_kv", _m002_settings_kv),
@@ -258,6 +272,7 @@ MIGRATIONS: list[tuple[str, Migration]] = [
     ("004_runtime_settings", _m004_runtime_settings),
     ("005_episode_summary", _m005_episode_summary),
     ("006_job_progress", _m006_job_progress),
+    ("007_episode_cleaned_text_size", _m007_episode_cleaned_text_size),
 ]
 
 

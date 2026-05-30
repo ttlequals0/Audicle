@@ -14,7 +14,9 @@ def _client(env: Path) -> TestClient:
     return TestClient(create_app())
 
 
-def _seed_episode(env: Path, *, id_: str, transcript_vtt: str | None) -> Path:
+def _seed_episode(
+    env: Path, *, id_: str, transcript_vtt: str | None, cleaned_text: str | None = None
+) -> Path:
     database.run_migrations(env)
     conn = database.connect(database.db_path(env))
     try:
@@ -29,6 +31,7 @@ def _seed_episode(env: Path, *, id_: str, transcript_vtt: str | None) -> Path:
             artwork_path=f"/data/media/{id_}.jpg",
             transcript_vtt=transcript_vtt,
             duration_secs=10,
+            cleaned_text=cleaned_text,
         )
     finally:
         conn.close()
@@ -80,6 +83,22 @@ def test_get_jpg_returns_404_when_file_missing(env: Path) -> None:
     _seed_episode(env, id_="abc", transcript_vtt=None)
     with _client(env) as client:
         response = client.get("/media/abc.jpg")
+    assert response.status_code == 404
+
+
+def test_get_cleaned_text_serves_from_db(env: Path) -> None:
+    _seed_episode(env, id_="abc", transcript_vtt=None, cleaned_text="The cleaned article.")
+    with _client(env) as client:
+        response = client.get("/media/abc.txt")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "text/plain; charset=utf-8"
+    assert response.content == b"The cleaned article."
+
+
+def test_get_cleaned_text_returns_404_when_null(env: Path) -> None:
+    _seed_episode(env, id_="abc", transcript_vtt="WEBVTT\n", cleaned_text=None)
+    with _client(env) as client:
+        response = client.get("/media/abc.txt")
     assert response.status_code == 404
 
 
