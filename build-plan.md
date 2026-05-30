@@ -225,7 +225,7 @@ End-to-end per submitted URL:
 2. **Queue:** background asyncio task polls SQLite for `queued` jobs. Single in-flight job, no concurrent processing.
 3. **Extract (stage `extract`):** Firecrawl HTTP call with 3 retries (exponential backoff), returns markdown. Validate against minimum length threshold; fail if too short.
 4. **Cleanup (stage `cleanup`):** send markdown to LLM with cleanup prompt. LLM removes site cruft, transforms headings to transitions, summarizes code blocks and tables, normalizes URLs and symbols. Output is plain text.
-5. **Corrections (stage `corrections`):** apply pronunciation dictionary substitutions to cleaned text.
+5. **Corrections (stage `corrections`):** apply pronunciation substitutions to cleaned text. Two layers are merged in one pass: a bundled read-only seed list and the user dictionary, with user entries winning on key collision.
 6. **Chunk (stage `chunk`):** split text on paragraph boundaries first, sentence boundaries if paragraph exceeds size limit, comma or semicolon boundaries as fallback for long sentences. Target 180 words per chunk, hard max 220.
 7. **Synthesize (stage `tts`):** for each chunk, POST to TTS wrapper at `/generate`. Wrapper returns WAV path on shared volume. Track per-chunk duration.
 8. **Audio post-process (stage `audio`):** trim silence from each chunk, concat WAVs with configurable silence padding (default 250ms), normalize with ffmpeg filter chain (lifted from ebook2audiobook: loudnorm -14 LUFS, EQ, denoise, compress), encode to MP3.
@@ -362,8 +362,9 @@ DELETE /api/v1/episodes/{episode_id}    # delete an episode
 # Prompt and Corrections
 GET    /api/v1/prompt                   # read current cleanup prompt
 PUT    /api/v1/prompt                   # update cleanup prompt
-GET    /api/v1/corrections              # read pronunciation dictionary
-PUT    /api/v1/corrections              # update pronunciation dictionary
+GET    /api/v1/corrections              # read user pronunciation dictionary
+PUT    /api/v1/corrections              # update user pronunciation dictionary
+GET    /api/v1/corrections/seed         # read built-in seed corrections (read-only)
 
 # Runtime Settings (UI-editable subset of env vars)
 GET    /api/v1/settings                 # read current runtime overrides

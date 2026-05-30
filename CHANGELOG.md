@@ -6,6 +6,23 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-05-30
+
+### Built-in pronunciation corrections
+
+- Audicle now ships a baseline set of pronunciation corrections (acronyms,
+  brand names, mispronounced and technical terms) that apply automatically on
+  every episode. Your own corrections still live in Settings and take
+  precedence when they share a key.
+- The built-in list is read-only and isn't shown in the editor. The full set,
+  including reference-only rows, is at `GET /api/v1/corrections/seed`. The
+  Settings corrections panel notes this and links the endpoint.
+- Context-dependent homographs (read, lead, wound) and acronyms the cleanup
+  step already spells out are listed for reference but not applied yet; a later
+  contextual pass will handle homographs.
+- A malformed bundled seed list degrades to user-corrections-only rather than
+  failing the job.
+
 ## [0.8.1] - 2026-05-30
 
 ### Reference-audio defaults and audition UX
