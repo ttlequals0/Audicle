@@ -664,3 +664,14 @@ def test_corrections_malformed_seed_falls_back_to_user_only(
     monkeypatch.setattr(seed_corrections, "seed_path", lambda: bad_seed)
     out = asyncio.run(pipeline._stage_corrections("a widget here", get_settings()))
     assert "wid jet" in out
+
+
+# --- cleanup: residual markdown heading strip ------------------------------
+
+
+def test_strip_heading_markers_removes_atx_headings_only() -> None:
+    text = "### Getting started\nBody.\n## Sub\ntext with C# inline\n#nospace"
+    out = pipeline._strip_heading_markers(text)
+    # Heading hashes (with trailing space) are removed; inline # and a hash with
+    # no following space are left alone.
+    assert out == "Getting started\nBody.\nSub\ntext with C# inline\n#nospace"
