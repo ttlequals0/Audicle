@@ -199,7 +199,12 @@ class XTTSEngine:
             extra={"event": "tts_embeddings_compute", "reference": str(ref_path)},
         )
         gpt_cond_latent, speaker_embedding = (
-            self._model.synthesizer.tts_model.get_conditioning_latents(audio_path=[str(ref_path)])
+            self._model.synthesizer.tts_model.get_conditioning_latents(
+                audio_path=[str(ref_path)],
+                gpt_cond_len=self.config.gpt_cond_len,
+                gpt_cond_chunk_len=self.config.gpt_cond_chunk_len,
+                max_ref_length=self.config.max_ref_length,
+            )
         )
         self._gpt_cond_latent = gpt_cond_latent
         self._speaker_embedding = speaker_embedding
@@ -277,6 +282,7 @@ class XTTSEngine:
             repetition_penalty=self.config.repetition_penalty,
             top_k=self.config.top_k,
             top_p=self.config.top_p,
+            speed=self.config.speed,
         )["wav"]
 
     def _wav_bytes(self, wav_array) -> bytes:

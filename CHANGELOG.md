@@ -23,6 +23,13 @@ work lives under `[Unreleased]`.
 - The built-in pronunciation list grew from 311 to 841 entries, adding internet
   slang, medical and financial terms, geographic names, legal abbreviations, and
   more. Existing curated entries win on any conflict.
+- The TTS wrapper exposes new knobs for taming XTTS-v2 pitch drift, all tunable by
+  environment variable without a rebuild: `XTTS_GPT_COND_LEN`,
+  `XTTS_GPT_COND_CHUNK_LEN`, and `XTTS_MAX_REF_LENGTH` control how much of the
+  reference clip shapes the speaker latent (the default of 6 seconds leaves most
+  of a 20-second reference unused), and `XTTS_SPEED` slows playback slightly to
+  counter the model speeding up on long runs. Defaults match XTTS-v2's own, so
+  behavior is unchanged until you tune them and A/B the result by ear.
 
 ### Changed
 

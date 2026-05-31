@@ -1,8 +1,81 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
+import pytest
 from config import Config
 from engine import _XTTS_MAX_CHARS, XTTSEngine, _split_for_xtts
+
+_COND_ENV = ("XTTS_GPT_COND_LEN", "XTTS_GPT_COND_CHUNK_LEN", "XTTS_MAX_REF_LENGTH", "XTTS_SPEED")
+
+
+def test_conditioning_defaults_match_xtts(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Unset -> XTTS-v2's own defaults, so prior behavior is reproduced.
+    for name in _COND_ENV:
+        monkeypatch.delenv(name, raising=False)
+    cfg = Config.from_env()
+    assert (cfg.gpt_cond_len, cfg.gpt_cond_chunk_len, cfg.max_ref_length, cfg.speed) == (6, 6, 30, 1.0)
+
+
+def test_conditioning_overrides_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XTTS_GPT_COND_LEN", "30")
+    monkeypatch.setenv("XTTS_GPT_COND_CHUNK_LEN", "12")
+    monkeypatch.setenv("XTTS_MAX_REF_LENGTH", "60")
+    monkeypatch.setenv("XTTS_SPEED", "0.95")
+    cfg = Config.from_env()
+    assert (cfg.gpt_cond_len, cfg.gpt_cond_chunk_len, cfg.max_ref_length, cfg.speed) == (30, 12, 60, 0.95)
+
+
+def test_compute_embeddings_forwards_conditioning(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("XTTS_GPT_COND_LEN", "30")
+    monkeypatch.setenv("XTTS_GPT_COND_CHUNK_LEN", "12")
+    monkeypatch.setenv("XTTS_MAX_REF_LENGTH", "60")
+    captured: dict = {}
+
+    class _FakeInner:
+        def get_conditioning_latents(self, **kwargs):
+            captured.update(kwargs)
+            return ("latent", "embed")
+
+    class _FakeModel:
+        class synthesizer:  # noqa: N801
+            tts_model = _FakeInner()
+
+    engine = XTTSEngine(Config.from_env())
+    engine._model = _FakeModel()
+    ref = tmp_path / "voice.wav"
+    engine._compute_embeddings(ref)
+    assert captured["audio_path"] == [str(ref)]
+    assert captured["gpt_cond_len"] == 30
+    assert captured["gpt_cond_chunk_len"] == 12
+    assert captured["max_ref_length"] == 60
+    assert engine.reference_loaded is True
+
+
+def test_infer_piece_forwards_speed_and_sampling(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XTTS_SPEED", "0.9")
+    captured: dict = {}
+
+    class _FakeInner:
+        def inference(self, **kwargs):
+            captured.update(kwargs)
+            return {"wav": np.zeros(8, dtype=np.float32)}
+
+    class _FakeModel:
+        class synthesizer:  # noqa: N801
+            tts_model = _FakeInner()
+
+    engine = XTTSEngine(Config.from_env())
+    engine._model = _FakeModel()
+    engine._gpt_cond_latent = "latent"
+    engine._speaker_embedding = "embed"
+    engine._infer_piece("hello there")
+    assert captured["speed"] == 0.9
+    assert captured["temperature"] == engine.config.temperature
+    assert captured["text"] == "hello there"
 
 
 def test_run_inference_whitespace_text_returns_silence() -> None:
