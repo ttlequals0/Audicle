@@ -6,6 +6,19 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-05-31
+
+### Fixed
+
+- The pronunciation phase's LLM step now reliably reproduces the full passage.
+  In 0.13.0 the prompt was not forceful enough, so the model often returned a
+  short "nothing to respell" reply instead of the text; the length guard then
+  discarded it, leaving the LLM step contributing nothing (the deterministic
+  dictionary still applied). The prompt now mandates full verbatim reproduction
+  with only matched terms respelled, and a discarded short reply is logged with a
+  preview for diagnosis. Article content was never at risk -- the guard kept the
+  original text whenever the model came back short.
+
 ## [0.13.0] - 2026-05-31
 
 ### Added

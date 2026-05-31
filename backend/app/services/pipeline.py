@@ -930,9 +930,9 @@ async def _pronounce_with_llm(
     out_parts: list[str] = []
     for index, window in enumerate(windows):
         user_message = (
-            "Apply the pronunciation reference to the text below and return ONLY "
-            "the text -- same length and order, with just the referenced terms "
-            "respelled."
+            "Reproduce the text below in full, copying every sentence in order and "
+            "changing only the spelled form of terms that match the pronunciation "
+            "reference. Output the complete text and nothing else."
             f"\n\n<text>\n{window}\n</text>"
         )
         try:
@@ -952,6 +952,9 @@ async def _pronounce_with_llm(
                     "window_index": index,
                     "input_chars": len(window),
                     "output_chars": len(part),
+                    # Snippet of what the model returned, to diagnose a short reply
+                    # (e.g. a refusal or "nothing to respell") vs a real respelling.
+                    "output_preview": part[:200],
                 },
             )
             part = window
