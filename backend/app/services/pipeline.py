@@ -334,16 +334,125 @@ def _normalize_date_months(text: str) -> str:
     return _DATE_MONTH_RE.sub(lambda m: _DATE_MONTHS[m.group(1)], text)
 
 
+# Grouped thousands (1,234 / 1,234,567) and decimals (3.14, 1,234.56): two number
+# shapes XTTS-v2 reliably garbles. One token must carry a comma group or a
+# decimal point to match -- bare integers (15, 2026), unit-attached numbers
+# (500m), versions (1.2.3), and code-glued digits (x86, startup_32) are
+# deliberately left to the LLM prompt because they are context-dependent (a year
+# reads "twenty twenty-six", an emergency number reads "nine one one"). The
+# (?<![\w.,])/(?![\w.,]) guards keep this off identifiers and the middle of a
+# dotted version string or IP address.
+_SPELLABLE_NUMBER_RE = re.compile(
+    r"(?<![\w.,])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+)(?![\w.,])"
+)
+
+
+# Self-contained integer-to-words (num2words is LGPL, outside the project's
+# license allow-list). Covers up to quintillions; beyond the scale table we fall
+# back to digit-by-digit, which is never wrong.
+_ONES = (
+    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+    "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
+    "seventeen", "eighteen", "nineteen",
+)
+_TENS = ("", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
+_SCALES = ("", "thousand", "million", "billion", "trillion", "quadrillion", "quintillion")
+
+
+def _three_to_words(n: int) -> list[str]:
+    """Words for 0..999 (empty list for 0, so callers can skip empty groups)."""
+
+    words: list[str] = []
+    hundreds, rest = divmod(n, 100)
+    if hundreds:
+        words += [_ONES[hundreds], "hundred"]
+    if rest < 20:
+        if rest:
+            words.append(_ONES[rest])
+    else:
+        tens, ones = divmod(rest, 10)
+        words.append(_TENS[tens] if not ones else f"{_TENS[tens]}-{_ONES[ones]}")
+    return words
+
+
+def _int_to_words(n: int) -> str | None:
+    """Cardinal spelling of a non-negative int, or None if past the scale table."""
+
+    if n == 0:
+        return "zero"
+    groups: list[int] = []
+    while n > 0:
+        n, rem = divmod(n, 1000)
+        groups.append(rem)
+    if len(groups) > len(_SCALES):
+        return None
+    words: list[str] = []
+    for i in range(len(groups) - 1, -1, -1):
+        if groups[i]:
+            words += _three_to_words(groups[i])
+            if i:
+                words.append(_SCALES[i])
+    return " ".join(words)
+
+
+def _digits_to_words(digits: str) -> str:
+    return " ".join(_ONES[int(d)] for d in digits)
+
+
+def _spell_number(token: str) -> str:
+    """Spell one grouped/decimal number. Fractions read digit-by-digit so
+    trailing zeros survive ("2.0" -> "two point zero", not "two")."""
+
+    if "." in token:
+        integer, fraction = token.replace(",", "").split(".")
+        whole = _int_to_words(int(integer)) or _digits_to_words(integer)
+        return f"{whole} point {_digits_to_words(fraction)}"
+    integer = token.replace(",", "")
+    return _int_to_words(int(integer)) or _digits_to_words(integer)
+
+
+def _normalize_numbers(text: str) -> str:
+    """Spell grouped-thousand and decimal numbers the LLM left as digits.
+
+    "1,234,567" -> "one million two hundred thirty-four thousand five hundred
+    sixty-seven"; "3.14" -> "three point one four". Narrow on purpose: see the
+    regex comment for why bare integers and code-glued digits are excluded.
+    """
+
+    return _SPELLABLE_NUMBER_RE.sub(lambda m: _spell_number(m.group(1)), text)
+
+
+# snake_case / __dunder code identifiers the LLM/corrections didn't rewrite, read
+# as spaced words so XTTS doesn't hallucinate on the underscores. Dotted file
+# tokens (node.js, head64.c) are deliberately left to the LLM cleanup rule
+# ("file or command names become plain spoken language") and explicit seed rows
+# -- a generic word.ext transform here mis-speaks framework names and TLDs.
+_SNAKE_IDENTIFIER_RE = re.compile(r"(?<![\w-])_*([A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+)(?![\w-])")
+
+
+def _normalize_identifiers(text: str) -> str:
+    """Expand leftover snake_case code identifiers into spaced spoken words.
+
+    "startup_32" -> "startup 32", "__startup_64" -> "startup 64",
+    "reset_early_page_tables" -> "reset early page tables". Runs after the
+    corrections dictionary so explicit pronunciations (e.g. "ttyS0" -> "T T Y S
+    0") win first and this only mops up identifiers no rule covered.
+    """
+
+    return _SNAKE_IDENTIFIER_RE.sub(lambda m: m.group(1).replace("_", " "), text)
+
+
 def _normalize_for_tts(text: str) -> str:
     """Deterministic fixups for things the cleanup prompt doesn't reliably catch.
 
     One ordered pass so future rules have a single home: strip residual markdown
-    heading markers, then expand date-context month abbreviations. Runs at the
-    end of cleanup, before the pronunciation dictionary, so e.g. "Feb 3" becomes
-    "February 3" and the corrections dict can then voice it correctly.
+    heading markers, expand date-context month abbreviations, then spell the
+    number shapes XTTS garbles. Runs at the end of cleanup, before the
+    pronunciation dictionary, so e.g. "Feb 3" becomes "February 3" and the
+    corrections dict can then voice it correctly.
     """
 
-    return _normalize_date_months(_strip_heading_markers(text))
+    return _normalize_numbers(_normalize_date_months(_strip_heading_markers(text)))
 
 
 async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
@@ -638,7 +747,10 @@ async def _stage_corrections(cleaned: str, settings: Settings) -> str:
         )
         seed_dict = {}
     merged = {**seed_dict, **user_dict}
-    result = corrections.apply(cleaned, merged)
+    # Explicit pronunciations first (so "ttyS0" -> "T T Y S 0" wins), then the
+    # generic identifier transform mops up any snake_case/dotted-file token no
+    # rule covered.
+    result = _normalize_identifiers(corrections.apply(cleaned, merged))
     logger.info(
         "Corrections applied",
         extra={

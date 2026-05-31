@@ -18,6 +18,8 @@ _KNOWN_CATEGORIES = {
     "Tech Brand",
     "Format",
     "Medical/Scientific",
+    "Symbol/Function",
+    "File Path",
 }
 
 
@@ -77,6 +79,15 @@ def test_pronounce_as_word_acronym_is_applicable() -> None:
     assert entries["RAM"].applicable is True  # 'ram' is not a letter spell-out
     assert entries["BIOS"].applicable is True  # 'BY-oss'
     assert entries["SQL"].applicable is True  # 'sequel'
+
+
+def test_mixed_case_spelled_out_token_is_applicable() -> None:
+    # The LLM dot-spells all-caps tokens, so a mixed-case spelled-out row
+    # ('ttyS0' -> 'T T Y S 0') is the only thing that voices it -- keep it applied.
+    entries = _by_input(seed_corrections.load_seed(seed_corrections.seed_path()))
+    assert entries["ttyS0"].applicable is True
+    # All-caps spelled-out tokens stay excluded (cleanup dots them).
+    assert entries["GRUB"].applicable is False
 
 
 def test_applicable_dict_excludes_non_applicable_rows() -> None:

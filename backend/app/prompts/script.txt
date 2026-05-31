@@ -48,8 +48,24 @@ Normalize for speech:
   rather than letter by letter, for example NASA, SCUBA, and NATO, and the
   technical terms SQL, JSON, YAML, GUI, and OAuth.
 
+Numbers, units, and code-like tokens. The narrator reads text, not symbols, so
+write these the way a person would say them:
+- Plain quantities: write the number in words and expand the unit. "500m north"
+  becomes "five hundred meters north", "20GB" becomes "twenty gigabytes", "3kg"
+  becomes "three kilograms". Pick the unit the sentence means: "m" is meters or
+  minutes, "s" is seconds, by context.
+- Digit sequences read one digit at a time, such as emergency, phone, and port
+  numbers: "911" becomes "nine one one", "port 8080" becomes "port eight zero
+  eight zero".
+- Version numbers read each part with "point": "version 1.2.3" becomes "version
+  one point two point three".
+- Years read naturally: "2026" becomes "twenty twenty-six".
+- Identifiers that glue a letter to a number read the letter then the number in
+  words: "x86" becomes "x eighty-six", "x86_64" becomes "x eighty-six sixty-four".
+- Leave a number alone only inside a direct block quote attributed to a real
+  person in the article.
+
 Leave unchanged:
-- Numbers and version numbers.
 - Direct block quotes attributed to real people in the article.
 - All ordinary body prose that the rules above do not touch.
 
@@ -70,5 +86,5 @@ RIGHT output (clean narration of the article itself):
 Getting started is simple. The A.P.I. talks to a SQL database, and full details
 are available at a link to example dot com.
 
-You can reach the team at support at example dot com, or save 20 percent this
-week.
+You can reach the team at support at example dot com, or save twenty percent
+this week.

@@ -6,6 +6,34 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-05-30
+
+### Added
+
+- Number normalization before narration. Numbers written with thousands
+  separators or a decimal point (`1,234.56`, `3.14`) are spelled in words, which
+  XTTS otherwise garbles. Bare integers, years, version numbers, IP addresses,
+  and digits glued to letters are left for the cleanup prompt, which has context
+  the deterministic pass cannot.
+- A snake_case identifier pass that reads leftover code names as spaced words
+  (`reset_early_page_tables` becomes "reset early page tables"), applied after
+  the pronunciation dictionary so explicit entries still win.
+- Built-in pronunciations for kernel and systems terms (boot symbols, registers,
+  device names, hypervisor and security brands).
+
+### Changed
+
+- The cleanup prompt now writes numbers, units, and version numbers the way a
+  narrator says them (`500m` to "five hundred meters", `911` to "nine one one",
+  `x86` to "x eighty-six") instead of leaving the digits in place.
+- Mixed-case spelled-out pronunciations such as `ttyS0` to "T T Y S 0" are now
+  applied. They were previously dropped alongside all-caps acronyms, which the
+  cleanup stage already spells out on its own.
+- XTTS generation is tuned to cut garbled words and pitch jumps between
+  segments: the per-call text cap drops from 240 to 200 characters and sampling
+  temperature from 0.65 to 0.60. Both read from `XTTS_MAX_CHARS` and
+  `XTTS_TEMPERATURE` for tuning without an image rebuild.
+
 ## [0.9.4] - 2026-05-30
 
 ### Fixed

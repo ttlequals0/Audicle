@@ -237,3 +237,76 @@ Format,etc.,et SET-er-ah,Latin abbreviation
 Format,approx.,approximately,Abbreviation
 Format,v2.0,version two point oh,Version strings
 Format,v1.2.3,version one point two point three,Semantic version
+Tech Acronym,GRUB,G R U B,Grand Unified Bootloader — spell out
+Tech Acronym,UEFI,U E F I,Unified Extensible Firmware Interface
+Tech Acronym,KASLR,K A S L R,Kernel Address Space Layout Randomization
+Tech Acronym,GDT,G D T,Global Descriptor Table
+Tech Acronym,IDT,I D T,Interrupt Descriptor Table
+Tech Acronym,SME,S M E,Secure Memory Encryption
+Tech Acronym,SEV,S E V,Secure Encrypted Virtualization
+Tech Acronym,TDX,T D X,Trust Domain Extensions (Intel)
+Tech Acronym,TME,T M E,Total Memory Encryption
+Tech Acronym,SSE2,S S E 2,Streaming SIMD Extensions 2
+Tech Acronym,CPUID,C P U I D,CPU Identification instruction
+Tech Acronym,AVX-512,A V X 512,Advanced Vector Extensions 512-bit
+Tech Acronym,ACPI,A C P I,Advanced Configuration and Power Interface
+Tech Acronym,E820,E 8 2 0,BIOS memory map standard
+Tech Acronym,KVM,K V M,Kernel-based Virtual Machine
+Tech Acronym,RCU,R C U,Read-Copy-Update
+Tech Acronym,IRQ,I R Q,Interrupt Request
+Tech Acronym,LSM,L S M,Linux Security Module
+Tech Acronym,SLUB,S L U B,Slab allocator variant — spell out
+Tech Acronym,PID,P I D,Process ID
+Tech Acronym,ARM,arm,Pronounced as a word
+Tech Acronym,RISC-V,risk five,Pronounced 'risk five'
+Tech Acronym,EFI,E F I,Extensible Firmware Interface
+Tech Acronym,DMI,D M I,Desktop Management Interface
+Tech Acronym,SMP,S M P,Symmetric Multi-Processing
+Tech Acronym,NOP,nop,No Operation — pronounced as a word
+Tech Acronym,JMP,jump,Assembly jump instruction
+Tech Acronym,MDS,M D S,Microarchitectural Data Sampling
+Symbol/Function,__pi___startup_64,P I startup 64,Position-independent thunk for startup 64
+Symbol/Function,cr4_init_shadow,C R 4 init shadow,CR4 control register shadow init
+Symbol/Function,clear_bss,clear B S S,Zeroes .bss section
+Symbol/Function,sme_early_init,S M E early init,Early Secure Memory Encryption setup
+Symbol/Function,kasan_init,K A S A N init,Kernel Address Sanitizer init
+Symbol/Function,idt_setup_early_handler,I D T setup early handler,Installs minimal interrupt handlers
+Symbol/Function,copy_bootdata,copy boot data,Copies bootloader parameters
+Symbol/Function,load_ucode_bsp,load microcode B S P,Loads CPU microcode on boot strap processor
+Symbol/Function,early_cpu_init,early C P U init,Identifies CPU features via CPUID
+Symbol/Function,boot_cpu_data,boot C P U data,Struct holding CPU feature flags
+Symbol/Function,e820__memory_setup,E 8 2 0 memory setup,Parses firmware memory map
+Symbol/Function,e820__memblock_setup,E 8 2 0 memblock setup,Feeds memory map into memblock allocator
+Symbol/Function,memblock,mem block,Primitive early memory allocator
+Symbol/Function,early_ioremap_init,early I O remap init,Sets up early I/O memory mapping
+Symbol/Function,earlyprintk,early printk,Early kernel print before console
+Symbol/Function,ttyS0,T T Y S 0,First serial terminal device
+Symbol/Function,efi_init,E F I init,Hooks up UEFI runtime services
+Symbol/Function,dmi_setup,D M I setup,Reads firmware DMI tables
+Symbol/Function,reserve_brk,reserve B R K,Reserves kernel scratch memory
+Symbol/Function,init_mem_mapping,init memory mapping,Builds full kernel direct map
+Symbol/Function,arch_reserve_crashkernel,arch reserve crash kernel,Reserves memory for kdump
+Symbol/Function,boot_cpu_init,boot C P U init,Marks boot CPU as online
+Symbol/Function,mm_core_init,M M core init,Brings up full memory subsystem
+Symbol/Function,mm_core_init_early,M M core init early,Preliminary memory management state
+Symbol/Function,setup_per_cpu_areas,setup per C P U areas,Allocates per-CPU variable slots
+Symbol/Function,kmalloc,K malloc,Kernel slab memory allocator
+Symbol/Function,vmalloc,V malloc,Virtual contiguous memory allocator
+Symbol/Function,kmemleak_init,K mem leak init,Kernel memory leak detector init
+Symbol/Function,ftrace_init,F trace init,Function tracer infrastructure init
+Symbol/Function,softirq_init,soft I R Q init,Initializes software interrupts
+Symbol/Function,init_IRQ,init I R Q,IRQ subsystem initialization
+Symbol/Function,rcu_init,R C U init,Read-Copy-Update init
+Symbol/Function,inode,I node,Filesystem inode struct
+Symbol/Function,.bss,B S S section,Uninitialized data segment
+File Path,arch/x86/boot/compressed/,arch x86 boot compressed,Kernel decompressor source path
+File Path,arch/x86/kernel/head64.c,arch x86 kernel head 64 dot c,Early C kernel entry source file
+File Path,arch/x86/kernel/setup.c,arch x86 kernel setup dot c,Architecture setup source file
+File Path,init/main.c,init main dot c,Main kernel init source file
+File Path,/proc/cmdline,proc cmdline,Kernel command-line virtual file
+Tech Brand,Xen,zen,Hypervisor — pronounced 'zen'
+Tech Brand,Hyper-V,Hyper V,Microsoft hypervisor
+Tech Brand,VMware,V M ware,Virtualization platform
+Tech Brand,SELinux,S E Linux,Security-Enhanced Linux
+Tech Brand,AppArmor,App Armor,Linux security module
+Tech Brand,Spectre,SPEC-ter,CPU speculative execution vulnerability
