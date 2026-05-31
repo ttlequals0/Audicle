@@ -35,7 +35,11 @@ Settings -- provider, voice, prompts, and pronunciation corrections.
 
 ## Sample
 
-[Listen to a 30-second sample (MP3)](docs/sample.mp3) -- cloned-voice narration of a Substack essay.
+A 30-second clip of cloned-voice narration (a news article).
+
+<audio controls src="docs/sample.mp3"></audio>
+
+[Download the MP3](docs/sample.mp3) if the player doesn't load.
 
 ## Why
 
