@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="branding/wordmark.svg" alt="Audicle" width="320">
+</p>
+
 # Audicle
 
 Self-hosted Podcasting 2.0 service that turns saved articles into a personal podcast feed.
@@ -5,6 +9,16 @@ Self-hosted Podcasting 2.0 service that turns saved articles into a personal pod
 Paste a URL, wait a few minutes, get an episode with cloned-voice narration, artwork, and a WebVTT transcript. Subscribe in Pocket Casts, Overcast, or Apple Podcasts the same way you'd subscribe to anyone else's show.
 
 Tagline: *your reading list, as a podcast you own.*
+
+## Screenshots
+
+| Desktop | Mobile |
+|---|---|
+| <img src="docs/screenshot-desktop.png" alt="Audicle desktop" width="480"> | <img src="docs/screenshot-mobile.png" alt="Audicle mobile" width="200"> |
+
+## Sample
+
+[Listen to a 30-second sample (MP3)](docs/sample.mp3) -- cloned-voice narration of a Substack essay.
 
 ## Why
 
