@@ -1,6 +1,6 @@
 [project]
 name = "audicle"
-version = "0.9.4"
+version = "0.10.0"
 description = "Self-hosted service that turns article URLs into a Podcasting 2.0 feed."
 requires-python = ">=3.13"
 license = { text = "MIT" }
@@ -39,6 +39,9 @@ dependencies = [
     "slowapi>=0.1.9",
     "pyyaml>=6.0.3",
     "python-multipart>=0.0.29",
+    # Deterministic number-to-words for the TTS normalization safety net
+    # (grouped thousands, decimals). Same package ebook2audiobook vendors.
+    "num2words>=0.5.13",
 ]
 
 [tool.uv.sources]

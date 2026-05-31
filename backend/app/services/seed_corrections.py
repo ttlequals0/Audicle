@@ -65,8 +65,14 @@ def _is_applicable(input_text: str, replacement_text: str) -> bool:
     if _ANNOTATION_RE.search(input_text):
         return False
     # Spelled-out ALL-CAPS tokens duplicate what LLM cleanup already produces,
-    # regardless of category (Tech Brand acronyms like AWS land here too).
-    if _SINGLE_TOKEN_RE.match(input_text) and _is_spelled_out(replacement_text):
+    # regardless of category (Tech Brand acronyms like AWS land here too). The
+    # LLM's rule only fires on all-caps tokens, so a mixed-case spelled-out row
+    # (e.g. "ttyS0" -> "T T Y S 0") stays applicable -- nothing else voices it.
+    if (
+        _SINGLE_TOKEN_RE.match(input_text)
+        and _is_spelled_out(replacement_text)
+        and input_text == input_text.upper()
+    ):
         return False
     # Must pass the same per-entry rules the user dictionary enforces.
     result = corrections.validate({input_text: replacement_text}, max_entries=1)

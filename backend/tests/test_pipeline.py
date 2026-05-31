@@ -691,6 +691,52 @@ def test_normalize_for_tts_strips_headings_and_expands_dates() -> None:
     assert out == "News\nShipped January 15 2026."
 
 
+def test_normalize_numbers_spells_grouped_and_decimal() -> None:
+    assert pipeline._normalize_numbers("price 1,000 today") == "price one thousand today"
+    assert "one million" in pipeline._normalize_numbers("1,234,567 rows")
+    assert pipeline._normalize_numbers("pi is 3.14") == "pi is three point one four"
+
+
+def test_normalize_numbers_grouped_with_decimal() -> None:
+    # Grouped thousands carrying a decimal fraction must spell as one number,
+    # not leave a stray "1," with the fraction mis-spoken.
+    assert (
+        pipeline._normalize_numbers("cost 1,234.56 dollars")
+        == "cost one thousand, two hundred and thirty-four point five six dollars"
+    )
+
+
+def test_normalize_numbers_preserves_trailing_zero_fraction() -> None:
+    # Fractions read digit-by-digit so "2.0"/"1.50" don't collapse to integers.
+    assert pipeline._normalize_numbers("Web 2.0 era") == "Web two point zero era"
+    assert pipeline._normalize_numbers("just 1.50 left") == "just one point five zero left"
+
+
+def test_normalize_numbers_leaves_ambiguous_and_glued_alone() -> None:
+    # Bare integers (day/year), versions, IPs, and code-glued digits are
+    # context-dependent -- left to the LLM prompt, untouched here.
+    assert pipeline._normalize_numbers("In 2026 we saw 15 things") == "In 2026 we saw 15 things"
+    assert pipeline._normalize_numbers("version 1.2.3 shipped") == "version 1.2.3 shipped"
+    assert pipeline._normalize_numbers("ip 10.0.0.1 here") == "ip 10.0.0.1 here"
+    assert pipeline._normalize_numbers("x86 and startup_32") == "x86 and startup_32"
+
+
+def test_normalize_identifiers_expands_snake_case() -> None:
+    assert pipeline._normalize_identifiers("startup_32 ran") == "startup 32 ran"
+    assert pipeline._normalize_identifiers("__startup_64 entry") == "startup 64 entry"
+    assert (
+        pipeline._normalize_identifiers("reset_early_page_tables here")
+        == "reset early page tables here"
+    )
+
+
+def test_normalize_identifiers_leaves_prose_and_files_alone() -> None:
+    # Dotted file/framework names are left to the LLM cleanup rule, not respaced.
+    assert pipeline._normalize_identifiers("a normal sentence.") == "a normal sentence."
+    assert pipeline._normalize_identifiers("and/or maybe") == "and/or maybe"
+    assert pipeline._normalize_identifiers("built on node.js today") == "built on node.js today"
+
+
 # --- corrections: pronunciation after normalization ------------------------
 
 

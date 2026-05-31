@@ -23,8 +23,9 @@ logger = logging.getLogger("tts.engine")
 # XTTS-v2 can only synthesize ~400 tokens per inference() call and its tokenizer
 # warns above 250 chars for English. We split incoming text into pieces under
 # this budget and concatenate the audio, so the wrapper never 500s on a long
-# chunk regardless of how the backend chunked it.
-_XTTS_MAX_CHARS = 240
+# chunk regardless of how the backend chunked it. The runtime cap comes from
+# Config.max_chars (env XTTS_MAX_CHARS); this constant is the fallback default.
+_XTTS_MAX_CHARS = 200
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
 
@@ -251,7 +252,7 @@ class XTTSEngine:
         # _split_for_xtts only returns non-empty pieces; an empty list means the
         # text had no speakable content (e.g. a whitespace-only chunk). Return a
         # short silence instead of feeding "" to XTTS, which crashes inference.
-        pieces = _split_for_xtts(text)
+        pieces = _split_for_xtts(text, self.config.max_chars)
         if not pieces:
             return np.zeros(int(self.sample_rate * 0.05), dtype=np.float32)
         wavs = [np.asarray(self._infer_piece(piece), dtype=np.float32) for piece in pieces]

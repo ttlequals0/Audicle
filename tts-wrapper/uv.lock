@@ -139,7 +139,7 @@ wheels = [
 
 [[package]]
 name = "audicle-tts-wrapper"
-version = "0.6.0"
+version = "0.9.4"
 source = { virtual = "." }
 dependencies = [
     { name = "coqui-tts" },

@@ -25,6 +25,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from num2words import num2words
+
 from app.config import Settings
 from app.core import database
 from app.core.paths import file_size_or_zero, media_dir
@@ -334,16 +336,73 @@ def _normalize_date_months(text: str) -> str:
     return _DATE_MONTH_RE.sub(lambda m: _DATE_MONTHS[m.group(1)], text)
 
 
+# Grouped thousands (1,234 / 1,234,567) and decimals (3.14, 1,234.56): two number
+# shapes XTTS-v2 reliably garbles. One token must carry a comma group or a
+# decimal point to match -- bare integers (15, 2026), unit-attached numbers
+# (500m), versions (1.2.3), and code-glued digits (x86, startup_32) are
+# deliberately left to the LLM prompt because they are context-dependent (a year
+# reads "twenty twenty-six", an emergency number reads "nine one one"). The
+# (?<![\w.,])/(?![\w.,]) guards keep this off identifiers and the middle of a
+# dotted version string or IP address.
+_SPELLABLE_NUMBER_RE = re.compile(
+    r"(?<![\w.,])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+)(?![\w.,])"
+)
+
+
+def _spell_number(token: str) -> str:
+    """Spell one grouped/decimal number. Fractions read digit-by-digit so
+    trailing zeros survive ("2.0" -> "two point zero", not "two")."""
+
+    if "." in token:
+        integer, fraction = token.replace(",", "").split(".")
+        digits = " ".join(num2words(int(d)) for d in fraction)
+        return f"{num2words(int(integer))} point {digits}"
+    return num2words(int(token.replace(",", "")))
+
+
+def _normalize_numbers(text: str) -> str:
+    """Spell grouped-thousand and decimal numbers the LLM left as digits.
+
+    "1,234,567" -> "one million, two hundred and thirty-four thousand, five
+    hundred and sixty-seven"; "3.14" -> "three point one four". Narrow on
+    purpose: see the regex comment for why bare integers and code-glued digits
+    are excluded.
+    """
+
+    return _SPELLABLE_NUMBER_RE.sub(lambda m: _spell_number(m.group(1)), text)
+
+
+# snake_case / __dunder code identifiers the LLM/corrections didn't rewrite, read
+# as spaced words so XTTS doesn't hallucinate on the underscores. Dotted file
+# tokens (node.js, head64.c) are deliberately left to the LLM cleanup rule
+# ("file or command names become plain spoken language") and explicit seed rows
+# -- a generic word.ext transform here mis-speaks framework names and TLDs.
+_SNAKE_IDENTIFIER_RE = re.compile(r"(?<![\w-])_*([A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+)(?![\w-])")
+
+
+def _normalize_identifiers(text: str) -> str:
+    """Expand leftover snake_case code identifiers into spaced spoken words.
+
+    "startup_32" -> "startup 32", "__startup_64" -> "startup 64",
+    "reset_early_page_tables" -> "reset early page tables". Runs after the
+    corrections dictionary so explicit pronunciations (e.g. "ttyS0" -> "T T Y S
+    0") win first and this only mops up identifiers no rule covered.
+    """
+
+    return _SNAKE_IDENTIFIER_RE.sub(lambda m: m.group(1).replace("_", " "), text)
+
+
 def _normalize_for_tts(text: str) -> str:
     """Deterministic fixups for things the cleanup prompt doesn't reliably catch.
 
     One ordered pass so future rules have a single home: strip residual markdown
-    heading markers, then expand date-context month abbreviations. Runs at the
-    end of cleanup, before the pronunciation dictionary, so e.g. "Feb 3" becomes
-    "February 3" and the corrections dict can then voice it correctly.
+    heading markers, expand date-context month abbreviations, then spell the
+    number shapes XTTS garbles. Runs at the end of cleanup, before the
+    pronunciation dictionary, so e.g. "Feb 3" becomes "February 3" and the
+    corrections dict can then voice it correctly.
     """
 
-    return _normalize_date_months(_strip_heading_markers(text))
+    return _normalize_numbers(_normalize_date_months(_strip_heading_markers(text)))
 
 
 async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
@@ -638,7 +697,10 @@ async def _stage_corrections(cleaned: str, settings: Settings) -> str:
         )
         seed_dict = {}
     merged = {**seed_dict, **user_dict}
-    result = corrections.apply(cleaned, merged)
+    # Explicit pronunciations first (so "ttyS0" -> "T T Y S 0" wins), then the
+    # generic identifier transform mops up any snake_case/dotted-file token no
+    # rule covered.
+    result = _normalize_identifiers(corrections.apply(cleaned, merged))
     logger.info(
         "Corrections applied",
         extra={
