@@ -39,9 +39,6 @@ dependencies = [
     "slowapi>=0.1.9",
     "pyyaml>=6.0.3",
     "python-multipart>=0.0.29",
-    # Deterministic number-to-words for the TTS normalization safety net
-    # (grouped thousands, decimals). Same package ebook2audiobook vendors.
-    "num2words>=0.5.13",
 ]
 
 [tool.uv.sources]

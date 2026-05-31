@@ -702,7 +702,7 @@ def test_normalize_numbers_grouped_with_decimal() -> None:
     # not leave a stray "1," with the fraction mis-spoken.
     assert (
         pipeline._normalize_numbers("cost 1,234.56 dollars")
-        == "cost one thousand, two hundred and thirty-four point five six dollars"
+        == "cost one thousand two hundred thirty-four point five six dollars"
     )
 
 

@@ -25,8 +25,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from num2words import num2words
-
 from app.config import Settings
 from app.core import database
 from app.core.paths import file_size_or_zero, media_dir
@@ -349,24 +347,76 @@ _SPELLABLE_NUMBER_RE = re.compile(
 )
 
 
+# Self-contained integer-to-words (num2words is LGPL, outside the project's
+# license allow-list). Covers up to quintillions; beyond the scale table we fall
+# back to digit-by-digit, which is never wrong.
+_ONES = (
+    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+    "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
+    "seventeen", "eighteen", "nineteen",
+)
+_TENS = ("", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
+_SCALES = ("", "thousand", "million", "billion", "trillion", "quadrillion", "quintillion")
+
+
+def _three_to_words(n: int) -> list[str]:
+    """Words for 0..999 (empty list for 0, so callers can skip empty groups)."""
+
+    words: list[str] = []
+    hundreds, rest = divmod(n, 100)
+    if hundreds:
+        words += [_ONES[hundreds], "hundred"]
+    if rest < 20:
+        if rest:
+            words.append(_ONES[rest])
+    else:
+        tens, ones = divmod(rest, 10)
+        words.append(_TENS[tens] if not ones else f"{_TENS[tens]}-{_ONES[ones]}")
+    return words
+
+
+def _int_to_words(n: int) -> str | None:
+    """Cardinal spelling of a non-negative int, or None if past the scale table."""
+
+    if n == 0:
+        return "zero"
+    groups: list[int] = []
+    while n > 0:
+        n, rem = divmod(n, 1000)
+        groups.append(rem)
+    if len(groups) > len(_SCALES):
+        return None
+    words: list[str] = []
+    for i in range(len(groups) - 1, -1, -1):
+        if groups[i]:
+            words += _three_to_words(groups[i])
+            if i:
+                words.append(_SCALES[i])
+    return " ".join(words)
+
+
+def _digits_to_words(digits: str) -> str:
+    return " ".join(_ONES[int(d)] for d in digits)
+
+
 def _spell_number(token: str) -> str:
     """Spell one grouped/decimal number. Fractions read digit-by-digit so
     trailing zeros survive ("2.0" -> "two point zero", not "two")."""
 
     if "." in token:
         integer, fraction = token.replace(",", "").split(".")
-        digits = " ".join(num2words(int(d)) for d in fraction)
-        return f"{num2words(int(integer))} point {digits}"
-    return num2words(int(token.replace(",", "")))
+        whole = _int_to_words(int(integer)) or _digits_to_words(integer)
+        return f"{whole} point {_digits_to_words(fraction)}"
+    integer = token.replace(",", "")
+    return _int_to_words(int(integer)) or _digits_to_words(integer)
 
 
 def _normalize_numbers(text: str) -> str:
     """Spell grouped-thousand and decimal numbers the LLM left as digits.
 
-    "1,234,567" -> "one million, two hundred and thirty-four thousand, five
-    hundred and sixty-seven"; "3.14" -> "three point one four". Narrow on
-    purpose: see the regex comment for why bare integers and code-glued digits
-    are excluded.
+    "1,234,567" -> "one million two hundred thirty-four thousand five hundred
+    sixty-seven"; "3.14" -> "three point one four". Narrow on purpose: see the
+    regex comment for why bare integers and code-glued digits are excluded.
     """
 
     return _SPELLABLE_NUMBER_RE.sub(lambda m: _spell_number(m.group(1)), text)
