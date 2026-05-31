@@ -72,6 +72,23 @@ async def test_extract_happy_path(env: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert result.metadata["title"] == "ok"
 
 
+async def test_extract_sends_main_content_filtering(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return _ok_response("body " * 200)
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+
+    await extraction.extract("https://example.test/article", get_settings())
+    assert captured["onlyMainContent"] is True
+    assert captured["removeBase64Images"] is True
+    assert captured["excludeTags"] == ["nav", "footer", "header", "aside"]
+
+
 async def test_extract_retries_on_5xx_then_succeeds(
     env: Path, monkeypatch: pytest.MonkeyPatch, fast_backoff
 ) -> None:

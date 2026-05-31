@@ -1,22 +1,31 @@
-"""Cleanup prompt file management.
+"""Cleanup + summary prompts, stored in the DB with packaged defaults.
 
-The prompt lives at ``backend/app/prompts/script.txt`` (bind-mounted), is
-editable via ``PUT /api/v1/prompt``, and is re-read on every job.
-
-Both the bind-mount edit path and the API edit path write to the same file
-via ``os.replace`` after a temp-file write so concurrent reads always see a
-consistent prompt (the pipeline's ``cleanup`` stage open-reads this file at
-the start of each job).
+The shipped default for each prompt is a read-only file baked into the image at
+``app/defaults/{script,summary}.txt``. An operator edit is stored as a row in
+the ``settings`` table and wins over the default; clearing it restores the
+default. The pipeline resolves the effective prompt per job, so edits take
+effect on the next job with no restart -- and nothing is written to disk.
 """
 
 from __future__ import annotations
 
 import logging
+import sqlite3
+from functools import cache
 from pathlib import Path
+from typing import Literal
 
-from app.services.atomic_write import write_bytes_atomic
+from app.services import settings_store
 
 logger = logging.getLogger("app.services.prompt")
+
+PromptKind = Literal["cleanup", "summary"]
+
+# Per kind: (settings-table key for the override, packaged default filename).
+_PROMPTS: dict[PromptKind, tuple[str, str]] = {
+    "cleanup": (settings_store.CLEANUP_PROMPT_KEY, "script.txt"),
+    "summary": (settings_store.SUMMARY_PROMPT_KEY, "summary.txt"),
+}
 
 
 class PromptTooLargeError(Exception):
@@ -28,24 +37,64 @@ class PromptTooLargeError(Exception):
     """
 
 
-def load(path: Path) -> str:
-    """Return the current prompt text. Missing file raises FileNotFoundError so
-    the operator notices a misconfigured mount instead of silently running with
-    no rules."""
-
-    return path.read_text(encoding="utf-8")
+def _defaults_dir() -> Path:
+    return Path(__file__).parent.parent / "defaults"
 
 
-def save(path: Path, content: str, *, max_bytes: int) -> None:
-    """Atomic write with a size guard.
+@cache
+def default_text(kind: PromptKind) -> str:
+    """The packaged default prompt text (read-only, baked into the image).
 
-    Encoded length (not character count) is what the cap applies to, since
-    multi-byte characters can push a "small" prompt over the limit.
+    Cached: the default files are immutable image content, so the per-job read
+    is wasted after the first.
     """
+
+    return (_defaults_dir() / _PROMPTS[kind][1]).read_text(encoding="utf-8")
+
+
+def _override(conn: sqlite3.Connection, kind: PromptKind) -> str | None:
+    """The stored operator override, or None when unset/blank (use the default)."""
+
+    value = settings_store.get(conn, _PROMPTS[kind][0])
+    return value if value is not None and value.strip() else None
+
+
+def load_effective(conn: sqlite3.Connection, kind: PromptKind) -> str:
+    """Return the operator override if one is stored, else the packaged default."""
+
+    return _override(conn, kind) or default_text(kind)
+
+
+def is_default(conn: sqlite3.Connection, kind: PromptKind) -> bool:
+    """True when no (non-blank) override is stored -- the default is in effect."""
+
+    return _override(conn, kind) is None
+
+
+def load_with_flag(conn: sqlite3.Connection, kind: PromptKind) -> tuple[str, bool]:
+    """Effective text plus whether it is the default, from a single DB read."""
+
+    override = _override(conn, kind)
+    if override is not None:
+        return override, False
+    return default_text(kind), True
+
+
+def save_override(
+    conn: sqlite3.Connection, kind: PromptKind, content: str, *, max_bytes: int
+) -> None:
+    """Store an operator override. Encoded length (not char count) is capped so a
+    multi-byte string can't slip past the limit."""
 
     encoded = content.encode("utf-8")
     if len(encoded) > max_bytes:
         raise PromptTooLargeError(
             f"prompt is {len(encoded)} bytes, exceeds MAX_PROMPT_LENGTH_BYTES={max_bytes}"
         )
-    write_bytes_atomic(path, encoded, prefix=".script-")
+    settings_store.set_(conn, _PROMPTS[kind][0], content)
+
+
+def reset(conn: sqlite3.Connection, kind: PromptKind) -> None:
+    """Drop the override so the packaged default takes over again."""
+
+    settings_store.delete(conn, _PROMPTS[kind][0])

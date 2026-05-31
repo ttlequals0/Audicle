@@ -24,6 +24,7 @@ def _episode(
     duration_secs: int | None = 90,
     pub_date: str = "2026-05-28T18:00:00Z",
     summary: str | None = None,
+    revision: int = 1,
 ) -> Episode:
     return Episode(
         id=id,
@@ -39,6 +40,7 @@ def _episode(
         created_at=pub_date,
         updated_at=pub_date,
         summary=summary,
+        revision=revision,
     )
 
 
@@ -150,6 +152,21 @@ def test_item_enclosure_missing_file_reports_zero_length(env: Path) -> None:
     root = DET.fromstring(body)
     enclosure = root.find("channel/item/enclosure")
     assert int(enclosure.get("length")) == 0
+
+
+def test_item_guid_stable_on_first_render(env: Path) -> None:
+    ep = _episode(id="abc", revision=1)
+    body = _render([ep], env=env)
+    guid = DET.fromstring(body).find("channel/item/guid")
+    assert guid.text == "abc"
+
+
+def test_item_guid_gets_revision_suffix_after_reprocess(env: Path) -> None:
+    # A reprocessed episode (revision > 1) gets a fresh GUID so clients re-download.
+    ep = _episode(id="abc", revision=3)
+    body = _render([ep], env=env)
+    guid = DET.fromstring(body).find("channel/item/guid")
+    assert guid.text == "abc-r3"
 
 
 def test_item_includes_itunes_duration_in_hms(env: Path) -> None:

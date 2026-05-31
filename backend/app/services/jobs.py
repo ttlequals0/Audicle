@@ -36,13 +36,16 @@ class Job:
     # existing constructors keep working.
     progress_current: int | None = None
     progress_total: int | None = None
+    # Set when the worker claims the job (queued -> processing); NULL while
+    # queued and for jobs created before 0.11.0.
+    started_at: str | None = None
 
 
 # Shared column list so every Job SELECT returns the progress fields _row_to_job
 # reads. ``SELECT *`` is used by the list API, which maps columns explicitly.
 _JOB_COLUMNS = (
     "id, url, episode_id, status, stage, error, created_at, updated_at, "
-    "progress_current, progress_total"
+    "progress_current, progress_total, started_at"
 )
 
 
@@ -70,6 +73,7 @@ def _row_to_job(row: sqlite3.Row) -> Job:
         updated_at=row["updated_at"],
         progress_current=row["progress_current"],
         progress_total=row["progress_total"],
+        started_at=row["started_at"],
     )
 
 
@@ -210,6 +214,7 @@ def claim_next_queued(conn: sqlite3.Connection) -> Job | None:
             return None
         conn.execute(
             "UPDATE jobs SET status = 'processing', "
+            "started_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), "
             "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
             (row["id"],),
         )

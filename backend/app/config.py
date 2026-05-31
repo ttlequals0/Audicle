@@ -86,6 +86,15 @@ class Settings(BaseSettings):
     FIRECRAWL_TIMEOUT_SECONDS: int = 30
     MIN_EXTRACTION_CHARS: int = 500
     MIN_CLEANUP_CHARS: int = 200
+    # Firecrawl scrape filtering so chrome (nav, cookie banners, footers) is
+    # dropped before the LLM ever sees it. onlyMainContent is Firecrawl's
+    # main-article heuristic; excludeTags drops elements by tag/selector.
+    FIRECRAWL_ONLY_MAIN_CONTENT: bool = True
+    FIRECRAWL_REMOVE_BASE64_IMAGES: bool = True
+    # Comma-separated like CORS_ORIGINS (pydantic-settings JSON-parses list env
+    # vars, which makes a plain comma list crash startup); split via the
+    # firecrawl_exclude_tags property.
+    FIRECRAWL_EXCLUDE_TAGS: str = "nav,footer,header,aside"
 
     # Queue / HTTP / worker.
     QUEUE_POLL_INTERVAL_SECONDS: float = 2.0
@@ -172,6 +181,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
+    @property
+    def firecrawl_exclude_tags(self) -> list[str]:
+        return [t.strip() for t in self.FIRECRAWL_EXCLUDE_TAGS.split(",") if t.strip()]
 
 
 @lru_cache(maxsize=1)

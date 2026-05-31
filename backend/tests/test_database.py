@@ -19,6 +19,9 @@ def test_run_migrations_creates_tables(tmp_path: Path) -> None:
         "006_job_progress",
         "007_episode_cleaned_text_size",
         "008_backfill_cleaned_text_from_vtt",
+        "009_job_started_at",
+        "010_episode_revision",
+        "011_import_corrections_to_db",
     ]
 
     conn = database.connect(database.db_path(tmp_path))
@@ -43,6 +46,9 @@ def test_second_run_is_a_noop(tmp_path: Path) -> None:
         "006_job_progress",
         "007_episode_cleaned_text_size",
         "008_backfill_cleaned_text_from_vtt",
+        "009_job_started_at",
+        "010_episode_revision",
+        "011_import_corrections_to_db",
     ]
     assert second == []
 
@@ -51,6 +57,44 @@ def test_no_backup_on_fresh_init_or_noop(tmp_path: Path) -> None:
     database.run_migrations(tmp_path)
     database.run_migrations(tmp_path)
     assert sorted(tmp_path.glob(f"{database.BACKUP_PREFIX}*")) == []
+
+
+def test_m011_imports_legacy_corrections_into_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A non-empty legacy on-disk dictionary is imported into the settings table.
+    legacy = tmp_path / "pronunciation.json"
+    legacy.write_text('{"kubectl": "kube control"}', encoding="utf-8")
+    monkeypatch.setattr(database, "_legacy_corrections_path", lambda: legacy)
+
+    database.run_migrations(tmp_path)
+
+    from app.services import corrections, settings_store
+
+    conn = database.connect(database.db_path(tmp_path))
+    try:
+        assert settings_store.get(conn, settings_store.PRONUNCIATION_KEY) is not None
+        assert corrections.load_user_dict(conn) == {"kubectl": "kube control"}
+    finally:
+        conn.close()
+
+
+def test_m011_no_import_when_legacy_file_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    legacy = tmp_path / "pronunciation.json"
+    legacy.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(database, "_legacy_corrections_path", lambda: legacy)
+
+    database.run_migrations(tmp_path)
+
+    from app.services import settings_store
+
+    conn = database.connect(database.db_path(tmp_path))
+    try:
+        assert settings_store.get(conn, settings_store.PRONUNCIATION_KEY) is None
+    finally:
+        conn.close()
 
 
 def test_backup_when_pending_migration_runs_against_populated_db(

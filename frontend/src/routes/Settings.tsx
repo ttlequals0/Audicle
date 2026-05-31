@@ -69,6 +69,7 @@ const PROVIDER_SPECIFIC_KEYS = new Set(
 
 interface PromptBody {
   prompt: string;
+  is_default?: boolean;
 }
 
 export default function SettingsRoute() {
@@ -535,6 +536,18 @@ function PromptEditor({ initial }: { initial: string }) {
     },
   });
 
+  // Reset clears the DB override; the response carries the packaged default,
+  // which we load back into the editor.
+  const reset = useMutation({
+    mutationFn: () => api<PromptBody>("/api/v1/prompt", { method: "DELETE" }),
+    onSuccess: (data) => {
+      setText(data.prompt);
+      setMsg("reset to default");
+      setTimeout(() => setMsg(null), 2000);
+      qc.invalidateQueries({ queryKey: ["prompt"] });
+    },
+  });
+
   return (
     <section className="space-y-3">
       <textarea
@@ -545,6 +558,13 @@ function PromptEditor({ initial }: { initial: string }) {
       <div className="flex items-center gap-3">
         <button className="btn-primary" disabled={m.isPending} onClick={() => m.mutate()}>
           {m.isPending ? "saving..." : "save prompt"}
+        </button>
+        <button
+          className="btn-ghost"
+          disabled={reset.isPending}
+          onClick={() => reset.mutate()}
+        >
+          {reset.isPending ? "resetting..." : "reset to default"}
         </button>
         {msg && <span className="font-mono text-xs text-accent">{msg}</span>}
       </div>
@@ -584,6 +604,17 @@ function CorrectionsTable({ initial }: { initial: Record<string, string> }) {
     },
     onSuccess: () => {
       setMsg("saved");
+      setTimeout(() => setMsg(null), 2000);
+      qc.invalidateQueries({ queryKey: ["corrections"] });
+    },
+  });
+
+  // Clear all user corrections (built-in fixes are unaffected).
+  const reset = useMutation({
+    mutationFn: () => api("/api/v1/corrections", { method: "DELETE" }),
+    onSuccess: () => {
+      setRows([]);
+      setMsg("cleared");
       setTimeout(() => setMsg(null), 2000);
       qc.invalidateQueries({ queryKey: ["corrections"] });
     },
@@ -644,6 +675,13 @@ function CorrectionsTable({ initial }: { initial: Record<string, string> }) {
       <div className="flex items-center gap-3">
         <button className="btn-primary" disabled={m.isPending} onClick={() => m.mutate()}>
           {m.isPending ? "saving..." : "save corrections"}
+        </button>
+        <button
+          className="btn-ghost"
+          disabled={reset.isPending || rows.length === 0}
+          onClick={() => reset.mutate()}
+        >
+          {reset.isPending ? "clearing..." : "clear all"}
         </button>
         {msg && <span className="font-mono text-xs text-accent">{msg}</span>}
       </div>
@@ -783,9 +821,9 @@ function ReferenceVoiceWidget() {
         <label className="label" htmlFor="ref-sample">
           sample text (for preview / audition)
         </label>
-        <input
+        <textarea
           id="ref-sample"
-          className="field"
+          className="field min-h-[120px] resize-y"
           value={sample}
           onChange={(e) => setSample(e.target.value)}
         />

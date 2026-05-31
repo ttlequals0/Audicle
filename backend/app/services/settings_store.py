@@ -34,10 +34,24 @@ FEED_GUID_EPOCH_KEY = "feed_guid_epoch"
 APP_PASSWORD_KEY = "app_password"
 SESSION_SECRET_KEY_NAME = "session_secret"
 
+# Operator-editable config that used to live in bind-mounted files (now DB-backed
+# so a deploy ships behavior via the image default and /data holds only media).
+# Absence of a row means "use the packaged default".
+CLEANUP_PROMPT_KEY = "cleanup_prompt"
+SUMMARY_PROMPT_KEY = "summary_prompt"
+PRONUNCIATION_KEY = "pronunciation_dict"
+
 
 def get(conn: sqlite3.Connection, key: str) -> str | None:
     row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
     return None if row is None else row["value"]
+
+
+def delete(conn: sqlite3.Connection, key: str) -> None:
+    """Remove a setting row so the caller falls back to its packaged default."""
+
+    conn.execute("DELETE FROM settings WHERE key = ?", (key,))
+    conn.commit()
 
 
 def set_(conn: sqlite3.Connection, key: str, value: str) -> None:

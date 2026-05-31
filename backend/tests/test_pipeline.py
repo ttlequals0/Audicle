@@ -620,9 +620,7 @@ def test_corrections_applies_seed_brand_phrase(
     """An applicable seed row (a brand phrase) is corrected even with no user
     dictionary present."""
 
-    database.run_migrations(env)
-    user_file = tmp_path / "pronunciation.json"  # missing -> empty user dict
-    monkeypatch.setattr(pipeline, "_corrections_path", lambda _s: user_file)
+    database.run_migrations(env)  # no user dict stored -> empty user corrections
     out = asyncio.run(
         pipeline._stage_corrections("I bought a Louis Vuitton bag.", get_settings())
     )
@@ -634,12 +632,14 @@ def test_corrections_user_override_beats_seed(
 ) -> None:
     """A user correction whose key also exists in the seed wins."""
 
-    import json
+    from app.services import corrections as corrections_service
 
     database.run_migrations(env)
-    user_file = tmp_path / "pronunciation.json"
-    user_file.write_text(json.dumps({"Louis Vuitton": "ELL VEE"}), encoding="utf-8")
-    monkeypatch.setattr(pipeline, "_corrections_path", lambda _s: user_file)
+    conn = database.connect(database.db_path(env))
+    try:
+        corrections_service.save_user_dict(conn, {"Louis Vuitton": "ELL VEE"})
+    finally:
+        conn.close()
     out = asyncio.run(pipeline._stage_corrections("My Louis Vuitton bag.", get_settings()))
     assert "ELL VEE" in out
     assert "loo-ee vwee-TOHN" not in out
@@ -651,19 +651,84 @@ def test_corrections_malformed_seed_falls_back_to_user_only(
     """A malformed bundled seed CSV must not fail the job; user corrections
     still apply."""
 
-    import json
-
+    from app.services import corrections as corrections_service
     from app.services import seed_corrections
 
     database.run_migrations(env)
-    user_file = tmp_path / "pronunciation.json"
-    user_file.write_text(json.dumps({"widget": "wid jet"}), encoding="utf-8")
-    monkeypatch.setattr(pipeline, "_corrections_path", lambda _s: user_file)
+    conn = database.connect(database.db_path(env))
+    try:
+        corrections_service.save_user_dict(conn, {"widget": "wid jet"})
+    finally:
+        conn.close()
     bad_seed = tmp_path / "bad_seed.csv"
     bad_seed.write_text("wrong,columns\na,b\n", encoding="utf-8")
     monkeypatch.setattr(seed_corrections, "seed_path", lambda: bad_seed)
     out = asyncio.run(pipeline._stage_corrections("a widget here", get_settings()))
     assert "wid jet" in out
+
+
+# --- cleanup: boilerplate-only window drop ---------------------------------
+
+
+def test_is_empty_section_detects_sentinel_and_disclaimers() -> None:
+    assert pipeline._is_empty_section("NO_ARTICLE_CONTENT")
+    assert pipeline._is_empty_section("NO_ARTICLE_CONTENT.")
+    assert pipeline._is_empty_section('"NO_ARTICLE_CONTENT"')
+    assert pipeline._is_empty_section('"NO_ARTICLE_CONTENT".')
+    # The two real disclaimers the model leaked in the incident.
+    assert pipeline._is_empty_section(
+        "There is no article content in what you provided. The entire text is "
+        "website cookie-consent and privacy-policy boilerplate."
+    )
+    assert pipeline._is_empty_section(
+        "If you paste the article body text, I can clean it for you."
+    )
+
+
+def test_is_empty_section_keeps_real_prose() -> None:
+    # Normal narration is not dropped, even when it mentions "article".
+    assert not pipeline._is_empty_section(
+        "This article explains how the kernel boots in six phases. " * 5
+    )
+    assert not pipeline._is_empty_section(
+        "The mayor announced a five hundred thousand dollar settlement today."
+    )
+    # A real column that opens "There is no article this week" must survive: it
+    # hits the disclaimer opener but has no supplied-input signal.
+    assert not pipeline._is_empty_section(
+        "There is no article this week, so instead we round up the month's best reads."
+    )
+
+
+def test_is_empty_section_catches_sentinel_with_stray_prose() -> None:
+    # Model adds stray text around the sentinel -> still dropped (containment).
+    assert pipeline._is_empty_section("NO_ARTICLE_CONTENT\n\nSkip to main content")
+
+
+async def test_cleanup_drops_boilerplate_only_windows(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows that come back as the sentinel or a disclaimer are dropped; only
+    the real article body survives into the cleaned text."""
+
+    database.run_migrations(env)
+    monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _md, _n: ["a", "b", "c"])
+    outputs = iter(
+        [
+            "NO_ARTICLE_CONTENT",
+            "The mayor announced the budget today and the council approved it. " * 8,
+            "There is no article body text in the content you provided.",
+        ]
+    )
+
+    async def _fake(_system, _user, _settings, **_kwargs):
+        return next(outputs)
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _fake)
+    cleaned = await pipeline._stage_cleanup("job", "markdown", get_settings())
+    assert "NO_ARTICLE_CONTENT" not in cleaned
+    assert "there is no article" not in cleaned.lower()
+    assert "mayor announced the budget" in cleaned
 
 
 # --- cleanup: residual markdown heading strip ------------------------------
@@ -721,6 +786,64 @@ def test_normalize_numbers_leaves_ambiguous_and_glued_alone() -> None:
     assert pipeline._normalize_numbers("x86 and startup_32") == "x86 and startup_32"
 
 
+def test_strip_code_artifacts_removes_backticks_parens_and_hex() -> None:
+    assert pipeline._strip_code_artifacts("call `smp init()` now") == "call smp init now"
+    assert (
+        pipeline._strip_code_artifacts("loaded at 0x1000000 then 0xffffffff81000000")
+        == "loaded at a hexadecimal value then a hexadecimal value"
+    )
+    # Plain prose (with real parenthetical) is untouched.
+    assert pipeline._strip_code_artifacts("a normal sentence (with an aside)") == (
+        "a normal sentence (with an aside)"
+    )
+
+
+def test_normalize_for_tts_strips_code_artifacts() -> None:
+    out = pipeline._normalize_for_tts("The `__init` section maps 0x1000000 in ram.")
+    assert "`" not in out
+    assert "0x" not in out
+    assert "a hexadecimal value" in out
+
+
+def test_normalize_currency_expands_magnitude_suffix() -> None:
+    assert pipeline._normalize_currency("raised $500k") == "raised five hundred thousand dollars"
+    assert (
+        pipeline._normalize_currency("a $3.5M round")
+        == "a three point five million dollars round"
+    )
+    assert pipeline._normalize_currency("worth $1.2B now") == "worth one point two billion dollars now"
+
+
+def test_normalize_currency_plain_and_grouped_and_symbols() -> None:
+    assert pipeline._normalize_currency("costs $500") == "costs five hundred dollars"
+    assert (
+        pipeline._normalize_currency("paid $1,200 total")
+        == "paid one thousand two hundred dollars total"
+    )
+    assert pipeline._normalize_currency("about €100k") == "about one hundred thousand euros"
+    assert pipeline._normalize_currency("won £2M") == "won two million pounds"
+
+
+def test_normalize_currency_leaves_unitted_bare_numbers_alone() -> None:
+    # No currency symbol means the suffix is a unit, left to the LLM prompt.
+    assert pipeline._normalize_currency("500m north") == "500m north"
+    assert pipeline._normalize_currency("a 5k run") == "a 5k run"
+    # A mis-suffixed token ($500kg) falls through untouched rather than mis-read.
+    assert pipeline._normalize_currency("weighs $500kg") == "weighs $500kg"
+
+
+def test_normalize_currency_preserves_trailing_punctuation() -> None:
+    # The thousands-grouped number shape stops a trailing comma/period being
+    # swallowed into the amount and dropped from the sentence.
+    assert pipeline._normalize_currency("was $500, but") == "was five hundred dollars, but"
+    assert pipeline._normalize_currency("cost $1,200.") == "cost one thousand two hundred dollars."
+
+
+def test_normalize_for_tts_runs_currency_before_numbers() -> None:
+    # Ordered pass: currency expands first, leaving no digits for the number pass.
+    assert pipeline._normalize_for_tts("worth $2.5B") == "worth two point five billion dollars"
+
+
 def test_normalize_identifiers_expands_snake_case() -> None:
     assert pipeline._normalize_identifiers("startup_32 ran") == "startup 32 ran"
     assert pipeline._normalize_identifiers("__startup_64 entry") == "startup 64 entry"
@@ -746,9 +869,7 @@ def test_corrections_voices_february_after_date_normalization(
     """Cleanup normalizes 'Feb 3' -> 'February 3'; the corrections stage then
     voices February via the seed pronunciation."""
 
-    database.run_migrations(env)
-    user_file = tmp_path / "pronunciation.json"
-    monkeypatch.setattr(pipeline, "_corrections_path", lambda _s: user_file)
+    database.run_migrations(env)  # no user dict stored
     normalized = pipeline._normalize_for_tts("Posted Jan 15 2026 and Feb 3 2025.")
     out = asyncio.run(pipeline._stage_corrections(normalized, get_settings()))
     assert "January 15 2026" in out

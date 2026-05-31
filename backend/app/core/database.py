@@ -291,6 +291,74 @@ def _m008_backfill_cleaned_text_from_vtt(conn: sqlite3.Connection) -> None:
             )
 
 
+def _m009_job_started_at(conn: sqlite3.Connection) -> None:
+    """Add the timestamp set when the worker claims a job (queued -> processing).
+
+    Lets the UI show true synthesis time (started_at..updated_at) instead of
+    queue-wait-inclusive elapsed. Additive/NULL for jobs created before 0.11.0
+    and for any job still queued; readers skip the duration when NULL.
+    """
+
+    conn.execute("ALTER TABLE jobs ADD COLUMN started_at TEXT")
+
+
+def _m010_episode_revision(conn: sqlite3.Connection) -> None:
+    """Add a per-episode render counter so reprocessed episodes get a fresh feed
+    GUID (forcing podcast clients to re-download the new audio).
+
+    Starts at 1 for every existing/new episode; the finalize upsert increments it
+    on each reprocess. The feed appends ``-r{revision}`` to the GUID only when
+    revision > 1, so untouched episodes keep their stable GUID (no back-catalog
+    re-download).
+    """
+
+    conn.execute("ALTER TABLE episodes ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")
+
+
+def _legacy_corrections_path() -> Path:
+    """Where the pre-0.12.0 bind-mounted pronunciation dictionary lives, read once
+    by the import migration. A function (not a constant) so tests can patch it."""
+
+    return Path(__file__).parent.parent / "corrections" / "pronunciation.json"
+
+
+def _m011_import_corrections_to_db(conn: sqlite3.Connection) -> None:
+    """Import a legacy on-disk pronunciation dictionary into the settings table.
+
+    Corrections moved from a bind-mounted ``pronunciation.json`` to a DB row in
+    0.12.0. An operator who customized the dictionary has it on disk; import it
+    once (only if no DB row exists yet and the file is non-empty) so the move
+    preserves their entries. The empty default makes "non-empty == customized"
+    unambiguous. Writes via raw ``conn.execute`` (no commit) so it stays inside
+    the migration's atomic transaction.
+    """
+
+    import json
+
+    # Local import: keep the core->services dependency at call time, not load.
+    from app.services import corrections, settings_store
+
+    existing = conn.execute(
+        "SELECT 1 FROM settings WHERE key = ?", (settings_store.PRONUNCIATION_KEY,)
+    ).fetchone()
+    if existing is not None:
+        return
+    try:
+        dictionary = corrections.load(_legacy_corrections_path())
+    except (ValueError, OSError) as exc:
+        logger.warning(
+            "Legacy corrections file unreadable; skipping DB import",
+            extra={"event": "corrections_import_skipped", "error": str(exc)},
+        )
+        return
+    if not dictionary:
+        return
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?, ?)",
+        (settings_store.PRONUNCIATION_KEY, json.dumps(dictionary, ensure_ascii=False)),
+    )
+
+
 MIGRATIONS: list[tuple[str, Migration]] = [
     ("001_initial_schema", _m001_initial_schema),
     ("002_settings_kv", _m002_settings_kv),
@@ -300,6 +368,9 @@ MIGRATIONS: list[tuple[str, Migration]] = [
     ("006_job_progress", _m006_job_progress),
     ("007_episode_cleaned_text_size", _m007_episode_cleaned_text_size),
     ("008_backfill_cleaned_text_from_vtt", _m008_backfill_cleaned_text_from_vtt),
+    ("009_job_started_at", _m009_job_started_at),
+    ("010_episode_revision", _m010_episode_revision),
+    ("011_import_corrections_to_db", _m011_import_corrections_to_db),
 ]
 
 

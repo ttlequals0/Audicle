@@ -104,6 +104,36 @@ def test_applicable_dict_excludes_non_applicable_rows() -> None:
     assert set(applied) == expected
 
 
+# --- reference_block() / load_reference_block() ----------------------------
+
+
+def test_reference_block_includes_only_curated_categories() -> None:
+    entries = [
+        SeedEntry("Homograph", "read (present)", "reed", "Present tense", False),
+        SeedEntry("Consumer Brand", "Porsche", "POR-shuh", "", True),
+        SeedEntry("Tech Acronym", "API", "A P I", "spell out", False),
+        SeedEntry("Symbol/Function", "kmalloc", "kay malloc", "", True),
+    ]
+    block = seed_corrections.reference_block(entries, seed_corrections.REFERENCE_CATEGORIES)
+    assert "read (present) -> reed  (Present tense)" in block
+    assert "Porsche -> POR-shuh" in block
+    # Categories outside the curated set are left to the deterministic pass.
+    assert "API" not in block
+    assert "kmalloc" not in block
+
+
+def test_reference_block_empty_when_no_match() -> None:
+    entries = [SeedEntry("Tech Acronym", "API", "A P I", "", False)]
+    assert seed_corrections.reference_block(entries, seed_corrections.REFERENCE_CATEGORIES) == ""
+
+
+def test_load_reference_block_from_bundled_csv() -> None:
+    block = seed_corrections.load_reference_block()
+    assert block  # the shipped CSV has curated rows
+    # A known homograph carries its context annotation through to the reference.
+    assert "read (present) -> reed" in block
+
+
 # --- applicable_dict() edge cases ------------------------------------------
 
 

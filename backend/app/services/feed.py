@@ -119,6 +119,11 @@ def render(
     for ep in episodes:
         item = fg.add_entry(order="append")
         guid_value = f"{ep.id}-{feed_guid_epoch}" if feed_guid_epoch else ep.id
+        # A reprocessed episode (revision > 1) gets a fresh GUID so podcast
+        # clients, which key "already downloaded" on the GUID, re-fetch the
+        # regenerated audio. First renders keep the stable GUID (no churn).
+        if ep.revision > 1:
+            guid_value = f"{guid_value}-r{ep.revision}"
         item.id(guid_value)
         item.guid(guid_value, permalink=False)
         if ep.title:

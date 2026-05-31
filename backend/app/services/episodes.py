@@ -34,6 +34,9 @@ class Episode:
     # carried on the row, so it isn't a dataclass field.)
     summary: str | None = None
     audio_size_bytes: int | None = None
+    # Render counter: 1 on first finalize, +1 per reprocess. The feed folds it
+    # into the GUID (only when > 1) so reprocessed episodes re-download.
+    revision: int = 1
 
 
 # cleaned_text is intentionally NOT in the default select: it's a large text
@@ -43,7 +46,7 @@ class Episode:
 _SELECT_COLUMNS = (
     "id, job_id, title, author, original_url, audio_path, artwork_path, "
     "transcript_vtt, duration_secs, pub_date, created_at, updated_at, summary, "
-    "audio_size_bytes"
+    "audio_size_bytes, revision"
 )
 
 
@@ -63,6 +66,7 @@ def _row_to_episode(row: sqlite3.Row) -> Episode:
         updated_at=row["updated_at"],
         summary=row["summary"],
         audio_size_bytes=row["audio_size_bytes"],
+        revision=row["revision"],
     )
 
 
@@ -128,7 +132,9 @@ def upsert(
     entered the feed), while ``pub_date`` is bumped to now so a reprocessed
     episode re-surfaces as new in podcast clients and re-sorts to the top of
     the feed. ``updated_at`` bumps too so RSS clients see a fresh
-    ``lastBuildDate``.
+    ``lastBuildDate``. ``revision`` increments on the reprocess (update) branch
+    so the feed can hand the episode a new GUID and clients re-download the
+    regenerated audio rather than keeping the stale enclosure they already have.
     """
 
     conn.execute(
@@ -151,6 +157,7 @@ def upsert(
             summary          = excluded.summary,
             cleaned_text     = excluded.cleaned_text,
             audio_size_bytes = excluded.audio_size_bytes,
+            revision         = episodes.revision + 1,
             pub_date         = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
             updated_at       = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
         """,

@@ -142,3 +142,39 @@ def load_applicable_dict() -> dict[str, str]:
     """Load the bundled seed and return its applicable ``{key: replacement}`` map."""
 
     return applicable_dict(load_seed(seed_path()))
+
+
+# Categories whose corrections are context-dependent or phonetic respellings the
+# deterministic whole-word pass can't safely apply on its own: homographs need
+# sentence context, and brand/word/medical respellings read best when the LLM
+# places them by meaning. These are fed to the cleanup LLM as a reference so the
+# list does not have to be exhaustively hand-maintained; the deterministic pass
+# still runs afterward as a backstop for anything the LLM misses.
+REFERENCE_CATEGORIES = frozenset(
+    {"Homograph", "Consumer Brand", "Mispronounced Word", "Medical/Scientific"}
+)
+
+
+def reference_block(entries: list[SeedEntry], categories: frozenset[str]) -> str:
+    """Format curated rows as an ``input -> replacement`` reference for the LLM.
+
+    Returns "" when no rows match so the caller can append unconditionally.
+    """
+
+    lines: list[str] = []
+    for entry in entries:
+        if entry.category not in categories:
+            continue
+        if not entry.input_text or not entry.replacement_text:
+            continue
+        line = f"- {entry.input_text} -> {entry.replacement_text}"
+        if entry.notes:
+            line += f"  ({entry.notes})"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def load_reference_block(categories: frozenset[str] = REFERENCE_CATEGORIES) -> str:
+    """Load the bundled seed and format its curated rows as an LLM reference."""
+
+    return reference_block(load_seed(seed_path()), categories)
