@@ -6,6 +6,39 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-05-31
+
+### Added
+
+- A dedicated pronunciation and normalization phase now runs between cleanup and
+  chunking. It works in two layers: an LLM pass respells terms by context using
+  the full correction set (every built-in entry plus the operator's own
+  dictionary), and the existing deterministic pass (regex number, currency, date,
+  and code fixups plus the seed and user dictionary) runs after it as a guaranteed
+  backstop. The LLM pass processes the text in paragraph windows and keeps the
+  original text for any window that errors or comes back far shorter than it went
+  in, so it can only improve pronunciation, never drop article content. The phase
+  has its own prompt, shipped as `pronunciation.txt` and overridable through the
+  same prompt store as the cleanup and summary prompts.
+- The built-in pronunciation list grew from 311 to 841 entries, adding internet
+  slang, medical and financial terms, geographic names, legal abbreviations, and
+  more. Existing curated entries win on any conflict.
+
+### Changed
+
+- The LLM no longer sees a hand-picked subset of pronunciation categories. The
+  new phase shows it the entire correction set and lets it apply entries by
+  context, which retires the category allowlist that had to be maintained by hand.
+  The deterministic pass still applies every entry it can match as a backstop.
+- The pipeline stage formerly logged as `corrections` is now `normalize`, and the
+  deterministic number, date, and code fixups moved out of cleanup into it so they
+  run once on the full text.
+
+### Documentation
+
+- The README now opens with the wordmark, a desktop and mobile screenshot table,
+  and a link to a short audio sample.
+
 ## [0.12.2] - 2026-05-31
 
 ### Fixed

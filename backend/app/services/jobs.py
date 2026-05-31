@@ -18,7 +18,7 @@ from typing import Any
 logger = logging.getLogger("app.services.jobs")
 
 JobStatus = str  # queued | processing | done | failed
-JobStage = str  # extract | cleanup | corrections | chunk | tts | audio | artwork | transcript | finalize | done
+JobStage = str  # extract | cleanup | normalize | chunk | tts | audio | artwork | transcript | finalize | done
 
 
 @dataclass(frozen=True)

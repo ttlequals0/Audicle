@@ -104,34 +104,46 @@ def test_applicable_dict_excludes_non_applicable_rows() -> None:
     assert set(applied) == expected
 
 
-# --- reference_block() / load_reference_block() ----------------------------
+# --- format_reference() / load_reference() ---------------------------------
 
 
-def test_reference_block_includes_only_curated_categories() -> None:
+def test_format_reference_includes_every_category_with_notes() -> None:
     entries = [
         SeedEntry("Homograph", "read (present)", "reed", "Present tense", False),
         SeedEntry("Consumer Brand", "Porsche", "POR-shuh", "", True),
         SeedEntry("Tech Acronym", "API", "A P I", "spell out", False),
         SeedEntry("Symbol/Function", "kmalloc", "kay malloc", "", True),
     ]
-    block = seed_corrections.reference_block(entries, seed_corrections.REFERENCE_CATEGORIES)
+    block = seed_corrections.format_reference(entries)
+    # Full set: no category curation, no applicability gating -- even the
+    # non-applicable annotated homograph and the spelled-out acronym appear.
     assert "read (present) -> reed  (Present tense)" in block
     assert "Porsche -> POR-shuh" in block
-    # Categories outside the curated set are left to the deterministic pass.
-    assert "API" not in block
-    assert "kmalloc" not in block
+    assert "API -> A P I  (spell out)" in block
+    assert "kmalloc -> kay malloc" in block
 
 
-def test_reference_block_empty_when_no_match() -> None:
-    entries = [SeedEntry("Tech Acronym", "API", "A P I", "", False)]
-    assert seed_corrections.reference_block(entries, seed_corrections.REFERENCE_CATEGORIES) == ""
+def test_format_reference_layers_user_dict_over_seed() -> None:
+    entries = [SeedEntry("Consumer Brand", "Porsche", "POR-shuh", "note", True)]
+    block = seed_corrections.format_reference(entries, {"Porsche": "PORSH", "Kubernetes": "koo-ber-net-eez"})
+    # User wins on collision (seed note dropped) and adds its own keys.
+    assert "Porsche -> PORSH" in block
+    assert "POR-shuh" not in block
+    assert "Kubernetes -> koo-ber-net-eez" in block
 
 
-def test_load_reference_block_from_bundled_csv() -> None:
-    block = seed_corrections.load_reference_block()
-    assert block  # the shipped CSV has curated rows
+def test_format_reference_skips_blank_rows() -> None:
+    entries = [SeedEntry("Homograph", "", "x", "", False), SeedEntry("Homograph", "y", "", "", False)]
+    assert seed_corrections.format_reference(entries) == ""
+
+
+def test_load_reference_from_bundled_csv() -> None:
+    block = seed_corrections.load_reference()
+    assert block  # the shipped CSV has rows
     # A known homograph carries its context annotation through to the reference.
     assert "read (present) -> reed" in block
+    # An acronym the deterministic pass skips is still shown to the LLM.
+    assert "API ->" in block
 
 
 # --- applicable_dict() edge cases ------------------------------------------
