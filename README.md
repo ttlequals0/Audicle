@@ -37,9 +37,9 @@ Settings -- provider, voice, prompts, and pronunciation corrections.
 
 A 30-second clip of cloned-voice narration (a news article).
 
-<audio controls src="docs/sample.mp3"></audio>
+https://github.com/user-attachments/assets/a508b4b9-9913-4b18-9b63-210774eecb85
 
-[Download the MP3](docs/sample.mp3) if the player doesn't load.
+[Download the MP3](docs/sample.mp3)
 
 ## Why
 
