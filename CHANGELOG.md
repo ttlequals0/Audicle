@@ -6,6 +6,18 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-05-31
+
+### Fixed
+
+- Cleanup no longer narrates a "there is no article content here" disclaimer when
+  a page splits into windows that are entirely boilerplate (cookie/consent text,
+  navigation). The prompt now asks the model to emit an explicit sentinel for an
+  empty section and the cleanup stage drops those windows, with a backstop that
+  also discards a short disclaimer if the model writes one anyway. The real
+  article body is kept; a page with no article at all still fails cleanly rather
+  than publishing the disclaimer.
+
 ## [0.12.0] - 2026-05-31
 
 ### Added

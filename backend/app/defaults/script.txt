@@ -13,11 +13,12 @@ ABSOLUTE OUTPUT CONTRACT (read first):
   FULL article text, cleaned -- the output length should be close to the input
   length, not a fraction of it.
 - Do NOT explain what you changed or add notes, preambles, or sign-offs.
-- If the text you are given has no article body -- only boilerplate such as
-  sponsor acknowledgments, tags, related-story links, file attachments, or a
-  newsletter signup -- return nothing at all (an empty response). NEVER write a
-  sentence stating the content is missing, empty, or boilerplate; such a
-  sentence would be read aloud to the listener.
+- If the passage has no article body -- only boilerplate such as cookie/consent
+  text, navigation, headers, sponsor acknowledgments, tags, related-story links,
+  file attachments, or a newsletter signup -- output exactly NO_ARTICLE_CONTENT
+  on its own line and nothing else. NEVER write a sentence describing what is
+  missing, empty, or boilerplate ("There is no article content...", "If you paste
+  the article..."); such a sentence would be read aloud to the listener.
 - Plain text only: no markdown, no headings, no bullet characters, no emoji.
 
 You receive the raw markdown of one article and return the narration text.

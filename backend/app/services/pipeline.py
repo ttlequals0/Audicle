@@ -487,6 +487,51 @@ def _normalize_for_tts(text: str) -> str:
     )
 
 
+# The cleanup prompt tells the model to emit this exact token for a window that
+# is all boilerplate (no article body). An explicit sentinel is obeyed far more
+# reliably than "return nothing", which models tend to answer with a prose
+# disclaimer ("There is no article content...") that would otherwise be narrated.
+_EMPTY_SECTION_SENTINEL = "NO_ARTICLE_CONTENT"
+# Backstops for when the model ignores the sentinel and writes a refusal in prose.
+# Assistant-offer phrasing ("if you paste the article...") is conclusive on its
+# own -- a real article never says it. The "there is no article..." opener can
+# appear in a real column, so it additionally requires a reference to the supplied
+# input (or a boilerplate keyword) before a window is dropped.
+_DISCLAIMER_OFFER_RE = re.compile(
+    r"^if you (paste|provide|share) the article", re.IGNORECASE
+)
+_DISCLAIMER_OPENER_RE = re.compile(
+    r"^(there (is|was) no (article|content|text)|"
+    r"no article (body|content|text) (was|is|were))",
+    re.IGNORECASE,
+)
+_DISCLAIMER_SIGNAL_RE = re.compile(
+    r"you (provided|shared|gave|pasted)|in (the content|what you)|"
+    r"was not included|to extract|cookie|consent|boilerplate|navigation",
+    re.IGNORECASE,
+)
+
+
+def _is_empty_section(text: str) -> bool:
+    """True when a cleanup window produced no article body -- the sentinel
+    (anywhere in the output, in case the model adds stray prose), or a short
+    refusal the model wrote instead of the sentinel."""
+
+    if _EMPTY_SECTION_SENTINEL in text:
+        return True
+    stripped = text.strip()
+    # Backstop only: a short output (a real article section is long). The offer
+    # phrasing is conclusive; the "no article" opener needs a supplied-input
+    # signal so a real "There is no article this week..." column is not dropped.
+    if len(stripped) >= 600:
+        return False
+    if _DISCLAIMER_OFFER_RE.match(stripped):
+        return True
+    return bool(_DISCLAIMER_OPENER_RE.match(stripped)) and bool(
+        _DISCLAIMER_SIGNAL_RE.search(stripped)
+    )
+
+
 async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
     """LLM cleanup with tenacity retry on transient provider failures.
 
@@ -535,20 +580,28 @@ async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
         # rather than replying conversationally to it.
         user_message = (
             "Clean the article below per your instructions. Return ONLY the "
-            "cleaned narration text -- no commentary, no greetings, no questions."
+            "cleaned narration text -- no commentary, no greetings, no questions. "
+            "If this passage has no article body, output exactly NO_ARTICLE_CONTENT "
+            "and nothing else."
             f"\n\n<article>\n{window}\n</article>"
         )
-        part = await _llm_with_retry(system_prompt, user_message, settings)
-        cleaned_parts.append(part.strip())
+        part = (await _llm_with_retry(system_prompt, user_message, settings)).strip()
+        # Drop boilerplate-only windows so a "there is no article" disclaimer never
+        # reaches narration; the empty string is filtered out of the join below.
+        empty = _is_empty_section(part)
+        output_chars = len(part)  # the model's real output, before we drop it
+        if empty:
+            part = ""
+        cleaned_parts.append(part)
         _set_progress(job_id, index + 1, len(windows), settings)
         logger.info(
             "Cleanup window done",
             extra={
-                "event": "cleanup_window_done",
+                "event": "cleanup_window_empty" if empty else "cleanup_window_done",
                 "window_index": index,
                 "window_count": len(windows),
                 "input_chars": len(window),
-                "output_chars": len(part),
+                "output_chars": output_chars,
             },
         )
     cleaned = _normalize_for_tts("\n\n".join(p for p in cleaned_parts if p))

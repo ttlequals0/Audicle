@@ -667,6 +667,70 @@ def test_corrections_malformed_seed_falls_back_to_user_only(
     assert "wid jet" in out
 
 
+# --- cleanup: boilerplate-only window drop ---------------------------------
+
+
+def test_is_empty_section_detects_sentinel_and_disclaimers() -> None:
+    assert pipeline._is_empty_section("NO_ARTICLE_CONTENT")
+    assert pipeline._is_empty_section("NO_ARTICLE_CONTENT.")
+    assert pipeline._is_empty_section('"NO_ARTICLE_CONTENT"')
+    assert pipeline._is_empty_section('"NO_ARTICLE_CONTENT".')
+    # The two real disclaimers the model leaked in the incident.
+    assert pipeline._is_empty_section(
+        "There is no article content in what you provided. The entire text is "
+        "website cookie-consent and privacy-policy boilerplate."
+    )
+    assert pipeline._is_empty_section(
+        "If you paste the article body text, I can clean it for you."
+    )
+
+
+def test_is_empty_section_keeps_real_prose() -> None:
+    # Normal narration is not dropped, even when it mentions "article".
+    assert not pipeline._is_empty_section(
+        "This article explains how the kernel boots in six phases. " * 5
+    )
+    assert not pipeline._is_empty_section(
+        "The mayor announced a five hundred thousand dollar settlement today."
+    )
+    # A real column that opens "There is no article this week" must survive: it
+    # hits the disclaimer opener but has no supplied-input signal.
+    assert not pipeline._is_empty_section(
+        "There is no article this week, so instead we round up the month's best reads."
+    )
+
+
+def test_is_empty_section_catches_sentinel_with_stray_prose() -> None:
+    # Model adds stray text around the sentinel -> still dropped (containment).
+    assert pipeline._is_empty_section("NO_ARTICLE_CONTENT\n\nSkip to main content")
+
+
+async def test_cleanup_drops_boilerplate_only_windows(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows that come back as the sentinel or a disclaimer are dropped; only
+    the real article body survives into the cleaned text."""
+
+    database.run_migrations(env)
+    monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _md, _n: ["a", "b", "c"])
+    outputs = iter(
+        [
+            "NO_ARTICLE_CONTENT",
+            "The mayor announced the budget today and the council approved it. " * 8,
+            "There is no article body text in the content you provided.",
+        ]
+    )
+
+    async def _fake(_system, _user, _settings, **_kwargs):
+        return next(outputs)
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _fake)
+    cleaned = await pipeline._stage_cleanup("job", "markdown", get_settings())
+    assert "NO_ARTICLE_CONTENT" not in cleaned
+    assert "there is no article" not in cleaned.lower()
+    assert "mayor announced the budget" in cleaned
+
+
 # --- cleanup: residual markdown heading strip ------------------------------
 
 
