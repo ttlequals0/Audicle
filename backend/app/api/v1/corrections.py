@@ -3,32 +3,31 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 
 from app.config import Settings, get_settings
+from app.core import database
 from app.services import corrections as corrections_service
 from app.services import seed_corrections
 
 router = APIRouter(tags=["corrections"])
 
 
-def _corrections_path() -> Path:
-    return Path(__file__).parent.parent.parent / "corrections" / "pronunciation.json"
-
-
 @router.get(
     "/corrections",
     summary="Read the pronunciation dictionary",
 )
-def read_corrections() -> dict[str, str]:
-    try:
-        return corrections_service.load(_corrections_path())
-    except ValueError as exc:
-        # Malformed file on disk; surface clearly so the operator notices.
-        raise HTTPException(status_code=500, detail=f"corrections file invalid: {exc}") from exc
+def read_corrections(settings: Annotated[Settings, Depends(get_settings)]) -> dict[str, str]:
+    with database.connection(settings.DATA_DIR) as conn:
+        try:
+            return corrections_service.load_user_dict(conn)
+        except ValueError as exc:
+            # Stored value is somehow not a JSON object; surface clearly.
+            raise HTTPException(
+                status_code=500, detail=f"stored corrections invalid: {exc}"
+            ) from exc
 
 
 @router.put(
@@ -53,8 +52,19 @@ def write_corrections(
                 },
             },
         )
-    corrections_service.save(_corrections_path(), body)
+    with database.connection(settings.DATA_DIR) as conn:
+        corrections_service.save_user_dict(conn, body)
     return body
+
+
+@router.delete(
+    "/corrections",
+    summary="Reset the pronunciation dictionary to empty",
+)
+def reset_corrections(settings: Annotated[Settings, Depends(get_settings)]) -> dict[str, str]:
+    with database.connection(settings.DATA_DIR) as conn:
+        corrections_service.save_user_dict(conn, {})
+    return {}
 
 
 @router.get(

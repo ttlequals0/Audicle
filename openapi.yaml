@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.10.0
+  version: 0.12.0
 paths:
   /health/live:
     get:
@@ -190,7 +190,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PromptBody'
+                $ref: '#/components/schemas/PromptResponse'
     put:
       tags:
       - prompt
@@ -208,13 +208,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PromptBody'
+                $ref: '#/components/schemas/PromptResponse'
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - prompt
+      summary: Reset the cleanup prompt to default
+      operationId: reset_prompt_api_v1_prompt_delete
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromptResponse'
   /api/v1/corrections:
     get:
       tags:
@@ -259,6 +271,21 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - corrections
+      summary: Reset the pronunciation dictionary to empty
+      operationId: reset_corrections_api_v1_corrections_delete
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+                title: Response Reset Corrections Api V1 Corrections Delete
   /api/v1/corrections/seed:
     get:
       tags:
@@ -1025,6 +1052,11 @@ components:
         updated_at:
           type: string
           title: Updated At
+        started_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Started At
       additionalProperties: false
       type: object
       required:
@@ -1038,6 +1070,7 @@ components:
       - progress_total
       - created_at
       - updated_at
+      - started_at
       title: JobListItem
     LoginRequest:
       properties:
@@ -1111,6 +1144,19 @@ components:
       required:
       - prompt
       title: PromptBody
+    PromptResponse:
+      properties:
+        prompt:
+          type: string
+          title: Prompt
+        is_default:
+          type: boolean
+          title: Is Default
+      type: object
+      required:
+      - prompt
+      - is_default
+      title: PromptResponse
     PurgeResponse:
       properties:
         older_than_days:

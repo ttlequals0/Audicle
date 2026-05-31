@@ -3,50 +3,73 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from app.core import database
 from app.services import prompt as prompt_service
 
 
-def test_load_returns_file_contents(tmp_path: Path) -> None:
-    target = tmp_path / "script.txt"
-    target.write_text("rules here\nmore rules", encoding="utf-8")
-    assert prompt_service.load(target) == "rules here\nmore rules"
+def _conn(env: Path):
+    database.run_migrations(env)
+    return database.connect(database.db_path(env))
 
 
-def test_save_atomic_round_trip(tmp_path: Path) -> None:
-    target = tmp_path / "script.txt"
-    prompt_service.save(target, "new prompt body", max_bytes=10240)
-    assert prompt_service.load(target) == "new prompt body"
+def test_load_effective_returns_packaged_default_when_unset(env: Path) -> None:
+    conn = _conn(env)
+    try:
+        # No override stored -> the shipped default file content, and is_default True.
+        assert prompt_service.load_effective(conn, "cleanup") == prompt_service.default_text("cleanup")
+        assert prompt_service.is_default(conn, "cleanup") is True
+    finally:
+        conn.close()
 
 
-def test_save_rejects_oversize(tmp_path: Path) -> None:
-    target = tmp_path / "script.txt"
-    with pytest.raises(prompt_service.PromptTooLargeError):
-        prompt_service.save(target, "x" * 100, max_bytes=50)
+def test_save_override_then_load_effective(env: Path) -> None:
+    conn = _conn(env)
+    try:
+        prompt_service.save_override(conn, "cleanup", "new prompt body", max_bytes=10240)
+        assert prompt_service.load_effective(conn, "cleanup") == "new prompt body"
+        assert prompt_service.is_default(conn, "cleanup") is False
+    finally:
+        conn.close()
 
 
-def test_save_byte_length_not_char_length(tmp_path: Path) -> None:
-    """A short character string can still exceed the byte cap when encoded
-    in multi-byte UTF-8."""
+def test_reset_restores_default(env: Path) -> None:
+    conn = _conn(env)
+    try:
+        prompt_service.save_override(conn, "cleanup", "custom", max_bytes=10240)
+        prompt_service.reset(conn, "cleanup")
+        assert prompt_service.is_default(conn, "cleanup") is True
+        assert prompt_service.load_effective(conn, "cleanup") == prompt_service.default_text("cleanup")
+    finally:
+        conn.close()
 
-    target = tmp_path / "script.txt"
-    # Each emoji is 4 bytes UTF-8; 20 of them = 80 bytes.
-    body = "\N{ROCKET}" * 20
-    with pytest.raises(prompt_service.PromptTooLargeError):
-        prompt_service.save(target, body, max_bytes=50)
+
+def test_summary_kind_uses_its_own_default(env: Path) -> None:
+    conn = _conn(env)
+    try:
+        assert prompt_service.load_effective(conn, "summary") == prompt_service.default_text("summary")
+        # Overriding cleanup must not affect summary.
+        prompt_service.save_override(conn, "cleanup", "only cleanup", max_bytes=10240)
+        assert prompt_service.is_default(conn, "summary") is True
+    finally:
+        conn.close()
 
 
-def test_save_atomic_no_partial_on_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    target = tmp_path / "script.txt"
-    prompt_service.save(target, "original", max_bytes=10240)
+def test_save_rejects_oversize(env: Path) -> None:
+    conn = _conn(env)
+    try:
+        with pytest.raises(prompt_service.PromptTooLargeError):
+            prompt_service.save_override(conn, "cleanup", "x" * 100, max_bytes=50)
+    finally:
+        conn.close()
 
-    import os
 
-    def _boom(*_args, **_kwargs):
-        raise OSError("simulated replace failure")
+def test_save_byte_length_not_char_length(env: Path) -> None:
+    """A short character string can still exceed the byte cap in multi-byte UTF-8."""
 
-    monkeypatch.setattr(os, "replace", _boom)
-    with pytest.raises(OSError):
-        prompt_service.save(target, "new content", max_bytes=10240)
-
-    assert prompt_service.load(target) == "original"
-    assert not list(tmp_path.glob(".script-*.tmp"))
+    conn = _conn(env)
+    try:
+        body = "\N{ROCKET}" * 20  # 4 bytes each = 80 bytes
+        with pytest.raises(prompt_service.PromptTooLargeError):
+            prompt_service.save_override(conn, "cleanup", body, max_bytes=50)
+    finally:
+        conn.close()

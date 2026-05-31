@@ -17,9 +17,13 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/data
-      # Bind mounts target /app/app/* (the Dockerfile copies backend/app there);
-      # host edits show up at the path the code reads from. An empty mount is
-      # seeded with the packaged default on first boot.
+      # As of 0.12.0 the cleanup/summary prompts and pronunciation corrections
+      # are DB-backed (default ships in the image, edits live in the settings
+      # table). The prompts/ and corrections/ mounts are now vestigial: kept only
+      # so the 011 migration can import a pre-0.12.0 on-disk pronunciation.json on
+      # first boot. They can be dropped once every deployment is post-import.
+      # The reference voice (voice.wav) is a real media file shared with the
+      # wrapper, so it stays a bind mount.
       - ./backend/app/prompts:/app/app/prompts
       - ./backend/app/corrections:/app/app/corrections
       - ./backend/app/reference:/app/app/reference

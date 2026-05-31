@@ -37,3 +37,17 @@ def test_set_stage_resets_progress(env: Path) -> None:
         assert job.progress_total is None
     finally:
         conn.close()
+
+
+def test_claim_sets_started_at(env: Path) -> None:
+    conn, job_id = _job(env)
+    try:
+        # Queued jobs have no start time; claiming stamps it.
+        assert jobs.get_job(conn, job_id).started_at is None
+        claimed = jobs.claim_next_queued(conn)
+        conn.commit()
+        assert claimed is not None and claimed.id == job_id
+        assert claimed.status == "processing"
+        assert claimed.started_at is not None
+    finally:
+        conn.close()

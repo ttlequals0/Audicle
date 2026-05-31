@@ -1,8 +1,9 @@
 """Pronunciation corrections.
 
-Word-level overrides applied between LLM cleanup and chunking. The dictionary
-lives at ``backend/app/corrections/pronunciation.json`` (bind-mounted), is
-editable via ``PUT /api/v1/corrections``, and is re-read on every job.
+Word-level overrides applied between LLM cleanup and chunking. The user
+dictionary is stored in the ``settings`` table (DB-backed), editable via
+``PUT /api/v1/corrections``, and re-read on every job. ``load(path)`` remains
+for the one-time migration that imports a legacy on-disk ``pronunciation.json``.
 
 Substitution mechanics:
 
@@ -23,11 +24,12 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from app.services.atomic_write import write_bytes_atomic
+from app.services import settings_store
 
 logger = logging.getLogger("app.services.corrections")
 
@@ -143,8 +145,23 @@ def load(path: Path) -> dict[str, str]:
     return body
 
 
-def save(path: Path, dictionary: dict[str, str]) -> None:
-    """Write ``dictionary`` atomically via the shared atomic-write helper."""
+def load_user_dict(conn: sqlite3.Connection) -> dict[str, str]:
+    """Load the operator pronunciation dictionary from the DB (empty if unset)."""
 
-    encoded = json.dumps(dictionary, ensure_ascii=False, indent=2).encode("utf-8")
-    write_bytes_atomic(path, encoded, prefix=".pronunciation-")
+    raw = settings_store.get(conn, settings_store.PRONUNCIATION_KEY)
+    if not raw or not raw.strip():
+        return {}
+    body = json.loads(raw)
+    if not isinstance(body, dict):
+        raise ValueError(f"stored corrections must be a JSON object, got {type(body).__name__}")
+    return body
+
+
+def save_user_dict(conn: sqlite3.Connection, dictionary: dict[str, str]) -> None:
+    """Persist the operator pronunciation dictionary to the DB as JSON."""
+
+    settings_store.set_(
+        conn,
+        settings_store.PRONUNCIATION_KEY,
+        json.dumps(dictionary, ensure_ascii=False),
+    )

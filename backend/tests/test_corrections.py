@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+from app.core import database
 from app.services import corrections
 
 # --- apply() ---------------------------------------------------------------
@@ -95,35 +96,45 @@ def test_validate_collects_all_failures() -> None:
     assert len(result.failures) >= 2
 
 
-# --- load / save round-trip ------------------------------------------------
+# --- DB-backed user dictionary ---------------------------------------------
 
 
-def test_save_then_load_round_trips(tmp_path: Path) -> None:
-    target = tmp_path / "pronunciation.json"
-    corrections.save(target, {"kubectl": "kube control"})
-    loaded = corrections.load(target)
-    assert loaded == {"kubectl": "kube control"}
+def _conn(env: Path):
+    database.run_migrations(env)
+    return database.connect(database.db_path(env))
 
 
-def test_save_is_atomic_no_partial_file_left_on_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    target = tmp_path / "pronunciation.json"
-    corrections.save(target, {"original": "kept"})
+def test_user_dict_save_then_load_round_trips(env: Path) -> None:
+    conn = _conn(env)
+    try:
+        corrections.save_user_dict(conn, {"kubectl": "kube control"})
+        assert corrections.load_user_dict(conn) == {"kubectl": "kube control"}
+    finally:
+        conn.close()
 
-    # Inject a failure during write by patching os.replace.
-    import os
 
-    def _boom(*_args, **_kwargs):
-        raise OSError("simulated replace failure")
+def test_user_dict_empty_when_unset(env: Path) -> None:
+    conn = _conn(env)
+    try:
+        assert corrections.load_user_dict(conn) == {}
+    finally:
+        conn.close()
 
-    monkeypatch.setattr(os, "replace", _boom)
-    with pytest.raises(OSError):
-        corrections.save(target, {"new": "lost"})
 
-    # Original file should be unchanged and no .tmp files lingering.
-    assert corrections.load(target) == {"original": "kept"}
-    assert not list(tmp_path.glob(".pronunciation-*.tmp"))
+def test_user_dict_rejects_non_object_stored_value(env: Path) -> None:
+    conn = _conn(env)
+    try:
+        # A non-object JSON value should surface as a ValueError on load.
+        from app.services import settings_store
+
+        settings_store.set_(conn, settings_store.PRONUNCIATION_KEY, json.dumps(["not", "a", "dict"]))
+        with pytest.raises(ValueError, match="JSON object"):
+            corrections.load_user_dict(conn)
+    finally:
+        conn.close()
+
+
+# --- load(path): retained for the one-time legacy-file migration -----------
 
 
 def test_load_missing_file_returns_empty(tmp_path: Path) -> None:

@@ -128,7 +128,9 @@ export default function Home() {
           </button>
           {recentOpen && (
             <ul className="space-y-2">
-              {history.map((j) => (
+              {history.map((j) => {
+                const duration = formatDuration(j.started_at, j.updated_at);
+                return (
                 <li key={j.id} className="card p-4 flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="mono-xs text-mute truncate">{j.url}</p>
@@ -143,9 +145,13 @@ export default function Home() {
                     <time className="mono-xs text-mute" dateTime={j.updated_at}>
                       {formatJobTime(j.updated_at)}
                     </time>
+                    {duration && (
+                      <span className="mono-xs text-mute">took {duration}</span>
+                    )}
                   </div>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           )}
         </section>
@@ -163,6 +169,19 @@ function formatJobTime(iso: string): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+// Processing time = claim (started_at) to last update. Null/invalid/negative
+// (queued jobs, pre-0.11.0 rows) renders nothing.
+function formatDuration(start: string | null, end: string): string {
+  if (!start) return "";
+  const ms = new Date(end).getTime() - new Date(start).getTime();
+  if (isNaN(ms) || ms < 0) return "";
+  const secs = Math.round(ms / 1000);
+  if (secs < 60) return `${secs}s`;
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${m}m ${s}s`;
 }
 
 function progressSuffix(j: JobRow): string {

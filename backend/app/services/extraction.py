@@ -60,7 +60,14 @@ async def extract(url: str, settings: Settings) -> ExtractionResult:
     """
 
     endpoint = f"{settings.FIRECRAWL_URL.rstrip('/')}/v1/scrape"
-    payload = {"url": url, "formats": ["markdown"]}
+    payload: dict[str, Any] = {
+        "url": url,
+        "formats": ["markdown"],
+        "onlyMainContent": settings.FIRECRAWL_ONLY_MAIN_CONTENT,
+        "removeBase64Images": settings.FIRECRAWL_REMOVE_BASE64_IMAGES,
+    }
+    if settings.firecrawl_exclude_tags:
+        payload["excludeTags"] = settings.firecrawl_exclude_tags
     timeout = httpx.Timeout(settings.FIRECRAWL_TIMEOUT_SECONDS)
 
     async with httpx.AsyncClient(timeout=timeout) as client:

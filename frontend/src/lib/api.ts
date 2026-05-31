@@ -121,6 +121,7 @@ export interface JobRow {
   progress_total: number | null;
   created_at: string;
   updated_at: string;
+  started_at: string | null;
 }
 
 export interface SettingsPayload {

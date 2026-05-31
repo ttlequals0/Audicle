@@ -620,9 +620,7 @@ def test_corrections_applies_seed_brand_phrase(
     """An applicable seed row (a brand phrase) is corrected even with no user
     dictionary present."""
 
-    database.run_migrations(env)
-    user_file = tmp_path / "pronunciation.json"  # missing -> empty user dict
-    monkeypatch.setattr(pipeline, "_corrections_path", lambda _s: user_file)
+    database.run_migrations(env)  # no user dict stored -> empty user corrections
     out = asyncio.run(
         pipeline._stage_corrections("I bought a Louis Vuitton bag.", get_settings())
     )
@@ -634,12 +632,14 @@ def test_corrections_user_override_beats_seed(
 ) -> None:
     """A user correction whose key also exists in the seed wins."""
 
-    import json
+    from app.services import corrections as corrections_service
 
     database.run_migrations(env)
-    user_file = tmp_path / "pronunciation.json"
-    user_file.write_text(json.dumps({"Louis Vuitton": "ELL VEE"}), encoding="utf-8")
-    monkeypatch.setattr(pipeline, "_corrections_path", lambda _s: user_file)
+    conn = database.connect(database.db_path(env))
+    try:
+        corrections_service.save_user_dict(conn, {"Louis Vuitton": "ELL VEE"})
+    finally:
+        conn.close()
     out = asyncio.run(pipeline._stage_corrections("My Louis Vuitton bag.", get_settings()))
     assert "ELL VEE" in out
     assert "loo-ee vwee-TOHN" not in out
@@ -651,14 +651,15 @@ def test_corrections_malformed_seed_falls_back_to_user_only(
     """A malformed bundled seed CSV must not fail the job; user corrections
     still apply."""
 
-    import json
-
+    from app.services import corrections as corrections_service
     from app.services import seed_corrections
 
     database.run_migrations(env)
-    user_file = tmp_path / "pronunciation.json"
-    user_file.write_text(json.dumps({"widget": "wid jet"}), encoding="utf-8")
-    monkeypatch.setattr(pipeline, "_corrections_path", lambda _s: user_file)
+    conn = database.connect(database.db_path(env))
+    try:
+        corrections_service.save_user_dict(conn, {"widget": "wid jet"})
+    finally:
+        conn.close()
     bad_seed = tmp_path / "bad_seed.csv"
     bad_seed.write_text("wrong,columns\na,b\n", encoding="utf-8")
     monkeypatch.setattr(seed_corrections, "seed_path", lambda: bad_seed)
@@ -721,6 +722,45 @@ def test_normalize_numbers_leaves_ambiguous_and_glued_alone() -> None:
     assert pipeline._normalize_numbers("x86 and startup_32") == "x86 and startup_32"
 
 
+def test_normalize_currency_expands_magnitude_suffix() -> None:
+    assert pipeline._normalize_currency("raised $500k") == "raised five hundred thousand dollars"
+    assert (
+        pipeline._normalize_currency("a $3.5M round")
+        == "a three point five million dollars round"
+    )
+    assert pipeline._normalize_currency("worth $1.2B now") == "worth one point two billion dollars now"
+
+
+def test_normalize_currency_plain_and_grouped_and_symbols() -> None:
+    assert pipeline._normalize_currency("costs $500") == "costs five hundred dollars"
+    assert (
+        pipeline._normalize_currency("paid $1,200 total")
+        == "paid one thousand two hundred dollars total"
+    )
+    assert pipeline._normalize_currency("about €100k") == "about one hundred thousand euros"
+    assert pipeline._normalize_currency("won £2M") == "won two million pounds"
+
+
+def test_normalize_currency_leaves_unitted_bare_numbers_alone() -> None:
+    # No currency symbol means the suffix is a unit, left to the LLM prompt.
+    assert pipeline._normalize_currency("500m north") == "500m north"
+    assert pipeline._normalize_currency("a 5k run") == "a 5k run"
+    # A mis-suffixed token ($500kg) falls through untouched rather than mis-read.
+    assert pipeline._normalize_currency("weighs $500kg") == "weighs $500kg"
+
+
+def test_normalize_currency_preserves_trailing_punctuation() -> None:
+    # The thousands-grouped number shape stops a trailing comma/period being
+    # swallowed into the amount and dropped from the sentence.
+    assert pipeline._normalize_currency("was $500, but") == "was five hundred dollars, but"
+    assert pipeline._normalize_currency("cost $1,200.") == "cost one thousand two hundred dollars."
+
+
+def test_normalize_for_tts_runs_currency_before_numbers() -> None:
+    # Ordered pass: currency expands first, leaving no digits for the number pass.
+    assert pipeline._normalize_for_tts("worth $2.5B") == "worth two point five billion dollars"
+
+
 def test_normalize_identifiers_expands_snake_case() -> None:
     assert pipeline._normalize_identifiers("startup_32 ran") == "startup 32 ran"
     assert pipeline._normalize_identifiers("__startup_64 entry") == "startup 64 entry"
@@ -746,9 +786,7 @@ def test_corrections_voices_february_after_date_normalization(
     """Cleanup normalizes 'Feb 3' -> 'February 3'; the corrections stage then
     voices February via the seed pronunciation."""
 
-    database.run_migrations(env)
-    user_file = tmp_path / "pronunciation.json"
-    monkeypatch.setattr(pipeline, "_corrections_path", lambda _s: user_file)
+    database.run_migrations(env)  # no user dict stored
     normalized = pipeline._normalize_for_tts("Posted Jan 15 2026 and Feb 3 2025.")
     out = asyncio.run(pipeline._stage_corrections(normalized, get_settings()))
     assert "January 15 2026" in out

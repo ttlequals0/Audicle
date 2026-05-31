@@ -29,6 +29,7 @@ def test_upsert_inserts_then_updates_same_id(env: Path) -> None:
         assert first.id == "ep1"
         assert first.title == "First"
         assert first.duration_secs == 120
+        assert first.revision == 1
 
         second = episodes.upsert(
             conn,
@@ -50,6 +51,8 @@ def test_upsert_inserts_then_updates_same_id(env: Path) -> None:
         # pub_date bumps on reprocess so the episode re-surfaces as new (>= original;
         # equal is possible when both upserts land in the same wall-clock second).
         assert second.pub_date >= first.pub_date
+        # revision increments on the reprocess branch so the feed hands out a new GUID.
+        assert second.revision == 2
     finally:
         conn.close()
 

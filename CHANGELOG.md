@@ -6,6 +6,50 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-05-31
+
+### Added
+
+- Currency amounts with a magnitude suffix are spelled out for narration:
+  `$500k` reads "five hundred thousand dollars", `$3.5M` reads "three point five
+  million dollars". The leading currency symbol is what distinguishes the suffix
+  from a unit, so a bare `500m north` still reads as meters. Euro and pound
+  symbols are covered too.
+- The cleanup LLM now receives a curated pronunciation reference drawn from the
+  built-in correction list (homographs, brand, mispronounced-word, and
+  medical/scientific rows) so it can apply the context-dependent cases by
+  meaning. The deterministic corrections pass still runs afterward as a backstop,
+  so the list no longer has to be exhaustive for those categories.
+- The RECENT list on the home screen shows how long each finished job took to
+  process, measured from when the worker picked it up rather than when it was
+  submitted, so queue wait time is excluded.
+- Reprocessing an episode now gives it a fresh feed GUID (a per-episode revision
+  counter folded into the GUID), so podcast clients re-download the regenerated
+  audio instead of keeping the version they already have. Episodes that have not
+  been reprocessed keep a stable GUID, so the back catalog is not re-downloaded.
+
+### Changed
+
+- The cleanup prompt, summary prompt, and pronunciation corrections are now
+  stored in the database instead of bind-mounted files. The packaged default
+  ships in the image and an operator edit is stored as a DB row that wins until
+  reset, so prompt changes deploy with the image and the data directory holds
+  only media. The prompt and corrections endpoints gained a reset-to-default
+  action; any existing on-disk pronunciation dictionary is imported into the DB
+  on first boot so nothing is lost.
+- Firecrawl scrapes now request main-content extraction and drop common page
+  chrome (navigation, header, footer, aside) and base64 images before the text
+  reaches the LLM, so cookie banners and boilerplate are far less likely to land
+  in narration. These are tunable via `FIRECRAWL_ONLY_MAIN_CONTENT`,
+  `FIRECRAWL_EXCLUDE_TAGS` (comma-separated), and `FIRECRAWL_REMOVE_BASE64_IMAGES`.
+- The cleanup prompt names cookie and consent banners, privacy notices, login
+  walls, app-install interstitials, and sticky call-to-action bars explicitly in
+  its remove list, and is told to emit nothing for a section that is entirely
+  boilerplate (so a "there is no article text here" note can no longer be
+  narrated).
+- The voice-audition sample text field is now a resizable multi-line box, so long
+  sample text is readable in full instead of scrolling a single line.
+
 ## [0.10.0] - 2026-05-30
 
 ### Added

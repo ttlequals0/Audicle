@@ -32,6 +32,7 @@ class JobListItem(BaseModel):
     progress_total: int | None
     created_at: str
     updated_at: str
+    started_at: str | None
 
 
 @router.get(
@@ -74,6 +75,7 @@ async def list_jobs(
             progress_total=row["progress_total"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            started_at=row["started_at"],
         )
         for row in page_rows
     ]

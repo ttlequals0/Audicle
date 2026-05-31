@@ -346,6 +346,17 @@ _SPELLABLE_NUMBER_RE = re.compile(
     r"(?<![\w.,])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+)(?![\w.,])"
 )
 
+# Money with a currency symbol and an optional magnitude suffix (k/m/b/t). The
+# leading symbol is what disambiguates the suffix from a unit -- "$500m" is
+# "five hundred million dollars" while a bare "500m north" stays meters (left to
+# the LLM prompt). Trailing (?!\w) keeps "$500kg" out (k then g) so a mis-suffixed
+# token falls through untouched rather than being read wrong.
+_CURRENCY_RE = re.compile(
+    r"(?<!\w)([$€£])\s?(\d{1,3}(?:,\d{3})*(?:\.\d+)?)([kKmMbBtT])?(?!\w)"
+)
+_CURRENCY_WORDS = {"$": "dollars", "€": "euros", "£": "pounds"}
+_MAGNITUDE_WORDS = {"k": "thousand", "m": "million", "b": "billion", "t": "trillion"}
+
 
 # Self-contained integer-to-words (num2words is LGPL, outside the project's
 # license allow-list). Covers up to quintillions; beyond the scale table we fall
@@ -411,6 +422,25 @@ def _spell_number(token: str) -> str:
     return _int_to_words(int(integer)) or _digits_to_words(integer)
 
 
+def _normalize_currency(text: str) -> str:
+    """Expand currency amounts, including magnitude suffixes, into spoken words.
+
+    "$500k" -> "five hundred thousand dollars", "$3.5M" -> "three point five
+    million dollars", "$1,200" -> "one thousand two hundred dollars". Reuses
+    ``_spell_number`` for the numeric part. Runs before ``_normalize_numbers`` so
+    the digits are already words by the time the bare-number pass looks at them.
+    """
+
+    def repl(match: re.Match[str]) -> str:
+        symbol, number, magnitude = match.group(1), match.group(2), match.group(3)
+        words = _spell_number(number)
+        if magnitude:
+            words = f"{words} {_MAGNITUDE_WORDS[magnitude.lower()]}"
+        return f"{words} {_CURRENCY_WORDS[symbol]}"
+
+    return _CURRENCY_RE.sub(repl, text)
+
+
 def _normalize_numbers(text: str) -> str:
     """Spell grouped-thousand and decimal numbers the LLM left as digits.
 
@@ -452,7 +482,9 @@ def _normalize_for_tts(text: str) -> str:
     corrections dict can then voice it correctly.
     """
 
-    return _normalize_numbers(_normalize_date_months(_strip_heading_markers(text)))
+    return _normalize_numbers(
+        _normalize_currency(_normalize_date_months(_strip_heading_markers(text)))
+    )
 
 
 async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
@@ -465,8 +497,31 @@ async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
     :class:`llm.LLMRequestError` (4xx, malformed response) is non-retryable.
     """
 
-    prompt_path = _prompt_path(settings)
-    system_prompt = prompt_service.load(prompt_path)
+    with database.connection(settings.DATA_DIR) as conn:
+        system_prompt = prompt_service.load_effective(conn, "cleanup")
+
+    # Append the curated pronunciation reference (homographs, brand/word/medical
+    # respellings) so the LLM applies the context-dependent cases by meaning;
+    # the deterministic corrections stage still backstops anything it misses. A
+    # malformed bundled CSV degrades to no reference rather than failing the job.
+    try:
+        reference = seed_corrections.load_reference_block()
+    except Exception:
+        logger.error(
+            "Pronunciation reference failed to load; cleaning without it",
+            extra={"event": "pronunciation_reference_load_failed"},
+            exc_info=True,
+        )
+        reference = ""
+    if reference:
+        system_prompt = (
+            f"{system_prompt}\n\n"
+            "PRONUNCIATION REFERENCE -- when the article uses any of the terms on "
+            "the left, respell it as shown on the right so the narrator pronounces "
+            "it correctly. Apply by context (homographs depend on sentence "
+            "meaning); leave everything else unchanged:\n"
+            f"{reference}"
+        )
 
     # Process the article in paragraph-bounded windows, one LLM call each, then
     # concatenate. A single giant call capped the output at LLM_MAX_TOKENS and
@@ -736,7 +791,8 @@ async def _stage_corrections(cleaned: str, settings: Settings) -> str:
     raises in ``corrections.load`` so the operator fixes their own file.
     """
 
-    user_dict = corrections.load(_corrections_path(settings))
+    with database.connection(settings.DATA_DIR) as conn:
+        user_dict = corrections.load_user_dict(conn)
     try:
         seed_dict = seed_corrections.load_applicable_dict()
     except Exception:
@@ -773,8 +829,8 @@ async def _stage_summary(text: str, settings: Settings) -> str | None:
     bug stays visible in the logs rather than being silently lost.
     """
 
-    prompt_path = _summary_prompt_path(settings)
-    system_prompt = prompt_service.load(prompt_path)
+    with database.connection(settings.DATA_DIR) as conn:
+        system_prompt = prompt_service.load_effective(conn, "summary")
     # A 2-4 sentence show-notes blurb only needs the article opening, so cap the
     # input -- most articles fit under the cap (no change), and a very long one
     # is summarized from its first ~16K chars instead of billing the full body
@@ -829,18 +885,6 @@ async def _llm_with_retry(system: str, user: str, settings: Settings) -> str:
             raise inner from exc
         raise llm.LLMProviderError(f"LLM retries exhausted: {inner}") from exc
     raise llm.LLMProviderError("LLM retry loop exited without a response")
-
-
-def _prompt_path(_settings: Settings) -> Path:
-    return Path(__file__).parent.parent / "prompts" / "script.txt"
-
-
-def _summary_prompt_path(_settings: Settings) -> Path:
-    return Path(__file__).parent.parent / "prompts" / "summary.txt"
-
-
-def _corrections_path(_settings: Settings) -> Path:
-    return Path(__file__).parent.parent / "corrections" / "pronunciation.json"
 
 
 # --- DB helpers --------------------------------------------------------------
