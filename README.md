@@ -12,9 +12,26 @@ Tagline: *your reading list, as a podcast you own.*
 
 ## Screenshots
 
-| Desktop | Mobile |
-|---|---|
-| <img src="docs/screenshot-desktop.png" alt="Audicle desktop" width="480"> | <img src="docs/screenshot-mobile.png" alt="Audicle mobile" width="200"> |
+Home -- paste a URL and it joins the feed.
+
+<p align="center">
+  <img src="docs/screenshot-home-desktop.png" alt="Home, desktop" width="600">
+  <img src="docs/screenshot-home-mobile.png" alt="Home, mobile" width="190">
+</p>
+
+Feed -- your episodes with inline players, transcripts, and per-episode actions.
+
+<p align="center">
+  <img src="docs/screenshot-feed-desktop.png" alt="Feed, desktop" width="600">
+  <img src="docs/screenshot-feed-mobile.png" alt="Feed, mobile" width="190">
+</p>
+
+Settings -- provider, voice, prompts, and pronunciation corrections.
+
+<p align="center">
+  <img src="docs/screenshot-settings-desktop.png" alt="Settings, desktop" width="600">
+  <img src="docs/screenshot-settings-mobile.png" alt="Settings, mobile" width="190">
+</p>
 
 ## Sample
 
