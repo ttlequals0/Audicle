@@ -622,7 +622,7 @@ def test_corrections_applies_seed_brand_phrase(
 
     database.run_migrations(env)  # no user dict stored -> empty user corrections
     out = asyncio.run(
-        pipeline._stage_corrections("I bought a Louis Vuitton bag.", get_settings())
+        pipeline._apply_corrections("I bought a Louis Vuitton bag.", get_settings())
     )
     assert "loo-ee vwee-TOHN" in out
 
@@ -640,7 +640,7 @@ def test_corrections_user_override_beats_seed(
         corrections_service.save_user_dict(conn, {"Louis Vuitton": "ELL VEE"})
     finally:
         conn.close()
-    out = asyncio.run(pipeline._stage_corrections("My Louis Vuitton bag.", get_settings()))
+    out = asyncio.run(pipeline._apply_corrections("My Louis Vuitton bag.", get_settings()))
     assert "ELL VEE" in out
     assert "loo-ee vwee-TOHN" not in out
 
@@ -663,8 +663,57 @@ def test_corrections_malformed_seed_falls_back_to_user_only(
     bad_seed = tmp_path / "bad_seed.csv"
     bad_seed.write_text("wrong,columns\na,b\n", encoding="utf-8")
     monkeypatch.setattr(seed_corrections, "seed_path", lambda: bad_seed)
-    out = asyncio.run(pipeline._stage_corrections("a widget here", get_settings()))
+    out = asyncio.run(pipeline._apply_corrections("a widget here", get_settings()))
     assert "wid jet" in out
+
+
+# --- normalize stage: LLM pronunciation pass + deterministic backstop -------
+
+
+def _echo_window(seen: dict):
+    """Stub _llm_with_retry that returns the window text unchanged (LLM no-op),
+    so the test isolates the deterministic backstop and pass plumbing."""
+
+    async def _echo(_system, user, _settings, **_kwargs):
+        seen["called"] = seen.get("called", 0) + 1
+        return user.split("<text>\n", 1)[1].rsplit("\n</text>", 1)[0]
+
+    return _echo
+
+
+async def test_normalize_runs_llm_pass_then_deterministic_backstop(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stage calls the LLM pronunciation pass and then applies the seed
+    dictionary as the guaranteed backstop."""
+
+    database.run_migrations(env)
+    seen: dict = {}
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _echo_window(seen))
+    job = _seed_job(env)
+    out = await pipeline._stage_normalize(
+        job, "I shopped for a Louis Vuitton bag today.", get_settings()
+    )
+    assert seen.get("called")  # the LLM pass ran
+    assert "loo-ee vwee-TOHN" in out  # backstop applied the seed correction
+
+
+async def test_normalize_llm_short_output_falls_back_to_input(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A window whose LLM output is far shorter than its input is discarded so
+    the pass never drops article content."""
+
+    database.run_migrations(env)
+    monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _t, _n: None)
+
+    async def _truncate(_system, _user, _settings, **_kwargs):
+        return "x"  # pathologically short
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _truncate)
+    long_text = "The council approved the budget after a long debate. " * 20
+    out = await pipeline._pronounce_with_llm("job", long_text, get_settings())
+    assert out == long_text  # original window preserved, not the "x"
 
 
 # --- cleanup: boilerplate-only window drop ---------------------------------
@@ -871,6 +920,6 @@ def test_corrections_voices_february_after_date_normalization(
 
     database.run_migrations(env)  # no user dict stored
     normalized = pipeline._normalize_for_tts("Posted Jan 15 2026 and Feb 3 2025.")
-    out = asyncio.run(pipeline._stage_corrections(normalized, get_settings()))
+    out = asyncio.run(pipeline._apply_corrections(normalized, get_settings()))
     assert "January 15 2026" in out
     assert "FEB-roo-air-ee 3 2025" in out

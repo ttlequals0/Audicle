@@ -54,6 +54,21 @@ def test_summary_kind_uses_its_own_default(env: Path) -> None:
         conn.close()
 
 
+def test_pronunciation_kind_uses_its_own_default(env: Path) -> None:
+    conn = _conn(env)
+    try:
+        default = prompt_service.default_text("pronunciation")
+        assert default.strip()  # the packaged file is non-empty
+        assert prompt_service.load_effective(conn, "pronunciation") == default
+        assert prompt_service.is_default(conn, "pronunciation") is True
+        # Overriding it is independent of cleanup/summary.
+        prompt_service.save_override(conn, "pronunciation", "only pronunciation", max_bytes=10240)
+        assert prompt_service.load_effective(conn, "pronunciation") == "only pronunciation"
+        assert prompt_service.is_default(conn, "cleanup") is True
+    finally:
+        conn.close()
+
+
 def test_save_rejects_oversize(env: Path) -> None:
     conn = _conn(env)
     try:

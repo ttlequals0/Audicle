@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="branding/wordmark.svg" alt="Audicle" width="320">
+</p>
+
 # Audicle
 
 Self-hosted Podcasting 2.0 service that turns saved articles into a personal podcast feed.
@@ -6,16 +10,47 @@ Paste a URL, wait a few minutes, get an episode with cloned-voice narration, art
 
 Tagline: *your reading list, as a podcast you own.*
 
+## Screenshots
+
+Home -- paste a URL and it joins the feed.
+
+<p align="center">
+  <img src="docs/screenshot-home-desktop.png" alt="Home, desktop" width="600">
+  <img src="docs/screenshot-home-mobile.png" alt="Home, mobile" width="190">
+</p>
+
+Feed -- your episodes with inline players, transcripts, and per-episode actions.
+
+<p align="center">
+  <img src="docs/screenshot-feed-desktop.png" alt="Feed, desktop" width="600">
+  <img src="docs/screenshot-feed-mobile.png" alt="Feed, mobile" width="190">
+</p>
+
+Settings -- provider, voice, prompts, and pronunciation corrections.
+
+<p align="center">
+  <img src="docs/screenshot-settings-desktop.png" alt="Settings, desktop" width="600">
+  <img src="docs/screenshot-settings-mobile.png" alt="Settings, mobile" width="190">
+</p>
+
+## Sample
+
+A 30-second clip of cloned-voice narration (a news article).
+
+https://github.com/user-attachments/assets/a508b4b9-9913-4b18-9b63-210774eecb85
+
+[Download the MP3](docs/sample.mp3)
+
 ## Why
 
-I read too much, drive too much, and the existing "article to audio" tools either lock the audio behind their app, charge per minute, or use voices that sound like the airport PA. I wanted something that:
+I read too much, I like having my hands free on the go, and the existing "article to audio" tools either lock the audio behind their app, charge per minute, or use voices that sound like airport PA systems. I wanted something that:
 
-- runs on my own GPU box
+- I have full control over
 - produces a real podcast feed any podcatcher can subscribe to
 - uses my own voice (or any voice I have rights to)
 - keeps the source URL list private
 
-That's what this is. If you don't have a GPU, it'll run on CPU too, just 5-10x slower per chunk.
+That's what this is. If you don't have a GPU, it'll run on CPU too, just slower.
 
 ## What's in the repo
 
@@ -160,12 +195,6 @@ cd frontend && npm install && npm run dev   # Vite, hot reload
 There's an OpenAPI dump at `openapi.yaml`; regenerate via `uv run python scripts/dump_openapi.py`.
 
 CodeQL runs on every PR. Pre-commit hooks aren't installed by default -- wire them with `git config core.hooksPath .githooks` after the `.githooks` directory is in place.
-
-## Status
-
-This is the working main branch through Phase 13 of the build plan. The feed serves real episodes end to end. Auth, retention, runtime settings, PWA install, reference-voice management, and the operator UI are all wired.
-
-What's not done: multi-host scale-out, multi-user accounts, and any monetization plumbing. None of those are on the roadmap.
 
 ## LLM Disclosure
 

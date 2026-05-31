@@ -6,6 +6,59 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-05-31
+
+### Fixed
+
+- The pronunciation phase's LLM step now reliably reproduces the full passage.
+  In 0.13.0 the prompt was not forceful enough, so the model often returned a
+  short "nothing to respell" reply instead of the text; the length guard then
+  discarded it, leaving the LLM step contributing nothing (the deterministic
+  dictionary still applied). The prompt now mandates full verbatim reproduction
+  with only matched terms respelled, and a discarded short reply is logged with a
+  preview for diagnosis. Article content was never at risk -- the guard kept the
+  original text whenever the model came back short.
+
+## [0.13.0] - 2026-05-31
+
+### Added
+
+- A dedicated pronunciation and normalization phase now runs between cleanup and
+  chunking. It works in two layers: an LLM pass respells terms by context using
+  the full correction set (every built-in entry plus the operator's own
+  dictionary), and the existing deterministic pass (regex number, currency, date,
+  and code fixups plus the seed and user dictionary) runs after it as a guaranteed
+  backstop. The LLM pass processes the text in paragraph windows and keeps the
+  original text for any window that errors or comes back far shorter than it went
+  in, so it can only improve pronunciation, never drop article content. The phase
+  has its own prompt, shipped as `pronunciation.txt` and overridable through the
+  same prompt store as the cleanup and summary prompts.
+- The built-in pronunciation list grew from 311 to 841 entries, adding internet
+  slang, medical and financial terms, geographic names, legal abbreviations, and
+  more. Existing curated entries win on any conflict.
+- The TTS wrapper exposes new knobs for taming XTTS-v2 pitch drift, all tunable by
+  environment variable without a rebuild: `XTTS_GPT_COND_LEN`,
+  `XTTS_GPT_COND_CHUNK_LEN`, and `XTTS_MAX_REF_LENGTH` control how much of the
+  reference clip shapes the speaker latent (the default of 6 seconds leaves most
+  of a 20-second reference unused), and `XTTS_SPEED` slows playback slightly to
+  counter the model speeding up on long runs. Defaults match XTTS-v2's own, so
+  behavior is unchanged until you tune them and A/B the result by ear.
+
+### Changed
+
+- The LLM no longer sees a hand-picked subset of pronunciation categories. The
+  new phase shows it the entire correction set and lets it apply entries by
+  context, which retires the category allowlist that had to be maintained by hand.
+  The deterministic pass still applies every entry it can match as a backstop.
+- The pipeline stage formerly logged as `corrections` is now `normalize`, and the
+  deterministic number, date, and code fixups moved out of cleanup into it so they
+  run once on the full text.
+
+### Documentation
+
+- The README now opens with the wordmark, a desktop and mobile screenshot table,
+  and a link to a short audio sample.
+
 ## [0.12.2] - 2026-05-31
 
 ### Fixed

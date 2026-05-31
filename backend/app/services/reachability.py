@@ -203,7 +203,7 @@ async def run_all(settings: Settings) -> list[CheckResult]:
             "Reachability check",
             # Use `phase` instead of `stage` so reachability events don't
             # share a Loki label with the pipeline-stage contextvar
-            # (extract/cleanup/corrections/...). Operators querying by stage
+            # (extract/cleanup/normalize/...). Operators querying by stage
             # see only pipeline events.
             extra={
                 "event": "reachability_check",

@@ -11,7 +11,8 @@ the pipeline:
 
 - Annotated homographs whose input carries a parenthesized qualifier
   (``read (present)``) -- context-dependent, not matchable by whole-word
-  substitution. A future contextual layer will handle them.
+  substitution. The LLM pronunciation pass handles them by context (it sees the
+  full reference via :func:`format_reference`); the deterministic pass skips them.
 - ALL-CAPS tokens whose replacement is the spelled-out letters (``API`` ->
   ``A P I``, ``AWS`` -> ``A W S``): the LLM cleanup stage already spells these
   out (to dotted form) before corrections run, so the row would never match the
@@ -144,37 +145,40 @@ def load_applicable_dict() -> dict[str, str]:
     return applicable_dict(load_seed(seed_path()))
 
 
-# Categories whose corrections are context-dependent or phonetic respellings the
-# deterministic whole-word pass can't safely apply on its own: homographs need
-# sentence context, and brand/word/medical respellings read best when the LLM
-# places them by meaning. These are fed to the cleanup LLM as a reference so the
-# list does not have to be exhaustively hand-maintained; the deterministic pass
-# still runs afterward as a backstop for anything the LLM misses.
-REFERENCE_CATEGORIES = frozenset(
-    {"Homograph", "Consumer Brand", "Mispronounced Word", "Medical/Scientific"}
-)
+def format_reference(
+    entries: list[SeedEntry], user_dict: dict[str, str] | None = None
+) -> str:
+    """Format the full correction set as an LLM reference for the pronunciation
+    pass: one ``- input -> replacement  (notes)`` line per term.
 
-
-def reference_block(entries: list[SeedEntry], categories: frozenset[str]) -> str:
-    """Format curated rows as an ``input -> replacement`` reference for the LLM.
-
-    Returns "" when no rows match so the caller can append unconditionally.
+    Unlike the deterministic dictionary, the reference is NOT category-curated
+    and NOT gated by ``applicable`` -- the LLM sees every seed row (homographs,
+    acronyms, brands, slang) plus the operator's user dictionary, and decides by
+    context what to apply. The user dictionary is layered on top: it wins on key
+    collision (replacing the seed's spelling in place) and appends its own keys.
+    Returns "" when there is nothing to reference.
     """
 
-    lines: list[str] = []
+    merged: dict[str, tuple[str, str]] = {}
     for entry in entries:
-        if entry.category not in categories:
-            continue
         if not entry.input_text or not entry.replacement_text:
             continue
-        line = f"- {entry.input_text} -> {entry.replacement_text}"
-        if entry.notes:
-            line += f"  ({entry.notes})"
+        merged.setdefault(entry.input_text, (entry.replacement_text, entry.notes))
+    for key, value in (user_dict or {}).items():
+        if key and value:
+            merged[key] = (value, "")
+
+    lines: list[str] = []
+    for inp, (repl, notes) in merged.items():
+        line = f"- {inp} -> {repl}"
+        if notes:
+            line += f"  ({notes})"
         lines.append(line)
     return "\n".join(lines)
 
 
-def load_reference_block(categories: frozenset[str] = REFERENCE_CATEGORIES) -> str:
-    """Load the bundled seed and format its curated rows as an LLM reference."""
+def load_reference(user_dict: dict[str, str] | None = None) -> str:
+    """Load the bundled seed and format the full correction set (seed + user
+    dictionary) as the LLM pronunciation reference."""
 
-    return reference_block(load_seed(seed_path()), categories)
+    return format_reference(load_seed(seed_path()), user_dict)

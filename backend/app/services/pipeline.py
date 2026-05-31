@@ -1,6 +1,6 @@
 """Job processing pipeline orchestrator.
 
-The full chain: extract -> cleanup -> corrections -> chunk ->
+The full chain: extract -> cleanup -> normalize -> summary -> chunk ->
 tts -> audio -> artwork -> transcript -> finalize. Finalize upserts the
 ``episodes`` row that the RSS feed and ``/media/{id}.{mp3,jpg,vtt}``
 handlers serve.
@@ -162,7 +162,7 @@ def _finalize_failure(
 
 
 async def _run_stages(job: jobs.Job, settings: Settings) -> None:
-    """Run the stages in order: extract -> cleanup -> corrections -> summary ->
+    """Run the stages in order: extract -> cleanup -> normalize -> summary ->
     chunk -> tts -> audio -> artwork -> transcript -> finalize (finalize
     inserts/updates the episodes row)."""
 
@@ -175,21 +175,21 @@ async def _run_stages(job: jobs.Job, settings: Settings) -> None:
         job.id,
         settings,
     )
-    corrected = await _run_stage(
-        "corrections",
-        lambda: _stage_corrections(cleaned, settings),
+    normalized = await _run_stage(
+        "normalize",
+        lambda: _stage_normalize(job, cleaned, settings),
         job.id,
         settings,
     )
     summary = await _run_stage(
         "summary",
-        lambda: _stage_summary(corrected, settings),
+        lambda: _stage_summary(normalized, settings),
         job.id,
         settings,
     )
     chunks = await _run_stage(
         "chunk",
-        lambda: _stage_chunk(corrected, settings),
+        lambda: _stage_chunk(normalized, settings),
         job.id,
         settings,
     )
@@ -226,7 +226,7 @@ async def _run_stages(job: jobs.Job, settings: Settings) -> None:
             artwork_result=artwork_result,
             vtt=vtt,
             summary=summary,
-            cleaned_text=corrected,
+            cleaned_text=normalized,
             settings=settings,
         ),
         job.id,
@@ -566,28 +566,9 @@ async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
     with database.connection(settings.DATA_DIR) as conn:
         system_prompt = prompt_service.load_effective(conn, "cleanup")
 
-    # Append the curated pronunciation reference (homographs, brand/word/medical
-    # respellings) so the LLM applies the context-dependent cases by meaning;
-    # the deterministic corrections stage still backstops anything it misses. A
-    # malformed bundled CSV degrades to no reference rather than failing the job.
-    try:
-        reference = seed_corrections.load_reference_block()
-    except Exception:
-        logger.error(
-            "Pronunciation reference failed to load; cleaning without it",
-            extra={"event": "pronunciation_reference_load_failed"},
-            exc_info=True,
-        )
-        reference = ""
-    if reference:
-        system_prompt = (
-            f"{system_prompt}\n\n"
-            "PRONUNCIATION REFERENCE -- when the article uses any of the terms on "
-            "the left, respell it as shown on the right so the narrator pronounces "
-            "it correctly. Apply by context (homographs depend on sentence "
-            "meaning); leave everything else unchanged:\n"
-            f"{reference}"
-        )
+    # Pronunciation respelling is no longer done here -- it moved to the dedicated
+    # normalize stage (LLM pronunciation pass + deterministic backstop) so cleanup
+    # stays focused on de-chroming the scrape.
 
     # Process the article in paragraph-bounded windows, one LLM call each, then
     # concatenate. A single giant call capped the output at LLM_MAX_TOKENS and
@@ -625,7 +606,9 @@ async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
                 "output_chars": output_chars,
             },
         )
-    cleaned = _normalize_for_tts("\n\n".join(p for p in cleaned_parts if p))
+    # Deterministic _normalize_for_tts runs later in the normalize stage, once on
+    # the full text, so cleanup just joins the surviving windows here.
+    cleaned = "\n\n".join(p for p in cleaned_parts if p)
     if len(cleaned) < settings.MIN_CLEANUP_CHARS:
         raise CleanupTooShortError(
             f"Cleanup output is {len(cleaned)} chars, below "
@@ -856,17 +839,28 @@ def _coerce_str(value: Any) -> str | None:
     return None
 
 
-async def _stage_corrections(cleaned: str, settings: Settings) -> str:
-    """Apply the built-in seed baseline plus the user dictionary in one pass.
+async def _apply_corrections(
+    text: str, settings: Settings, user_dict: dict[str, str] | None = None
+) -> str:
+    """Deterministic normalization backstop, run after the LLM pronunciation pass.
 
-    Both are re-read every call. The user dictionary wins on key collision
-    (``{**seed, **user}``). A malformed *bundled* seed CSV degrades to
-    user-only rather than failing every job; a malformed *user* file still
-    raises in ``corrections.load`` so the operator fixes their own file.
+    Order: regex fixups (``_normalize_for_tts`` -- headings, code artifacts,
+    dates, currency, numbers), then the seed + user pronunciation dictionary in
+    one pass, then the snake_case identifier sweep. This is the guaranteed
+    coverage layer: anything the LLM pass missed is corrected here.
+
+    Seed and user dictionaries are re-read every call. The user dictionary wins on
+    key collision (``{**seed, **user}``); ``_stage_normalize`` passes it in so it
+    is loaded once per article, but it is loaded here when called directly. A
+    malformed *bundled* seed CSV degrades to user-only rather than failing every
+    job; a malformed *user* file still raises in ``corrections.load`` so the
+    operator fixes their own file.
     """
 
-    with database.connection(settings.DATA_DIR) as conn:
-        user_dict = corrections.load_user_dict(conn)
+    normalized = _normalize_for_tts(text)
+    if user_dict is None:
+        with database.connection(settings.DATA_DIR) as conn:
+            user_dict = corrections.load_user_dict(conn)
     try:
         seed_dict = seed_corrections.load_applicable_dict()
     except Exception:
@@ -880,7 +874,7 @@ async def _stage_corrections(cleaned: str, settings: Settings) -> str:
     # Explicit pronunciations first (so "ttyS0" -> "T T Y S 0" wins), then the
     # generic identifier transform mops up any snake_case/dotted-file token no
     # rule covered.
-    result = _normalize_identifiers(corrections.apply(cleaned, merged))
+    result = _normalize_identifiers(corrections.apply(normalized, merged))
     logger.info(
         "Corrections applied",
         extra={
@@ -888,7 +882,108 @@ async def _stage_corrections(cleaned: str, settings: Settings) -> str:
             "entries_user": len(user_dict),
             "entries_seed_applicable": len(seed_dict),
             "entries_merged": len(merged),
-            "delta_chars": len(result) - len(cleaned),
+            "delta_chars": len(result) - len(text),
+        },
+    )
+    return result
+
+
+# A pronunciation pass only respells terms, so each window's output should be
+# about as long as its input. A far-shorter return signals truncation or a
+# refusal; below this ratio the window falls back to its input so the pass can
+# only improve pronunciation, never drop article content.
+_PRONUNCIATION_MIN_RATIO = 0.5
+
+
+async def _pronounce_with_llm(
+    job_id: str, text: str, settings: Settings, user_dict: dict[str, str] | None = None
+) -> str:
+    """LLM pronunciation pass: respell terms from the full correction set (seed +
+    user dictionary) by context, leaving everything else verbatim.
+
+    Per-window like cleanup so a long article never hits the output-token cap.
+    Degrades safely: a failed reference load or a failed/short window passes that
+    text through unchanged. The deterministic backstop in ``_apply_corrections``
+    still runs after, so a skipped window is never left uncorrected.
+    """
+
+    with database.connection(settings.DATA_DIR) as conn:
+        system_prompt = prompt_service.load_effective(conn, "pronunciation")
+        if user_dict is None:
+            user_dict = corrections.load_user_dict(conn)
+    try:
+        reference = seed_corrections.load_reference(user_dict)
+    except Exception:
+        logger.error(
+            "Pronunciation reference failed to load; skipping LLM pass",
+            extra={"event": "pronunciation_reference_load_failed"},
+            exc_info=True,
+        )
+        return text
+    if not reference:
+        return text
+    system_prompt = (
+        f"{system_prompt}\n\nPRONUNCIATION REFERENCE (term -> respelling):\n{reference}"
+    )
+
+    windows = chunker.pack_paragraphs(text, settings.LLM_CLEANUP_WINDOW_CHARS) or [text]
+    out_parts: list[str] = []
+    for index, window in enumerate(windows):
+        user_message = (
+            "Reproduce the text below in full, copying every sentence in order and "
+            "changing only the spelled form of terms that match the pronunciation "
+            "reference. Output the complete text and nothing else."
+            f"\n\n<text>\n{window}\n</text>"
+        )
+        try:
+            part = (await _llm_with_retry(system_prompt, user_message, settings)).strip()
+        except Exception:
+            logger.warning(
+                "Pronunciation window failed; passing it through unchanged",
+                extra={"event": "pronunciation_window_failed", "window_index": index},
+                exc_info=True,
+            )
+            part = window
+        if len(part) < len(window) * _PRONUNCIATION_MIN_RATIO:
+            logger.warning(
+                "Pronunciation window output too short; keeping original",
+                extra={
+                    "event": "pronunciation_window_short",
+                    "window_index": index,
+                    "input_chars": len(window),
+                    "output_chars": len(part),
+                    # Snippet of what the model returned, to diagnose a short reply
+                    # (e.g. a refusal or "nothing to respell") vs a real respelling.
+                    "output_preview": part[:200],
+                },
+            )
+            part = window
+        out_parts.append(part)
+        _set_progress(job_id, index + 1, len(windows), settings)
+    return "\n\n".join(out_parts)
+
+
+async def _stage_normalize(job: jobs.Job, cleaned: str, settings: Settings) -> str:
+    """Dedicated pronunciation + normalization phase (post-cleanup, pre-chunk).
+
+    Two layers: an LLM pronunciation pass that respells terms from the full
+    correction set by context, then the deterministic ``_apply_corrections``
+    backstop (regex fixups + seed/user dictionary) that guarantees coverage for
+    anything the LLM missed.
+    """
+
+    # Load the user dictionary once for both the LLM pass and the deterministic
+    # backstop rather than opening a second connection in each.
+    with database.connection(settings.DATA_DIR) as conn:
+        user_dict = corrections.load_user_dict(conn)
+    pronounced = await _pronounce_with_llm(job.id, cleaned, settings, user_dict=user_dict)
+    result = await _apply_corrections(pronounced, settings, user_dict=user_dict)
+    logger.info(
+        "Normalize stage complete",
+        extra={
+            "event": "normalize_complete",
+            "input_chars": len(cleaned),
+            "output_chars": len(result),
         },
     )
     return result
