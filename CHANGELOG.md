@@ -6,6 +6,16 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-05-31
+
+### Fixed
+
+- Inline-code leftovers no longer reach narration on code-dense articles. The
+  cleanup pass now strips residual markdown backticks and empty call-parens
+  (`smp init()` becomes "smp init") and replaces hex literals (`0xffffffff81000000`)
+  with the spoken phrase "a hexadecimal value" instead of letting XTTS read an
+  unintelligible string of characters.
+
 ## [0.12.1] - 2026-05-31
 
 ### Fixed

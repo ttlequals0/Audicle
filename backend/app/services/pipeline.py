@@ -472,18 +472,39 @@ def _normalize_identifiers(text: str) -> str:
     return _SNAKE_IDENTIFIER_RE.sub(lambda m: m.group(1).replace("_", " "), text)
 
 
+# Inline-code leftovers the LLM keeps on code-dense articles despite the prompt:
+# backtick fences, empty call-parens after a name ("smp init()"), and hex
+# literals. A hex address read digit-by-digit is unintelligible noise, so it is
+# replaced with a short spoken phrase rather than spelled out.
+_HEX_LITERAL_RE = re.compile(r"\b0x[0-9A-Fa-f]+\b")
+_EMPTY_CALL_PARENS_RE = re.compile(r"(?<=\w)\(\)")
+
+
+def _strip_code_artifacts(text: str) -> str:
+    """Remove inline-code noise XTTS can't voice: backticks, ``()`` call syntax,
+    and hex literals (replaced with a spoken phrase)."""
+
+    text = text.replace("`", "")
+    text = _HEX_LITERAL_RE.sub("a hexadecimal value", text)
+    return _EMPTY_CALL_PARENS_RE.sub("", text)
+
+
 def _normalize_for_tts(text: str) -> str:
     """Deterministic fixups for things the cleanup prompt doesn't reliably catch.
 
     One ordered pass so future rules have a single home: strip residual markdown
-    heading markers, expand date-context month abbreviations, then spell the
-    number shapes XTTS garbles. Runs at the end of cleanup, before the
-    pronunciation dictionary, so e.g. "Feb 3" becomes "February 3" and the
-    corrections dict can then voice it correctly.
+    heading markers, strip inline-code artifacts (backticks, call-parens, hex),
+    expand date-context month abbreviations, then spell the number shapes XTTS
+    garbles. Runs at the end of cleanup, before the pronunciation dictionary, so
+    e.g. "Feb 3" becomes "February 3" and the corrections dict can then voice it
+    correctly. Code-artifact stripping runs before number spelling so a hex
+    literal is gone before the number pass ever looks at it.
     """
 
     return _normalize_numbers(
-        _normalize_currency(_normalize_date_months(_strip_heading_markers(text)))
+        _normalize_currency(
+            _normalize_date_months(_strip_code_artifacts(_strip_heading_markers(text)))
+        )
     )
 
 

@@ -786,6 +786,25 @@ def test_normalize_numbers_leaves_ambiguous_and_glued_alone() -> None:
     assert pipeline._normalize_numbers("x86 and startup_32") == "x86 and startup_32"
 
 
+def test_strip_code_artifacts_removes_backticks_parens_and_hex() -> None:
+    assert pipeline._strip_code_artifacts("call `smp init()` now") == "call smp init now"
+    assert (
+        pipeline._strip_code_artifacts("loaded at 0x1000000 then 0xffffffff81000000")
+        == "loaded at a hexadecimal value then a hexadecimal value"
+    )
+    # Plain prose (with real parenthetical) is untouched.
+    assert pipeline._strip_code_artifacts("a normal sentence (with an aside)") == (
+        "a normal sentence (with an aside)"
+    )
+
+
+def test_normalize_for_tts_strips_code_artifacts() -> None:
+    out = pipeline._normalize_for_tts("The `__init` section maps 0x1000000 in ram.")
+    assert "`" not in out
+    assert "0x" not in out
+    assert "a hexadecimal value" in out
+
+
 def test_normalize_currency_expands_magnitude_suffix() -> None:
     assert pipeline._normalize_currency("raised $500k") == "raised five hundred thousand dollars"
     assert (
