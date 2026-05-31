@@ -39,14 +39,14 @@ Settings -- provider, voice, prompts, and pronunciation corrections.
 
 ## Why
 
-I read too much, drive too much, and the existing "article to audio" tools either lock the audio behind their app, charge per minute, or use voices that sound like the airport PA. I wanted something that:
+I read too much, I like having my hands free on the go, and the existing "article to audio" tools either lock the audio behind their app, charge per minute, or use voices that sound like airport PA systems. I wanted something that:
 
-- runs on my own GPU box
+- I have full control over
 - produces a real podcast feed any podcatcher can subscribe to
 - uses my own voice (or any voice I have rights to)
 - keeps the source URL list private
 
-That's what this is. If you don't have a GPU, it'll run on CPU too, just 5-10x slower per chunk.
+That's what this is. If you don't have a GPU, it'll run on CPU too, just slower.
 
 ## What's in the repo
 
