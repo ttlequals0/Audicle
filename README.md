@@ -106,6 +106,7 @@ restarts load from disk instantly.
 | `FEED_CATEGORY` | iTunes category (see list below) | `Technology` |
 | `FEED_LANGUAGE` | RFC 5646 tag | `en-US` |
 | `FIRECRAWL_URL` | Self-hosted Firecrawl base URL | `http://firecrawl:3002` |
+| `FIRECRAWL_API_KEY` | Optional bearer token for a Firecrawl behind auth (blank = open) | _(unset)_ |
 | `LLM_PROVIDER` | `openai-compatible`, `anthropic`, `openrouter`, or `ollama` | `openai-compatible` |
 | `OPENAI_BASE_URL` | for openai-compatible | `http://llm:8080/v1` |
 | `OPENAI_API_KEY` | for openai-compatible | `sk-...` |

@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     UI_BASE_URL: str = ""
     DATA_DIR: Path = Path("/data")
     FIRECRAWL_URL: str = "http://firecrawl:3002"
+    # Optional bearer token for a Firecrawl instance behind auth (e.g. the hosted
+    # API or a self-hosted deployment with FIRECRAWL_API_KEY set). Empty = no auth
+    # header, preserving the open self-hosted default.
+    FIRECRAWL_API_KEY: str = ""
     TTS_URL: str = "http://tts-wrapper:8000"
     LLM_PROVIDER: Literal["openai-compatible", "anthropic", "openrouter", "ollama"] = (
         "openai-compatible"

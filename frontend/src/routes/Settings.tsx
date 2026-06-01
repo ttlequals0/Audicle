@@ -37,7 +37,7 @@ const GROUPS: Record<string, string[]> = {
     "FEED_EXPLICIT",
     "FEED_ARTWORK_URL",
   ],
-  Connections: ["FIRECRAWL_URL", "TTS_URL"],
+  Connections: ["FIRECRAWL_URL", "FIRECRAWL_API_KEY", "TTS_URL"],
   TTS: ["TTS_CHUNK_TARGET_WORDS", "TTS_CHUNK_MAX_WORDS", "TTS_CHUNK_SILENCE_MS"],
   Cleanup: ["MIN_CLEANUP_CHARS", "MAX_PROMPT_LENGTH_BYTES"],
   Retention: ["RETENTION_DAYS"],
@@ -50,6 +50,7 @@ const MASKED_KEYS = new Set([
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
   "OPENROUTER_API_KEY",
+  "FIRECRAWL_API_KEY",
 ]);
 const PROVIDER_OPTIONS = ["openai-compatible", "anthropic", "openrouter", "ollama"];
 
@@ -171,6 +172,11 @@ export default function SettingsRoute() {
             {group === "Feed" && (
               <p className="mono-xs text-mute mb-3">
                 // saved feed changes apply on the next podcast-app refresh -- no rebuild
+              </p>
+            )}
+            {group === "Connections" && (
+              <p className="mono-xs text-mute mb-3">
+                // firecrawl api key is optional -- leave blank for an open self-hosted instance
               </p>
             )}
             {visible.map((key) => (

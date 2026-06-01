@@ -126,6 +126,29 @@ def test_api_key_is_masked_on_get_and_survives_resave(env: Path) -> None:
     assert stored["OPENAI_API_KEY"] == "sk-secret-123"
 
 
+def test_firecrawl_api_key_is_allowlisted_and_masked(env: Path) -> None:
+    """The Firecrawl key is operator-settable and treated as a secret: allowlisted
+    for PUT, never echoed back, and survives a sentinel re-save like the LLM keys."""
+
+    from app.services import runtime_settings
+
+    with _client(env) as client:
+        assert "FIRECRAWL_API_KEY" in client.get("/api/v1/settings").json()["allowlist"]
+        client.put("/api/v1/settings", json={"FIRECRAWL_API_KEY": "fc-secret-123"})
+        masked = client.get("/api/v1/settings").json()["values"]["FIRECRAWL_API_KEY"]
+        assert masked == runtime_settings.MASK_SENTINEL
+        client.put(
+            "/api/v1/settings", json={"FIRECRAWL_API_KEY": runtime_settings.MASK_SENTINEL}
+        )
+
+    conn = database.connect(database.db_path(env))
+    try:
+        stored = runtime_settings.get_all(conn)
+    finally:
+        conn.close()
+    assert stored["FIRECRAWL_API_KEY"] == "fc-secret-123"
+
+
 def test_api_key_cleared_by_empty_value(env: Path) -> None:
     """Sending an empty string for a masked key removes the override."""
 
