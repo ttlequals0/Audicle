@@ -89,6 +89,38 @@ async def test_extract_sends_main_content_filtering(
     assert captured["excludeTags"] == ["nav", "footer", "header", "aside"]
 
 
+async def test_extract_sends_bearer_header_when_key_set(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "fc-secret-123")
+    get_settings.cache_clear()
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["auth"] = request.headers.get("authorization")
+        return _ok_response("body " * 200)
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    await extraction.extract("https://example.test/article", get_settings())
+    assert captured["auth"] == "Bearer fc-secret-123"
+
+
+async def test_extract_omits_auth_header_when_key_unset(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("FIRECRAWL_API_KEY", raising=False)
+    get_settings.cache_clear()
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["auth"] = request.headers.get("authorization")
+        return _ok_response("body " * 200)
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    await extraction.extract("https://example.test/article", get_settings())
+    assert captured["auth"] is None
+
+
 async def test_extract_retries_on_5xx_then_succeeds(
     env: Path, monkeypatch: pytest.MonkeyPatch, fast_backoff
 ) -> None:

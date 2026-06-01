@@ -715,41 +715,6 @@ async def test_normalize_llm_short_output_falls_back_to_input(
 # --- cleanup: boilerplate-only window drop ---------------------------------
 
 
-def test_is_empty_section_detects_sentinel_and_disclaimers() -> None:
-    assert pipeline._is_empty_section("NO_ARTICLE_CONTENT")
-    assert pipeline._is_empty_section("NO_ARTICLE_CONTENT.")
-    assert pipeline._is_empty_section('"NO_ARTICLE_CONTENT"')
-    assert pipeline._is_empty_section('"NO_ARTICLE_CONTENT".')
-    # The two real disclaimers the model leaked in the incident.
-    assert pipeline._is_empty_section(
-        "There is no article content in what you provided. The entire text is "
-        "website cookie-consent and privacy-policy boilerplate."
-    )
-    assert pipeline._is_empty_section(
-        "If you paste the article body text, I can clean it for you."
-    )
-
-
-def test_is_empty_section_keeps_real_prose() -> None:
-    # Normal narration is not dropped, even when it mentions "article".
-    assert not pipeline._is_empty_section(
-        "This article explains how the kernel boots in six phases. " * 5
-    )
-    assert not pipeline._is_empty_section(
-        "The mayor announced a five hundred thousand dollar settlement today."
-    )
-    # A real column that opens "There is no article this week" must survive: it
-    # hits the disclaimer opener but has no supplied-input signal.
-    assert not pipeline._is_empty_section(
-        "There is no article this week, so instead we round up the month's best reads."
-    )
-
-
-def test_is_empty_section_catches_sentinel_with_stray_prose() -> None:
-    # Model adds stray text around the sentinel -> still dropped (containment).
-    assert pipeline._is_empty_section("NO_ARTICLE_CONTENT\n\nSkip to main content")
-
-
 async def test_cleanup_drops_boilerplate_only_windows(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -774,6 +739,64 @@ async def test_cleanup_drops_boilerplate_only_windows(
     assert "NO_ARTICLE_CONTENT" not in cleaned
     assert "there is no article" not in cleaned.lower()
     assert "mayor announced the budget" in cleaned
+
+
+# --- cleanup: sentinel-marker output contract (integration) ----------------
+
+
+async def test_cleanup_retries_when_model_ignores_markers(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A window that comes back as a bare conversational refusal (no markers, no
+    sentinel) is retried once; the retry's marker'd content is what survives."""
+
+    database.run_migrations(env)
+    monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _md, _n: ["only-window"])
+    outputs = iter(
+        [
+            "I don't have any stored instructions. Could you point me to the rules?",
+            "<<<AUDICLE_BEGIN>>>\n"
+            + "The mayor announced the budget today and the council approved it. " * 8
+            + "\n<<<AUDICLE_END>>>",
+        ]
+    )
+    calls = {"n": 0}
+
+    async def _fake(_system, _user, _settings, **_kwargs):
+        calls["n"] += 1
+        return next(outputs)
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _fake)
+    cleaned = await pipeline._stage_cleanup("job", "markdown", get_settings())
+    assert calls["n"] == 2  # initial refusal + one retry
+    assert "mayor announced the budget" in cleaned
+    assert "stored instructions" not in cleaned
+
+
+async def test_cleanup_extracts_marker_body_dropping_preamble(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CoreWeave incident: preamble glued on top of real marker'd content is
+    stripped, the content kept, and no retry fires (markers were honored)."""
+
+    database.run_migrations(env)
+    monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _md, _n: ["w1"])
+    calls = {"n": 0}
+
+    async def _fake(_system, _user, _settings, **_kwargs):
+        calls["n"] += 1
+        return (
+            "I don't have any stored instructions for how to clean articles.\n\n"
+            "<<<AUDICLE_BEGIN>>>\n"
+            + "CoreWeave is a cloud computing company that runs GPU data centers. " * 8
+            + "\n<<<AUDICLE_END>>>"
+        )
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _fake)
+    cleaned = await pipeline._stage_cleanup("job", "markdown", get_settings())
+    assert calls["n"] == 1  # markers honored -> no retry
+    assert "stored instructions" not in cleaned
+    assert "CoreWeave is a cloud computing company" in cleaned
 
 
 # --- cleanup: residual markdown heading strip ------------------------------

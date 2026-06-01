@@ -69,8 +69,15 @@ async def extract(url: str, settings: Settings) -> ExtractionResult:
     if settings.firecrawl_exclude_tags:
         payload["excludeTags"] = settings.firecrawl_exclude_tags
     timeout = httpx.Timeout(settings.FIRECRAWL_TIMEOUT_SECONDS)
+    # Bearer auth only when a key is configured; an open self-hosted Firecrawl
+    # sends no Authorization header.
+    headers = (
+        {"Authorization": f"Bearer {settings.FIRECRAWL_API_KEY}"}
+        if settings.FIRECRAWL_API_KEY
+        else None
+    )
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
         try:
             response = await _post_with_retry(client, endpoint, payload, settings)
         except RetryError as exc:

@@ -38,6 +38,7 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         # Connections: the bundled service URLs are operator-tunable so they can
         # be pointed at an external Firecrawl/TTS without an env edit + restart.
         "FIRECRAWL_URL",
+        "FIRECRAWL_API_KEY",
         "TTS_URL",
         "TTS_CHUNK_TARGET_WORDS",
         "TTS_CHUNK_MAX_WORDS",
@@ -65,7 +66,7 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
 # Secret-bearing keys: their stored value is never returned by GET (masked to a
 # sentinel) so the Settings UI can show "set" without leaking the credential.
 MASKED_KEYS: frozenset[str] = frozenset(
-    {"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY"}
+    {"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "FIRECRAWL_API_KEY"}
 )
 
 # Sentinel returned by GET for a masked key that has a stored override, and

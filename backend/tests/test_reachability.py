@@ -83,6 +83,26 @@ async def test_check_firecrawl_ok_on_2xx(env: Path, monkeypatch: pytest.MonkeyPa
     assert "200" in result.detail
 
 
+async def test_check_firecrawl_sends_bearer_when_key_set(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An auth-gated Firecrawl must be probed with the same bearer the pipeline
+    uses, so its health paths aren't reported unreachable."""
+
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "fc-key")
+    get_settings.cache_clear()
+    captured: dict[str, httpx.Request] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["request"] = request
+        return httpx.Response(200, text='{"ok":true}')
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    result = await reachability.check_firecrawl(get_settings())
+    assert result.ok is True
+    assert captured["request"].headers.get("authorization") == "Bearer fc-key"
+
+
 async def test_check_firecrawl_falls_through_to_root_on_404(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -6,6 +6,36 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-05-31
+
+### Added
+
+- Firecrawl API key support. A new `FIRECRAWL_API_KEY` is sent as an
+  `Authorization: Bearer` header when set, so a Firecrawl instance behind auth
+  (the hosted API or a self-hosted deployment with a key) can be reached. The key
+  is settable in the Settings UI under Connections and is masked on read like the
+  LLM keys; leaving it blank preserves the open self-hosted default.
+
+### Fixed
+
+- Cleaned articles no longer leak a conversational preamble into narration. The
+  per-window cleaner now wraps its output in begin/end markers and the parser
+  keeps only the text between them, so a reply the model glues on top (such as
+  "I don't have any stored instructions...", seen on a Wikipedia page) is dropped
+  instead of read aloud. A no-marker fallback strips a leading conversational
+  paragraph, and a window that comes back as a bare refusal is retried once.
+- Wiki-style page chrome is removed before cleanup: the table of contents,
+  `[edit]` links, bracketed citation superscripts, and the trailing link-list
+  sections (See also, References, External links, Notes, Further reading,
+  Bibliography, Citations, Sources). This keeps each cleanup window
+  article-shaped and stops footer link dumps from reaching the narrator.
+
+### Changed
+
+- "AI" is now pronounced "A.I." deterministically. The correction moved from an
+  LLM-only hint to the guaranteed backstop, matching the "A.P.I." convention the
+  cleanup prompt already uses for other acronyms.
+
 ## [0.13.2] - 2026-05-31
 
 ### Fixed

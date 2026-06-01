@@ -29,9 +29,11 @@ from app.config import Settings
 from app.core import database
 from app.core.paths import file_size_or_zero, media_dir
 from app.services import (
+    article_prep,
     artwork,
     audio,
     chunker,
+    cleanup_output,
     corrections,
     episodes,
     extraction,
@@ -511,51 +513,6 @@ def _normalize_for_tts(text: str) -> str:
     )
 
 
-# The cleanup prompt tells the model to emit this exact token for a window that
-# is all boilerplate (no article body). An explicit sentinel is obeyed far more
-# reliably than "return nothing", which models tend to answer with a prose
-# disclaimer ("There is no article content...") that would otherwise be narrated.
-_EMPTY_SECTION_SENTINEL = "NO_ARTICLE_CONTENT"
-# Backstops for when the model ignores the sentinel and writes a refusal in prose.
-# Assistant-offer phrasing ("if you paste the article...") is conclusive on its
-# own -- a real article never says it. The "there is no article..." opener can
-# appear in a real column, so it additionally requires a reference to the supplied
-# input (or a boilerplate keyword) before a window is dropped.
-_DISCLAIMER_OFFER_RE = re.compile(
-    r"^if you (paste|provide|share) the article", re.IGNORECASE
-)
-_DISCLAIMER_OPENER_RE = re.compile(
-    r"^(there (is|was) no (article|content|text)|"
-    r"no article (body|content|text) (was|is|were))",
-    re.IGNORECASE,
-)
-_DISCLAIMER_SIGNAL_RE = re.compile(
-    r"you (provided|shared|gave|pasted)|in (the content|what you)|"
-    r"was not included|to extract|cookie|consent|boilerplate|navigation",
-    re.IGNORECASE,
-)
-
-
-def _is_empty_section(text: str) -> bool:
-    """True when a cleanup window produced no article body -- the sentinel
-    (anywhere in the output, in case the model adds stray prose), or a short
-    refusal the model wrote instead of the sentinel."""
-
-    if _EMPTY_SECTION_SENTINEL in text:
-        return True
-    stripped = text.strip()
-    # Backstop only: a short output (a real article section is long). The offer
-    # phrasing is conclusive; the "no article" opener needs a supplied-input
-    # signal so a real "There is no article this week..." column is not dropped.
-    if len(stripped) >= 600:
-        return False
-    if _DISCLAIMER_OFFER_RE.match(stripped):
-        return True
-    return bool(_DISCLAIMER_OPENER_RE.match(stripped)) and bool(
-        _DISCLAIMER_SIGNAL_RE.search(stripped)
-    )
-
-
 async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
     """LLM cleanup with tenacity retry on transient provider failures.
 
@@ -573,6 +530,11 @@ async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
     # normalize stage (LLM pronunciation pass + deterministic backstop) so cleanup
     # stays focused on de-chroming the scrape.
 
+    # Strip wiki-style chrome (TOC, [edit] markers, citation superscripts, and
+    # trailing See also/References/External links link dumps) before windowing so
+    # each window is article-shaped rather than dominated by page furniture.
+    markdown = article_prep.strip_chrome(markdown)
+
     # Process the article in paragraph-bounded windows, one LLM call each, then
     # concatenate. A single giant call capped the output at LLM_MAX_TOKENS and
     # truncated long articles to the first paragraph; windowing keeps each call's
@@ -582,18 +544,31 @@ async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
     for index, window in enumerate(windows):
         # Repeat the directive in the user turn (many models weight it higher
         # than the system prompt) and delimit the article so the model cleans it
-        # rather than replying conversationally to it.
+        # rather than replying conversationally to it. The marker contract lets
+        # the parser drop any preamble the model glues on top of the narration.
         user_message = (
-            "Clean the article below per your instructions. Return ONLY the "
-            "cleaned narration text -- no commentary, no greetings, no questions. "
-            "If this passage has no article body, output exactly NO_ARTICLE_CONTENT "
-            "and nothing else."
+            "Clean the article below per your instructions. Output ONLY the "
+            f"cleaned narration text between a line {cleanup_output.BEGIN_MARKER} "
+            f"and a line {cleanup_output.END_MARKER} -- no commentary, greetings, "
+            "or questions outside the markers. If this passage has no article "
+            "body, output exactly NO_ARTICLE_CONTENT and nothing else."
             f"\n\n<article>\n{window}\n</article>"
         )
-        part = (await _llm_with_retry(system_prompt, user_message, settings)).strip()
-        # Drop boilerplate-only windows so a "there is no article" disclaimer never
-        # reaches narration; the empty string is filtered out of the join below.
-        empty = _is_empty_section(part)
+        raw = await _llm_with_retry(system_prompt, user_message, settings)
+        part = cleanup_output.extract_clean_output(raw)
+        if cleanup_output.needs_compliance_retry(raw, part):
+            raw = await _llm_with_retry(
+                system_prompt, cleanup_output.RETRY_INSTRUCTION + user_message, settings
+            )
+            part = cleanup_output.extract_clean_output(raw)
+        # Drop boilerplate-only windows and any refusal the model still leaked, so
+        # a "there is no article" line never reaches narration; the empty string
+        # is filtered out of the join below.
+        empty = (
+            not part
+            or cleanup_output.is_empty_section(part)
+            or cleanup_output.is_refusal_output(part)
+        )
         output_chars = len(part)  # the model's real output, before we drop it
         if empty:
             part = ""

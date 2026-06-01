@@ -40,8 +40,15 @@ async def check_firecrawl(settings: Settings, *, timeout: float = 5.0) -> CheckR
     base = settings.FIRECRAWL_URL.rstrip("/")
     candidates = (f"{base}/v1/health", f"{base}/health", f"{base}/")
     last_detail = "no endpoint responded"
+    # Send the same bearer the pipeline uses so an auth-gated Firecrawl isn't
+    # reported unreachable when its health paths also require the key.
+    headers = (
+        {"Authorization": f"Bearer {settings.FIRECRAWL_API_KEY}"}
+        if settings.FIRECRAWL_API_KEY
+        else None
+    )
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
         for endpoint in candidates:
             try:
                 response = await client.get(endpoint)
