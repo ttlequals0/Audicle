@@ -6,6 +6,45 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-05-31
+
+### Fixed
+
+- `RETENTION_DAYS=0` no longer wipes every episode on the daily sweep. The
+  background sweep now treats 0 (or any value at or below it) as "keep forever"
+  and skips the automatic purge, matching what operators expect from a 0 value.
+  The deliberate wipe-everything path stays available through the explicit
+  `POST /api/v1/purge?older_than_days=0&confirm=true` admin action.
+- The session signing secret is now initialised atomically. Under the default
+  two-worker deployment, a fresh install could have both workers generate and
+  write different secrets at the same time, so each worker signed cookies with
+  its own key and logged users out on roughly half their requests until a
+  restart. Initialisation now uses an insert-if-absent followed by a read, so
+  every worker converges on the same persisted secret.
+- The reference-voice test, audition, and commit flows now serialise across
+  worker processes with a file lock. The previous in-process lock did not
+  coordinate between workers, so concurrent auditions could overwrite the
+  committed `voice.wav` with a candidate clip.
+- The artwork SSRF guard now pins redirected requests to the IP it validated,
+  closing a DNS-rebinding window on the redirect hop where a hostile server
+  could send the fetch to an internal address after passing the hostname check.
+- Sentence-ending decimal and grouped numbers (for example "the cost was
+  1,234.56.") are now spelled out for narration. The number normaliser's guard
+  against dotted version strings and IP addresses was also rejecting a number
+  immediately followed by a sentence period, leaving raw digits for the model.
+- The readiness probe no longer runs its ffmpeg version check on the event loop.
+  A wedged or slow ffmpeg (whose failures are not cached) could stall the loop
+  for the full probe timeout; the check now runs off-thread.
+
+### Fixed (tts-wrapper)
+
+- A timed-out `/generate` no longer lets a backend retry stack a second
+  inference on the GPU. A request that times out cannot cancel the running
+  inference thread, so the work continues after the 504; the wrapper now rejects
+  an overlapping inference with 503 instead of starting a concurrent one, which
+  prevents VRAM exhaustion from retries. The orphaned inference finishes and
+  frees the GPU on its own.
+
 ## [0.13.1] - 2026-05-31
 
 ### Fixed

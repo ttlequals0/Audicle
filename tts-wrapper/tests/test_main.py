@@ -14,7 +14,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from engine import Engine, GPUOutOfMemoryError
+from engine import Engine, GPUOutOfMemoryError, InferenceBusyError
 from main import create_app
 
 
@@ -45,12 +45,14 @@ class FakeEngine:
         *,
         fail_load: bool = False,
         oom_synthesize: bool = False,
+        busy_synthesize: bool = False,
         synthesize_returns: bytes | None = None,
     ) -> None:
         self.model_loaded = False
         self.reference_loaded = False
         self.fail_load = fail_load
         self.oom_synthesize = oom_synthesize
+        self.busy_synthesize = busy_synthesize
         self.synthesize_returns = synthesize_returns or _silent_wav()
         self.synthesize_calls: list[str] = []
         self.reload_calls = 0
@@ -65,6 +67,8 @@ class FakeEngine:
         self.synthesize_calls.append(text)
         if self.oom_synthesize:
             raise GPUOutOfMemoryError("simulated OOM")
+        if self.busy_synthesize:
+            raise InferenceBusyError("simulated busy")
         # Tiny delay so the asyncio.Lock can be observed by another caller.
         await asyncio.sleep(0)
         return self.synthesize_returns
@@ -215,6 +219,22 @@ def test_generate_500_with_gpu_oom_detail(tmp_path: Path) -> None:
     assert "simulated" in detail["cause"]
 
 
+def test_generate_503_when_inference_busy(tmp_path: Path) -> None:
+    """An overlapping inference (e.g. a backend retry while an orphaned post-
+    timeout thread is still on the GPU) must come back as 503, not start a
+    second concurrent GPU inference. 503 is server-side retryable so the backend
+    backs off instead of stacking work."""
+
+    engine = FakeEngine(busy_synthesize=True)
+    with _client(engine, tmp_path) as client:
+        response = client.post(
+            "/generate",
+            json={"text": "hi", "episode_id": "ep", "chunk_index": 0},
+        )
+    assert response.status_code == 503
+    assert response.json()["detail"]["error"] == "inference busy"
+
+
 def test_generate_serializes_concurrent_calls_via_lock(tmp_path: Path) -> None:
     """The asyncio.Lock around inference must queue concurrent /generate calls;
     if two requests overlap without serialization, the synthesize_calls log
@@ -257,6 +277,23 @@ def test_generate_rejects_path_traversal_in_episode_id(tmp_path: Path) -> None:
                 json={"text": "hi", "episode_id": evil, "chunk_index": 0},
             )
             assert response.status_code == 422, f"accepted: {evil!r}"
+
+
+def test_reload_503_when_inference_busy(tmp_path: Path) -> None:
+    """If an inference (e.g. an orphaned post-timeout thread) still holds the GPU
+    when /reload tries to recompute embeddings, the wrapper returns 503 rather
+    than running concurrent GPU work or a misleading 500."""
+
+    class _BusyReloadEngine(FakeEngine):
+        async def reload_reference(self) -> None:
+            self.reload_calls += 1
+            raise InferenceBusyError("simulated busy")
+
+    engine = _BusyReloadEngine()
+    with _client(engine, tmp_path) as client:
+        response = client.post("/reload")
+    assert response.status_code == 503
+    assert response.json()["detail"]["error"] == "inference busy"
 
 
 def test_reload_404_when_engine_raises_file_not_found(tmp_path: Path) -> None:

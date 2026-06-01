@@ -306,14 +306,6 @@ async def _resolve_public_host(host: str) -> str:
     return public_ip
 
 
-async def _assert_public_host(host: str) -> None:
-    """Wrapper around :func:`_resolve_public_host` that discards the IP --
-    kept for the event-hook redirect re-check where pinning isn't viable
-    (httpx builds the redirected URL itself)."""
-
-    await _resolve_public_host(host)
-
-
 async def _download(url: str, settings: Settings) -> bytes:
     """Download ``url`` with a hard byte cap.
 
@@ -342,10 +334,18 @@ async def _download(url: str, settings: Settings) -> bytes:
         # Fires for every outgoing request including redirects, so we re-run
         # the SSRF guard against the redirected hostname. The initial GET is
         # already pinned to a resolved public IP; this hook covers the
-        # ``Location:`` header path where httpx synthesizes a fresh URL.
+        # ``Location:`` header path where httpx synthesizes a fresh URL. We
+        # pin that URL to the validated IP too -- otherwise httpx re-resolves
+        # the hostname at connect time, reopening the DNS-rebinding TOCTOU on
+        # the redirect hop (validation lookup gets a public IP, connect lookup
+        # gets a private one).
         if request.url.host == pinned_ip:
-            return  # already validated above
-        await _assert_public_host(request.url.host)
+            return  # initial GET, already pinned above
+        original_host = request.url.host or ""
+        redirect_ip = await _resolve_public_host(original_host)
+        request.url = request.url.copy_with(host=redirect_ip)
+        request.headers["Host"] = original_host
+        request.extensions["sni_hostname"] = original_host
 
     timeout = httpx.Timeout(settings.ARTWORK_FETCH_TIMEOUT_SECONDS)
     max_bytes = settings.ARTWORK_MAX_DOWNLOAD_BYTES

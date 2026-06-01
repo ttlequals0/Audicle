@@ -128,8 +128,21 @@ def get_or_init_session_secret(conn: sqlite3.Connection) -> str:
     if existing:
         return existing
     fresh = secrets.token_urlsafe(64)
-    set_(conn, SESSION_SECRET_KEY_NAME, fresh)
-    return fresh
+    # First-writer-wins, atomic at the SQLite level: INSERT OR IGNORE never
+    # overwrites an existing row, so two worker processes racing on a fresh DB
+    # converge on a single secret instead of each signing cookies with its own
+    # key (which logs users out on ~half their requests under round-robin). Do
+    # NOT use set_(): its ON CONFLICT DO UPDATE is overwrite semantics. Re-SELECT
+    # to return whichever value actually landed.
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO settings (key, value, updated_at)
+        VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        """,
+        (SESSION_SECRET_KEY_NAME, fresh),
+    )
+    conn.commit()
+    return get(conn, SESSION_SECRET_KEY_NAME) or fresh
 
 
 def _canonical_feed_url(base_url: str) -> str:

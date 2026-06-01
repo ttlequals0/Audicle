@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from config import Config
-from engine import Engine, GPUOutOfMemoryError, XTTSEngine
+from engine import Engine, GPUOutOfMemoryError, InferenceBusyError, XTTSEngine
 from log_setup import setup_logging
 
 setup_logging()
@@ -255,6 +255,21 @@ def create_app(
                 raise HTTPException(
                     status_code=500, detail={"error": "GPU OOM", "cause": str(exc)}
                 ) from exc
+            except InferenceBusyError as exc:
+                # A prior inference (often an orphaned thread left running after a
+                # timeout) is still on the GPU. Reject with 503 rather than start
+                # a second concurrent inference; the backend retries with backoff.
+                logger.warning(
+                    "Inference rejected; another is already running",
+                    extra={
+                        "event": "tts_inference_busy",
+                        "episode_id": body.episode_id,
+                        "chunk_index": body.chunk_index,
+                    },
+                )
+                raise HTTPException(
+                    status_code=503, detail={"error": "inference busy"}
+                ) from exc
 
         inference_ms = int((time.perf_counter() - inference_started) * 1000)
 
@@ -301,6 +316,13 @@ def create_app(
                 await engine.reload_reference()
             except FileNotFoundError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except InferenceBusyError as exc:
+                # An inference (likely an orphaned post-timeout thread) still
+                # holds the GPU; recomputing embeddings now would run concurrent
+                # GPU work. 503 so the caller retries once the GPU frees.
+                raise HTTPException(
+                    status_code=503, detail={"error": "inference busy"}
+                ) from exc
             except Exception as exc:
                 logger.exception("reload failed", extra={"event": "tts_reload_failed"})
                 raise HTTPException(status_code=500, detail=f"reload failed: {exc}") from exc

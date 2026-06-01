@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from config import Config
-from engine import _XTTS_MAX_CHARS, XTTSEngine, _split_for_xtts
+from engine import _XTTS_MAX_CHARS, InferenceBusyError, XTTSEngine, _split_for_xtts
 
 _COND_ENV = ("XTTS_GPT_COND_LEN", "XTTS_GPT_COND_CHUNK_LEN", "XTTS_MAX_REF_LENGTH", "XTTS_SPEED")
 
@@ -55,6 +55,19 @@ def test_compute_embeddings_forwards_conditioning(
     assert engine.reference_loaded is True
 
 
+def test_compute_embeddings_rejects_when_gpu_busy(tmp_path: Path) -> None:
+    # /reload's embedding recompute is GPU work; it must not run while an
+    # inference (e.g. an orphaned post-timeout thread) still holds the GPU lock.
+    engine = XTTSEngine(Config.from_env())
+    engine._model = object()
+    assert engine._gpu_lock.acquire(blocking=False)
+    try:
+        with pytest.raises(InferenceBusyError):
+            engine._compute_embeddings(tmp_path / "voice.wav")
+    finally:
+        engine._gpu_lock.release()
+
+
 def test_infer_piece_forwards_speed_and_sampling(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("XTTS_SPEED", "0.9")
     captured: dict = {}
@@ -89,6 +102,53 @@ def test_run_inference_whitespace_text_returns_silence() -> None:
     assert out.dtype == np.float32
     assert len(out) > 0
     assert not out.any()  # all zeros
+
+
+def test_run_inference_rejects_concurrent_call() -> None:
+    # While the single-flight lock is held (simulating an orphaned post-timeout
+    # inference thread still on the GPU), a new _run_inference must reject with
+    # InferenceBusyError instead of starting a second concurrent GPU inference.
+    engine = XTTSEngine(Config.from_env())
+    engine._model = object()
+    engine.sample_rate = 24000
+    assert engine._gpu_lock.acquire(blocking=False)
+    try:
+        with pytest.raises(InferenceBusyError):
+            engine._run_inference("hello there")
+    finally:
+        engine._gpu_lock.release()
+
+
+def test_run_inference_releases_lock_after_success() -> None:
+    engine = XTTSEngine(Config.from_env())
+    engine._model = object()  # whitespace path returns before using the model
+    engine.sample_rate = 24000
+    engine._run_inference("   ")
+    # The lock must be free for the next call.
+    assert engine._gpu_lock.acquire(blocking=False)
+    engine._gpu_lock.release()
+
+
+def test_run_inference_releases_lock_after_exception() -> None:
+    engine = XTTSEngine(Config.from_env())
+    engine.sample_rate = 24000
+
+    class _BoomInner:
+        def inference(self, **kwargs):
+            raise RuntimeError("inference blew up")
+
+    class _BoomModel:
+        class synthesizer:  # noqa: N801
+            tts_model = _BoomInner()
+
+    engine._model = _BoomModel()
+    engine._gpt_cond_latent = "latent"
+    engine._speaker_embedding = "embed"
+    with pytest.raises(RuntimeError):
+        engine._run_inference("hello there")
+    # A raised inference must still release the lock so the wrapper recovers.
+    assert engine._gpu_lock.acquire(blocking=False)
+    engine._gpu_lock.release()
 
 
 def test_split_short_text_one_piece_per_sentence() -> None:

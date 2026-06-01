@@ -21,15 +21,12 @@ def _patch_async_client(monkeypatch: pytest.MonkeyPatch, transport: httpx.MockTr
     monkeypatch.setattr(httpx, "AsyncClient", factory)
 
     # SSRF guard would NXDOMAIN on example.test; tests exercise the rest
-    # of the pipeline via MockTransport, so stub both the resolver and the
-    # legacy wrapper to return TEST-NET-3 (RFC 5737).
-    async def _allow_all(_host: str) -> None:
-        return None
-
+    # of the pipeline via MockTransport, so stub the resolver to return
+    # TEST-NET-3 (RFC 5737). The initial GET and the redirect hook both go
+    # through _resolve_public_host now.
     async def _stub_resolve(_host: str) -> str:
         return "203.0.113.1"
 
-    monkeypatch.setattr(artwork, "_assert_public_host", _allow_all)
     monkeypatch.setattr(artwork, "_resolve_public_host", _stub_resolve)
 
 
@@ -391,13 +388,12 @@ async def test_process_artwork_blocks_private_ip_host(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """SSRF guard: hostname resolving to a private IP is rejected. Patches
-    artwork._assert_public_host's resolver via the module-level function
-    so the test doesn't depend on the host's DNS."""
+    artwork._resolve_public_host so the test doesn't depend on the host's DNS."""
 
-    async def _block(host: str) -> None:
+    async def _block(host: str) -> str:
         raise artwork._BlockedHostError(host, "non_public_address_127.0.0.1")
 
-    monkeypatch.setattr(artwork, "_assert_public_host", _block)
+    monkeypatch.setattr(artwork, "_resolve_public_host", _block)
     with caplog.at_level(logging.WARNING, logger="app.services.artwork"):
         result = await artwork.process_artwork(
             metadata={"ogImage": "https://internal-host.example/secret.png"},
