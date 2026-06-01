@@ -320,6 +320,35 @@ def test_prune_backups_removes_only_old(tmp_path: Path) -> None:
     assert recent.exists()
 
 
+async def test_reference_lock_async_excludes_other_holders(tmp_path: Path) -> None:
+    """While reference_lock_async is held, another fd (standing in for a second
+    worker process) must not be able to acquire the same flock -- this is what
+    serializes the reference-voice critical section across uvicorn --workers N."""
+
+    import fcntl
+    import os
+
+    async with database.reference_lock_async(tmp_path):
+        fd = os.open(
+            tmp_path / database.REFERENCE_LOCK_FILENAME, os.O_CREAT | os.O_RDWR, 0o600
+        )
+        try:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(fd)
+
+    # Released on exit: a fresh acquire now succeeds.
+    fd = os.open(
+        tmp_path / database.REFERENCE_LOCK_FILENAME, os.O_CREAT | os.O_RDWR, 0o600
+    )
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
 def test_migration_lock_serializes_concurrent_callers(tmp_path: Path) -> None:
     """The fcntl lock is the only thing preventing two startups from racing on
     schema state. A second caller blocks until the first releases the lock."""

@@ -307,13 +307,9 @@ def _stub_artwork_download(monkeypatch: pytest.MonkeyPatch, png_bytes: bytes) ->
 
     from app.services import artwork as _artwork
 
-    async def _allow_all(_host: str) -> None:
-        return None
-
     async def _stub_resolve(_host: str) -> str:
         return "203.0.113.1"
 
-    monkeypatch.setattr(_artwork, "_assert_public_host", _allow_all)
     monkeypatch.setattr(_artwork, "_resolve_public_host", _stub_resolve)
 
 
@@ -824,6 +820,17 @@ def test_normalize_numbers_preserves_trailing_zero_fraction() -> None:
     # Fractions read digit-by-digit so "2.0"/"1.50" don't collapse to integers.
     assert pipeline._normalize_numbers("Web 2.0 era") == "Web two point zero era"
     assert pipeline._normalize_numbers("just 1.50 left") == "just one point five zero left"
+
+
+def test_normalize_numbers_spells_sentence_ending_number() -> None:
+    # A number immediately followed by a sentence-ending period must still be
+    # spelled; the trailing-dot guard only protects dotted versions/IPs.
+    assert (
+        pipeline._normalize_numbers("The cost was 1,234.56.")
+        == "The cost was one thousand two hundred thirty-four point five six."
+    )
+    assert pipeline._normalize_numbers("GDP grew to 3.14.") == "GDP grew to three point one four."
+    assert pipeline._normalize_numbers("I weigh 220.5.") == "I weigh two hundred twenty point five."
 
 
 def test_normalize_numbers_leaves_ambiguous_and_glued_alone() -> None:

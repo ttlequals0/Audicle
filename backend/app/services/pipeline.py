@@ -340,10 +340,13 @@ def _normalize_date_months(text: str) -> str:
 # (500m), versions (1.2.3), and code-glued digits (x86, startup_32) are
 # deliberately left to the LLM prompt because they are context-dependent (a year
 # reads "twenty twenty-six", an emergency number reads "nine one one"). The
-# (?<![\w.,])/(?![\w.,]) guards keep this off identifiers and the middle of a
-# dotted version string or IP address.
+# (?<![\w.,]) lookbehind keeps this off identifiers and the middle of a dotted
+# version string or IP address. The trailing (?!\.\d|[,\w]) rejects only a
+# number glued to a following digit via "." or "," or to a word char (so
+# "1.2.3" and "x86" stay untouched) while still matching a number that ends a
+# sentence ("the cost was 1,234.56." -> spelled).
 _SPELLABLE_NUMBER_RE = re.compile(
-    r"(?<![\w.,])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+)(?![\w.,])"
+    r"(?<![\w.,])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+)(?!\.\d|[,\w])"
 )
 
 # Money with a currency symbol and an optional magnitude suffix (k/m/b/t). The

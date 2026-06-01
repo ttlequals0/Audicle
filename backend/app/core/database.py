@@ -17,14 +17,15 @@ fixes:
 
 from __future__ import annotations
 
+import asyncio
 import fcntl
 import logging
 import os
 import shutil
 import sqlite3
 import time
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager, suppress
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -32,6 +33,7 @@ logger = logging.getLogger("app.core.database")
 
 DB_FILENAME = "podcast.db"
 LOCK_FILENAME = ".migration.lock"
+REFERENCE_LOCK_FILENAME = ".reference.lock"
 BACKUP_PREFIX = "podcast.db.backup-"
 
 
@@ -80,11 +82,16 @@ def connection(data_dir: Path, *, timeout: float = 30.0) -> Iterator[sqlite3.Con
 
 
 @contextmanager
-def migration_lock(data_dir: Path) -> Iterator[None]:
-    """Serialize concurrent startups via fcntl.flock on .migration.lock."""
+def _flock_exclusive(data_dir: Path, filename: str) -> Iterator[None]:
+    """Hold an exclusive fcntl.flock on ``data_dir/filename`` for the block.
+
+    The lock lives on the kernel file descriptor, so it serializes across
+    processes (the ``uvicorn --workers N`` case) -- unlike an in-process
+    asyncio.Lock, which each worker holds its own copy of.
+    """
 
     data_dir.mkdir(parents=True, exist_ok=True)
-    lock_path = data_dir / LOCK_FILENAME
+    lock_path = data_dir / filename
     fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
@@ -94,6 +101,49 @@ def migration_lock(data_dir: Path) -> Iterator[None]:
             fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
             os.close(fd)
+
+
+@contextmanager
+def migration_lock(data_dir: Path) -> Iterator[None]:
+    """Serialize concurrent startups via fcntl.flock on .migration.lock."""
+
+    with _flock_exclusive(data_dir, LOCK_FILENAME):
+        yield
+
+
+@asynccontextmanager
+async def reference_lock_async(data_dir: Path) -> AsyncIterator[None]:
+    """Cross-process exclusive lock for the reference-voice critical section,
+    safe to hold across awaits.
+
+    ``/api/v1/reference/test`` and ``/commit`` both read-stage-generate-restore
+    the single shared ``voice.wav``; an in-process asyncio.Lock can't serialize
+    them across ``uvicorn --workers N``, so they race and clobber the committed
+    clip. This flock closes that gap.
+
+    Uses a non-blocking flock with async retry rather than a blocking acquire on
+    a worker thread: every suspension point is an ``asyncio.sleep`` holding only
+    the fd (which the ``finally`` always closes), so a cancelled request -- e.g.
+    the client disconnecting during a contended wait -- can never orphan the
+    lock. A blocking ``flock`` run via ``asyncio.to_thread`` could be cancelled
+    after the thread acquired the lock, leaving it held until process exit.
+    """
+
+    data_dir.mkdir(parents=True, exist_ok=True)
+    fd = os.open(data_dir / REFERENCE_LOCK_FILENAME, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                await asyncio.sleep(0.05)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:

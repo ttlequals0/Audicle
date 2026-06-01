@@ -95,10 +95,14 @@ async def health_ready(request: Request, response: Response) -> dict[str, Any]:
     # Per build plan: aggregate component-level detail (wrapper version/torch/
     # coqui_tts/device from its /health, LLM + Firecrawl reachability) alongside
     # the local app/python/ffmpeg versions.
+    # _ffmpeg_version() runs a blocking subprocess; off-thread it so a wedged or
+    # slow ffmpeg (failures aren't cached, so they re-run every probe) can't stall
+    # the event loop for the full 2s timeout. Mirrors the worker retention sweep.
+    ffmpeg_version = await asyncio.to_thread(_ffmpeg_version)
     components: dict[str, Any] = {
         "app": __version__,
         "python": platform.python_version(),
-        "ffmpeg": _ffmpeg_version(),
+        "ffmpeg": ffmpeg_version,
         "tts_wrapper": {**tts_detail, "reachable": _reachable(tts_check)},
         "firecrawl": {
             "url": settings.FIRECRAWL_URL,

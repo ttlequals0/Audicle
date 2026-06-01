@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import logging
 import re
+import threading
 import time
 import wave
 from pathlib import Path
@@ -59,6 +60,18 @@ class GPUOutOfMemoryError(RuntimeError):
     """
 
 
+class InferenceBusyError(RuntimeError):
+    """Raised when a /generate arrives while a prior inference is still running.
+
+    ``asyncio.wait_for`` cancels the awaiting coroutine on timeout but cannot
+    cancel the OS thread running torch inference, so the GPU work continues after
+    the route has returned 504 and released its lock. The backend retries the
+    504, and without this guard each retry would spawn another concurrent
+    inference thread and exhaust VRAM. The wrapper rejects the overlapping call
+    with 503 instead; the orphaned thread finishes and frees the GPU on its own.
+    """
+
+
 @runtime_checkable
 class Engine(Protocol):
     """Minimal contract the FastAPI wrapper depends on."""
@@ -79,8 +92,9 @@ class Engine(Protocol):
     async def synthesize(self, text: str) -> bytes:
         """Return a WAV byte string for ``text``.
 
-        Raises :class:`GPUOutOfMemoryError` on CUDA OOM. Any other exception
-        propagates as a 500 to the client.
+        Raises :class:`GPUOutOfMemoryError` on CUDA OOM and
+        :class:`InferenceBusyError` when another inference is already running
+        (mapped to 503). Any other exception propagates as a 500 to the client.
         """
 
     async def reload_reference(self) -> None:
@@ -108,6 +122,12 @@ class XTTSEngine:
         self._gpt_cond_latent = None
         self._speaker_embedding = None
         self._torch = None  # cached torch module reference
+        # Single-flight guard over ALL GPU work (inference and embedding
+        # recompute), held in the worker thread that does the work. An
+        # overlapping call -- e.g. a backend retry after a timeout left the prior
+        # inference thread running, or a /reload racing that orphan -- is
+        # rejected instead of starting a second concurrent GPU operation.
+        self._gpu_lock = threading.Lock()
 
     def load(self) -> None:
         import torch  # noqa: PLC0415  (intentional lazy import)
@@ -194,21 +214,29 @@ class XTTSEngine:
 
     def _compute_embeddings(self, ref_path: Path) -> None:
         assert self._model is not None
-        logger.info(
-            "Computing speaker embeddings",
-            extra={"event": "tts_embeddings_compute", "reference": str(ref_path)},
-        )
-        gpt_cond_latent, speaker_embedding = (
-            self._model.synthesizer.tts_model.get_conditioning_latents(
-                audio_path=[str(ref_path)],
-                gpt_cond_len=self.config.gpt_cond_len,
-                gpt_cond_chunk_len=self.config.gpt_cond_chunk_len,
-                max_ref_length=self.config.max_ref_length,
+        # Embedding recompute is GPU work too: reject if an inference (possibly
+        # an orphaned post-timeout thread) is still on the device, so /reload
+        # can't run concurrently with it. Uncontended at startup (load()).
+        if not self._gpu_lock.acquire(blocking=False):
+            raise InferenceBusyError("an inference is already running on this wrapper")
+        try:
+            logger.info(
+                "Computing speaker embeddings",
+                extra={"event": "tts_embeddings_compute", "reference": str(ref_path)},
             )
-        )
-        self._gpt_cond_latent = gpt_cond_latent
-        self._speaker_embedding = speaker_embedding
-        self.reference_loaded = True
+            gpt_cond_latent, speaker_embedding = (
+                self._model.synthesizer.tts_model.get_conditioning_latents(
+                    audio_path=[str(ref_path)],
+                    gpt_cond_len=self.config.gpt_cond_len,
+                    gpt_cond_chunk_len=self.config.gpt_cond_chunk_len,
+                    max_ref_length=self.config.max_ref_length,
+                )
+            )
+            self._gpt_cond_latent = gpt_cond_latent
+            self._speaker_embedding = speaker_embedding
+            self.reference_loaded = True
+        finally:
+            self._gpu_lock.release()
 
     async def reload_reference(self) -> None:
         import asyncio  # noqa: PLC0415
@@ -254,21 +282,31 @@ class XTTSEngine:
         import numpy as np  # noqa: PLC0415  (lazy: numpy comes from torch's wheel)
 
         assert self._model is not None
-        # _split_for_xtts only returns non-empty pieces; an empty list means the
-        # text had no speakable content (e.g. a whitespace-only chunk). Return a
-        # short silence instead of feeding "" to XTTS, which crashes inference.
-        pieces = _split_for_xtts(text, self.config.max_chars)
-        if not pieces:
-            return np.zeros(int(self.sample_rate * 0.05), dtype=np.float32)
-        wavs = [np.asarray(self._infer_piece(piece), dtype=np.float32) for piece in pieces]
-        if len(wavs) == 1:
-            return wavs[0]
-        # Join sentence pieces with a short silence so they don't slur together.
-        gap = np.zeros(int(self.sample_rate * 0.12), dtype=np.float32)
-        joined: list = [wavs[0]]
-        for wav in wavs[1:]:
-            joined += [gap, wav]
-        return np.concatenate(joined)
+        # Reject an overlapping GPU operation rather than running it concurrently.
+        # The non-blocking acquire fails if a prior call (possibly an orphaned
+        # post-timeout thread, or a /reload's embedding recompute) still holds the
+        # lock; that holder frees the GPU when it finishes and releases here.
+        if not self._gpu_lock.acquire(blocking=False):
+            raise InferenceBusyError("an inference is already running on this wrapper")
+        try:
+            # _split_for_xtts only returns non-empty pieces; an empty list means
+            # the text had no speakable content (e.g. a whitespace-only chunk).
+            # Return a short silence instead of feeding "" to XTTS, which crashes
+            # inference.
+            pieces = _split_for_xtts(text, self.config.max_chars)
+            if not pieces:
+                return np.zeros(int(self.sample_rate * 0.05), dtype=np.float32)
+            wavs = [np.asarray(self._infer_piece(piece), dtype=np.float32) for piece in pieces]
+            if len(wavs) == 1:
+                return wavs[0]
+            # Join sentence pieces with a short silence so they don't slur together.
+            gap = np.zeros(int(self.sample_rate * 0.12), dtype=np.float32)
+            joined: list = [wavs[0]]
+            for wav in wavs[1:]:
+                joined += [gap, wav]
+            return np.concatenate(joined)
+        finally:
+            self._gpu_lock.release()
 
     def _infer_piece(self, text: str):
         assert self._model is not None

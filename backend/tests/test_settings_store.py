@@ -39,6 +39,43 @@ def test_set_upserts_on_existing_key(env: Path) -> None:
         conn.close()
 
 
+def test_get_or_init_session_secret_persists_first_call(env: Path) -> None:
+    conn = _open(env)
+    try:
+        first = settings_store.get_or_init_session_secret(conn)
+        second = settings_store.get_or_init_session_secret(conn)
+        assert first == second
+        assert settings_store.get(conn, settings_store.SESSION_SECRET_KEY_NAME) == first
+    finally:
+        conn.close()
+
+
+def test_get_or_init_session_secret_converges_across_connections(env: Path) -> None:
+    """Two separate connections (the cross-process worker case) must converge on
+    a single persisted secret -- the INSERT OR IGNORE makes init first-writer-
+    wins instead of last-writer-overwrites."""
+
+    database.run_migrations(env)
+    conn_a = database.connect(database.db_path(env))
+    conn_b = database.connect(database.db_path(env))
+    try:
+        secret_a = settings_store.get_or_init_session_secret(conn_a)
+        secret_b = settings_store.get_or_init_session_secret(conn_b)
+        assert secret_a == secret_b
+    finally:
+        conn_a.close()
+        conn_b.close()
+
+
+def test_get_or_init_session_secret_never_overwrites_existing(env: Path) -> None:
+    conn = _open(env)
+    try:
+        settings_store.set_(conn, settings_store.SESSION_SECRET_KEY_NAME, "pre-existing")
+        assert settings_store.get_or_init_session_secret(conn) == "pre-existing"
+    finally:
+        conn.close()
+
+
 def test_get_or_init_podcast_guid_persists_first_call(env: Path) -> None:
     conn = _open(env)
     try:

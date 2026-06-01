@@ -76,6 +76,31 @@ def test_maybe_run_retention_sweep_runs_when_hour_matches(
         conn.close()
 
 
+def test_maybe_run_retention_sweep_keeps_all_when_days_zero(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RETENTION_DAYS=0 means "keep forever": the automatic sweep must NOT
+    purge. The wipe-all-on-zero contract is reserved for the explicit
+    operator-initiated /purge endpoint."""
+
+    monkeypatch.setenv("RETENTION_DAYS", "0")
+    get_settings.cache_clear()
+    settings = get_settings()
+    assert settings.RETENTION_DAYS == 0
+    fake_now = datetime(2026, 5, 28, settings.RETENTION_SWEEP_HOUR_UTC, 30, 0, tzinfo=UTC)
+    _freeze_now(monkeypatch, fake_now)
+    _seed_old(env, id_="old")
+
+    new_day = worker._maybe_run_retention_sweep(settings, last_sweep_day=None)
+    assert new_day == "2026-05-28"
+
+    conn = database.connect(database.db_path(env))
+    try:
+        assert episodes.get_by_id(conn, "old") is not None
+    finally:
+        conn.close()
+
+
 def test_maybe_run_retention_sweep_skips_when_already_ran_today(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

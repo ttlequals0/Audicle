@@ -19,6 +19,8 @@ import asyncio
 import io
 import logging
 import wave
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
@@ -27,6 +29,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 
 from app.config import Settings, get_settings
+from app.core import database
 from app.services.atomic_write import write_bytes_atomic
 
 logger = logging.getLogger("app.api.reference")
@@ -46,11 +49,24 @@ DEFAULT_SAMPLE_TEXT = (
     "the great explorer of the truth, the master-builder of human happiness."
 )
 
-# Serialises /test against itself so two operators auditioning candidates
-# can't race on the shared reference path. /commit doesn't need the lock
-# (atomic rename) but takes it anyway to prevent /test seeing a half-
-# swapped voice.
+# Serialises the reference-voice critical section. The in-process asyncio.Lock
+# gives intra-worker fairness and a cheap fast path; the cross-process fcntl
+# flock (database.reference_lock) is what actually prevents the read-stage-
+# generate-restore sequence from interleaving across uvicorn --workers N and
+# clobbering the committed voice.wav. /commit takes it too so /test never sees a
+# half-swapped voice.
 _reference_lock = asyncio.Lock()
+
+
+@asynccontextmanager
+async def _serialized_reference_access(data_dir: Path) -> AsyncIterator[None]:
+    """Hold the in-process lock and the cross-process flock for the duration of
+    a reference-voice critical section. The asyncio.Lock queues same-process
+    callers cheaply; the flock (cancellation-safe, see reference_lock_async)
+    serializes across worker processes."""
+
+    async with _reference_lock, database.reference_lock_async(data_dir):
+        yield
 
 
 def _reference_path() -> Path:
@@ -146,7 +162,7 @@ async def test_candidate(
     reference = _reference_path()
     reference.parent.mkdir(parents=True, exist_ok=True)
 
-    async with _reference_lock:
+    async with _serialized_reference_access(settings.DATA_DIR):
         backup = reference.read_bytes() if reference.is_file() else None
         try:
             write_bytes_atomic(reference, candidate, prefix=".ref-test-")
@@ -211,7 +227,7 @@ async def audition_committed(
         raise HTTPException(
             status_code=503, detail="no reference voice committed; commit one first"
         )
-    async with _reference_lock, httpx.AsyncClient(
+    async with _serialized_reference_access(settings.DATA_DIR), httpx.AsyncClient(
         timeout=settings.TTS_HTTP_TIMEOUT_SECONDS
     ) as client:
         try:
@@ -241,7 +257,7 @@ async def commit_candidate(
     reference = _reference_path()
     reference.parent.mkdir(parents=True, exist_ok=True)
 
-    async with _reference_lock:
+    async with _serialized_reference_access(settings.DATA_DIR):
         write_bytes_atomic(reference, candidate, prefix=".ref-")
         async with httpx.AsyncClient(
             timeout=settings.TTS_HTTP_TIMEOUT_SECONDS

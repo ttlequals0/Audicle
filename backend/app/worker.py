@@ -65,8 +65,13 @@ def _maybe_run_retention_sweep(settings: Settings, last_sweep_day: str | None) -
         # Apply DB overrides so RETENTION_DAYS set via PUT /api/v1/settings
         # takes effect on the next sweep without a worker restart.
         overlaid = runtime_settings.overlay(settings)
-        retention.purge_older_than(overlaid, older_than_days=overlaid.RETENTION_DAYS)
-        retention.purge_expired_jobs(overlaid, older_than_days=overlaid.RETENTION_DAYS)
+        # RETENTION_DAYS <= 0 means "keep forever": skip the automatic episode/job
+        # purge. The wipe-all-on-zero contract (year-9999 cutoff) is reserved for
+        # the explicit operator-initiated POST /api/v1/purge?older_than_days=0
+        # &confirm=true, so the env knob can't silently delete everything daily.
+        if overlaid.RETENTION_DAYS > 0:
+            retention.purge_older_than(overlaid, older_than_days=overlaid.RETENTION_DAYS)
+            retention.purge_expired_jobs(overlaid, older_than_days=overlaid.RETENTION_DAYS)
         retention.sweep_orphan_media(overlaid)
         database.prune_backups(
             overlaid.DATA_DIR, retention_days=overlaid.MIGRATION_BACKUP_RETENTION_DAYS
