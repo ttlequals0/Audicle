@@ -75,7 +75,12 @@ cp .env.example .env   # optional: pre-set BASE_URL and any defaults
 docker compose up -d
 ```
 
-The web UI is at `http://localhost:8000/`. The RSS feed is `http://localhost:8000/rss/rss.xml` -- paste that into any podcatcher.
+The web UI is at `http://localhost:8000/`. The RSS feed lives at a slug derived
+from your feed name -- e.g. `FEED_TITLE="Articles of Interest"` is served at
+`http://localhost:8000/rss/articles_of_interest.xml`. The Feed page in the UI
+shows the exact URL with a copy button; paste it into any podcatcher. Renaming
+the feed changes the slug and mints new feed/episode GUIDs, so subscribers
+resubscribe to the new URL.
 
 The container runs as a non-root user (uid 1000). If you bind-mount host
 directories (or set `user:` in compose), make them writable by uid 1000 so the

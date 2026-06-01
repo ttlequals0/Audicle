@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.14.0
+  version: 0.15.1
 paths:
   /health/live:
     get:
@@ -712,13 +712,19 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-  /rss/rss.xml:
+  /rss/{slug}.xml:
     get:
       tags:
       - rss
       summary: Get Rss
-      operationId: get_rss_rss_rss_xml_get
+      operationId: get_rss_rss__slug__xml_get
       parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Slug
       - name: if-modified-since
         in: header
         required: false
@@ -1200,12 +1206,16 @@ components:
           additionalProperties: true
           type: object
           title: Defaults
+        feed_url:
+          type: string
+          title: Feed Url
       additionalProperties: false
       type: object
       required:
       - allowlist
       - values
       - defaults
+      - feed_url
       title: SettingsResponse
     SubmitRequest:
       properties:

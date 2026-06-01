@@ -67,7 +67,7 @@ def test_overlay_coerces_bool_value(env: Path) -> None:
 
 
 def test_rss_render_reflects_runtime_overrides(env: Path) -> None:
-    """End-to-end: PUT a FEED_TITLE override, GET /rss/rss.xml, confirm the
+    """End-to-end: PUT a FEED_TITLE override, GET the slug feed, confirm the
     new title shows up. This is the test the deferred-fix CHANGELOG entry
     promised."""
 
@@ -76,7 +76,7 @@ def test_rss_render_reflects_runtime_overrides(env: Path) -> None:
         runtime_settings.set_value(conn, "FEED_TITLE", "Runtime Override Title")
 
     with TestClient(create_app()) as client:
-        response = client.get("/rss/rss.xml")
+        response = client.get("/rss/runtime_override_title.xml")
     assert response.status_code == 200
     root = DET.fromstring(response.content)
     assert root.find("channel/title").text == "Runtime Override Title"

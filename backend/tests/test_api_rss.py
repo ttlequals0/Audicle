@@ -45,7 +45,7 @@ def _seed(env: Path, *, audio_path: str = "/data/media/ep.mp3") -> None:
 def test_get_rss_returns_200_with_xml_body(env: Path) -> None:
     _seed(env)
     with _client(env) as client:
-        response = client.get("/rss/rss.xml")
+        response = client.get("/rss/test_feed.xml")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/rss+xml")
     root = DET.fromstring(response.content)
@@ -57,7 +57,7 @@ def test_get_rss_returns_200_with_xml_body(env: Path) -> None:
 def test_get_rss_emits_cache_control_header(env: Path) -> None:
     _seed(env)
     with _client(env) as client:
-        response = client.get("/rss/rss.xml")
+        response = client.get("/rss/test_feed.xml")
     cc = response.headers["cache-control"]
     assert "public" in cc
     assert "max-age=" in cc
@@ -66,11 +66,11 @@ def test_get_rss_emits_cache_control_header(env: Path) -> None:
 def test_get_rss_last_modified_round_trips_to_304(env: Path) -> None:
     _seed(env)
     with _client(env) as client:
-        first = client.get("/rss/rss.xml")
+        first = client.get("/rss/test_feed.xml")
         last_modified = first.headers["last-modified"]
         # Reuse the Last-Modified value as If-Modified-Since; expect 304.
         not_modified = client.get(
-            "/rss/rss.xml",
+            "/rss/test_feed.xml",
             headers={"If-Modified-Since": last_modified},
         )
     assert first.status_code == 200
@@ -83,7 +83,7 @@ def test_get_rss_returns_full_body_when_client_is_older(env: Path) -> None:
     _seed(env)
     with _client(env) as client:
         old = format_datetime(parsedate_to_datetime("Sun, 01 Jan 2000 00:00:00 GMT"), usegmt=True)
-        response = client.get("/rss/rss.xml", headers={"If-Modified-Since": old})
+        response = client.get("/rss/test_feed.xml", headers={"If-Modified-Since": old})
     assert response.status_code == 200
     assert len(response.content) > 0
 
@@ -91,16 +91,35 @@ def test_get_rss_returns_full_body_when_client_is_older(env: Path) -> None:
 def test_get_rss_persists_podcast_guid_across_requests(env: Path) -> None:
     _seed(env)
     with _client(env) as client:
-        first = client.get("/rss/rss.xml")
-        second = client.get("/rss/rss.xml")
+        first = client.get("/rss/test_feed.xml")
+        second = client.get("/rss/test_feed.xml")
     g1 = DET.fromstring(first.content).find(f"channel/{{{_PODCAST_NS}}}guid").text
     g2 = DET.fromstring(second.content).find(f"channel/{{{_PODCAST_NS}}}guid").text
     assert g1 == g2
 
 
+def test_get_rss_wrong_slug_404s(env: Path) -> None:
+    # The feed lives only at the current FEED_TITLE slug ("Audicle" ->
+    # /rss/test_feed.xml). The legacy /rss/rss.xml and any other slug 404.
+    _seed(env)
+    with _client(env) as client:
+        assert client.get("/rss/rss.xml").status_code == 404
+        assert client.get("/rss/something_else.xml").status_code == 404
+        assert client.get("/rss/test_feed.xml").status_code == 200
+
+
+def test_get_rss_self_link_uses_current_slug(env: Path) -> None:
+    _seed(env)
+    with _client(env) as client:
+        response = client.get("/rss/test_feed.xml")
+    root = DET.fromstring(response.content)
+    atom_self = root.find("channel/{http://www.w3.org/2005/Atom}link[@rel='self']")
+    assert atom_self.get("href").endswith("/rss/test_feed.xml")
+
+
 def test_get_rss_with_no_episodes_returns_200_empty_channel(env: Path) -> None:
     with _client(env) as client:
-        response = client.get("/rss/rss.xml")
+        response = client.get("/rss/test_feed.xml")
     assert response.status_code == 200
     root = DET.fromstring(response.content)
     assert len(root.findall("channel/item")) == 0
@@ -125,7 +144,7 @@ def test_get_rss_excludes_episodes_with_null_audio(env: Path) -> None:
     finally:
         conn.close()
     with _client(env) as client:
-        response = client.get("/rss/rss.xml")
+        response = client.get("/rss/test_feed.xml")
     root = DET.fromstring(response.content)
     guids = [g.text for g in root.findall("channel/item/guid")]
     assert guids == ["ep"]

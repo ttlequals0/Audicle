@@ -6,6 +6,32 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-06-01
+
+### Fixed
+
+- A feed cover set to a GitHub *blob* URL (`github.com/<owner>/<repo>/blob/...`,
+  which serves an HTML page, not the image) is now rewritten to its raw
+  `raw.githubusercontent.com` form when the feed renders, so the artwork
+  resolves in podcast apps. Pasting the address-bar URL of an image in a GitHub
+  repo no longer produces a broken cover. Any non-blob URL is left unchanged.
+
+## [0.15.0] - 2026-06-01
+
+### Changed
+
+- The RSS feed is now served at a slug derived from `FEED_TITLE` instead of the
+  fixed `/rss/rss.xml`. "Articles of Interest" is served at
+  `/rss/articles_of_interest.xml` (lowercase, underscores, ASCII-folded). The
+  atom `rel="self"` link and the Feed page's subscribe URL track the slug; the
+  backend computes the URL so the client never reimplements the slug rule.
+  **The old `/rss/rss.xml` path is gone and now returns 404** -- resubscribe at
+  the slug URL shown on the Feed page.
+- Renaming the feed is treated as a new feed: when the slug changes, the channel
+  `podcast:guid` is rotated and `feed_guid_epoch` is bumped, which re-salts every
+  episode `<guid>`, so podcast apps resubscribe and re-download. A save that does
+  not change the slug leaves the GUIDs untouched.
+
 ## [0.14.0] - 2026-05-31
 
 ### Added
