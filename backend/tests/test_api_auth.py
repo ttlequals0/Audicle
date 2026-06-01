@@ -139,7 +139,7 @@ def test_lockdown_keeps_public_podcast_and_ops_routes_open(auth_env) -> None:
     (not 401), proving the route is reachable without a session."""
 
     with _client() as client:
-        assert client.get("/rss/rss.xml").status_code == 200
+        assert client.get("/rss/test_feed.xml").status_code == 200
         assert client.get("/health/live").status_code == 200
         assert client.get("/media/nope.mp3").status_code == 404
 

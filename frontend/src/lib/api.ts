@@ -128,6 +128,8 @@ export interface SettingsPayload {
   allowlist: string[];
   values: Record<string, unknown>;
   defaults: Record<string, unknown>;
+  // Public feed URL, slug-derived from FEED_TITLE by the backend.
+  feed_url: string;
 }
 
 export interface HealthLive {

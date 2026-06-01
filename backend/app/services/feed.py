@@ -22,6 +22,7 @@ from feedgen.feed import FeedGenerator
 
 from app.config import Settings
 from app.core.timestamps import parse_iso
+from app.services import slug
 from app.services.episodes import Episode, audio_size
 
 logger = logging.getLogger("app.services.feed")
@@ -65,7 +66,7 @@ def render(
     # install. Emit title (defaults to "Audicle") and description always; gate
     # author/owner/artwork on non-empty values so an empty feed still validates.
     # Compute title + author once so "which fields are present" lives in one spot.
-    title = settings.FEED_TITLE or "Audicle"
+    title = settings.FEED_TITLE or slug.DEFAULT_FEED_TITLE
     author = {
         key: value
         for key, value in (("name", settings.FEED_AUTHOR), ("email", _clean_email(settings.FEED_EMAIL)))
@@ -81,7 +82,7 @@ def render(
     # element ends up pointing at BASE_URL (the website) rather than at the
     # feed URL itself, which is the conventional rendering for podcast
     # players.
-    fg.link(href=f"{settings.BASE_URL.rstrip('/')}/rss/rss.xml", rel="self")
+    fg.link(href=slug.feed_url(settings.BASE_URL, settings.FEED_TITLE), rel="self")
     fg.link(href=settings.BASE_URL, rel="alternate")
     # Channel artwork precedence: operator FEED_ARTWORK_URL when set, then the
     # branded DEFAULT_ARTWORK_URL (raw-GitHub .jpg), then the server-local

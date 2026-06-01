@@ -1,19 +1,20 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, Episode } from "../lib/api";
-import { useHealthLive } from "../lib/useHealthLive";
+import { api, Episode, SettingsPayload } from "../lib/api";
 import AudioPlayer from "../components/AudioPlayer";
 
 export default function Feed() {
   const [copied, setCopied] = useState(false);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
   const qc = useQueryClient();
-  // Build the subscribe URL from the configured BASE_URL (the public feed host),
-  // not the browser origin -- the app is often reached on a different host
-  // (LAN IP, localhost) than the one podcast clients use.
-  const healthQ = useHealthLive();
-  const base = (healthQ.data?.base_url || window.location.origin).replace(/\/$/, "");
-  const feedUrl = `${base}/rss/rss.xml`;
+  // The subscribe URL is slug-derived from FEED_TITLE and built server-side
+  // (against the configured BASE_URL, the public feed host), so the client
+  // never reimplements slugify and always shows the real feed URL.
+  const settingsQ = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => api<SettingsPayload>("/api/v1/settings"),
+  });
+  const feedUrl = settingsQ.data?.feed_url ?? "";
 
   const onActionError = (verb: string) => (err: unknown) => {
     const status = (err as { status?: number })?.status;
@@ -71,11 +72,12 @@ export default function Feed() {
       <button
         className="btn-ghost w-full mb-2 flex items-center justify-center gap-2"
         onClick={copy}
+        disabled={!feedUrl}
       >
         {copied ? "✓ Copied" : "⧉ Copy feed URL"}
       </button>
       <p className="mono-xs text-mute truncate mb-5" title={feedUrl}>
-        {feedUrl}
+        {feedUrl || (settingsQ.isError ? "feed URL unavailable" : "loading...")}
       </p>
 
       {actionMsg && <p className="mono-xs text-accent mb-3">{actionMsg}</p>}

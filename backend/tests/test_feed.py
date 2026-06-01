@@ -323,7 +323,7 @@ def test_self_link_points_at_rss_endpoint(env: Path) -> None:
     root = DET.fromstring(body)
     atom_self = root.find("channel/{http://www.w3.org/2005/Atom}link[@rel='self']")
     assert atom_self is not None
-    assert atom_self.get("href").endswith("/rss/rss.xml")
+    assert atom_self.get("href").endswith("/rss/test_feed.xml")
 
 
 def test_hms_handles_zero_and_negative(env: Path) -> None:

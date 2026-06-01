@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app.config import Settings, get_settings
 from app.core import database
-from app.services import runtime_settings
+from app.services import runtime_settings, settings_store, slug
 
 router = APIRouter(tags=["settings"])
 
@@ -30,6 +30,9 @@ class SettingsResponse(BaseModel):
     # Effective env/code default for each allowlisted key, so the UI can show
     # editable defaults instead of blank fields. Secret keys are masked.
     defaults: dict[str, Any]
+    # The public feed URL, slug-derived from the effective FEED_TITLE, so the UI
+    # shows the real subscribe URL without reimplementing slugify client-side.
+    feed_url: str
 
 
 @router.get(
@@ -65,6 +68,11 @@ async def put_settings_overrides(
         )
     conn = database.connect(database.db_path(settings.DATA_DIR))
     try:
+        # The current feed slug, before applying, so a FEED_TITLE rename can be
+        # detected below. Derived live from the effective title (no stored copy
+        # to drift from the live FEED_TITLE the feed is actually served at).
+        old_slug = slug.feed_slug(_effective_title(runtime_settings.get_all(conn), settings))
+
         for key, value in payload.items():
             if key in runtime_settings.MASKED_KEYS:
                 # Re-saving the form sends back the mask sentinel for an
@@ -76,7 +84,15 @@ async def put_settings_overrides(
                     runtime_settings.delete(conn, key)
                     continue
             runtime_settings.set_value(conn, key, value)
+
         stored = runtime_settings.get_all(conn)
+        # Rename = new feed: if FEED_TITLE's slug changed, rotate the channel
+        # podcast:guid and bump the epoch (which re-salts every episode <guid>),
+        # so podcast apps treat it as a fresh feed and re-download. new_slug comes
+        # from the stored value (always a coerced string), so a non-string
+        # FEED_TITLE in the payload can't reach slugify.
+        if "FEED_TITLE" in payload and slug.feed_slug(_effective_title(stored, settings)) != old_slug:
+            settings_store.rotate_feed_guids(conn, settings.BASE_URL)
     finally:
         conn.close()
     return _masked_response(stored, settings)
@@ -98,7 +114,15 @@ def _masked_response(stored: dict[str, str], settings: Settings) -> SettingsResp
         allowlist=sorted(runtime_settings.ALLOWED_KEYS),
         values=values,
         defaults=_defaults_map(settings),
+        feed_url=slug.feed_url(settings.BASE_URL, _effective_title(stored, settings)),
     )
+
+
+def _effective_title(stored: dict[str, str], settings: Settings) -> str | None:
+    """The FEED_TITLE in effect: the stored override, else the env/code value.
+    ``slug.feed_slug``/``feed_url`` apply the default when this is empty."""
+
+    return stored.get("FEED_TITLE") or settings.FEED_TITLE
 
 
 def _defaults_map(settings: Settings) -> dict[str, Any]:

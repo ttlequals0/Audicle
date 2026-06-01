@@ -4,12 +4,24 @@ from pathlib import Path
 
 from app.core import database
 from app.main import create_app
+from app.services import settings_store
 from fastapi.testclient import TestClient
 
 
 def _client(env: Path) -> TestClient:
     database.run_migrations(env)
     return TestClient(create_app())
+
+
+def _guids(env: Path) -> tuple[str | None, int]:
+    conn = database.connect(database.db_path(env))
+    try:
+        return (
+            settings_store.get(conn, settings_store.PODCAST_GUID_KEY),
+            settings_store.get_feed_guid_epoch(conn),
+        )
+    finally:
+        conn.close()
 
 
 def test_get_settings_returns_empty_values_initially(env: Path) -> None:
@@ -179,3 +191,40 @@ def test_api_key_overlay_reaches_settings(env: Path) -> None:
     overlaid = runtime_settings.overlay(get_settings())
     assert overlaid.OPENAI_API_KEY == "sk-overlaid"
     assert overlaid.LLM_MODEL == "m2"
+
+
+# --- feed slug: feed_url + rename rotation ---------------------------------
+
+
+def test_feed_url_is_slug_derived_and_tracks_rename(env: Path) -> None:
+    with _client(env) as client:
+        assert client.get("/api/v1/settings").json()["feed_url"].endswith("/rss/test_feed.xml")
+    with _client(env) as client:
+        body = client.put("/api/v1/settings", json={"FEED_TITLE": "Articles of Interest"}).json()
+    assert body["feed_url"].endswith("/rss/articles_of_interest.xml")
+
+
+def test_feed_rename_rotates_feed_and_episode_guids(env: Path) -> None:
+    # Renaming the feed (slug change) mints a new channel guid and bumps the
+    # epoch, which re-salts every episode <guid> -- "rename = new feed".
+    with _client(env) as client:
+        client.put("/api/v1/settings", json={"FEED_TITLE": "First Name"})
+    guid1, epoch1 = _guids(env)
+    with _client(env) as client:
+        client.put("/api/v1/settings", json={"FEED_TITLE": "Second Name"})
+    guid2, epoch2 = _guids(env)
+    assert epoch2 == epoch1 + 1
+    assert guid1 and guid2 and guid1 != guid2
+
+
+def test_feed_save_without_slug_change_does_not_rotate(env: Path) -> None:
+    with _client(env) as client:
+        client.put("/api/v1/settings", json={"FEED_TITLE": "Stable Name"})
+    g1, e1 = _guids(env)
+    with _client(env) as client:
+        # Same slug (whitespace differences collapse) -> no rotation.
+        client.put("/api/v1/settings", json={"FEED_TITLE": "Stable   Name"})
+        # A non-title change must not rotate either.
+        client.put("/api/v1/settings", json={"LLM_MODEL": "m9"})
+    g2, e2 = _guids(env)
+    assert (g1, e1) == (g2, e2)
