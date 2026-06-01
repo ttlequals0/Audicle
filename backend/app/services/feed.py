@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import html
 import logging
+import re
 from datetime import datetime
 from xml.etree import ElementTree as ET
 
@@ -26,6 +27,26 @@ from app.services import slug
 from app.services.episodes import Episode, audio_size
 
 logger = logging.getLogger("app.services.feed")
+
+# A GitHub *blob* URL (github.com/<o>/<r>/blob/<branch>/<path>) is the HTML web
+# page, not the file -- an easy mistake when pasting a cover URL from the address
+# bar. Rewrite it to the raw form so the artwork actually resolves to an image.
+_GITHUB_BLOB_RE = re.compile(
+    r"^https?://github\.com/([^/]+)/([^/]+)/blob/(.+)$", re.IGNORECASE
+)
+
+
+def _raw_github_url(url: str) -> str:
+    """Rewrite a GitHub blob page URL to its raw.githubusercontent.com form;
+    return any other URL unchanged."""
+
+    match = _GITHUB_BLOB_RE.match(url.strip())
+    if not match:
+        return url
+    owner, repo, path = match.groups()
+    path = path.split("?", 1)[0].split("#", 1)[0]  # raw URLs stay extension-clean
+    return f"https://raw.githubusercontent.com/{owner}/{repo}/{path}"
+
 
 _PODCAST_NS = "https://podcastindex.org/namespace/1.0"
 _ITUNES_NS = "http://www.itunes.com/dtds/podcast-1.0.dtd"
@@ -90,7 +111,7 @@ def render(
     # env-overridable and may be set to "", which would make feedgen reject an
     # empty cover ("Image file must be png or jpg"); the local seed guarantees a
     # non-empty .jpg so the feed always renders.
-    artwork_url = (
+    artwork_url = _raw_github_url(
         settings.FEED_ARTWORK_URL
         or settings.DEFAULT_ARTWORK_URL
         or f"{settings.BASE_URL.rstrip('/')}/media/default.jpg"

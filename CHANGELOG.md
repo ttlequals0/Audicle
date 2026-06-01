@@ -6,6 +6,16 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-06-01
+
+### Fixed
+
+- A feed cover set to a GitHub *blob* URL (`github.com/<owner>/<repo>/blob/...`,
+  which serves an HTML page, not the image) is now rewritten to its raw
+  `raw.githubusercontent.com` form when the feed renders, so the artwork
+  resolves in podcast apps. Pasting the address-bar URL of an image in a GitHub
+  repo no longer produces a broken cover. Any non-blob URL is left unchanged.
+
 ## [0.15.0] - 2026-06-01
 
 ### Changed

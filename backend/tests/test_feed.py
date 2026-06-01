@@ -74,6 +74,39 @@ def test_channel_contains_required_fields(env: Path) -> None:
     assert channel.find("image/url").text == get_settings().FEED_ARTWORK_URL
 
 
+def test_raw_github_url_rewrites_blob_to_raw() -> None:
+    assert (
+        feed._raw_github_url(
+            "https://github.com/ttlequals0/Audicle/blob/main/branding/podcast-artwork-3000.jpg"
+        )
+        == "https://raw.githubusercontent.com/ttlequals0/Audicle/main/branding/podcast-artwork-3000.jpg"
+    )
+    # Query/hash stripped so the cover stays extension-clean for Apple.
+    assert (
+        feed._raw_github_url("https://github.com/o/r/blob/main/a.jpg?raw=true")
+        == "https://raw.githubusercontent.com/o/r/main/a.jpg"
+    )
+    # Non-blob URLs pass through unchanged.
+    raw = "https://raw.githubusercontent.com/o/r/main/a.jpg"
+    assert feed._raw_github_url(raw) == raw
+    assert feed._raw_github_url("https://example.com/cover.png") == "https://example.com/cover.png"
+
+
+def test_channel_artwork_rewrites_github_blob_url(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A pasted GitHub blob page URL (HTML) is rewritten to the raw image URL so
+    # the cover actually resolves in podcast apps.
+    monkeypatch.setenv(
+        "FEED_ARTWORK_URL",
+        "https://github.com/ttlequals0/Audicle/blob/main/branding/podcast-artwork-3000.jpg",
+    )
+    get_settings.cache_clear()
+    channel = DET.fromstring(_render([], env=env)).find("channel")
+    assert (
+        channel.find("image/url").text
+        == "https://raw.githubusercontent.com/ttlequals0/Audicle/main/branding/podcast-artwork-3000.jpg"
+    )
+
+
 def test_channel_contains_podcast_namespace_tags(env: Path) -> None:
     body = _render([], env=env, podcast_guid="abcdef-guid")
     root = DET.fromstring(body)
