@@ -6,6 +6,18 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-06-02
+
+### Fixed
+
+- Dotted acronyms ("A.I.", "U.S.", "U.S.A.") are collapsed to spaced letters
+  ("A I", "U S", "U S A") before synthesis, since XTTS reads each period as a
+  pause ("A <pause> I"). Applied as the final normalize step so it catches both
+  article text and any dotted correction; the seed's `AI` entry now uses the
+  spaced form too.
+- Home page "recent" section is collapsed by default and remembers its
+  open/closed state across reloads (persisted), instead of resetting each visit.
+
 ## [0.16.0] - 2026-06-02
 
 ### Added

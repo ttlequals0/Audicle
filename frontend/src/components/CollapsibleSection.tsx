@@ -7,7 +7,10 @@ interface CollapsibleSectionProps {
   storageKey?: string;
 }
 
-function usePersistentOpen(key: string, defaultOpen: boolean): [boolean, (v: boolean) => void] {
+export function usePersistentOpen(
+  key: string,
+  defaultOpen: boolean,
+): [boolean, (v: boolean) => void] {
   const [open, setOpen] = useState<boolean>(() => {
     try {
       const stored = localStorage.getItem(key);

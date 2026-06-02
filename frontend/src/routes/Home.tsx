@@ -1,6 +1,7 @@
 import { useState, FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, JobRow, JobStatus } from "../lib/api";
+import { usePersistentOpen } from "../components/CollapsibleSection";
 
 interface SubmitResponse {
   job_id: string;
@@ -10,9 +11,8 @@ interface SubmitResponse {
 export default function Home() {
   const [url, setUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
-  // null = follow the smart default (open when the queue is empty so finished
-  // and failed jobs stay visible); a bool means the user toggled it explicitly.
-  const [recentManual, setRecentManual] = useState<boolean | null>(null);
+  // Recents are collapsed by default and the toggle is remembered across reloads.
+  const [recentOpen, setRecentOpen] = usePersistentOpen("home.recents.open", false);
   const qc = useQueryClient();
 
   const jobsQ = useQuery({
@@ -54,9 +54,6 @@ export default function Home() {
     .filter((j) => j.status === "queued" || j.status === "processing")
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
   const history = jobs.filter((j) => j.status !== "queued" && j.status !== "processing");
-  // Default open when nothing is active, so a finished or failed job (and its
-  // error) is visible without a click; collapsed while a queue is running.
-  const recentOpen = recentManual ?? active.length === 0;
 
   return (
     <div>
@@ -118,7 +115,7 @@ export default function Home() {
         <section className="mt-8">
           <button
             className="mono-xs text-mute mb-3 flex items-center gap-1.5 hover:text-fg"
-            onClick={() => setRecentManual(!recentOpen)}
+            onClick={() => setRecentOpen(!recentOpen)}
             aria-expanded={recentOpen}
           >
             <span className={`transition-transform ${recentOpen ? "rotate-90" : ""}`}>

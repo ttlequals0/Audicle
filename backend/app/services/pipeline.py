@@ -561,6 +561,21 @@ _LETTER_PLURAL = {
 _ACRONYM_RE = re.compile(r"(?<![A-Za-z0-9-])([A-Z]{2,}[0-9]*)(s)?(?![A-Za-z0-9-])")
 
 
+# Dotted acronyms ("A.I.", "U.S.", "U.S.A.") -- XTTS reads each period as a pause
+# ("A <pause> I"), so collapse the dots to spaced letters the engine voices cleanly.
+# Uppercase-only (so "e.g."/"i.e." and decimals are untouched); needs 2+ letter-dot
+# pairs so a lone "A." (sentence) doesn't match.
+_DOTTED_ACRONYM_RE = re.compile(r"(?:[A-Z]\.){2,}")
+
+
+def _normalize_dotted_acronyms(text: str) -> str:
+    """Turn "A.I." into "A I" so XTTS doesn't pause on the periods."""
+
+    return _DOTTED_ACRONYM_RE.sub(
+        lambda m: " ".join(ch for ch in m.group(0) if ch.isalpha()), text
+    )
+
+
 def _normalize_acronyms(text: str, keep: frozenset[str] | set[str] = _ACRONYM_KEEP) -> str:
     """Spell unknown all-caps acronyms letter by letter (digits as words).
 
@@ -1018,7 +1033,10 @@ async def _apply_corrections(text: str, settings: Settings) -> str:
         # aggressive base-lexicon pass, then the snake_case identifier sweep.
         applied = corrections.apply(spelled, pairs)
         applied = _apply_base_lexicon(applied, conn, settings)
-    result = _normalize_identifiers(applied)
+    # Strip periods from dotted acronyms LAST -- catches both article text ("U.S.")
+    # and any dotted respelling a correction injected ("A.I.") -- so XTTS never
+    # pauses mid-acronym.
+    result = _normalize_dotted_acronyms(_normalize_identifiers(applied))
     logger.info(
         "Corrections applied",
         extra={

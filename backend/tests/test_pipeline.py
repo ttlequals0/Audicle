@@ -882,6 +882,15 @@ def test_normalize_numbers_leaves_ambiguous_and_glued_alone() -> None:
     assert pipeline._normalize_numbers("x86 and startup_32") == "x86 and startup_32"
 
 
+def test_normalize_dotted_acronyms() -> None:
+    # XTTS pauses on the periods, so collapse them to spaced letters.
+    assert pipeline._normalize_dotted_acronyms("about A.I. today") == "about A I today"
+    assert pipeline._normalize_dotted_acronyms("the U.S.A. and U.K.") == "the U S A and U K"
+    # Lowercase latin abbreviations and decimals/versions are left untouched.
+    assert pipeline._normalize_dotted_acronyms("e.g. this, i.e. that") == "e.g. this, i.e. that"
+    assert pipeline._normalize_dotted_acronyms("v1.2 and pi 3.14") == "v1.2 and pi 3.14"
+
+
 def test_normalize_months_respells_capitalized_only() -> None:
     assert pipeline._normalize_months("Posted February 3") == "Posted FEB-roo-air-ee 3"
     assert pipeline._normalize_months("in January 2026") == "in JAN-yoo-air-ee 2026"
