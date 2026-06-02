@@ -88,7 +88,7 @@ export default function SettingsRoute() {
   });
   const correctionsQ = useQuery({
     queryKey: ["corrections"],
-    queryFn: () => api<Record<string, string>>("/api/v1/corrections"),
+    queryFn: () => api<Record<string, CorrectionEntry>>("/api/v1/corrections"),
   });
   const healthQ = useHealthLive();
   const [draft, setDraft] = useState<Record<string, string>>({});
@@ -578,30 +578,55 @@ function PromptEditor({ initial }: { initial: string }) {
   );
 }
 
+type Mode = "spell" | "word" | "override";
+
+interface CorrectionEntry {
+  mode: Mode;
+  spoken: string;
+  ipa: string | null;
+  case_sensitive: boolean;
+}
+
 interface Row {
   id: number;
   k: string;
-  v: string;
+  v: string; // spoken
+  mode: Mode;
+  ipa: string;
+  caseSensitive: boolean;
 }
 
 let _rowCounter = 0;
-const newRow = (k = "", v = ""): Row => ({ id: ++_rowCounter, k, v });
+const newRow = (k = "", entry?: Partial<CorrectionEntry>): Row => ({
+  id: ++_rowCounter,
+  k,
+  v: entry?.spoken ?? "",
+  mode: entry?.mode ?? "override",
+  ipa: entry?.ipa ?? "",
+  caseSensitive: entry?.case_sensitive ?? false,
+});
 
-function CorrectionsTable({ initial }: { initial: Record<string, string> }) {
+function CorrectionsTable({ initial }: { initial: Record<string, CorrectionEntry> }) {
   const qc = useQueryClient();
   // Lazy initializer: seeded from the initial prop. Parent only mounts
   // this component once the query has data, so refetches arriving as
   // new identical props won't reset rows.
   const [rows, setRows] = useState<Row[]>(() =>
-    Object.entries(initial).map(([k, v]) => newRow(k, v))
+    Object.entries(initial).map(([k, entry]) => newRow(k, entry))
   );
   const [msg, setMsg] = useState<string | null>(null);
 
   const m = useMutation({
     mutationFn: () => {
-      const obj: Record<string, string> = {};
+      const obj: Record<string, Partial<CorrectionEntry>> = {};
       for (const row of rows) {
-        if (row.k.trim()) obj[row.k.trim()] = row.v;
+        if (!row.k.trim()) continue;
+        obj[row.k.trim()] = {
+          mode: row.mode,
+          spoken: row.v,
+          ipa: row.ipa.trim() || null,
+          case_sensitive: row.caseSensitive,
+        };
       }
       return api("/api/v1/corrections", {
         method: "PUT",
@@ -638,45 +663,77 @@ function CorrectionsTable({ initial }: { initial: Record<string, string> }) {
         </p>
       </div>
       <p className="text-mute text-xs">
-        left column: source word; right column: the spelling the TTS should narrate.
+        word: the source term. spoken: how the TTS should narrate it. mode: spell
+        (letter by letter), word (read as written), or override (use spoken). ipa is
+        optional and used only by the phoneme engine. Case-sensitive matches the
+        exact casing only.
       </p>
+      <LexiconLookup />
       <div className="space-y-2">
-        {rows.map((row) => (
-          <div key={row.id} className="correction-row">
-            <input
-              className="field"
-              placeholder="word"
-              value={row.k}
-              onChange={(e) =>
-                setRows((rs) =>
-                  rs.map((r) => (r.id === row.id ? { ...r, k: e.target.value } : r))
-                )
-              }
-            />
-            <input
-              className="field"
-              placeholder="replacement"
-              value={row.v}
-              onChange={(e) =>
-                setRows((rs) =>
-                  rs.map((r) => (r.id === row.id ? { ...r, v: e.target.value } : r))
-                )
-              }
-            />
-            <button
-              className="text-mute hover:text-danger flex items-center justify-center w-8"
-              onClick={() => setRows((rs) => rs.filter((r) => r.id !== row.id))}
-            >
-              &times;
-            </button>
-          </div>
-        ))}
-        <button
-          className="btn-ghost"
-          onClick={() => setRows((r) => [...r, newRow()])}
-        >
+        {rows.map((row) => {
+          const patch = (p: Partial<Row>) =>
+            setRows((rs) => rs.map((r) => (r.id === row.id ? { ...r, ...p } : r)));
+          return (
+            <div key={row.id} className="flex flex-wrap items-center gap-2">
+              <input
+                className="field flex-1 min-w-[8rem]"
+                placeholder="word"
+                value={row.k}
+                onChange={(e) => patch({ k: e.target.value })}
+              />
+              <input
+                className="field flex-1 min-w-[8rem]"
+                placeholder="spoken"
+                value={row.v}
+                onChange={(e) => patch({ v: e.target.value })}
+              />
+              <select
+                className="field w-28"
+                value={row.mode}
+                onChange={(e) => patch({ mode: e.target.value as Mode })}
+              >
+                <option value="override">override</option>
+                <option value="word">word</option>
+                <option value="spell">spell</option>
+              </select>
+              <input
+                className="field w-28"
+                placeholder="ipa (opt)"
+                value={row.ipa}
+                onChange={(e) => patch({ ipa: e.target.value })}
+              />
+              <label className="mono-xs text-mute flex items-center gap-1" title="case-sensitive">
+                <input
+                  type="checkbox"
+                  checked={row.caseSensitive}
+                  onChange={(e) => patch({ caseSensitive: e.target.checked })}
+                />
+                Aa
+              </label>
+              <button
+                className="text-mute hover:text-danger flex items-center justify-center w-8"
+                onClick={() => setRows((rs) => rs.filter((r) => r.id !== row.id))}
+              >
+                &times;
+              </button>
+            </div>
+          );
+        })}
+        <button className="btn-ghost" onClick={() => setRows((r) => [...r, newRow()])}>
           add row
         </button>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="mono-xs text-mute">export:</span>
+        <a className="btn-ghost" href="/api/v1/corrections/export?format=json&scope=user">
+          JSON
+        </a>
+        <a className="btn-ghost" href="/api/v1/corrections/export?format=pls&scope=user">
+          PLS
+        </a>
+        <a className="btn-ghost" href="/api/v1/corrections/export?format=json&scope=all">
+          full lexicon (JSON)
+        </a>
       </div>
       <div className="flex items-center gap-3">
         <button className="btn-primary" disabled={m.isPending} onClick={() => m.mutate()}>
@@ -692,6 +749,42 @@ function CorrectionsTable({ initial }: { initial: Record<string, string> }) {
         {msg && <span className="font-mono text-xs text-accent">{msg}</span>}
       </div>
     </section>
+  );
+}
+
+function LexiconLookup() {
+  const [q, setQ] = useState("");
+  const [result, setResult] = useState<string | null>(null);
+  const search = async () => {
+    const term = q.trim();
+    if (!term) return;
+    const body = await api<{ entry: (CorrectionEntry & { origin: string }) | null }>(
+      `/api/v1/corrections/lookup?q=${encodeURIComponent(term)}`
+    );
+    setResult(
+      body.entry
+        ? `${body.entry.origin}: "${body.entry.spoken}" (${body.entry.mode})` +
+            (body.entry.ipa ? ` /${body.entry.ipa}/` : "")
+        : "no match in the built-in lexicon"
+    );
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <input
+        className="field flex-1 min-w-[8rem]"
+        placeholder="look up a word in the built-in lexicon"
+        value={q}
+        onChange={(e) => {
+          setResult(null);
+          setQ(e.target.value);
+        }}
+        onKeyDown={(e) => e.key === "Enter" && search()}
+      />
+      <button className="btn-ghost" onClick={search}>
+        look up
+      </button>
+      {result && <span className="mono-xs text-mute">{result}</span>}
+    </div>
   );
 }
 

@@ -1,6 +1,6 @@
 [project]
 name = "audicle-tts-wrapper"
-version = "0.15.1"
+version = "0.16.0"
 description = "FastAPI wrapper around Coqui XTTS-v2 for Audicle."
 requires-python = ">=3.11,<3.13"
 # 3.11 lower bound: torch wheels for XTTS-v2 lag the latest Python release.
@@ -20,6 +20,15 @@ dependencies = [
     "pydantic>=2.9",
     "numpy>=1.26,<3.0",
     "coqui-tts>=0.24,<0.25",
+]
+
+# Optional StyleTTS2 phoneme engine (TTS_ENGINE=styletts2). Kept out of the default
+# deps so the XTTS image stays lean; installed in the image via a build arg. gruut
+# (MIT) is the IPA phonemizer; styletts2 is the zero-shot clone model.
+[project.optional-dependencies]
+styletts2 = [
+    "styletts2>=0.1",
+    "gruut[en]>=2.4",
 ]
 # NOTE: coqui-tts 0.24 declares ``transformers>=4.43.0`` with no upper bound, so
 # a fresh resolve pulls transformers 5.x whose lazy-import API coqui can't use
@@ -41,7 +50,7 @@ build-backend = "setuptools.build_meta"
 # multiple top-level modules, which breaks ``pip install .`` on a current
 # Python base image (older bases shipped a lenient setuptools that hid this).
 [tool.setuptools]
-py-modules = ["config", "engine", "main"]
+py-modules = ["config", "engine", "main", "style_engine"]
 
 [dependency-groups]
 dev = [

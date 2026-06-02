@@ -136,10 +136,18 @@ class Settings(BaseSettings):
     # Cleanup prompt + pronunciation corrections.
     MAX_PROMPT_LENGTH_BYTES: int = 10240
     MAX_CORRECTIONS_ENTRIES: int = 500
+    # When true, the full base lexicon is applied to every matching token on the
+    # XTTS path (aggressive). Only high-confidence base respellings are applied so
+    # auto-derived entries can't regress words XTTS already says correctly.
+    LEXICON_AGGRESSIVE: bool = True
 
     # TTS wrapper.
     TTS_LANGUAGE: str = "en"
     TTS_DEVICE: Literal["cuda", "cpu"] = "cuda"
+    # Which wrapper engine is live. "styletts2" enables sending the per-chunk IPA
+    # override map (`pronunciations`) to the wrapper; "xtts" (default) sends text
+    # only. Must match the wrapper's TTS_ENGINE.
+    TTS_ENGINE: Literal["xtts", "styletts2"] = "xtts"
     TTS_HTTP_TIMEOUT_SECONDS: float = 120
     # Used by the per-chunk pipeline call site; defined here so
     # operators can tune .env now without a follow-up rebuild.

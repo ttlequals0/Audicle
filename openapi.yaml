@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.15.1
+  version: 0.16.0
 paths:
   /health/live:
     get:
@@ -231,7 +231,7 @@ paths:
     get:
       tags:
       - corrections
-      summary: Read the pronunciation dictionary
+      summary: Read the user pronunciation corrections
       operationId: read_corrections_api_v1_corrections_get
       responses:
         '200':
@@ -239,14 +239,13 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties:
-                  type: string
+                additionalProperties: true
                 type: object
                 title: Response Read Corrections Api V1 Corrections Get
     put:
       tags:
       - corrections
-      summary: Replace the pronunciation dictionary
+      summary: Replace the user pronunciation corrections
       operationId: write_corrections_api_v1_corrections_put
       requestBody:
         content:
@@ -274,7 +273,7 @@ paths:
     delete:
       tags:
       - corrections
-      summary: Reset the pronunciation dictionary to empty
+      summary: Clear the user pronunciation corrections
       operationId: reset_corrections_api_v1_corrections_delete
       responses:
         '200':
@@ -282,25 +281,14 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties:
-                  type: string
+                additionalProperties: true
                 type: object
                 title: Response Reset Corrections Api V1 Corrections Delete
   /api/v1/corrections/seed:
     get:
       tags:
       - corrections
-      summary: Read the built-in seed pronunciation corrections
-      description: 'Return the bundled baseline corrections (read-only).
-
-
-        These ship with Audicle, are not editable, and are applied beneath the
-
-        user''s own corrections (which win on key collision). ``applicable`` marks
-
-        rows that are actually applied in the pipeline -- annotated homographs and
-
-        spelled-out acronyms are listed for reference but not applied.'
+      summary: Read the built-in seed corrections (read-only)
       operationId: read_seed_corrections_api_v1_corrections_seed_get
       responses:
         '200':
@@ -311,6 +299,71 @@ paths:
                 additionalProperties: true
                 type: object
                 title: Response Read Seed Corrections Api V1 Corrections Seed Get
+  /api/v1/corrections/lookup:
+    get:
+      tags:
+      - corrections
+      summary: Look up a term in the full lexicon
+      operationId: lookup_correction_api_v1_corrections_lookup_get
+      parameters:
+      - name: q
+        in: query
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 100
+          title: Q
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Lookup Correction Api V1 Corrections Lookup Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/corrections/export:
+    get:
+      tags:
+      - corrections
+      summary: Export corrections as JSON or PLS
+      operationId: export_corrections_api_v1_corrections_export_get
+      parameters:
+      - name: format
+        in: query
+        required: false
+        schema:
+          type: string
+          pattern: ^(json|pls)$
+          default: json
+          title: Format
+      - name: scope
+        in: query
+        required: false
+        schema:
+          type: string
+          pattern: ^(user|all)$
+          default: user
+          title: Scope
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/purge:
     post:
       tags:

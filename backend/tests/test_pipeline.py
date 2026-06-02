@@ -33,7 +33,7 @@ def _stub_full_chain(monkeypatch: pytest.MonkeyPatch) -> None:
 
     from app.services import audio, tts
 
-    async def _fake_tts(text, episode_id, chunk_index, settings):
+    async def _fake_tts(text, episode_id, chunk_index, settings, pronunciations=None):
         _ = text  # acknowledge
         _ = settings
         return tts.GenerateResult(
@@ -65,7 +65,7 @@ def _stub_tts_and_audio(monkeypatch: pytest.MonkeyPatch) -> None:
 
     from app.services import audio, tts
 
-    async def _fake_tts(text, episode_id, chunk_index, settings):
+    async def _fake_tts(text, episode_id, chunk_index, settings, pronunciations=None):
         _ = text
         _ = settings
         return tts.GenerateResult(
@@ -438,11 +438,11 @@ async def test_pipeline_transcript_stage_rejects_length_mismatch(
 
     from app.services import tts as tts_module
 
-    async def _drop_one(text, episode_id, chunk_index, settings):
+    async def _drop_one(text, episode_id, chunk_index, settings, pronunciations=None):
         result = await _stub_tts_for_extra(text, episode_id, chunk_index, settings)
         return result
 
-    async def _stub_tts_for_extra(text, episode_id, chunk_index, settings):
+    async def _stub_tts_for_extra(text, episode_id, chunk_index, settings, pronunciations=None):
         return tts_module.GenerateResult(
             wav_path=f"/tmp/{episode_id}_chunk_{chunk_index}.wav",
             duration_secs=1.0,
@@ -452,7 +452,7 @@ async def test_pipeline_transcript_stage_rejects_length_mismatch(
     call_count = {"n": 0}
     real_tts = _drop_one
 
-    async def _short_tts(text, episode_id, chunk_index, settings):
+    async def _short_tts(text, episode_id, chunk_index, settings, pronunciations=None):
         call_count["n"] += 1
         # Return only for first call; subsequent calls still execute but the
         # test patches _stage_transcript's inputs by intercepting the chunker.
@@ -628,39 +628,55 @@ def test_corrections_user_override_beats_seed(
 ) -> None:
     """A user correction whose key also exists in the seed wins."""
 
-    from app.services import corrections as corrections_service
+    from app.services import lexicon
 
     database.run_migrations(env)
-    conn = database.connect(database.db_path(env))
-    try:
-        corrections_service.save_user_dict(conn, {"Louis Vuitton": "ELL VEE"})
-    finally:
-        conn.close()
+    with database.connection(env) as conn:
+        lexicon.replace_user_entries(
+            conn, {"Louis Vuitton": {"mode": "override", "spoken": "ELL VEE"}}
+        )
     out = asyncio.run(pipeline._apply_corrections("My Louis Vuitton bag.", get_settings()))
     assert "ELL VEE" in out
     assert "loo-ee vwee-TOHN" not in out
 
 
-def test_corrections_malformed_seed_falls_back_to_user_only(
-    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A malformed bundled seed CSV must not fail the job; user corrections
-    still apply."""
+def test_corrections_user_entry_applies_via_lexicon(env: Path) -> None:
+    """A user lexicon entry is applied by the deterministic backstop."""
 
-    from app.services import corrections as corrections_service
-    from app.services import seed_corrections
+    from app.services import lexicon
 
     database.run_migrations(env)
-    conn = database.connect(database.db_path(env))
-    try:
-        corrections_service.save_user_dict(conn, {"widget": "wid jet"})
-    finally:
-        conn.close()
-    bad_seed = tmp_path / "bad_seed.csv"
-    bad_seed.write_text("wrong,columns\na,b\n", encoding="utf-8")
-    monkeypatch.setattr(seed_corrections, "seed_path", lambda: bad_seed)
+    with database.connection(env) as conn:
+        lexicon.replace_user_entries(
+            conn, {"widget": {"mode": "override", "spoken": "wid jet"}}
+        )
     out = asyncio.run(pipeline._apply_corrections("a widget here", get_settings()))
     assert "wid jet" in out
+
+
+def test_base_lexicon_confidence_gate(env: Path) -> None:
+    """Aggressive XTTS apply uses high-confidence base rows but skips low-confidence
+    ones, so noisy data (e.g. WikiAbbrev's 'the' -> 'these') can't clobber prose."""
+
+    from app.services import lexicon
+
+    database.run_migrations(env)
+    with database.connection(env) as conn:
+        lexicon.import_readonly(
+            conn,
+            "base",
+            {
+                # noisy crowd abbreviation below the gate -> must NOT apply
+                "the": {"mode": "override", "spoken": "these", "confidence": 0.4},
+                # high-confidence override -> applies
+                "Qatari": {"mode": "override", "spoken": "kuh-TAR-ee", "confidence": 1.0},
+            },
+        )
+        conn.commit()
+    out = asyncio.run(pipeline._apply_corrections("the Qatari team", get_settings()))
+    assert "these" not in out  # low-confidence noise gated out
+    assert "the" in out  # left intact
+    assert "kuh-TAR-ee" in out  # high-confidence base row applied
 
 
 # --- normalize stage: LLM pronunciation pass + deterministic backstop -------
@@ -820,8 +836,9 @@ def test_normalize_date_months_only_in_date_context() -> None:
 
 
 def test_normalize_for_tts_strips_headings_and_expands_dates() -> None:
+    # "Jan" expands to the full month, then the month normalizer respells it.
     out = pipeline._normalize_for_tts("### News\nShipped Jan 15 2026.")
-    assert out == "News\nShipped January 15 2026."
+    assert out == "News\nShipped JAN-yoo-air-ee 15 2026."
 
 
 def test_normalize_numbers_spells_grouped_and_decimal() -> None:
@@ -863,6 +880,60 @@ def test_normalize_numbers_leaves_ambiguous_and_glued_alone() -> None:
     assert pipeline._normalize_numbers("version 1.2.3 shipped") == "version 1.2.3 shipped"
     assert pipeline._normalize_numbers("ip 10.0.0.1 here") == "ip 10.0.0.1 here"
     assert pipeline._normalize_numbers("x86 and startup_32") == "x86 and startup_32"
+
+
+def test_normalize_months_respells_capitalized_only() -> None:
+    assert pipeline._normalize_months("Posted February 3") == "Posted FEB-roo-air-ee 3"
+    assert pipeline._normalize_months("in January 2026") == "in JAN-yoo-air-ee 2026"
+    assert pipeline._normalize_months("by October") == "by ock-TOH-ber"
+    # Lowercase homographs (adjective/verb/modal) are NOT touched.
+    assert pipeline._normalize_months("an august institution") == "an august institution"
+    assert pipeline._normalize_months("they may go") == "they may go"
+    assert pipeline._normalize_months("soldiers march on") == "soldiers march on"
+
+
+def test_normalize_acronyms_spells_unknown_allcaps() -> None:
+    # Unknown all-caps (tickers, unfamiliar acronyms) spelled letter by letter.
+    assert pipeline._normalize_acronyms("the CRWV stock") == "the C R W V stock"
+    assert pipeline._normalize_acronyms("buy NVDA now") == "buy N V D A now"
+    # Letters with a trailing digit: digit read as a word.
+    assert pipeline._normalize_acronyms("SSE2 support") == "S S E two support"
+
+
+def test_normalize_acronyms_handles_plurals() -> None:
+    assert pipeline._normalize_acronyms("many GPUs here") == "many G P yoos here"
+    assert pipeline._normalize_acronyms("two APIs") == "two A P eyes"
+    assert pipeline._normalize_acronyms("the URLs") == "the U R els"
+    assert pipeline._normalize_acronyms("three SDKs") == "three S D kays"
+
+
+def test_normalize_acronyms_keeps_read_as_word_and_singletons() -> None:
+    # Read-as-word acronyms are left intact.
+    assert pipeline._normalize_acronyms("NASA and NATO") == "NASA and NATO"
+    assert pipeline._normalize_acronyms("COVID cases") == "COVID cases"
+    # Already-spaced single letters are not re-spelled.
+    assert pipeline._normalize_acronyms("G P U here") == "G P U here"
+    # Mixed-case tokens are left to the lexicon (not letter-spelled).
+    assert pipeline._normalize_acronyms("OAuth and IPv6") == "OAuth and IPv6"
+
+
+def test_normalize_ranges_converts_dash_to_word() -> None:
+    # Spaced and unspaced digit ranges, hyphen and en/em dash.
+    assert pipeline._normalize_ranges("from 2017 - 2021") == "from 2017 to 2021"
+    assert pipeline._normalize_ranges("2017-2021") == "2017 to 2021"
+    assert pipeline._normalize_ranges("pages 10-12") == "pages 10 to 12"
+    assert pipeline._normalize_ranges("5\u201310 minutes") == "5 to 10 minutes"
+    assert pipeline._normalize_ranges("rated 4\u20145 stars") == "rated 4 to 5 stars"
+
+
+def test_normalize_ranges_leaves_dates_and_chains_alone() -> None:
+    # ISO dates and dashed phone chains (3+ numbers) are not ranges.
+    assert pipeline._normalize_ranges("on 2024-01-15 today") == "on 2024-01-15 today"
+    assert pipeline._normalize_ranges("call 1-800-555-1234") == "call 1-800-555-1234"
+    # Hyphenated words are untouched (no digits).
+    assert pipeline._normalize_ranges("a well-known fact") == "a well-known fact"
+    # A grouped-number range is spelled by the later number pass.
+    assert "one thousand to two thousand" in pipeline._normalize_for_tts("1,000-2,000 units")
 
 
 def test_strip_code_artifacts_removes_backticks_parens_and_hex() -> None:
@@ -945,11 +1016,11 @@ def test_normalize_identifiers_leaves_prose_and_files_alone() -> None:
 def test_corrections_voices_february_after_date_normalization(
     env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Cleanup normalizes 'Feb 3' -> 'February 3'; the corrections stage then
-    voices February via the seed pronunciation."""
+    """Cleanup normalizes 'Feb 3' -> 'February 3', then the month normalizer
+    respells every month phonetically (January and February here)."""
 
     database.run_migrations(env)  # no user dict stored
     normalized = pipeline._normalize_for_tts("Posted Jan 15 2026 and Feb 3 2025.")
     out = asyncio.run(pipeline._apply_corrections(normalized, get_settings()))
-    assert "January 15 2026" in out
+    assert "JAN-yoo-air-ee 15 2026" in out
     assert "FEB-roo-air-ee 3 2025" in out

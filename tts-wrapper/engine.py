@@ -80,6 +80,8 @@ class Engine(Protocol):
     reference_loaded: bool
     sample_rate: int
     device: str
+    name: str  # "xtts" | "styletts2"
+    supports_phonemes: bool  # True if synthesize honors the pronunciations map
 
     def load(self) -> None:
         """Synchronous startup: load model weights + reference embeddings.
@@ -89,8 +91,11 @@ class Engine(Protocol):
         restart loop surfaces the misconfig instead of serving 500s).
         """
 
-    async def synthesize(self, text: str) -> bytes:
+    async def synthesize(self, text: str, pronunciations: dict[str, str] | None = None) -> bytes:
         """Return a WAV byte string for ``text``.
+
+        ``pronunciations`` maps surface terms to IPA for engines that support
+        phoneme injection (StyleTTS2); text-only engines (XTTS) ignore it.
 
         Raises :class:`GPUOutOfMemoryError` on CUDA OOM and
         :class:`InferenceBusyError` when another inference is already running
@@ -111,6 +116,9 @@ class XTTSEngine:
     test environments without GPU runtime. Embeddings are cached on the
     instance; ``synthesize`` reuses them across every call.
     """
+
+    name = "xtts"
+    supports_phonemes = False
 
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -261,9 +269,10 @@ class XTTSEngine:
             self.reference_loaded = previous_loaded
             raise
 
-    async def synthesize(self, text: str) -> bytes:
+    async def synthesize(self, text: str, pronunciations: dict[str, str] | None = None) -> bytes:
         import asyncio  # noqa: PLC0415
 
+        _ = pronunciations  # XTTS is text-only; no phoneme-injection path
         assert self._model is not None
         assert self._torch is not None
         try:

@@ -22,8 +22,12 @@ When the text uses a term on the left, replace just that term with the
 respelling on the right. Rules for applying it:
 - Apply by meaning and context. Homographs depend on the sentence: "read" in
   past tense ("she read it") takes the "red" respelling, but present tense
-  ("please read it") stays as written. A reference entry may carry a
-  parenthesized note saying when it applies; use it, and never output the note.
+  ("please read it") stays as written. Other common homographs to judge by
+  context: "lead" the metal ("led") versus "lead" the verb ("leed"); "live"
+  the adjective ("lyve") versus the verb ("liv"); "tear" the eye drop ("teer")
+  versus to rip ("tair"); "bow", "wind", "close", "object", "present", "record".
+  A reference entry may carry a parenthesized note saying when it applies; use
+  it, and never output the note.
 - Replace only whole words or phrases that genuinely match a reference term. Do
   not respell a term that merely appears inside a larger unrelated word.
 - The respelling is a spoken form; keep it exactly as given in the reference.

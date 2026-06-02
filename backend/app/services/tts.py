@@ -63,15 +63,20 @@ async def generate_chunk(
     episode_id: str,
     chunk_index: int,
     settings: Settings,
+    pronunciations: dict[str, str] | None = None,
 ) -> GenerateResult:
     """POST a single chunk to the wrapper's ``/generate`` endpoint."""
 
     endpoint = f"{settings.TTS_URL.rstrip('/')}/generate"
-    payload = {
+    payload: dict[str, Any] = {
         "text": text,
         "episode_id": episode_id,
         "chunk_index": chunk_index,
     }
+    # Only attach the IPA map when populated, so an older wrapper (extra="forbid")
+    # never receives an unexpected field.
+    if pronunciations:
+        payload["pronunciations"] = pronunciations
     timeout = httpx.Timeout(settings.TTS_HTTP_TIMEOUT_SECONDS)
 
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -112,6 +117,7 @@ async def generate_chunk_with_retry(
     episode_id: str,
     chunk_index: int,
     settings: Settings,
+    pronunciations: dict[str, str] | None = None,
 ) -> GenerateResult:
     """Per-chunk TTS call with retry on transient failures.
 
@@ -130,7 +136,9 @@ async def generate_chunk_with_retry(
     try:
         async for attempt in retrying:
             with attempt:
-                return await generate_chunk(text, episode_id, chunk_index, settings)
+                return await generate_chunk(
+                    text, episode_id, chunk_index, settings, pronunciations
+                )
     except RetryError as exc:
         inner = exc.last_attempt.exception()
         if isinstance(inner, TTSError):

@@ -104,6 +104,83 @@ def _validate_entry(raw_key: Any, raw_value: Any):
         yield ValidationFailure(key=raw_key, reason="value contains control characters")
 
 
+def validate_lexicon(dictionary: Any, *, max_entries: int) -> ValidationResult:
+    """Validate the object-schema correction payload.
+
+    Each value is either a plain string (shorthand for ``{spoken: value}``) or an
+    object ``{mode?, spoken, ipa?, case_sensitive?}``. ``spoken`` is required and
+    follows the same length/control-char rules as the flat schema; ``mode`` must
+    be one of spell/word/override; ``ipa`` is an optional string; ``case_sensitive``
+    an optional bool.
+    """
+
+    from app.services import pronounce_convert  # local import avoids a cycle
+
+    if not isinstance(dictionary, dict):
+        return ValidationResult(
+            ok=False, failures=[ValidationFailure(key="<root>", reason="must be a JSON object")]
+        )
+    if len(dictionary) > max_entries:
+        return ValidationResult(
+            ok=False,
+            failures=[
+                ValidationFailure(
+                    key="<root>", reason=f"too many entries ({len(dictionary)} > {max_entries})"
+                )
+            ],
+        )
+    failures: list[ValidationFailure] = []
+    for raw_key, raw_value in dictionary.items():
+        failures.extend(_validate_key(raw_key))
+        spoken = raw_value if isinstance(raw_value, str) else None
+        if isinstance(raw_value, dict):
+            spoken = raw_value.get("spoken")
+            mode = raw_value.get("mode")
+            if mode is not None and mode not in pronounce_convert.MODES:
+                failures.append(ValidationFailure(key=str(raw_key), reason=f"invalid mode {mode!r}"))
+            ipa = raw_value.get("ipa")
+            if ipa is not None and not isinstance(ipa, str):
+                failures.append(ValidationFailure(key=str(raw_key), reason="ipa must be a string"))
+            cs = raw_value.get("case_sensitive")
+            if cs is not None and not isinstance(cs, bool):
+                failures.append(
+                    ValidationFailure(key=str(raw_key), reason="case_sensitive must be a bool")
+                )
+        elif not isinstance(raw_value, str):
+            failures.append(
+                ValidationFailure(key=str(raw_key), reason="value must be a string or object")
+            )
+            continue
+        failures.extend(_validate_value(str(raw_key), spoken))
+    return ValidationResult(ok=not failures, failures=failures)
+
+
+def _validate_key(raw_key: Any) -> list[ValidationFailure]:
+    out: list[ValidationFailure] = []
+    if not isinstance(raw_key, str):
+        return [ValidationFailure(key=str(raw_key), reason="key must be a string")]
+    if not raw_key:
+        out.append(ValidationFailure(key=raw_key, reason="key must be non-empty"))
+    if len(raw_key) > MAX_KEY_CHARS:
+        out.append(ValidationFailure(key=raw_key, reason=f"key length > {MAX_KEY_CHARS}"))
+    if raw_key != raw_key.strip():
+        out.append(ValidationFailure(key=raw_key, reason="key has leading or trailing whitespace"))
+    return out
+
+
+def _validate_value(key: str, value: Any) -> list[ValidationFailure]:
+    out: list[ValidationFailure] = []
+    if not isinstance(value, str):
+        return [ValidationFailure(key=key, reason="spoken must be a string")]
+    if not value:
+        out.append(ValidationFailure(key=key, reason="spoken must be non-empty"))
+    if len(value) > MAX_VALUE_CHARS:
+        out.append(ValidationFailure(key=key, reason=f"spoken length > {MAX_VALUE_CHARS}"))
+    if _CONTROL_CHAR_RE.search(value):
+        out.append(ValidationFailure(key=key, reason="spoken contains control characters"))
+    return out
+
+
 def apply(text: str, dictionary: dict[str, str]) -> str:
     """Replace every whole-word match in ``text`` per the dictionary.
 

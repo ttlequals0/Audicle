@@ -48,9 +48,13 @@ WORKDIR /app
 # engine.py registers the XTTS config classes via torch.serialization.
 # add_safe_globals before load so the trusted checkpoint deserializes.
 COPY pyproject.toml ./
-COPY config.py engine.py log_setup.py main.py ./
+COPY config.py engine.py log_setup.py main.py style_engine.py ./
+# INSTALL_STYLETTS2=1 adds the optional phoneme engine (gruut + styletts2). Default
+# 0 keeps the XTTS image lean; the engine is selected at runtime via TTS_ENGINE.
+ARG INSTALL_STYLETTS2=0
 RUN pip install --no-cache-dir "transformers>=4.48.0,<4.49" \
-    && pip install --no-cache-dir . \
+    && if [ "$INSTALL_STYLETTS2" = "1" ]; then pip install --no-cache-dir ".[styletts2]"; \
+       else pip install --no-cache-dir .; fi \
     && pip install --no-cache-dir -U \
         "urllib3>=2.7.0" "cryptography>=46.0.5" "pillow>=12.2.0" \
         "Brotli>=1.2.0" "setuptools>=78.1.1" "wheel>=0.46.2"

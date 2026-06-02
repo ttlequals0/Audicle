@@ -409,6 +409,64 @@ def _m011_import_corrections_to_db(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m012_lexicon_table(conn: sqlite3.Connection) -> None:
+    """Create the ``lexicon`` table and load seed rows + migrate the user dict.
+
+    All pronunciation data moves into one table: the curated seed CSV as read-only
+    ``origin='seed'`` rows, and the legacy flat ``settings.pronunciation_dict`` as
+    editable ``origin='user'`` rows. IPA is NOT derived here (gruut would make every
+    test's migration slow); it is left NULL and populated by the offline base-lexicon
+    build. The legacy settings row is preserved (never lose data). Runs via raw
+    ``conn.execute`` (no commit) inside the migration's atomic transaction.
+    """
+
+    import json
+
+    from app.services import lexicon, pronounce_convert, seed_corrections, settings_store
+
+    lexicon.create_schema(conn)
+
+    def _row(input_text: str, spoken: str, notes: str | None, source: str) -> dict:
+        mode = pronounce_convert.classify_mode(input_text, spoken, notes)
+        return {
+            "mode": mode,
+            "spoken": spoken,
+            "ipa": None,
+            "case_sensitive": pronounce_convert.default_case_sensitive(input_text, mode),
+            "confidence": pronounce_convert.CONF_CURATED,
+            "source": source,
+            "notes": notes,
+        }
+
+    try:
+        seed_entries = seed_corrections.load_seed(seed_corrections.seed_path())
+    except Exception:
+        logger.warning("Seed CSV unreadable during lexicon import", exc_info=True)
+        seed_entries = []
+    seed_rows = {
+        e.input_text: _row(e.input_text, e.replacement_text, e.notes, "seed")
+        for e in seed_entries
+        if e.input_text and e.replacement_text
+    }
+    lexicon.import_readonly(conn, "seed", seed_rows)
+
+    existing = conn.execute(
+        "SELECT value FROM settings WHERE key = ?", (settings_store.PRONUNCIATION_KEY,)
+    ).fetchone()
+    if existing and existing["value"]:
+        try:
+            flat = json.loads(existing["value"])
+        except (ValueError, TypeError):
+            flat = {}
+        user_rows = {
+            k: _row(k, v, None, "user-migrated")
+            for k, v in (flat.items() if isinstance(flat, dict) else [])
+            if isinstance(k, str) and isinstance(v, str) and k and v
+        }
+        if user_rows:
+            lexicon.insert_entries(conn, "user", user_rows, read_only=False)
+
+
 MIGRATIONS: list[tuple[str, Migration]] = [
     ("001_initial_schema", _m001_initial_schema),
     ("002_settings_kv", _m002_settings_kv),
@@ -421,6 +479,7 @@ MIGRATIONS: list[tuple[str, Migration]] = [
     ("009_job_started_at", _m009_job_started_at),
     ("010_episode_revision", _m010_episode_revision),
     ("011_import_corrections_to_db", _m011_import_corrections_to_db),
+    ("012_lexicon_table", _m012_lexicon_table),
 ]
 
 

@@ -76,7 +76,9 @@ export default function Feed() {
       >
         {copied ? "✓ Copied" : "⧉ Copy feed URL"}
       </button>
-      <p className="mono-xs text-mute truncate mb-5" title={feedUrl}>
+      {/* URL is redundant with the copy button on mobile (and gets cut off), so
+          hide it there; show it on wider screens where there's room. */}
+      <p className="mono-xs text-mute truncate mb-5 hidden sm:block" title={feedUrl}>
         {feedUrl || (settingsQ.isError ? "feed URL unavailable" : "loading...")}
       </p>
 

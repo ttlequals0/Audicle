@@ -60,6 +60,9 @@ def env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         monkeypatch.setenv(key, value)
     monkeypatch.setenv("DATA_DIR", str(data_dir))
     monkeypatch.setenv("LOG_FORMAT", "text")
+    # Don't import the ~400k-row bundled base lexicon on every app/worker startup
+    # in tests; the migration's seed layer suffices and test_lexicon covers sync.
+    monkeypatch.setenv("AUDICLE_SKIP_LEXICON_SYNC", "1")
     # TestClient speaks plain http; the production default (secure cookies)
     # would drop the session cookie so login wouldn't persist in tests.
     monkeypatch.setenv("SESSION_COOKIE_SECURE", "false")

@@ -25,7 +25,14 @@ jobs:
         with:
           # Block merges that introduce a high-severity CVE on a runtime dep.
           fail-on-severity: high
-          # The MIT/BSD/Apache/PSF set covers what we already use; flag any
-          # GPL/AGPL drift so the team picks it deliberately.
-          allow-licenses: MIT, BSD-2-Clause, BSD-3-Clause, Apache-2.0, ISC, MPL-2.0, PSF-2.0, Python-2.0, Unlicense, CC0-1.0, BlueOak-1.0.0
+          # The MIT/BSD/Apache/PSF set covers what we already use. LGPL-2.1/3.0 and
+          # ZPL-2.1 were added deliberately: the gruut phonemizer (used for IPA
+          # derivation) pulls num2words (LGPL) and pytz (MIT AND ZPL-2.1). LGPL/ZPL
+          # are weak-copyleft and do not impose obligations on this project's own
+          # source, so they are accepted.
+          allow-licenses: MIT, BSD-2-Clause, BSD-3-Clause, Apache-2.0, ISC, MPL-2.0, PSF-2.0, Python-2.0, Unlicense, CC0-1.0, BlueOak-1.0.0, LGPL-2.1-only, LGPL-3.0-or-later, ZPL-2.1
+          # Packages whose license metadata is absent/NOASSERTION on the registry
+          # but is permissive in the project (pysle MIT; hf-xet/praatio/regex are
+          # Apache/MIT-family) -- exempted by package so they don't block the gate.
+          allow-dependencies-licenses: pkg:pypi/pysle, pkg:pypi/hf-xet, pkg:pypi/praatio, pkg:pypi/regex
           comment-summary-in-pr: on-failure

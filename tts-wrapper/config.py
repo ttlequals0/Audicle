@@ -29,6 +29,14 @@ class Config:
     reference_path: str  # absolute path inside the container
     data_dir: str  # writes WAVs under {data_dir}/media
 
+    # Engine selector: "xtts" (default) | "styletts2". XTTS is text-only; StyleTTS2
+    # phonemizes via gruut and can honor injected IPA (the `pronunciations` map).
+    engine: str
+    # StyleTTS2-only knobs (ignored by XTTS). model_path empty -> the package's
+    # bundled default; phonemizer_lang feeds gruut.
+    style_model_path: str
+    style_phonemizer_lang: str
+
     temperature: float
     length_penalty: float
     repetition_penalty: float
@@ -56,6 +64,9 @@ class Config:
             language=os.environ.get("TTS_LANGUAGE", "en"),
             reference_path=os.environ.get("TTS_REFERENCE_PATH", "/app/reference/voice.wav"),
             data_dir=os.environ.get("DATA_DIR", "/data"),
+            engine=os.environ.get("TTS_ENGINE", "xtts"),
+            style_model_path=os.environ.get("STYLETTS2_MODEL_PATH", ""),
+            style_phonemizer_lang=os.environ.get("STYLETTS2_PHONEMIZER_LANG", "en-us"),
             # 0.60 (down from 0.65) trims the sampling variance that drives
             # per-piece pitch drift and the occasional hallucinated word.
             temperature=_float_env("XTTS_TEMPERATURE", 0.60),

@@ -85,6 +85,10 @@ class GenerateRequest(BaseModel):
     # accept a slightly broader alphabet for hand-curated cases.
     episode_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.-]+$")
     chunk_index: int = Field(ge=0, le=100000)
+    # Optional IPA overrides (surface term -> IPA). Honored only by phoneme-capable
+    # engines (StyleTTS2); the XTTS engine ignores it. Backward-compatible: the
+    # backend only sends it when the live engine reports it supports phonemes.
+    pronunciations: dict[str, str] | None = None
 
 
 class GenerateResponse(BaseModel):
@@ -102,10 +106,17 @@ class HealthResponse(BaseModel):
     coqui_tts: str | None = None
     device: str | None = None
     sample_rate: int | None = None
+    engine: str | None = None
+    supports_phonemes: bool | None = None
 
 
 def _default_engine_factory() -> Engine:
-    return XTTSEngine(Config.from_env())
+    cfg = Config.from_env()
+    if cfg.engine == "styletts2":
+        from style_engine import StyleTTS2Engine  # lazy: heavy deps
+
+        return StyleTTS2Engine(cfg)
+    return XTTSEngine(cfg)
 
 
 def create_app(
@@ -185,6 +196,9 @@ def create_app(
             "coqui_tts": _COQUI_TTS_VERSION,
             "device": engine.device,
             "sample_rate": engine.sample_rate,
+            # getattr with defaults so a minimal fake/legacy engine still serves.
+            "engine": getattr(engine, "name", None),
+            "supports_phonemes": getattr(engine, "supports_phonemes", None),
         }
         if not ok:
             # 503 body includes a diagnostic "error".
@@ -223,7 +237,7 @@ def create_app(
             inference_started = time.perf_counter()
             try:
                 wav_bytes = await asyncio.wait_for(
-                    engine.synthesize(body.text),
+                    engine.synthesize(body.text, body.pronunciations),
                     timeout=_REQUEST_INFERENCE_TIMEOUT_SECONDS,
                 )
             except TimeoutError as exc:
