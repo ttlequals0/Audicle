@@ -4,7 +4,7 @@ import csv
 from pathlib import Path
 
 import pytest
-from app.services import corrections, seed_corrections
+from app.services import seed_corrections
 from app.services.seed_corrections import SeedEntry
 
 # The bundled list is expected to grow, so tests derive the row count from the

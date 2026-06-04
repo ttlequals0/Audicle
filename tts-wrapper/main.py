@@ -290,14 +290,18 @@ def create_app(
         out_dir = chosen_data_dir / "media"
         out_dir.mkdir(parents=True, exist_ok=True)
         # episode_id is already constrained by the Pydantic pattern; the
-        # realpath + commonpath containment check is belt-and-braces against a
-        # future regex regression and is the form static analysis recognizes as
-        # a path-injection sanitizer (the validated realpath is what gets
-        # written, not the raw user input).
+        # containment check below is belt-and-braces against a future regex
+        # regression (the validated realpath is what gets written, not the raw
+        # user input). Normalize via os.path.realpath (also follows symlinks),
+        # then verify the resolved path starts with the data dir -- the
+        # realpath + startswith form is the barrier CodeQL's py/path-injection
+        # query recognizes as a sanitizer. The root is terminated with os.sep
+        # so a sibling like ".../media-evil" can't satisfy the prefix check
+        # against ".../media".
         filename = f"{body.episode_id}_chunk_{body.chunk_index}.wav"
         out_real = os.path.realpath(out_dir)
         wav_real = os.path.realpath(os.path.join(out_real, filename))
-        if os.path.commonpath([out_real, wav_real]) != out_real:
+        if not wav_real.startswith(out_real + os.sep):
             raise HTTPException(status_code=400, detail="resolved wav_path escapes data dir")
         wav_path = Path(wav_real)
         _atomic_write_bytes(wav_path, wav_bytes)

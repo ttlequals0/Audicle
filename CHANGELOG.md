@@ -6,6 +6,19 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.16.2] - 2026-06-03
+
+### Security
+
+- TTS wrapper path-injection guard rewritten from an `os.path.commonpath`
+  containment check to the `os.path.realpath` + `startswith(root + os.sep)`
+  form. Runtime behavior is unchanged (traversal still rejected with 400), but
+  CodeQL's path-injection query recognizes the new form as a sanitizer, which
+  it did not for `commonpath`.
+- Bumped aiohttp from 3.13.5 to 3.14.0 in the TTS wrapper lockfile, clearing
+  two advisories (cross-origin redirect with per-request cookies, and
+  deserialization of untrusted data).
+
 ## [0.16.1] - 2026-06-02
 
 ### Fixed
