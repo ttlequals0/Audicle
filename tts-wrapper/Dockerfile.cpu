@@ -29,36 +29,28 @@ ENV PYTHONUNBUFFERED=1 \
     # README license note); agree non-interactively so the model loads headless.
     COQUI_TOS_AGREED=1
 
-# build-essential: several coqui-tts deps (e.g. numba/llvmlite) build native
-# extensions. libsndfile for soundfile/coqui WAV IO; curl for healthchecks.
+# build-essential: several model deps (e.g. numba/llvmlite) build native
+# extensions. libsndfile for soundfile WAV IO; curl for healthchecks; git so the
+# chatterbox backend can install resemble-perth (a git+https dependency).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-         curl ca-certificates libsndfile1 build-essential \
+         curl ca-certificates libsndfile1 build-essential git \
     && apt-get install -y --only-upgrade gpgv \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY pyproject.toml ./
-COPY config.py engine.py log_setup.py main.py style_engine.py ./
-# INSTALL_STYLETTS2=1 adds the optional phoneme engine (gruut + styletts2).
-ARG INSTALL_STYLETTS2=0
-# Install torch AND torchaudio together from the CPU index with matching
-# versions. coqui-tts imports torchaudio; if it comes from PyPI while torch is
-# the CPU-index build, the torchaudio native extension fails to load against
-# torch (ABI mismatch). Pinning both from the same CPU index keeps them in step.
-# transformers pinned to the 4.48.x line: coqui-tts 0.24 requires >=4.43.0
-# unbounded but breaks on 5.x; >=4.48.0 clears CVE-2024-11392/-11393/-11394.
-# The trailing -U patches transitive deps pinned to vulnerable versions. torch
-# 2.6.0 clears CVE-2025-32434 (torch.load RCE); its weights_only=True default is
-# handled in engine.py via torch.serialization.add_safe_globals before load.
+COPY config.py engine.py log_setup.py main.py style_engine.py chatterbox_engine.py install_engine.sh ./
+# torch AND torchaudio are installed first from the CPU index with matching
+# versions: every engine imports torchaudio, and if it comes from PyPI while
+# torch is the CPU-index build the native extension fails to load (ABI mismatch).
+# chatterbox-tts pins torch==2.6.0/torchaudio==2.6.0, satisfied by this install.
+# install_engine.sh (shared with the GPU Dockerfile) then installs exactly one
+# engine extra (TTS_BACKEND) plus security patches.
+ARG TTS_BACKEND=chatterbox
 RUN pip install --no-cache-dir torch==2.6.0 torchaudio==2.6.0 \
         --index-url https://download.pytorch.org/whl/cpu \
-    && pip install --no-cache-dir "transformers>=4.48.0,<4.49" \
-    && if [ "$INSTALL_STYLETTS2" = "1" ]; then pip install --no-cache-dir ".[styletts2]"; \
-       else pip install --no-cache-dir .; fi \
-    && pip install --no-cache-dir -U \
-        "urllib3>=2.7.0" "cryptography>=46.0.5" "pillow>=12.2.0" \
-        "Brotli>=1.2.0" "setuptools>=78.1.1" "wheel>=0.46.2"
+    && sh install_engine.sh "$TTS_BACKEND"
 
 EXPOSE 8000
 
@@ -67,6 +59,8 @@ EXPOSE 8000
 # tts-wrapper/ and can't read the root file. main.py reads AUDICLE_WRAPPER_VERSION.
 ARG WRAPPER_VERSION=0.0.0
 ENV AUDICLE_WRAPPER_VERSION=${WRAPPER_VERSION}
-HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=120s \
+# start-period is generous: the first boot downloads multi-GB model weights from
+# HuggingFace before the model loads and /health/live turns 200.
+HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=300s \
     CMD curl -fsS http://localhost:8000/health/live || exit 1
 CMD ["uvicorn", "main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--timeout-keep-alive", "300"]

@@ -27,10 +27,11 @@ ENV PYTHONUNBUFFERED=1 \
     # README license note); agree non-interactively so the model loads headless.
     COQUI_TOS_AGREED=1
 
-# OS deps: curl for healthchecks; libsndfile for soundfile/coqui-tts WAV IO.
+# OS deps: curl for healthchecks; libsndfile for soundfile WAV IO; git so the
+# chatterbox backend can install resemble-perth (a git+https dependency).
 # --only-upgrade gpgv pulls the patched base-image package (CVE-2025-68973).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates libsndfile1 \
+    && apt-get install -y --no-install-recommends curl ca-certificates libsndfile1 git \
     && apt-get install -y --only-upgrade gpgv \
     && rm -rf /var/lib/apt/lists/*
 
@@ -48,16 +49,13 @@ WORKDIR /app
 # engine.py registers the XTTS config classes via torch.serialization.
 # add_safe_globals before load so the trusted checkpoint deserializes.
 COPY pyproject.toml ./
-COPY config.py engine.py log_setup.py main.py style_engine.py ./
-# INSTALL_STYLETTS2=1 adds the optional phoneme engine (gruut + styletts2). Default
-# 0 keeps the XTTS image lean; the engine is selected at runtime via TTS_ENGINE.
-ARG INSTALL_STYLETTS2=0
-RUN pip install --no-cache-dir "transformers>=4.48.0,<4.49" \
-    && if [ "$INSTALL_STYLETTS2" = "1" ]; then pip install --no-cache-dir ".[styletts2]"; \
-       else pip install --no-cache-dir .; fi \
-    && pip install --no-cache-dir -U \
-        "urllib3>=2.7.0" "cryptography>=46.0.5" "pillow>=12.2.0" \
-        "Brotli>=1.2.0" "setuptools>=78.1.1" "wheel>=0.46.2"
+COPY config.py engine.py log_setup.py main.py style_engine.py chatterbox_engine.py install_engine.sh ./
+# TTS_BACKEND selects which engine extra to install (xtts | styletts2 |
+# chatterbox); the engine is then chosen at runtime via TTS_ENGINE. install_engine.sh
+# (shared with Dockerfile.cpu) installs exactly one engine plus security patches;
+# torch is the base image's 2.6.0 (clears CVE-2025-32434), reused as-is.
+ARG TTS_BACKEND=chatterbox
+RUN sh install_engine.sh "$TTS_BACKEND"
 
 EXPOSE 8000
 
@@ -67,10 +65,12 @@ EXPOSE 8000
 ARG WRAPPER_VERSION=0.0.0
 ENV AUDICLE_WRAPPER_VERSION=${WRAPPER_VERSION}
 
-HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=120s \
+# start-period is generous: the first boot downloads multi-GB model weights from
+# HuggingFace before the model loads and /health/live turns 200.
+HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=300s \
     CMD curl -fsS http://localhost:8000/health/live || exit 1
 
-# ``--factory`` so create_app() is called once with the default XTTS engine.
-# ``--workers 1`` because XTTS holds GPU resources that don't survive forking;
-# the asyncio.Lock inside the app serializes per-process /generate calls.
+# ``--factory`` so create_app() is called once with the configured engine.
+# ``--workers 1`` because the model holds GPU resources that don't survive
+# forking; the asyncio.Lock inside the app serializes per-process /generate calls.
 CMD ["uvicorn", "main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--timeout-keep-alive", "300"]

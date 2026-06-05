@@ -145,9 +145,10 @@ class Settings(BaseSettings):
     TTS_LANGUAGE: str = "en"
     TTS_DEVICE: Literal["cuda", "cpu"] = "cuda"
     # Which wrapper engine is live. "styletts2" enables sending the per-chunk IPA
-    # override map (`pronunciations`) to the wrapper; "xtts" (default) sends text
-    # only. Must match the wrapper's TTS_ENGINE.
-    TTS_ENGINE: Literal["xtts", "styletts2"] = "xtts"
+    # override map (`pronunciations`) to the wrapper; "chatterbox" (default) and
+    # "xtts" send text only (no phoneme injection). Must match the wrapper's
+    # TTS_ENGINE.
+    TTS_ENGINE: Literal["xtts", "styletts2", "chatterbox"] = "chatterbox"
     TTS_HTTP_TIMEOUT_SECONDS: float = 120
     # Used by the per-chunk pipeline call site; defined here so
     # operators can tune .env now without a follow-up rebuild.

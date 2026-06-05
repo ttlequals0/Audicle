@@ -116,6 +116,10 @@ def _default_engine_factory() -> Engine:
         from style_engine import StyleTTS2Engine  # lazy: heavy deps
 
         return StyleTTS2Engine(cfg)
+    if cfg.engine == "chatterbox":
+        from chatterbox_engine import ChatterboxEngine  # lazy: heavy deps
+
+        return ChatterboxEngine(cfg)
     return XTTSEngine(cfg)
 
 
