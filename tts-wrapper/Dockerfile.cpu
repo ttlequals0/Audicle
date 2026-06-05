@@ -39,7 +39,9 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY pyproject.toml ./
-COPY config.py engine.py log_setup.py main.py ./
+COPY config.py engine.py log_setup.py main.py style_engine.py ./
+# INSTALL_STYLETTS2=1 adds the optional phoneme engine (gruut + styletts2).
+ARG INSTALL_STYLETTS2=0
 # Install torch AND torchaudio together from the CPU index with matching
 # versions. coqui-tts imports torchaudio; if it comes from PyPI while torch is
 # the CPU-index build, the torchaudio native extension fails to load against
@@ -52,7 +54,8 @@ COPY config.py engine.py log_setup.py main.py ./
 RUN pip install --no-cache-dir torch==2.6.0 torchaudio==2.6.0 \
         --index-url https://download.pytorch.org/whl/cpu \
     && pip install --no-cache-dir "transformers>=4.48.0,<4.49" \
-    && pip install --no-cache-dir . \
+    && if [ "$INSTALL_STYLETTS2" = "1" ]; then pip install --no-cache-dir ".[styletts2]"; \
+       else pip install --no-cache-dir .; fi \
     && pip install --no-cache-dir -U \
         "urllib3>=2.7.0" "cryptography>=46.0.5" "pillow>=12.2.0" \
         "Brotli>=1.2.0" "setuptools>=78.1.1" "wheel>=0.46.2"

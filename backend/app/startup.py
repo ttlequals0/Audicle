@@ -46,7 +46,41 @@ def bootstrap(settings: Settings, *, process_label: str) -> None:
         "Migrations complete",
         extra={"event": "migrations_complete", "count": len(applied)},
     )
+    _sync_base_lexicon(settings, logger)
     _seed_defaults(settings, logger)
+
+
+def _sync_base_lexicon(settings: Settings, logger: logging.Logger) -> None:
+    """Import the bundled base-lexicon artifact (read-only rows) if its version
+    changed. No-op when the artifact is absent (normal checkout). Tied to the app
+    version so a release refreshes the read-only layer without touching user rows."""
+
+    # Tests set this so a fresh per-test DB doesn't import the full ~1.3M-row
+    # bundled artifact on every app/worker startup (the migration's seed layer is
+    # enough for tests; the base layer is exercised directly in test_lexicon).
+    if os.environ.get("AUDICLE_SKIP_LEXICON_SYNC") == "1":
+        return
+
+    import threading
+
+    from app.services import lexicon
+
+    def _run() -> None:
+        # The full artifact import takes ~tens of seconds, so it runs in a daemon
+        # thread rather than blocking app/worker startup (the app serves with the
+        # seed layer immediately and the base layer lights up when this finishes).
+        # The migration lock serializes it across the supervised processes; the
+        # version gate inside sync makes the later acquirers no-op.
+        try:
+            with (
+                database.migration_lock(settings.DATA_DIR),
+                database.connection(settings.DATA_DIR) as conn,
+            ):
+                lexicon.sync_base_artifact(conn, lexicon.default_artifact_path(), __version__)
+        except Exception:
+            logger.warning("Base lexicon sync failed; continuing", exc_info=True)
+
+    threading.Thread(target=_run, name="lexicon-sync", daemon=True).start()
 
 
 def _seed_defaults(settings: Settings, logger: logging.Logger) -> None:

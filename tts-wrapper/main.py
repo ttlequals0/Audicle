@@ -85,6 +85,10 @@ class GenerateRequest(BaseModel):
     # accept a slightly broader alphabet for hand-curated cases.
     episode_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.-]+$")
     chunk_index: int = Field(ge=0, le=100000)
+    # Optional IPA overrides (surface term -> IPA). Honored only by phoneme-capable
+    # engines (StyleTTS2); the XTTS engine ignores it. Backward-compatible: the
+    # backend only sends it when the live engine reports it supports phonemes.
+    pronunciations: dict[str, str] | None = None
 
 
 class GenerateResponse(BaseModel):
@@ -102,10 +106,17 @@ class HealthResponse(BaseModel):
     coqui_tts: str | None = None
     device: str | None = None
     sample_rate: int | None = None
+    engine: str | None = None
+    supports_phonemes: bool | None = None
 
 
 def _default_engine_factory() -> Engine:
-    return XTTSEngine(Config.from_env())
+    cfg = Config.from_env()
+    if cfg.engine == "styletts2":
+        from style_engine import StyleTTS2Engine  # lazy: heavy deps
+
+        return StyleTTS2Engine(cfg)
+    return XTTSEngine(cfg)
 
 
 def create_app(
@@ -185,6 +196,9 @@ def create_app(
             "coqui_tts": _COQUI_TTS_VERSION,
             "device": engine.device,
             "sample_rate": engine.sample_rate,
+            # getattr with defaults so a minimal fake/legacy engine still serves.
+            "engine": getattr(engine, "name", None),
+            "supports_phonemes": getattr(engine, "supports_phonemes", None),
         }
         if not ok:
             # 503 body includes a diagnostic "error".
@@ -223,7 +237,7 @@ def create_app(
             inference_started = time.perf_counter()
             try:
                 wav_bytes = await asyncio.wait_for(
-                    engine.synthesize(body.text),
+                    engine.synthesize(body.text, body.pronunciations),
                     timeout=_REQUEST_INFERENCE_TIMEOUT_SECONDS,
                 )
             except TimeoutError as exc:
@@ -276,14 +290,18 @@ def create_app(
         out_dir = chosen_data_dir / "media"
         out_dir.mkdir(parents=True, exist_ok=True)
         # episode_id is already constrained by the Pydantic pattern; the
-        # realpath + commonpath containment check is belt-and-braces against a
-        # future regex regression and is the form static analysis recognizes as
-        # a path-injection sanitizer (the validated realpath is what gets
-        # written, not the raw user input).
+        # containment check below is belt-and-braces against a future regex
+        # regression (the validated realpath is what gets written, not the raw
+        # user input). Normalize via os.path.realpath (also follows symlinks),
+        # then verify the resolved path starts with the data dir -- the
+        # realpath + startswith form is the barrier CodeQL's py/path-injection
+        # query recognizes as a sanitizer. The root is terminated with os.sep
+        # so a sibling like ".../media-evil" can't satisfy the prefix check
+        # against ".../media".
         filename = f"{body.episode_id}_chunk_{body.chunk_index}.wav"
         out_real = os.path.realpath(out_dir)
         wav_real = os.path.realpath(os.path.join(out_real, filename))
-        if os.path.commonpath([out_real, wav_real]) != out_real:
+        if not wav_real.startswith(out_real + os.sep):
             raise HTTPException(status_code=400, detail="resolved wav_path escapes data dir")
         wav_path = Path(wav_real)
         _atomic_write_bytes(wav_path, wav_bytes)

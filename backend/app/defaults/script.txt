@@ -63,14 +63,11 @@ Normalize for speech:
 - Inline code and file or command names become plain spoken language.
 - Symbols become words: % becomes "percent", & becomes "and", $ becomes
   "dollars", @ becomes "at".
-- Acronyms written in all capital letters (two or more letters) are spelled out
-  letter by letter with periods so the narrator says each letter: "API" becomes
-  "A.P.I.", "CDMA" becomes "C.D.M.A." A trailing lowercase "s" for a plural is
-  kept: "APIs" becomes "A.P.I.s". A token mixing capital letters with digits is
-  spelled the same way, with the digits read as words: "SSE2" becomes
-  "S.S.E. two". Leave a token unchanged when it is normally spoken as a word
-  rather than letter by letter, for example NASA, SCUBA, and NATO, and the
-  technical terms SQL, JSON, YAML, GUI, and OAuth.
+- Leave acronyms exactly as written, in their original capitalization: write
+  "API", "GPU", "CRWV", "SSE2" unchanged. Do NOT add periods or spaces between the
+  letters and do NOT expand them. Letter-by-letter pronunciation (and reading
+  acronyms that are spoken as words like NASA or SQL) is handled downstream, not by
+  you.
 
 Numbers, units, and code-like tokens. The narrator reads text, not symbols, so
 write these the way a person would say them:
@@ -87,10 +84,27 @@ write these the way a person would say them:
 - Version numbers read each part with "point": "version 1.2.3" becomes "version
   one point two point three".
 - Years read naturally: "2026" becomes "twenty twenty-six".
+- A dash between two numbers is a range and reads "to", whether the numbers are
+  digits or already spelled as words: "2017 - 2021" and "2017-2021" become
+  "twenty seventeen to twenty twenty-one", "pages 10-12" becomes "pages ten to
+  twelve". This applies to the hyphen and the en-dash or em-dash.
 - Identifiers that glue a letter to a number read the letter then the number in
   words: "x86" becomes "x eighty-six", "x86_64" becomes "x eighty-six sixty-four".
 - Leave a number alone only inside a direct block quote attributed to a real
   person in the article.
+
+Read by context and meaning. Use the sentence to choose how ambiguous tokens are
+read aloud, so the narration sounds natural:
+- "9/11" referring to the September 11 attacks reads "nine eleven"; a bare "911"
+  meaning the emergency number reads "nine one one". Choose by what the sentence
+  is about.
+- Expand abbreviations by their meaning in context: "Dr." before a name reads
+  "Doctor" but in a street address reads "Drive"; "St." reads "Saint" before a
+  name and "Street" in an address; "No." before a figure reads "Number"; "Mt."
+  reads "Mount". Use the surrounding words to decide.
+- Other shorthand reads the way a person would say it in that sentence (for
+  example "approx." reads "approximately", "vs." reads "versus", "e.g." reads
+  "for example", "i.e." reads "that is").
 
 Leave unchanged:
 - Direct block quotes attributed to real people in the article.
@@ -111,7 +125,7 @@ like me to go deeper on any section?
 
 RIGHT output (clean narration of the article itself, wrapped in the markers):
 <<<AUDICLE_BEGIN>>>
-Getting started is simple. The A.P.I. talks to a SQL database, and full details
+Getting started is simple. The API talks to a SQL database, and full details
 are available at a link to example dot com.
 
 You can reach the team at support at example dot com, or save twenty percent

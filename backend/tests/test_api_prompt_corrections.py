@@ -74,9 +74,12 @@ def test_put_corrections_persists_for_next_get(client: TestClient) -> None:
     with client:
         put = client.put("/api/v1/corrections", json=payload)
         assert put.status_code == 200
-        assert put.json() == payload
         after = client.get("/api/v1/corrections").json()
-    assert after == payload
+    # Stored as the object schema; the spoken form round-trips.
+    assert set(after) == set(payload)
+    assert after["kubectl"]["spoken"] == "kube control"
+    assert after["PostgreSQL"]["spoken"] == "post gres Q L"
+    assert after["kubectl"]["mode"] in {"spell", "word", "override"}
 
 
 def test_put_corrections_400_on_bad_entry(client: TestClient) -> None:
@@ -164,10 +167,9 @@ def test_get_seed_corrections_returns_full_list_with_metadata(client: TestClient
     assert response.status_code == 200
     body = response.json()
     assert body["count"] == len(body["entries"]) > 0
-    assert 0 < body["applicable_count"] < body["count"]
-    assert body["applicable_count"] == sum(e["applicable"] for e in body["entries"])
     sample = body["entries"][0]
-    assert set(sample) == {"category", "input_text", "replacement_text", "notes", "applicable"}
+    assert {"input_text", "mode", "spoken", "origin", "read_only"} <= set(sample)
+    assert all(e["origin"] == "seed" and e["read_only"] for e in body["entries"])
 
 
 def test_get_seed_corrections_is_separate_from_user_dictionary(client: TestClient) -> None:
@@ -176,10 +178,30 @@ def test_get_seed_corrections_is_separate_from_user_dictionary(client: TestClien
     with client:
         client.put("/api/v1/corrections", json={"widget": "wid jet"})
         user = client.get("/api/v1/corrections").json()
-    assert user == {"widget": "wid jet"}  # only the user entry, no seed rows
+    assert set(user) == {"widget"}  # only the user entry, no seed rows
+    assert user["widget"]["spoken"] == "wid jet"
 
 
 def test_seed_corrections_has_no_put(client: TestClient) -> None:
     with client:
         response = client.put("/api/v1/corrections/seed", json={"anything": "x"})
     assert response.status_code == 405
+
+
+def test_lookup_finds_seed_entry(client: TestClient) -> None:
+    with client:
+        body = client.get("/api/v1/corrections/lookup", params={"q": "February"}).json()
+    assert body["entry"] is not None
+    assert body["entry"]["spoken"] == "FEB-roo-air-ee"
+    assert body["entry"]["origin"] == "seed"
+
+
+def test_export_json_and_pls(client: TestClient) -> None:
+    with client:
+        client.put("/api/v1/corrections", json={"Acme": "ACK-mee"})
+        js = client.get("/api/v1/corrections/export", params={"format": "json", "scope": "user"})
+        pls = client.get("/api/v1/corrections/export", params={"format": "pls", "scope": "user"})
+    assert js.status_code == 200
+    assert '"Acme"' in js.text and "ACK-mee" in js.text
+    assert pls.status_code == 200
+    assert "<lexicon" in pls.text and "<grapheme>Acme</grapheme>" in pls.text

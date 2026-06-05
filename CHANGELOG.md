@@ -6,6 +6,73 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.16.2] - 2026-06-03
+
+### Security
+
+- TTS wrapper path-injection guard rewritten from an `os.path.commonpath`
+  containment check to the `os.path.realpath` + `startswith(root + os.sep)`
+  form. Runtime behavior is unchanged (traversal still rejected with 400), but
+  CodeQL's path-injection query recognizes the new form as a sanitizer, which
+  it did not for `commonpath`.
+- Bumped aiohttp from 3.13.5 to 3.14.0 in the TTS wrapper lockfile, clearing
+  two advisories (cross-origin redirect with per-request cookies, and
+  deserialization of untrusted data).
+
+## [0.16.1] - 2026-06-02
+
+### Fixed
+
+- Dotted acronyms ("A.I.", "U.S.", "U.S.A.") are collapsed to spaced letters
+  ("A I", "U S", "U S A") before synthesis, since XTTS reads each period as a
+  pause ("A <pause> I"). Applied as the final normalize step so it catches both
+  article text and any dotted correction; the seed's `AI` entry now uses the
+  spaced form too.
+- Home page "recent" section is collapsed by default and remembers its
+  open/closed state across reloads (persisted), instead of resetting each visit.
+
+## [0.16.0] - 2026-06-02
+
+### Added
+
+- Pronunciation corrections moved to a single `lexicon` SQLite table with three
+  tiers: the curated seed list and an optional bundled base lexicon (both
+  read-only), plus editable user rows. Lookup precedence is user > seed > base.
+- Corrections now use a richer schema: `mode` (spell / word / override), a required
+  `spoken` respelling, an optional `ipa`, and a per-entry `case_sensitive` flag
+  (default case-insensitive, so "kubernetes"/"Kubernetes" match one entry).
+- Shared `convert_entry` pipeline (gruut + CMUdict) derives IPA from a respelling
+  and a respelling from IPA, and is applied to seed rows, the offline build, and
+  every user-submitted correction.
+- `GET /api/v1/corrections/export?format=json|pls&scope=user|all` exports the
+  corrections as a JSON dictionary or a W3C PLS lexicon. `GET
+  /api/v1/corrections/lookup?q=` searches the full lexicon.
+- `scripts/build_base_lexicon.py` builds the base-lexicon artifact from all eight
+  external sources (CMUdict, ISLEX, Wiktionary, balacoon abbreviations,
+  WikipediaAbbreviationData, USA + world city names, journalism acronyms) -- ~1.3M
+  entries, shipped gzipped and imported into the read-only rows by a versioned
+  startup sync that runs in a background thread (non-blocking) under the migration
+  lock. Source attributions in `THIRD_PARTY_NOTICES.md`.
+- Optional StyleTTS2 phoneme engine in the TTS wrapper (`TTS_ENGINE=styletts2`),
+  behind the existing engine abstraction with XTTS the default. It honors a
+  per-chunk IPA override map (`pronunciations`) so curated phonemes are used
+  directly. Selected at deploy time; XTTS remains the default and fallback.
+
+### Changed
+
+- Acronym spelling is now deterministic (a normalize pass) rather than relying on
+  the cleanup LLM: unknown all-caps and ticker symbols (e.g. "CRWV") are spelled
+  out, plural acronyms read correctly ("GPUs" -> "G P yoos"), and read-as-word
+  acronyms (NASA) are left alone.
+- Numeric ranges read "to" ("2017 - 2021" -> "2017 to 2021").
+- All twelve months are respelled phonetically (e.g. "February" ->
+  "FEB-roo-air-ee"); capitalized-only matching avoids the "august"/"may"/"march"
+  homographs.
+- The cleanup prompt does broader context disambiguation (9/11 vs 911, Dr./St./No.
+  by context) and the pronunciation prompt reinforces homograph-by-context.
+- Feed page hides the (truncated) feed URL on mobile and keeps the copy button;
+  the URL still shows on wider screens.
+
 ## [0.15.1] - 2026-06-01
 
 ### Fixed

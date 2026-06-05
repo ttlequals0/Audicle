@@ -38,8 +38,9 @@ from app.services import (
     episodes,
     extraction,
     jobs,
+    lexicon,
     llm,
-    seed_corrections,
+    pronounce_convert,
     transcript,
     tts,
 )
@@ -494,21 +495,170 @@ def _strip_code_artifacts(text: str) -> str:
     return _EMPTY_CALL_PARENS_RE.sub("", text)
 
 
+# A numeric range written with a dash reads as "to" ("2017-2021" -> "2017 to
+# 2021", "pages 10-12" -> "pages 10 to 12"). Matches a run of two-or-more numbers
+# joined by hyphen/en-dash/em-dash; the replacement only fires for an exact PAIR
+# so ISO dates ("2024-01-15") and dashed phone chains ("1-800-555-1234") -- three
+# or more numbers -- are left untouched. Word boundaries keep it off hyphenated
+# words (no digits) and code identifiers. Years the LLM already spelled to words
+# are handled by the cleanup prompt, not here; this is the digit-form backstop.
+_RANGE_DASH = "\\s*[-\u2013\u2014]\\s*"  # hyphen, en dash (U+2013), em dash (U+2014)
+_NUM = r"\d{1,4}(?:,\d{3})*(?:\.\d+)?"
+_RANGE_CHAIN_RE = re.compile(rf"(?<![\w.])({_NUM}(?:{_RANGE_DASH}{_NUM})+)(?![\w.])")
+_RANGE_SPLIT_RE = re.compile(_RANGE_DASH)
+
+
+def _normalize_ranges(text: str) -> str:
+    """Replace a numeric ``A-B`` range with ``A to B`` (digit forms only).
+
+    Only a two-number pair is treated as a range; longer dash-number chains
+    (dates, phone numbers) are left unchanged.
+    """
+
+    def repl(match: re.Match[str]) -> str:
+        parts = _RANGE_SPLIT_RE.split(match.group(1))
+        if len(parts) != 2:
+            return match.group(0)
+        return f"{parts[0]} to {parts[1]}"
+
+    return _RANGE_CHAIN_RE.sub(repl, text)
+
+
+# Read-as-word acronyms (and common all-caps English words) the deterministic
+# speller must NOT spell letter-by-letter. Backstop set; the lexicon's word-mode
+# rows (balacoon acronym vocabulary, CMUdict "is it a real word") augment it -- pass
+# the merged set as ``keep`` once the lexicon is wired. Most tech acronyms with a
+# known spoken form (SQL->sequel, GUI->gooey) are already replaced by
+# corrections.apply before this runs, so they never reach here.
+_ACRONYM_KEEP = frozenset(
+    {
+        "NASA", "NATO", "SCUBA", "RADAR", "SONAR", "LASER", "ASCII", "COVID",
+        "AIDS", "NASDAQ", "OPEC", "UNESCO", "UNICEF", "NAFTA", "FIFA", "CAPTCHA",
+        # Common all-caps English words that must read normally, not as letters.
+        "THE", "AND", "FOR", "ARE", "BUT", "NOT", "YOU", "ALL", "ANY", "CAN",
+        "HAD", "HER", "WAS", "ONE", "OUR", "OUT", "DAY", "GET", "HAS", "HIM",
+        "HIS", "HOW", "MAN", "NEW", "NOW", "OLD", "SEE", "TWO", "WHO", "DID",
+        "ITS", "LET", "PUT", "SAY", "SHE", "TOO", "USE", "YES",
+    }
+)
+
+# Spoken plural of each letter name (final letter of a pluralized acronym):
+# "GPUs" -> "G P yoos", "URLs" -> "U R els".
+_LETTER_PLURAL = {
+    "A": "ays", "B": "bees", "C": "cees", "D": "dees", "E": "ees", "F": "effs",
+    "G": "gees", "H": "aitches", "I": "eyes", "J": "jays", "K": "kays", "L": "els",
+    "M": "ems", "N": "ens", "O": "ohs", "P": "pees", "Q": "cues", "R": "ars",
+    "S": "esses", "T": "tees", "U": "yoos", "V": "vees", "W": "double-yoos",
+    "X": "exes", "Y": "wise", "Z": "zees",
+}
+
+# An all-caps acronym: 2+ uppercase letters, optional trailing digits, optional
+# lowercase plural "s". Bounded by non-alphanumerics AND non-hyphen so it never
+# fires inside a word, an already-spaced single letter, or a hyphenated
+# pseudo-phonetic respelling syllable ("FEB-roo-air-ee", "AW-gust") -- those
+# uppercase stress syllables are always hyphen-adjacent. Mixed-case tokens
+# (OAuth, IPv6) don't match -- left to the lexicon.
+_ACRONYM_RE = re.compile(r"(?<![A-Za-z0-9-])([A-Z]{2,}[0-9]*)(s)?(?![A-Za-z0-9-])")
+
+
+# Dotted acronyms ("A.I.", "U.S.", "U.S.A.") -- XTTS reads each period as a pause
+# ("A <pause> I"), so collapse the dots to spaced letters the engine voices cleanly.
+# Uppercase-only (so "e.g."/"i.e." and decimals are untouched); needs 2+ letter-dot
+# pairs so a lone "A." (sentence) doesn't match.
+_DOTTED_ACRONYM_RE = re.compile(r"(?:[A-Z]\.){2,}")
+
+
+def _normalize_dotted_acronyms(text: str) -> str:
+    """Turn "A.I." into "A I" so XTTS doesn't pause on the periods."""
+
+    return _DOTTED_ACRONYM_RE.sub(
+        lambda m: " ".join(ch for ch in m.group(0) if ch.isalpha()), text
+    )
+
+
+def _normalize_acronyms(text: str, keep: frozenset[str] | set[str] = _ACRONYM_KEEP) -> str:
+    """Spell unknown all-caps acronyms letter by letter (digits as words).
+
+    Runs after the corrections dictionary so known spoken forms (SQL -> sequel)
+    win first; this catches the leftovers -- tickers (CRWV), unfamiliar acronyms,
+    and plurals of spelled acronyms (GPUs -> "G P yoos"). ``keep`` lists tokens
+    read as words (NASA) that must not be spelled.
+    """
+
+    def repl(match: re.Match[str]) -> str:
+        core, plural = match.group(1), match.group(2)
+        if core in keep:
+            return match.group(0)
+        tokens: list[str] = []
+        for i, ch in enumerate(core):
+            last = i == len(core) - 1
+            if ch.isdigit():
+                tokens.append(_ONES[int(ch)])
+            elif last and plural:
+                tokens.append(_LETTER_PLURAL[ch])
+            else:
+                tokens.append(ch)
+        spoken = " ".join(tokens)
+        if plural and core[-1].isdigit():  # rare digit-final plural ("MP3s")
+            spoken += "s"
+        return spoken
+
+    return _ACRONYM_RE.sub(repl, text)
+
+
+# Phonetic respellings for all twelve months so XTTS says them correctly
+# (February is the notorious one). Keyed on the CAPITALIZED name and matched
+# case-sensitively: month names are always capitalized in real text, so this
+# dodges the homographs entirely -- lowercase "august" (the adjective, stressed
+# aw-GUST not AW-gust), "may", and "march" are left untouched. February matches
+# the seed's existing respelling.
+_MONTH_RESPELL = {
+    "January": "JAN-yoo-air-ee",
+    "February": "FEB-roo-air-ee",
+    "March": "march",
+    "April": "AY-pril",
+    "May": "may",
+    "June": "joon",
+    "July": "joo-LYE",
+    "August": "AW-gust",
+    "September": "sep-TEM-ber",
+    "October": "ock-TOH-ber",
+    "November": "no-VEM-ber",
+    "December": "dee-SEM-ber",
+}
+_MONTH_RE = re.compile(r"\b(" + "|".join(_MONTH_RESPELL) + r")\b")
+
+
+def _normalize_months(text: str) -> str:
+    """Respell capitalized month names phonetically. Runs after
+    ``_normalize_date_months`` so abbreviations ("Feb") are already full names."""
+
+    return _MONTH_RE.sub(lambda m: _MONTH_RESPELL[m.group(1)], text)
+
+
 def _normalize_for_tts(text: str) -> str:
     """Deterministic fixups for things the cleanup prompt doesn't reliably catch.
 
     One ordered pass so future rules have a single home: strip residual markdown
     heading markers, strip inline-code artifacts (backticks, call-parens, hex),
-    expand date-context month abbreviations, then spell the number shapes XTTS
-    garbles. Runs at the end of cleanup, before the pronunciation dictionary, so
-    e.g. "Feb 3" becomes "February 3" and the corrections dict can then voice it
-    correctly. Code-artifact stripping runs before number spelling so a hex
-    literal is gone before the number pass ever looks at it.
+    expand date-context month abbreviations, turn numeric dash-ranges into "to",
+    then spell the number shapes XTTS garbles. Runs at the end of cleanup, before
+    the pronunciation dictionary, so e.g. "Feb 3" becomes "February 3" and the
+    corrections dict can then voice it correctly. Code-artifact stripping runs
+    before number spelling so a hex literal is gone before the number pass ever
+    looks at it; range expansion runs before number spelling so "1,000-2,000"
+    becomes "1,000 to 2,000" and both grouped numbers are then spelled.
     """
 
     return _normalize_numbers(
         _normalize_currency(
-            _normalize_date_months(_strip_code_artifacts(_strip_heading_markers(text)))
+            _normalize_ranges(
+                _normalize_months(
+                    _normalize_date_months(
+                        _strip_code_artifacts(_strip_heading_markers(text))
+                    )
+                )
+            )
         )
     )
 
@@ -635,12 +785,20 @@ async def _stage_tts(
 
     results: list[tts.GenerateResult] = []
     total = len(chunks)
+    # On the phoneme engine, build each chunk's IPA override map up front in one
+    # connection (rather than reopening the DB per chunk); the XTTS path sends
+    # text only, so the maps stay None.
+    pron_maps: list[dict[str, str] | None] = [None] * len(chunks)
+    if settings.TTS_ENGINE == "styletts2":
+        with database.connection(settings.DATA_DIR) as conn:
+            pron_maps = [lexicon.pronunciations_for(conn, text) for text in chunks]
     for index, text in enumerate(chunks):
         result = await tts.generate_chunk_with_retry(
             text=text,
             episode_id=job.episode_id,
             chunk_index=index,
             settings=settings,
+            pronunciations=pron_maps[index],
         )
         results.append(result)
         _set_progress(job.id, index + 1, total, settings)
@@ -817,49 +975,73 @@ def _coerce_str(value: Any) -> str | None:
     return None
 
 
-async def _apply_corrections(
-    text: str, settings: Settings, user_dict: dict[str, str] | None = None
-) -> str:
+def _apply_base_lexicon(text: str, conn, settings: Settings) -> str:
+    """Aggressive per-token apply of the base lexicon (XTTS path).
+
+    Every plain word is looked up; a ``base`` entry whose respelling differs and
+    clears the confidence gate is applied. user/seed rows already ran via the
+    regex pass, so only ``base`` rows are applied here. No-op when
+    ``LEXICON_AGGRESSIVE`` is off or the base layer is empty.
+    """
+
+    if not settings.LEXICON_AGGRESSIVE:
+        return text
+    cache: dict[str, str] = {}
+
+    def repl(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if token in cache:
+            return cache[token]
+        entry = lexicon.lookup(conn, token)
+        out = token
+        if (
+            entry is not None
+            and entry.origin == "base"
+            and entry.confidence >= pronounce_convert.MIN_XTTS_CONFIDENCE
+            and entry.spoken
+            and entry.spoken != token
+        ):
+            out = entry.spoken
+        cache[token] = out
+        return out
+
+    return lexicon.WORD_TOKEN_RE.sub(repl, text)
+
+
+async def _apply_corrections(text: str, settings: Settings) -> str:
     """Deterministic normalization backstop, run after the LLM pronunciation pass.
 
-    Order: regex fixups (``_normalize_for_tts`` -- headings, code artifacts,
-    dates, currency, numbers), then the seed + user pronunciation dictionary in
-    one pass, then the snake_case identifier sweep. This is the guaranteed
-    coverage layer: anything the LLM pass missed is corrected here.
-
-    Seed and user dictionaries are re-read every call. The user dictionary wins on
-    key collision (``{**seed, **user}``); ``_stage_normalize`` passes it in so it
-    is loaded once per article, but it is loaded here when called directly. A
-    malformed *bundled* seed CSV degrades to user-only rather than failing every
-    job; a malformed *user* file still raises in ``corrections.load`` so the
-    operator fixes their own file.
+    Order: regex fixups (``_normalize_for_tts``), the deterministic acronym
+    speller, the user+seed pronunciation dictionary (longest-key-first regex),
+    the aggressive per-token base-lexicon pass, then the snake_case sweep. All
+    pronunciation data is sourced from the ``lexicon`` table. This is the
+    guaranteed coverage layer: anything the LLM pass missed is corrected here.
+    All pronunciation data is sourced from the ``lexicon`` table.
     """
 
     normalized = _normalize_for_tts(text)
-    if user_dict is None:
-        with database.connection(settings.DATA_DIR) as conn:
-            user_dict = corrections.load_user_dict(conn)
-    try:
-        seed_dict = seed_corrections.load_applicable_dict()
-    except Exception:
-        logger.error(
-            "Seed corrections failed to load; applying user corrections only",
-            extra={"event": "seed_corrections_load_failed"},
-            exc_info=True,
-        )
-        seed_dict = {}
-    merged = {**seed_dict, **user_dict}
-    # Explicit pronunciations first (so "ttyS0" -> "T T Y S 0" wins), then the
-    # generic identifier transform mops up any snake_case/dotted-file token no
-    # rule covered.
-    result = _normalize_identifiers(corrections.apply(normalized, merged))
+    with database.connection(settings.DATA_DIR) as conn:
+        pairs = lexicon.apply_pairs(conn)
+        # Spell unknown all-caps acronyms BEFORE the dictionary so it runs on
+        # source text only -- never on the injected respellings, whose uppercase
+        # stress syllables ("vwee-TOHN", "FEB-roo-air-ee") would otherwise be
+        # letter-spelled. Word-mode rows (NASA) and correction keys join the
+        # keep-set so they are left for the dictionary rather than spelled here.
+        keep = _ACRONYM_KEEP | lexicon.word_keep_set(conn) | set(pairs)
+        spelled = _normalize_acronyms(normalized, keep=keep)
+        # Explicit pronunciations next (so "ttyS0" -> "T T Y S 0" wins), then the
+        # aggressive base-lexicon pass, then the snake_case identifier sweep.
+        applied = corrections.apply(spelled, pairs)
+        applied = _apply_base_lexicon(applied, conn, settings)
+    # Strip periods from dotted acronyms LAST -- catches both article text ("U.S.")
+    # and any dotted respelling a correction injected ("A.I.") -- so XTTS never
+    # pauses mid-acronym.
+    result = _normalize_dotted_acronyms(_normalize_identifiers(applied))
     logger.info(
         "Corrections applied",
         extra={
             "event": "corrections_complete",
-            "entries_user": len(user_dict),
-            "entries_seed_applicable": len(seed_dict),
-            "entries_merged": len(merged),
+            "entries_pairs": len(pairs),
             "delta_chars": len(result) - len(text),
         },
     )
@@ -873,9 +1055,7 @@ async def _apply_corrections(
 _PRONUNCIATION_MIN_RATIO = 0.5
 
 
-async def _pronounce_with_llm(
-    job_id: str, text: str, settings: Settings, user_dict: dict[str, str] | None = None
-) -> str:
+async def _pronounce_with_llm(job_id: str, text: str, settings: Settings) -> str:
     """LLM pronunciation pass: respell terms from the full correction set (seed +
     user dictionary) by context, leaving everything else verbatim.
 
@@ -887,17 +1067,15 @@ async def _pronounce_with_llm(
 
     with database.connection(settings.DATA_DIR) as conn:
         system_prompt = prompt_service.load_effective(conn, "pronunciation")
-        if user_dict is None:
-            user_dict = corrections.load_user_dict(conn)
-    try:
-        reference = seed_corrections.load_reference(user_dict)
-    except Exception:
-        logger.error(
-            "Pronunciation reference failed to load; skipping LLM pass",
-            extra={"event": "pronunciation_reference_load_failed"},
-            exc_info=True,
-        )
-        return text
+        try:
+            reference = lexicon.reference_text(conn)
+        except Exception:
+            logger.error(
+                "Pronunciation reference failed to load; skipping LLM pass",
+                extra={"event": "pronunciation_reference_load_failed"},
+                exc_info=True,
+            )
+            return text
     if not reference:
         return text
     system_prompt = (
@@ -950,12 +1128,8 @@ async def _stage_normalize(job: jobs.Job, cleaned: str, settings: Settings) -> s
     anything the LLM missed.
     """
 
-    # Load the user dictionary once for both the LLM pass and the deterministic
-    # backstop rather than opening a second connection in each.
-    with database.connection(settings.DATA_DIR) as conn:
-        user_dict = corrections.load_user_dict(conn)
-    pronounced = await _pronounce_with_llm(job.id, cleaned, settings, user_dict=user_dict)
-    result = await _apply_corrections(pronounced, settings, user_dict=user_dict)
+    pronounced = await _pronounce_with_llm(job.id, cleaned, settings)
+    result = await _apply_corrections(pronounced, settings)
     logger.info(
         "Normalize stage complete",
         extra={

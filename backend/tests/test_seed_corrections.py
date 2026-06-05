@@ -4,7 +4,7 @@ import csv
 from pathlib import Path
 
 import pytest
-from app.services import corrections, seed_corrections
+from app.services import seed_corrections
 from app.services.seed_corrections import SeedEntry
 
 # The bundled list is expected to grow, so tests derive the row count from the
@@ -81,18 +81,17 @@ def test_pronounce_as_word_acronym_is_applicable() -> None:
     assert entries["SQL"].applicable is True  # 'sequel'
 
 
-def test_ai_is_applicable_and_dotted() -> None:
-    # 'AI' uses the dotted 'A.I.' form (single token, not space-spelled), so the
-    # deterministic backstop applies it on every standalone 'AI' rather than
-    # leaving it to the LLM pass.
+def test_ai_seed_uses_spaced_form_not_dotted() -> None:
+    # 'AI' is spelled with spaces, not periods -- XTTS reads a period as a pause
+    # ("A <pause> I"). Like other all-caps spelled-out rows it is NOT in the
+    # applicable dict (the deterministic acronym speller produces "A I"); it stays
+    # in the seed for the LLM reference.
     entries = _by_input(seed_corrections.load_seed(seed_corrections.seed_path()))
-    assert entries["AI"].replacement_text == "A.I."
-    assert entries["AI"].applicable is True
+    assert entries["AI"].replacement_text == "A I"
+    assert "." not in entries["AI"].replacement_text
+    assert entries["AI"].applicable is False
     applied = seed_corrections.applicable_dict(seed_corrections.load_seed(seed_corrections.seed_path()))
-    assert applied["AI"] == "A.I."
-    assert corrections.apply("The AI model", applied) == "The A.I. model"
-    # Whole-word only: never inside another token.
-    assert corrections.apply("AIR and TRAIN", applied) == "AIR and TRAIN"
+    assert "AI" not in applied
 
 
 def test_mixed_case_spelled_out_token_is_applicable() -> None:
