@@ -1,0 +1,189 @@
+"""Chatterbox (Turbo) engine: zero-shot voice cloning via Resemble AI's
+``chatterbox-tts`` library.
+
+A sibling of :class:`engine.XTTSEngine` behind the same :class:`engine.Engine`
+Protocol, selected with ``TTS_ENGINE=chatterbox``. Replaces the abandoned Coqui
+XTTS-v2 backend. Text-only (no IPA phoneme injection): ``supports_phonemes`` is
+False, so the backend never sends the ``pronunciations`` map -- text-level
+lexicon corrections still apply upstream in the pipeline.
+
+The reference voice is encoded once into the model's conditionals
+(``prepare_conditionals``) at load / ``/reload`` and reused for every chunk, so
+synthesis does not re-read the reference per call. The single-flight
+``_gpu_lock``, OOM mapping, and ``reload_reference`` rollback mirror XTTSEngine
+so the wrapper's 503/500/504 + ``/reload`` behavior is identical.
+
+Imports of ``torch`` and ``chatterbox`` are deferred to :meth:`load` so this
+module is importable in test environments without the GPU runtime.
+
+NOTE: Chatterbox Turbo defaults (exaggeration 0.0, cfg_weight 0.0) are a neutral
+straight read; the CHATTERBOX_* env knobs tune them. Every output carries
+Resemble's inaudible PerTh watermark (no disable flag in the library).
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+import time
+from pathlib import Path
+
+from config import Config
+from engine import (
+    GPUOutOfMemoryError,
+    InferenceBusyError,
+    _split_into_pieces,
+    join_with_silence,
+    pcm16_wav_bytes,
+)
+
+logger = logging.getLogger("tts.chatterbox")
+
+
+class ChatterboxEngine:
+    """Chatterbox Turbo backend with cached reference conditionals."""
+
+    name = "chatterbox"
+    supports_phonemes = False
+
+    def __init__(self, config: Config) -> None:
+        self.config = config
+        self.model_loaded = False
+        self.reference_loaded = False
+        # Provisional rate; replaced with the model's own ``sr`` after load.
+        self.sample_rate = config.sample_rate
+        self.device = config.device
+        self._model = None
+        self._torch = None  # cached torch module reference
+        # Single-flight guard over ALL GPU work (inference and conditional
+        # recompute); an overlapping call is rejected rather than run concurrently.
+        self._gpu_lock = threading.Lock()
+
+    def load(self) -> None:
+        import torch  # noqa: PLC0415  (intentional lazy import)
+        from chatterbox.tts_turbo import ChatterboxTurboTTS  # noqa: PLC0415
+
+        self._torch = torch
+        device = self.config.device
+        logger.info(
+            "Loading Chatterbox Turbo model",
+            extra={"event": "tts_model_loading", "device": device},
+        )
+        load_started = time.perf_counter()
+        self._model = ChatterboxTurboTTS.from_pretrained(device=device)
+        # Trust the model's native output rate (24 kHz) over the config default.
+        self.sample_rate = int(self._model.sr)
+        self.model_loaded = True
+        logger.info(
+            "Chatterbox Turbo model loaded",
+            extra={
+                "event": "tts_model_loaded",
+                "device": device,
+                "sample_rate": self.sample_rate,
+                "load_ms": int((time.perf_counter() - load_started) * 1000),
+            },
+        )
+
+        # Reference voice is optional at startup (operator uploads via the UI,
+        # which writes voice.wav and calls /reload). A missing OR unreadable clip
+        # just leaves reference_loaded=false and /generate returning 503 -- the
+        # wrapper stays up so the operator can upload a good clip.
+        ref_path = Path(self.config.reference_path)
+        if not ref_path.exists():
+            logger.warning(
+                "No reference voice yet; upload one via the UI. /generate is "
+                "unavailable until a voice is committed.",
+                extra={"event": "tts_reference_missing", "path": str(ref_path)},
+            )
+            return
+        try:
+            self._prepare_reference(ref_path)
+        except Exception:
+            logger.warning(
+                "Reference voice present but could not be decoded; ignoring it. "
+                "Upload a valid clip via the UI. /generate is unavailable until a "
+                "usable voice is committed.",
+                extra={"event": "tts_reference_invalid", "path": str(ref_path)},
+                exc_info=True,
+            )
+
+    def _prepare_reference(self, ref_path: Path) -> None:
+        assert self._model is not None
+        # Encoding the reference is GPU work too: reject if an inference (possibly
+        # an orphaned post-timeout thread) is still on the device, so /reload
+        # can't run concurrently with it. Uncontended at startup (load()).
+        if not self._gpu_lock.acquire(blocking=False):
+            raise InferenceBusyError("an inference is already running on this wrapper")
+        try:
+            logger.info(
+                "Encoding reference conditionals",
+                extra={"event": "tts_embeddings_compute", "reference": str(ref_path)},
+            )
+            # exaggeration is baked into the conditionals on the cached-conds path,
+            # so set it here (not just in generate). 0.0 == neutral straight read.
+            self._model.prepare_conditionals(
+                str(ref_path), exaggeration=self.config.chatterbox_exaggeration
+            )
+            self.reference_loaded = True
+        finally:
+            self._gpu_lock.release()
+
+    async def reload_reference(self) -> None:
+        import asyncio  # noqa: PLC0415
+
+        ref_path = Path(self.config.reference_path)
+        if not ref_path.exists():
+            raise FileNotFoundError(f"reference voice not found at {ref_path}")
+        # prepare_conditionals only swaps model.conds on success, so a failed
+        # recompute leaves the prior voice in place; we just roll the flag back.
+        previous_loaded = self.reference_loaded
+        self.reference_loaded = False
+        try:
+            await asyncio.to_thread(self._prepare_reference, ref_path)
+        except Exception:
+            self.reference_loaded = previous_loaded
+            raise
+
+    async def synthesize(self, text: str, pronunciations: dict[str, str] | None = None) -> bytes:
+        import asyncio  # noqa: PLC0415
+
+        _ = pronunciations  # Chatterbox is text-only; no phoneme-injection path
+        assert self._model is not None
+        assert self._torch is not None
+        try:
+            wav_array = await asyncio.to_thread(self._run_inference, text)
+        except self._torch.cuda.OutOfMemoryError as exc:
+            self._torch.cuda.empty_cache()
+            raise GPUOutOfMemoryError(str(exc)) from exc
+        return pcm16_wav_bytes(wav_array, self.sample_rate)
+
+    def _run_inference(self, text: str):
+        import numpy as np  # noqa: PLC0415  (lazy: numpy comes from torch's wheel)
+
+        assert self._model is not None
+        # Reject an overlapping GPU operation rather than running it concurrently.
+        if not self._gpu_lock.acquire(blocking=False):
+            raise InferenceBusyError("an inference is already running on this wrapper")
+        try:
+            # Chatterbox truncates long input rather than chunking, so split into
+            # speakable pieces under the cap and concatenate, like XTTS.
+            pieces = _split_into_pieces(text, self.config.max_chars)
+            if not pieces:
+                return np.zeros(int(self.sample_rate * 0.05), dtype=np.float32)
+            wavs = [np.asarray(self._infer_piece(piece), dtype=np.float32) for piece in pieces]
+            return join_with_silence(wavs, self.sample_rate)
+        finally:
+            self._gpu_lock.release()
+
+    def _infer_piece(self, text: str):
+        assert self._model is not None
+        # No audio_prompt_path -> reuse the conditionals cached by
+        # prepare_conditionals (the per-chunk performance win).
+        wav = self._model.generate(
+            text,
+            exaggeration=self.config.chatterbox_exaggeration,
+            cfg_weight=self.config.chatterbox_cfg_weight,
+            temperature=self.config.chatterbox_temperature,
+        )
+        # generate returns a torch.Tensor (1, N) float32 in [-1, 1].
+        return wav.squeeze(0).detach().cpu().numpy()

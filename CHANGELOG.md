@@ -6,6 +6,59 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-06-05
+
+### Fixed
+
+- Chatterbox wrapper crash-looped on model load (`perth.PerthImplicitWatermarker`
+  was `None` -> `TypeError`). The image's security upgrade pulled setuptools 82,
+  which removed the bundled `pkg_resources` that `resemble-perth` imports. Capped
+  setuptools to `>=78.1.1,<81` in `install_engine.sh` (keeps the CVE-2025-47273
+  fix, restores `pkg_resources`). 0.17.0 never ran; 0.17.1 is the first working
+  Chatterbox build.
+
+## [0.17.0] - 2026-06-04
+
+### Added
+
+- Chatterbox (Resemble AI) TTS engine in the wrapper (`TTS_ENGINE=chatterbox`),
+  behind the existing engine abstraction and now the default backend. Uses the
+  `chatterbox-tts` Turbo model for zero-shot voice cloning; the reference voice
+  is encoded once into the model conditionals and reused per chunk. Neutral
+  straight-read defaults, tunable via `CHATTERBOX_EXAGGERATION` /
+  `CHATTERBOX_CFG_WEIGHT` / `CHATTERBOX_TEMPERATURE`.
+
+### Changed
+
+- Default TTS engine moves from Coqui XTTS-v2 to Chatterbox. Coqui shut down and
+  XTTS-v2 is no longer maintained; XTTS and StyleTTS2 remain selectable engines
+  for fallback. The HTTP contract (`/generate`, `/reload`, `/health`), the
+  pipeline, and the reference-voice flow are unchanged -- only the wrapper's
+  inference engine swaps.
+- Wrapper dependencies restructured so each engine is a mutually-exclusive
+  optional extra (`xtts` / `styletts2` / `chatterbox`), selected at build time
+  via the Dockerfile `TTS_BACKEND` arg (replaces `INSTALL_STYLETTS2`). The
+  engines cannot share an image because their pinned transformers versions
+  conflict (chatterbox needs 5.2.0, coqui needs <4.49).
+- Wrapper healthcheck `start_period` raised to 300s to cover the first-boot model
+  download from HuggingFace.
+
+### Notes
+
+- Chatterbox embeds Resemble's inaudible PerTh watermark in all output; there is
+  no flag to disable it.
+
+### Security
+
+- The wrapper's `chatterbox` backend pulls `diffusers==0.29.0` transitively
+  (chatterbox-tts pins it), which carries two HIGH advisories, CVE-2026-44513 and
+  CVE-2026-45804, both `trust_remote_code` / TOCTOU remote-code-load bypasses
+  fixed only in diffusers 0.38.0. The path is not reachable here: chatterbox
+  imports diffusers only for its flow-matching decoder and never calls
+  `trust_remote_code`, and the wrapper loads only the trusted Chatterbox weights.
+  Accepted as an unavoidable transitive pin, same as the existing transformers
+  advisories. Revisit when chatterbox-tts bumps diffusers.
+
 ## [0.16.2] - 2026-06-03
 
 ### Security

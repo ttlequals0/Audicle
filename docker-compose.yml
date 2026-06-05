@@ -55,10 +55,18 @@ services:
     # ttlequals0/audicle-tts:*-cpu image and set TTS_DEVICE=cpu (5-10x slower).
     image: ttlequals0/audicle-tts:latest
     environment:
+      # Engine: chatterbox (default) | xtts | styletts2. Must match the image's
+      # build-arg TTS_BACKEND -- each engine is installed into its own image.
+      - TTS_ENGINE=${TTS_ENGINE:-chatterbox}
       - TTS_DEVICE=${TTS_DEVICE:-cuda}
       - TTS_LANGUAGE=${TTS_LANGUAGE:-en}
       - DATA_DIR=/data
       - TTS_REFERENCE_PATH=/app/reference/voice.wav
+      # Chatterbox generate knobs; defaults are a neutral straight read.
+      - CHATTERBOX_EXAGGERATION=${CHATTERBOX_EXAGGERATION:-0.0}
+      - CHATTERBOX_CFG_WEIGHT=${CHATTERBOX_CFG_WEIGHT:-0.0}
+      - CHATTERBOX_TEMPERATURE=${CHATTERBOX_TEMPERATURE:-0.8}
+      # XTTS knobs; used only when TTS_ENGINE=xtts.
       - XTTS_TEMPERATURE=${XTTS_TEMPERATURE:-0.65}
       - XTTS_LENGTH_PENALTY=${XTTS_LENGTH_PENALTY:-1.0}
       - XTTS_REPETITION_PENALTY=${XTTS_REPETITION_PENALTY:-2.0}
@@ -70,10 +78,10 @@ services:
       # UI upload) and the wrapper reloads it. No voice yet just means /generate
       # is unavailable until one is committed.
       - ./backend/app/reference:/app/reference:ro
-      # ~2 GB of XTTS-v2 weights download on first run. HF_HOME/TTS_HOME point
-      # at /data/hf_cache and /data/tts_home (see the wrapper Dockerfile), so
-      # the ./data bind mount above already persists them across recreation --
-      # no separate cache volume needed.
+      # Multi-GB model weights download on first run (Chatterbox from HuggingFace).
+      # HF_HOME/TTS_HOME point at /data/hf_cache and /data/tts_home (see the
+      # wrapper Dockerfile), so the ./data bind mount above already persists them
+      # across recreation -- no separate cache volume needed.
     deploy:
       resources:
         reservations:
@@ -88,7 +96,8 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 120s
+      # Generous: first boot downloads multi-GB model weights before loading.
+      start_period: 300s
     restart: unless-stopped
     # Match the app service security posture: no-new-privileges + cap_drop.
     # The nvidia runtime grants device access via the deploy.resources block,

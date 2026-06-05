@@ -16,15 +16,13 @@ behind the engine flag (XTTS stays the default).
 
 from __future__ import annotations
 
-import io
 import logging
 import re
 import threading
-import wave
 from pathlib import Path
 
 from config import Config
-from engine import GPUOutOfMemoryError, InferenceBusyError
+from engine import GPUOutOfMemoryError, InferenceBusyError, join_with_silence, pcm16_wav_bytes
 
 logger = logging.getLogger("tts.style_engine")
 
@@ -147,13 +145,7 @@ class StyleTTS2Engine:
             for piece in pieces:
                 phonemes = inject_phonemes(piece, pronunciations, self._phonemize)
                 wavs.append(np.asarray(self._infer_piece(phonemes), dtype=np.float32))
-            if len(wavs) == 1:
-                return wavs[0]
-            gap = np.zeros(int(self.sample_rate * 0.12), dtype=np.float32)
-            joined: list = [wavs[0]]
-            for wav in wavs[1:]:
-                joined += [gap, wav]
-            return np.concatenate(joined)
+            return join_with_silence(wavs, self.sample_rate)
         finally:
             self._gpu_lock.release()
 
@@ -189,14 +181,4 @@ class StyleTTS2Engine:
         raise RuntimeError(f"no styletts2 inference signature matched: {last_exc}")
 
     def _wav_bytes(self, wav_array) -> bytes:
-        import numpy as np  # noqa: PLC0415
-
-        clamped = np.clip(wav_array, -1.0, 1.0)
-        int16 = (clamped * 32767.0).astype(np.int16)
-        buf = io.BytesIO()
-        with wave.open(buf, "wb") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(self.sample_rate)
-            wf.writeframes(int16.tobytes())
-        return buf.getvalue()
+        return pcm16_wav_bytes(wav_array, self.sample_rate)

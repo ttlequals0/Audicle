@@ -1,40 +1,56 @@
 [project]
 name = "audicle-tts-wrapper"
-version = "0.16.2"
-description = "FastAPI wrapper around Coqui XTTS-v2 for Audicle."
+version = "0.17.1"
+description = "FastAPI TTS wrapper for Audicle (Chatterbox / XTTS-v2 / StyleTTS2)."
 requires-python = ">=3.11,<3.13"
-# 3.11 lower bound: torch wheels for XTTS-v2 lag the latest Python release.
-# 3.13 upper bound: same constraint -- bump once the idiap fork ships 3.13.
-# (Backend pyproject pins >=3.13; two Python versions in one repo is the
-# pragmatic compromise. Each package has its own venv.)
+# 3.11 lower bound: torch wheels for the TTS engines lag the latest Python.
+# 3.13 upper bound: chatterbox-tts caps numpy<2 below 3.13, and coqui's torch
+# wheels lag too. (Backend pyproject pins >=3.13; two Python versions in one repo
+# is the pragmatic compromise. Each package has its own venv.)
 license = { text = "MPL-2.0" }
 authors = [{ name = "ttlequals0" }]
 
-# Upper bounds on coqui-tts: the wrapper reaches into
-# ``model.synthesizer.tts_model.get_conditioning_latents`` and ``.inference``,
-# which are Coqui internals not covered by semver. Pin to a tested range and
-# bump deliberately.
+# Core deps are engine-agnostic: the FastAPI wrapper, validation, and numpy for
+# WAV encoding. Each TTS engine is an optional extra (below) so the dev/test
+# environment and each image install only the one backend they need.
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "pydantic>=2.9",
     "numpy>=1.26,<3.0",
-    "coqui-tts>=0.24,<0.25",
 ]
 
-# Optional StyleTTS2 phoneme engine (TTS_ENGINE=styletts2). Kept out of the default
-# deps so the XTTS image stays lean; installed in the image via a build arg. gruut
-# (MIT) is the IPA phonemizer; styletts2 is the zero-shot clone model.
+# One optional extra per engine, installed into its image via a build arg
+# (Dockerfile TTS_BACKEND) and selected at runtime via TTS_ENGINE. They are
+# MUTUALLY EXCLUSIVE: chatterbox-tts pins transformers==5.2.0 while coqui-tts
+# needs <4.49 at runtime, so never install more than one engine extra in one
+# image.
+#
+# xtts: the wrapper reaches into ``model.synthesizer.tts_model``
+# get_conditioning_latents/inference (Coqui internals not covered by semver), so
+# pin a tested range and bump deliberately. NOTE: Coqui shut down; this engine is
+# retained for fallback/tests, with chatterbox the default going forward.
+# styletts2: gruut (MIT) is the IPA phonemizer; styletts2 is the clone model.
+# chatterbox: Resemble AI's actively maintained zero-shot clone model (Turbo).
 [project.optional-dependencies]
+xtts = ["coqui-tts>=0.24,<0.25"]
 styletts2 = [
     "styletts2>=0.1",
     "gruut[en]>=2.4",
 ]
+chatterbox = ["chatterbox-tts>=0.1.7"]
+# NOTE: chatterbox-tts pins ``diffusers==0.29.0`` transitively, which carries two
+# HIGH advisories (CVE-2026-44513, CVE-2026-45804) -- both ``trust_remote_code`` /
+# TOCTOU remote-code-load bypasses, fixed only in diffusers 0.38.0. Not reachable
+# here: chatterbox imports diffusers only for its flow-matching decoder and never
+# uses ``trust_remote_code``, and the wrapper loads only the trusted Chatterbox
+# weights. Cannot bump diffusers without overriding chatterbox's pin; revisit when
+# chatterbox-tts ships a release that moves off 0.29.0.
 # NOTE: coqui-tts 0.24 declares ``transformers>=4.43.0`` with no upper bound, so
 # a fresh resolve pulls transformers 5.x whose lazy-import API coqui can't use
 # (ModuleNotFoundError: GPT2PreTrainedModel at XTTS import). The required cap
-# (``transformers<4.47``) is applied at install time in the Dockerfiles rather
-# than here: pinning it in the manifest would surface coqui's transitive
+# (``transformers>=4.48.0,<4.49``) is applied at install time in install_engine.sh
+# rather than here: pinning it in the manifest would surface coqui's transitive
 # transformers as a direct dependency to dependency-review, which flags HIGH
 # advisories on the only transformers line coqui works with. The advisories
 # concern untrusted-model deserialization; the wrapper only loads the trusted
@@ -50,7 +66,7 @@ build-backend = "setuptools.build_meta"
 # multiple top-level modules, which breaks ``pip install .`` on a current
 # Python base image (older bases shipped a lenient setuptools that hid this).
 [tool.setuptools]
-py-modules = ["config", "engine", "main", "style_engine"]
+py-modules = ["config", "engine", "main", "style_engine", "chatterbox_engine"]
 
 [dependency-groups]
 dev = [

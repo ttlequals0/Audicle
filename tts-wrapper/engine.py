@@ -21,17 +21,17 @@ from config import Config
 
 logger = logging.getLogger("tts.engine")
 
-# XTTS-v2 can only synthesize ~400 tokens per inference() call and its tokenizer
-# warns above 250 chars for English. We split incoming text into pieces under
-# this budget and concatenate the audio, so the wrapper never 500s on a long
-# chunk regardless of how the backend chunked it. The runtime cap comes from
-# Config.max_chars (env XTTS_MAX_CHARS); this constant is the fallback default.
-_XTTS_MAX_CHARS = 200
+# Most TTS models cap how much they synthesize per call (XTTS-v2 ~400 tokens and
+# warns above 250 chars; Chatterbox truncates long input). We split incoming text
+# into pieces under a char budget and concatenate the audio, so the wrapper never
+# 500s/truncates on a long chunk regardless of how the backend chunked it. The
+# runtime cap comes from Config.max_chars; this constant is the fallback default.
+_DEFAULT_MAX_CHARS = 200
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
 
-def _split_for_xtts(text: str, max_chars: int = _XTTS_MAX_CHARS) -> list[str]:
-    """Split ``text`` into pieces each <= ``max_chars`` (XTTS-safe).
+def _split_into_pieces(text: str, max_chars: int = _DEFAULT_MAX_CHARS) -> list[str]:
+    """Split ``text`` into pieces each <= ``max_chars``.
 
     Sentence boundaries first; an oversize sentence is cut at the last space
     before the cap (a hard cut only if a single token exceeds the cap).
@@ -50,6 +50,44 @@ def _split_for_xtts(text: str, max_chars: int = _XTTS_MAX_CHARS) -> list[str]:
         if sentence:
             pieces.append(sentence)
     return pieces
+
+
+def pcm16_wav_bytes(wav_array, sample_rate: int) -> bytes:
+    """Encode a 1D float32 array in [-1, 1] as 16-bit PCM mono WAV bytes.
+
+    Shared by every engine so the on-disk WAV format is identical regardless of
+    which model produced the samples.
+    """
+
+    import numpy as np  # noqa: PLC0415  (lazy: numpy comes from torch's wheel)
+
+    clamped = np.clip(wav_array, -1.0, 1.0)
+    int16 = (clamped * 32767.0).astype(np.int16)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)  # 16-bit
+        wf.setframerate(sample_rate)
+        wf.writeframes(int16.tobytes())
+    return buf.getvalue()
+
+
+def join_with_silence(wavs, sample_rate: int, gap_secs: float = 0.12):
+    """Concatenate float32 audio pieces separated by a short silence gap.
+
+    Assumes a non-empty list (callers return silence for empty text first). The
+    gap keeps sentence pieces from slurring together when a chunk was split.
+    """
+
+    import numpy as np  # noqa: PLC0415  (lazy: numpy comes from torch's wheel)
+
+    if len(wavs) == 1:
+        return wavs[0]
+    gap = np.zeros(int(sample_rate * gap_secs), dtype=np.float32)
+    joined: list = [wavs[0]]
+    for wav in wavs[1:]:
+        joined += [gap, wav]
+    return np.concatenate(joined)
 
 
 class GPUOutOfMemoryError(RuntimeError):
@@ -80,7 +118,7 @@ class Engine(Protocol):
     reference_loaded: bool
     sample_rate: int
     device: str
-    name: str  # "xtts" | "styletts2"
+    name: str  # "xtts" | "styletts2" | "chatterbox"
     supports_phonemes: bool  # True if synthesize honors the pronunciations map
 
     def load(self) -> None:
@@ -298,22 +336,15 @@ class XTTSEngine:
         if not self._gpu_lock.acquire(blocking=False):
             raise InferenceBusyError("an inference is already running on this wrapper")
         try:
-            # _split_for_xtts only returns non-empty pieces; an empty list means
+            # _split_into_pieces only returns non-empty pieces; an empty list means
             # the text had no speakable content (e.g. a whitespace-only chunk).
             # Return a short silence instead of feeding "" to XTTS, which crashes
             # inference.
-            pieces = _split_for_xtts(text, self.config.max_chars)
+            pieces = _split_into_pieces(text, self.config.max_chars)
             if not pieces:
                 return np.zeros(int(self.sample_rate * 0.05), dtype=np.float32)
             wavs = [np.asarray(self._infer_piece(piece), dtype=np.float32) for piece in pieces]
-            if len(wavs) == 1:
-                return wavs[0]
-            # Join sentence pieces with a short silence so they don't slur together.
-            gap = np.zeros(int(self.sample_rate * 0.12), dtype=np.float32)
-            joined: list = [wavs[0]]
-            for wav in wavs[1:]:
-                joined += [gap, wav]
-            return np.concatenate(joined)
+            return join_with_silence(wavs, self.sample_rate)
         finally:
             self._gpu_lock.release()
 
@@ -335,16 +366,4 @@ class XTTSEngine:
     def _wav_bytes(self, wav_array) -> bytes:
         """Encode a 1D float32 array as WAV bytes at the configured sample rate."""
 
-        import numpy as np  # noqa: PLC0415  (lazy: numpy comes from torch's wheel)
-
-        # XTTS returns float in [-1, 1]; convert to int16 PCM.
-        clamped = np.clip(wav_array, -1.0, 1.0)
-        int16 = (clamped * 32767.0).astype(np.int16)
-
-        buf = io.BytesIO()
-        with wave.open(buf, "wb") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)  # 16-bit
-            wf.setframerate(self.sample_rate)
-            wf.writeframes(int16.tobytes())
-        return buf.getvalue()
+        return pcm16_wav_bytes(wav_array, self.sample_rate)
