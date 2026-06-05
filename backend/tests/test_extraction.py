@@ -167,6 +167,49 @@ async def test_extract_rejects_short_markdown(env: Path, monkeypatch: pytest.Mon
         await extraction.extract("https://example.test/article", get_settings())
 
 
+_MEDIUM_URL = "https://wesbrown18.medium.com/the-post-abc123"
+
+
+async def test_extract_medium_falls_back_to_freedium(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Direct Medium scrape returns a teaser (clears the 500 global floor but below
+    # the medium rule's 3000 bar); the first Freedium candidate returns the body.
+    transport = _stub_transport(_ok_response("teaser " * 100), _ok_response("body " * 1000))
+    _patch_async_client(monkeypatch, transport)
+
+    result = await extraction.extract(_MEDIUM_URL, get_settings())
+    assert result.markdown.startswith("body ")
+
+
+async def test_extract_medium_uses_mirror_when_first_fallback_short(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport = _stub_transport(
+        _ok_response("teaser " * 100),  # direct: short
+        _ok_response("teaser " * 100),  # freedium.cfd: still short
+        _ok_response("body " * 1000),  # freedium-mirror.cfd: full
+    )
+    _patch_async_client(monkeypatch, transport)
+
+    result = await extraction.extract(_MEDIUM_URL, get_settings())
+    assert result.markdown.startswith("body ")
+
+
+async def test_extract_medium_fallback_disabled_returns_direct(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # With fallbacks off, the rule is ignored: a teaser above the 500 global floor
+    # is returned as-is (one HTTP call, no Freedium retry).
+    monkeypatch.setenv("EXTRACTION_FALLBACKS_ENABLED", "false")
+    get_settings.cache_clear()
+    transport = _stub_transport(_ok_response("teaser " * 100))
+    _patch_async_client(monkeypatch, transport)
+
+    result = await extraction.extract(_MEDIUM_URL, get_settings())
+    assert result.markdown.startswith("teaser ")
+
+
 async def test_extract_rejects_success_false(
     env: Path, monkeypatch: pytest.MonkeyPatch, fast_backoff
 ) -> None:

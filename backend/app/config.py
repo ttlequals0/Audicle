@@ -90,6 +90,10 @@ class Settings(BaseSettings):
     FIRECRAWL_TIMEOUT_SECONDS: int = 30
     MIN_EXTRACTION_CHARS: int = 500
     MIN_CLEANUP_CHARS: int = 200
+    # When a direct scrape of a known paywall/JS-gated host (see source_fallbacks)
+    # comes back below that source's bar, retry via a reader-proxy rewrite (e.g.
+    # Medium -> Freedium). False disables fallbacks (direct scrapes only).
+    EXTRACTION_FALLBACKS_ENABLED: bool = True
     # Firecrawl scrape filtering so chrome (nav, cookie banners, footers) is
     # dropped before the LLM ever sees it. onlyMainContent is Firecrawl's
     # main-article heuristic; excludeTags drops elements by tag/selector.
