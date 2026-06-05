@@ -6,6 +6,27 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-06-05
+
+### Added
+
+- Source-specific extraction fallbacks: when a direct Firecrawl scrape of a known
+  paywall/JS-gated host comes back below that source's bar, the extractor retries
+  against a reader-proxy rewrite of the URL. Ships with a Medium rule (retries via
+  `freedium.cfd`, then the `freedium-mirror.cfd` mirror), since a direct Medium
+  scrape returns only a paywalled teaser. Rules live in
+  `backend/app/services/source_fallbacks.py` as a plain-data registry -- a new
+  problem source is a one-line entry (host suffixes, reader-proxy URL templates,
+  per-source `min_chars`). Gated by `EXTRACTION_FALLBACKS_ENABLED` (default on);
+  disabling reverts to direct scrapes only.
+
+### Notes
+
+- Freedium circumvents Medium's paywall (Medium ToS) and is a third-party service
+  that can be unavailable; the mirror is tried as a fallback, and a failed chain
+  surfaces the original too-short result. Self-hosted Firecrawl has no stealth/
+  anti-bot engine, so this reader-proxy rewrite is the reliable path for Medium.
+
 ## [0.17.1] - 2026-06-05
 
 ### Fixed

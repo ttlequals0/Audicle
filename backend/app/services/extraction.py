@@ -21,6 +21,7 @@ from tenacity import (
 )
 
 from app.config import Settings
+from app.services.source_fallbacks import candidate_urls, match
 
 logger = logging.getLogger("app.services.extraction")
 
@@ -47,27 +48,31 @@ class ExtractionPermanentError(ExtractionError):
 
 
 class ExtractionTooShortError(ExtractionPermanentError):
-    """Markdown returned was below ``MIN_EXTRACTION_CHARS``."""
+    """No scrape (direct or fallback) cleared the minimum length.
+
+    The floor is ``MIN_EXTRACTION_CHARS`` by default, or a source-specific
+    ``min_chars`` when a ``source_fallbacks`` rule matched the host.
+    """
 
 
 async def extract(url: str, settings: Settings) -> ExtractionResult:
     """Scrape ``url`` via Firecrawl and validate the result.
 
+    For hosts with a known paywall/JS gate (see ``source_fallbacks``), a direct
+    scrape that comes back below the source's ``min_chars`` is retried against a
+    reader-proxy rewrite (e.g. Medium -> Freedium) before giving up.
+
     Raises:
         ExtractionTransientError: every retry exhausted on a retryable failure.
         ExtractionPermanentError: 4xx, malformed JSON, or other non-retryable.
-        ExtractionTooShortError: response shorter than ``MIN_EXTRACTION_CHARS``.
+        ExtractionTooShortError: no candidate cleared the minimum length.
     """
 
-    endpoint = f"{settings.FIRECRAWL_URL.rstrip('/')}/v1/scrape"
-    payload: dict[str, Any] = {
-        "url": url,
-        "formats": ["markdown"],
-        "onlyMainContent": settings.FIRECRAWL_ONLY_MAIN_CONTENT,
-        "removeBase64Images": settings.FIRECRAWL_REMOVE_BASE64_IMAGES,
-    }
-    if settings.firecrawl_exclude_tags:
-        payload["excludeTags"] = settings.firecrawl_exclude_tags
+    # A matched rule raises the bar (teasers clear the global floor) and supplies
+    # the reader-proxy rewrites. Disabling the feature reverts to plain behavior.
+    rule = match(url) if settings.EXTRACTION_FALLBACKS_ENABLED else None
+    floor = rule.min_chars if rule else settings.MIN_EXTRACTION_CHARS
+
     timeout = httpx.Timeout(settings.FIRECRAWL_TIMEOUT_SECONDS)
     # Bearer auth only when a key is configured; an open self-hosted Firecrawl
     # sends no Authorization header.
@@ -78,13 +83,67 @@ async def extract(url: str, settings: Settings) -> ExtractionResult:
     )
 
     async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
-        try:
-            response = await _post_with_retry(client, endpoint, payload, settings)
-        except RetryError as exc:
-            inner = exc.last_attempt.exception()
-            if isinstance(inner, ExtractionError):
-                raise inner from exc
-            raise ExtractionTransientError(f"Firecrawl retries exhausted: {inner}") from exc
+        result = await _scrape(client, url, settings)
+        if len(result.markdown) >= floor:
+            return result
+
+        # Direct scrape too short for this source: try reader-proxy fallbacks.
+        if rule is not None:
+            for label, candidate in candidate_urls(rule, url):
+                try:
+                    alt = await _scrape(client, candidate, settings)
+                except ExtractionError as exc:
+                    logger.warning(
+                        "Extraction fallback attempt failed",
+                        extra={
+                            "event": "extraction_fallback_failed",
+                            "fallback": label,
+                            "error": str(exc),
+                        },
+                    )
+                    continue
+                if len(alt.markdown) >= floor:
+                    logger.info(
+                        "Extraction fallback succeeded",
+                        extra={
+                            "event": "extraction_fallback_used",
+                            "fallback": label,
+                            "primary_chars": len(result.markdown),
+                            "markdown_chars": len(alt.markdown),
+                        },
+                    )
+                    return alt
+
+    floor_desc = f"min_chars={floor} for {rule.name}" if rule else f"MIN_EXTRACTION_CHARS={floor}"
+    raise ExtractionTooShortError(
+        f"Extracted markdown is {len(result.markdown)} chars, below {floor_desc}"
+    )
+
+
+def _build_payload(url: str, settings: Settings) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "url": url,
+        "formats": ["markdown"],
+        "onlyMainContent": settings.FIRECRAWL_ONLY_MAIN_CONTENT,
+        "removeBase64Images": settings.FIRECRAWL_REMOVE_BASE64_IMAGES,
+    }
+    if settings.firecrawl_exclude_tags:
+        payload["excludeTags"] = settings.firecrawl_exclude_tags
+    return payload
+
+
+async def _scrape(client: httpx.AsyncClient, url: str, settings: Settings) -> ExtractionResult:
+    """One scrape (with retries) -> ExtractionResult. Length is validated by the caller."""
+
+    endpoint = f"{settings.FIRECRAWL_URL.rstrip('/')}/v1/scrape"
+    payload = _build_payload(url, settings)
+    try:
+        response = await _post_with_retry(client, endpoint, payload, settings)
+    except RetryError as exc:
+        inner = exc.last_attempt.exception()
+        if isinstance(inner, ExtractionError):
+            raise inner from exc
+        raise ExtractionTransientError(f"Firecrawl retries exhausted: {inner}") from exc
 
     body = _parse_response(response, url)
     data = body.get("data") or {}
@@ -96,13 +155,6 @@ async def extract(url: str, settings: Settings) -> ExtractionResult:
     metadata = data.get("metadata") or {}
     if not isinstance(metadata, dict):
         metadata = {}
-
-    if len(markdown) < settings.MIN_EXTRACTION_CHARS:
-        raise ExtractionTooShortError(
-            f"Extracted markdown is {len(markdown)} chars, "
-            f"below MIN_EXTRACTION_CHARS={settings.MIN_EXTRACTION_CHARS}"
-        )
-
     return ExtractionResult(markdown=markdown, metadata=metadata)
 
 

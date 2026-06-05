@@ -1,6 +1,6 @@
 [project]
 name = "audicle-tts-wrapper"
-version = "0.17.1"
+version = "0.18.0"
 description = "FastAPI TTS wrapper for Audicle (Chatterbox / XTTS-v2 / StyleTTS2)."
 requires-python = ">=3.11,<3.13"
 # 3.11 lower bound: torch wheels for the TTS engines lag the latest Python.
