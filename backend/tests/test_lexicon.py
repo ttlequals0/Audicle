@@ -17,7 +17,7 @@ def test_migration_creates_table_and_imports_seed(env: Path) -> None:
         assert feb is not None
         assert feb.origin == "seed"
         assert feb.read_only is True
-        assert feb.spoken == "FEB-roo-air-ee"
+        assert feb.spoken == "feb-roo-air-ee"  # lowercased for Chatterbox
 
 
 def test_migration_imports_legacy_user_dict(env: Path) -> None:
@@ -88,7 +88,9 @@ def test_sync_base_artifact_imports_and_gates_on_version(env: Path, tmp_path: Pa
     with database.connection(env) as conn:
         lexicon.replace_user_entries(conn, {"Keepme": {"mode": "override", "spoken": "keep"}})
         assert lexicon.sync_base_artifact(conn, artifact, "v1") is True
-        assert lexicon.lookup(conn, "Qatar").spoken == "KUH-tar"
+        # Nguyen is base-only (Qatar now also ships in the seed, which would
+        # shadow the base row), so this cleanly verifies the base import.
+        assert lexicon.lookup(conn, "Nguyen").spoken == "win"
         # Same version -> no re-import.
         assert lexicon.sync_base_artifact(conn, artifact, "v1") is False
         # User rows survive the import.

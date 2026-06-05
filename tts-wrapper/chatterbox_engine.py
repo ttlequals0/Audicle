@@ -144,20 +144,22 @@ class ChatterboxEngine:
             self.reference_loaded = previous_loaded
             raise
 
-    async def synthesize(self, text: str, pronunciations: dict[str, str] | None = None) -> bytes:
+    async def synthesize(
+        self, text: str, pronunciations: dict[str, str] | None = None, seed: int | None = None
+    ) -> bytes:
         import asyncio  # noqa: PLC0415
 
         _ = pronunciations  # Chatterbox is text-only; no phoneme-injection path
         assert self._model is not None
         assert self._torch is not None
         try:
-            wav_array = await asyncio.to_thread(self._run_inference, text)
+            wav_array = await asyncio.to_thread(self._run_inference, text, seed)
         except self._torch.cuda.OutOfMemoryError as exc:
             self._torch.cuda.empty_cache()
             raise GPUOutOfMemoryError(str(exc)) from exc
         return pcm16_wav_bytes(wav_array, self.sample_rate)
 
-    def _run_inference(self, text: str):
+    def _run_inference(self, text: str, seed: int | None = None):
         import numpy as np  # noqa: PLC0415  (lazy: numpy comes from torch's wheel)
 
         assert self._model is not None
@@ -170,10 +172,30 @@ class ChatterboxEngine:
             pieces = _split_into_pieces(text, self.config.max_chars)
             if not pieces:
                 return np.zeros(int(self.sample_rate * 0.05), dtype=np.float32)
+            # Seed before generating so a chunk is reproducible run-to-run; this
+            # plus the lower temperature is what steadies pronunciation. A
+            # per-request seed override (sent on a quality regeneration) wins over
+            # the configured seed so the re-gen produces *different* audio.
+            effective_seed = self.config.chatterbox_seed if seed is None else seed
+            if effective_seed != 0:
+                self._set_seed(effective_seed)
             wavs = [np.asarray(self._infer_piece(piece), dtype=np.float32) for piece in pieces]
             return join_with_silence(wavs, self.sample_rate)
         finally:
             self._gpu_lock.release()
+
+    def _set_seed(self, seed: int) -> None:
+        import random  # noqa: PLC0415
+        import numpy as np  # noqa: PLC0415  (lazy: numpy comes from torch's wheel)
+
+        assert self._torch is not None
+        self._torch.manual_seed(seed)
+        if self._torch.cuda.is_available():
+            self._torch.cuda.manual_seed_all(seed)
+        # np.random.seed rejects values outside [0, 2**32-1]; mask so an
+        # operator-set CHATTERBOX_SEED can't crash inference.
+        np.random.seed(seed & 0xFFFFFFFF)
+        random.seed(seed)
 
     def _infer_piece(self, text: str):
         assert self._model is not None

@@ -33,7 +33,7 @@ def _stub_full_chain(monkeypatch: pytest.MonkeyPatch) -> None:
 
     from app.services import audio, tts
 
-    async def _fake_tts(text, episode_id, chunk_index, settings, pronunciations=None):
+    async def _fake_tts(text, episode_id, chunk_index, settings, pronunciations=None, seed=None):
         _ = text  # acknowledge
         _ = settings
         return tts.GenerateResult(
@@ -65,7 +65,7 @@ def _stub_tts_and_audio(monkeypatch: pytest.MonkeyPatch) -> None:
 
     from app.services import audio, tts
 
-    async def _fake_tts(text, episode_id, chunk_index, settings, pronunciations=None):
+    async def _fake_tts(text, episode_id, chunk_index, settings, pronunciations=None, seed=None):
         _ = text
         _ = settings
         return tts.GenerateResult(
@@ -438,11 +438,11 @@ async def test_pipeline_transcript_stage_rejects_length_mismatch(
 
     from app.services import tts as tts_module
 
-    async def _drop_one(text, episode_id, chunk_index, settings, pronunciations=None):
+    async def _drop_one(text, episode_id, chunk_index, settings, pronunciations=None, seed=None):
         result = await _stub_tts_for_extra(text, episode_id, chunk_index, settings)
         return result
 
-    async def _stub_tts_for_extra(text, episode_id, chunk_index, settings, pronunciations=None):
+    async def _stub_tts_for_extra(text, episode_id, chunk_index, settings, pronunciations=None, seed=None):
         return tts_module.GenerateResult(
             wav_path=f"/tmp/{episode_id}_chunk_{chunk_index}.wav",
             duration_secs=1.0,
@@ -452,7 +452,7 @@ async def test_pipeline_transcript_stage_rejects_length_mismatch(
     call_count = {"n": 0}
     real_tts = _drop_one
 
-    async def _short_tts(text, episode_id, chunk_index, settings, pronunciations=None):
+    async def _short_tts(text, episode_id, chunk_index, settings, pronunciations=None, seed=None):
         call_count["n"] += 1
         # Return only for first call; subsequent calls still execute but the
         # test patches _stage_transcript's inputs by intercepting the chunker.
@@ -620,7 +620,7 @@ def test_corrections_applies_seed_brand_phrase(
     out = asyncio.run(
         pipeline._apply_corrections("I bought a Louis Vuitton bag.", get_settings())
     )
-    assert "loo-ee vwee-TOHN" in out
+    assert "loo-ee vwee-tohn" in out
 
 
 def test_corrections_user_override_beats_seed(
@@ -637,7 +637,7 @@ def test_corrections_user_override_beats_seed(
         )
     out = asyncio.run(pipeline._apply_corrections("My Louis Vuitton bag.", get_settings()))
     assert "ELL VEE" in out
-    assert "loo-ee vwee-TOHN" not in out
+    assert "loo-ee vwee-tohn" not in out
 
 
 def test_corrections_user_entry_applies_via_lexicon(env: Path) -> None:
@@ -707,7 +707,7 @@ async def test_normalize_runs_llm_pass_then_deterministic_backstop(
         job, "I shopped for a Louis Vuitton bag today.", get_settings()
     )
     assert seen.get("called")  # the LLM pass ran
-    assert "loo-ee vwee-TOHN" in out  # backstop applied the seed correction
+    assert "loo-ee vwee-tohn" in out  # backstop applied the seed correction
 
 
 async def test_normalize_llm_short_output_falls_back_to_input(
@@ -838,7 +838,7 @@ def test_normalize_date_months_only_in_date_context() -> None:
 def test_normalize_for_tts_strips_headings_and_expands_dates() -> None:
     # "Jan" expands to the full month, then the month normalizer respells it.
     out = pipeline._normalize_for_tts("### News\nShipped Jan 15 2026.")
-    assert out == "News\nShipped JAN-yoo-air-ee 15 2026."
+    assert out == "News\nShipped jan-yoo-air-ee 15 2026."
 
 
 def test_normalize_numbers_spells_grouped_and_decimal() -> None:
@@ -892,9 +892,9 @@ def test_normalize_dotted_acronyms() -> None:
 
 
 def test_normalize_months_respells_capitalized_only() -> None:
-    assert pipeline._normalize_months("Posted February 3") == "Posted FEB-roo-air-ee 3"
-    assert pipeline._normalize_months("in January 2026") == "in JAN-yoo-air-ee 2026"
-    assert pipeline._normalize_months("by October") == "by ock-TOH-ber"
+    assert pipeline._normalize_months("Posted February 3") == "Posted feb-roo-air-ee 3"
+    assert pipeline._normalize_months("in January 2026") == "in jan-yoo-air-ee 2026"
+    assert pipeline._normalize_months("by October") == "by ock-toh-ber"
     # Lowercase homographs (adjective/verb/modal) are NOT touched.
     assert pipeline._normalize_months("an august institution") == "an august institution"
     assert pipeline._normalize_months("they may go") == "they may go"
@@ -983,6 +983,23 @@ def test_normalize_currency_plain_and_grouped_and_symbols() -> None:
     assert pipeline._normalize_currency("won £2M") == "won two million pounds"
 
 
+def test_normalize_currency_expands_magnitude_word() -> None:
+    # A magnitude written as a word after a space ("$3 million") must read
+    # "three million dollars", not "three dollars million".
+    assert pipeline._normalize_currency("raised $3 million") == "raised three million dollars"
+    assert (
+        pipeline._normalize_currency("a $3.5 billion round")
+        == "a three point five billion dollars round"
+    )
+    assert pipeline._normalize_currency("$500 thousand") == "five hundred thousand dollars"
+    assert pipeline._normalize_currency("worth €2 trillion") == "worth two trillion euros"
+
+
+def test_normalize_currency_word_magnitude_respects_word_boundary() -> None:
+    # "millionaire" is not a magnitude: only "$3" expands, the noun is left alone.
+    assert pipeline._normalize_currency("a $3 millionaire") == "a three dollars millionaire"
+
+
 def test_normalize_currency_leaves_unitted_bare_numbers_alone() -> None:
     # No currency symbol means the suffix is a unit, left to the LLM prompt.
     assert pipeline._normalize_currency("500m north") == "500m north"
@@ -1031,5 +1048,108 @@ def test_corrections_voices_february_after_date_normalization(
     database.run_migrations(env)  # no user dict stored
     normalized = pipeline._normalize_for_tts("Posted Jan 15 2026 and Feb 3 2025.")
     out = asyncio.run(pipeline._apply_corrections(normalized, get_settings()))
-    assert "JAN-yoo-air-ee 15 2026" in out
-    assert "FEB-roo-air-ee 3 2025" in out
+    assert "jan-yoo-air-ee 15 2026" in out
+    assert "feb-roo-air-ee 3 2025" in out
+
+
+# --- audio-QA: per-chunk regeneration on bad audio -------------------------
+
+
+def _write_drone_wav(path: Path) -> None:
+    import numpy as np
+    import soundfile as sf
+
+    t = np.arange(int(24000 * 1.0)) / 24000
+    sf.write(str(path), (0.5 * np.sin(2 * np.pi * 440 * t)).astype("float32"), 24000, subtype="PCM_16")
+
+
+def _write_speechlike_wav(path: Path) -> None:
+    import numpy as np
+    import soundfile as sf
+
+    t = np.arange(int(24000 * 2.0)) / 24000
+    env = 0.5 + 0.5 * np.sin(2 * np.pi * 4 * t)
+    env[(t > 0.7) & (t < 0.95)] = 0.0
+    sf.write(
+        str(path),
+        (0.6 * np.sin(2 * np.pi * 180 * t) * env).astype("float32"),
+        24000,
+        subtype="PCM_16",
+    )
+
+
+async def test_chunk_quality_check_regenerates_bad_chunk(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    database.run_migrations(env)
+    from app.services import tts
+
+    wav = tmp_path / "ep_chunk_0.wav"  # wrapper reuses one path; re-gen overwrites
+    calls = {"n": 0}
+    seeds: list[int | None] = []
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, pronunciations=None, seed=None):
+        calls["n"] += 1
+        seeds.append(seed)
+        _write_drone_wav(wav) if calls["n"] == 1 else _write_speechlike_wav(wav)
+        return tts.GenerateResult(wav_path=str(wav), duration_secs=1.0, sample_rate=24000)
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    job = _seed_job(env)
+    result = await pipeline._generate_chunk_quality_checked(
+        job, "two words here now", 0, get_settings(), None
+    )
+    assert calls["n"] == 2  # one bad read, one regeneration that recovered
+    assert result.wav_path == str(wav)
+    # The baseline uses the wrapper's configured seed (no override); the regen
+    # sends a distinct seed so Chatterbox produces different audio.
+    assert seeds[0] is None
+    assert isinstance(seeds[1], int) and seeds[1] != 0
+
+
+async def test_chunk_quality_check_keeps_last_after_max_regen(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    database.run_migrations(env)
+    from app.services import tts
+
+    wav = tmp_path / "ep_chunk_0.wav"
+    calls = {"n": 0}
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, pronunciations=None, seed=None):
+        calls["n"] += 1
+        _write_drone_wav(wav)  # always bad
+        return tts.GenerateResult(wav_path=str(wav), duration_secs=1.0, sample_rate=24000)
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    job = _seed_job(env)
+    result = await pipeline._generate_chunk_quality_checked(
+        job, "two words here now", 0, get_settings(), None
+    )
+    # 1 baseline + MAX_REGEN extra attempts; job is not failed (a result returns).
+    assert calls["n"] == get_settings().AUDIO_ANALYSIS_MAX_REGEN + 1
+    assert result.wav_path == str(wav)
+
+
+async def test_chunk_quality_check_disabled_calls_once(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("AUDIO_ANALYSIS_ENABLED", "false")
+    get_settings.cache_clear()
+    database.run_migrations(env)
+    from app.services import tts
+
+    wav = tmp_path / "ep_chunk_0.wav"
+    calls = {"n": 0}
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, pronunciations=None, seed=None):
+        calls["n"] += 1
+        _write_drone_wav(wav)  # bad, but analysis is off so no regen
+        return tts.GenerateResult(wav_path=str(wav), duration_secs=1.0, sample_rate=24000)
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    job = _seed_job(env)
+    await pipeline._generate_chunk_quality_checked(
+        job, "two words here now", 0, get_settings(), None
+    )
+    assert calls["n"] == 1

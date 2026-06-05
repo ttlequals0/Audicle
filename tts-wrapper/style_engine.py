@@ -119,9 +119,12 @@ class StyleTTS2Engine:
                     phones.append("".join(word.phonemes))
         return " ".join(phones)
 
-    async def synthesize(self, text: str, pronunciations: dict[str, str] | None = None) -> bytes:
+    async def synthesize(
+        self, text: str, pronunciations: dict[str, str] | None = None, seed: int | None = None
+    ) -> bytes:
         import asyncio  # noqa: PLC0415
 
+        _ = seed  # StyleTTS2 seeding is not wired; only Chatterbox honors the override
         assert self._model is not None
         assert self._torch is not None
         try:

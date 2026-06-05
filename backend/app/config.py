@@ -186,6 +186,22 @@ class Settings(BaseSettings):
     MP3_SAMPLE_RATE: int = 24000
     MP3_CHANNELS: int = 2
 
+    # Post-TTS audio quality analysis: detect a chunk that came back as a flat
+    # drone / steady noise / repetition and regenerate it (Chatterbox is
+    # non-deterministic, so a re-gen usually fixes it). Thresholds are starting
+    # points and need empirical tuning against real failures.
+    AUDIO_ANALYSIS_ENABLED: bool = True
+    AUDIO_ANALYSIS_MAX_REGEN: int = 2  # extra attempts on a bad chunk
+    AUDIO_ANALYSIS_FRAME_MS: int = 25
+    AUDIO_ANALYSIS_HOP_MS: int = 10
+    AUDIO_ANALYSIS_MIN_RMS_CV: float = 0.35  # below = flat envelope (drone/noise)
+    AUDIO_ANALYSIS_MIN_CREST: float = 3.0  # below = non-peaky (tone), linear ratio
+    AUDIO_ANALYSIS_MAX_ZCR: float = 0.35  # above = broadband noise (with low rms_cv)
+    AUDIO_ANALYSIS_MAX_SILENT_FRACTION: float = 0.85
+    AUDIO_ANALYSIS_WORDS_PER_SEC: float = 2.7
+    AUDIO_ANALYSIS_MAX_DURATION_RATIO: float = 2.0  # over-long => repetition
+    AUDIO_ANALYSIS_MIN_DURATION_RATIO: float = 0.25  # too-short => truncation
+
     # Artwork.
     ARTWORK_SIZE_PX: int = 3000
     ARTWORK_JPG_QUALITY: int = 85

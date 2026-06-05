@@ -63,9 +63,12 @@ class FakeEngine:
         self.model_loaded = True
         self.reference_loaded = True
 
-    async def synthesize(self, text: str, pronunciations: dict[str, str] | None = None) -> bytes:
+    async def synthesize(
+        self, text: str, pronunciations: dict[str, str] | None = None, seed: int | None = None
+    ) -> bytes:
         self.synthesize_calls.append(text)
         self.last_pronunciations = pronunciations
+        self.last_seed = seed
         if self.oom_synthesize:
             raise GPUOutOfMemoryError("simulated OOM")
         if self.busy_synthesize:

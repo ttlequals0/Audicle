@@ -192,7 +192,7 @@ def test_lookup_finds_seed_entry(client: TestClient) -> None:
     with client:
         body = client.get("/api/v1/corrections/lookup", params={"q": "February"}).json()
     assert body["entry"] is not None
-    assert body["entry"]["spoken"] == "FEB-roo-air-ee"
+    assert body["entry"]["spoken"] == "feb-roo-air-ee"  # lowercased for Chatterbox
     assert body["entry"]["origin"] == "seed"
 
 

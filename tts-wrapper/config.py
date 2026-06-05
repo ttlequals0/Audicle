@@ -39,12 +39,15 @@ class Config:
     style_model_path: str
     style_phonemizer_lang: str
 
-    # Chatterbox-only generate knobs (ignored by XTTS/StyleTTS2). Defaults match
-    # Chatterbox Turbo's own neutral straight read; exaggeration is baked into the
-    # reference conditionals at load, cfg_weight/temperature apply per call.
+    # Chatterbox-only generate knobs (ignored by XTTS/StyleTTS2). exaggeration is
+    # baked into the reference conditionals at load; cfg_weight/temperature apply
+    # per call. temperature is below Turbo's 0.8 to cut sampling variance (the
+    # "right dozens of times then wrong once" mispronunciation). seed makes a
+    # generation reproducible; 0 disables seeding (prior random behavior).
     chatterbox_exaggeration: float
     chatterbox_cfg_weight: float
     chatterbox_temperature: float
+    chatterbox_seed: int
 
     temperature: float
     length_penalty: float
@@ -76,10 +79,13 @@ class Config:
             engine=os.environ.get("TTS_ENGINE", "chatterbox"),
             style_model_path=os.environ.get("STYLETTS2_MODEL_PATH", ""),
             style_phonemizer_lang=os.environ.get("STYLETTS2_PHONEMIZER_LANG", "en-us"),
-            # Turbo defaults: exaggeration 0.0 + cfg_weight 0.0 == neutral read.
+            # exaggeration 0.0 + cfg_weight 0.0 == neutral read; temperature 0.5
+            # (down from Turbo's 0.8) trims sampling variance; seed 1234 makes a
+            # chunk reproducible (set 0 to disable).
             chatterbox_exaggeration=_float_env("CHATTERBOX_EXAGGERATION", 0.0),
             chatterbox_cfg_weight=_float_env("CHATTERBOX_CFG_WEIGHT", 0.0),
-            chatterbox_temperature=_float_env("CHATTERBOX_TEMPERATURE", 0.8),
+            chatterbox_temperature=_float_env("CHATTERBOX_TEMPERATURE", 0.5),
+            chatterbox_seed=_int_env("CHATTERBOX_SEED", 1234),
             # 0.60 (down from 0.65) trims the sampling variance that drives
             # per-piece pitch drift and the occasional hallucinated word.
             temperature=_float_env("XTTS_TEMPERATURE", 0.60),

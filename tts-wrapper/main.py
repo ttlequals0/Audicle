@@ -89,6 +89,10 @@ class GenerateRequest(BaseModel):
     # engines (StyleTTS2); the XTTS engine ignores it. Backward-compatible: the
     # backend only sends it when the live engine reports it supports phonemes.
     pronunciations: dict[str, str] | None = None
+    # Optional per-request seed override (Chatterbox only). The backend sends it on
+    # a quality regeneration so the re-gen uses a different seed than the bad take;
+    # omitted on the first attempt so the wrapper's configured seed applies.
+    seed: int | None = None
 
 
 class GenerateResponse(BaseModel):
@@ -241,7 +245,7 @@ def create_app(
             inference_started = time.perf_counter()
             try:
                 wav_bytes = await asyncio.wait_for(
-                    engine.synthesize(body.text, body.pronunciations),
+                    engine.synthesize(body.text, body.pronunciations, body.seed),
                     timeout=_REQUEST_INFERENCE_TIMEOUT_SECONDS,
                 )
             except TimeoutError as exc:

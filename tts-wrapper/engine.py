@@ -129,7 +129,9 @@ class Engine(Protocol):
         restart loop surfaces the misconfig instead of serving 500s).
         """
 
-    async def synthesize(self, text: str, pronunciations: dict[str, str] | None = None) -> bytes:
+    async def synthesize(
+        self, text: str, pronunciations: dict[str, str] | None = None, seed: int | None = None
+    ) -> bytes:
         """Return a WAV byte string for ``text``.
 
         ``pronunciations`` maps surface terms to IPA for engines that support
@@ -307,10 +309,13 @@ class XTTSEngine:
             self.reference_loaded = previous_loaded
             raise
 
-    async def synthesize(self, text: str, pronunciations: dict[str, str] | None = None) -> bytes:
+    async def synthesize(
+        self, text: str, pronunciations: dict[str, str] | None = None, seed: int | None = None
+    ) -> bytes:
         import asyncio  # noqa: PLC0415
 
         _ = pronunciations  # XTTS is text-only; no phoneme-injection path
+        _ = seed  # XTTS seeding is not wired; only Chatterbox honors the override
         assert self._model is not None
         assert self._torch is not None
         try:

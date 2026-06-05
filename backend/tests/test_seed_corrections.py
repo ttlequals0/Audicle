@@ -110,7 +110,7 @@ def test_applicable_dict_excludes_non_applicable_rows() -> None:
     assert "read (present)" not in applied
     assert "API" not in applied
     # Included: a brand phrase and a pronounce-as-word acronym.
-    assert applied["Louis Vuitton"] == "loo-ee vwee-TOHN"
+    assert applied["Louis Vuitton"] == "loo-ee vwee-tohn"  # lowercased for Chatterbox
     assert applied["SQL"] == "sequel"
     # Every applicable entry is present and nothing else.
     expected = {e.input_text for e in entries if e.applicable}
@@ -196,3 +196,29 @@ def test_load_seed_row_failing_validation_is_not_applicable(tmp_path: Path) -> N
     assert len(entries) == 1
     assert entries[0].applicable is False
     assert seed_corrections.applicable_dict(entries) == {}
+
+
+# --- Chatterbox respelling re-tune (lowercase) + merged manual corrections ---
+
+
+def test_seed_respellings_lowercased_for_chatterbox() -> None:
+    """Chatterbox reads ALL-CAPS stress syllables as letters-to-spell, so the
+    bundled respellings are lowercased. Spelled-out letter rows (A P I) keep
+    their single capitals and stay non-applicable."""
+
+    applied = seed_corrections.load_applicable_dict()
+    assert applied["Linux"] == "lin-uks"
+    assert applied["Kubernetes"] == "koo-ber-neh-tees"
+    assert applied["BIOS"] == "by-oss"
+    assert applied["CUDA"] == "koo-duh"  # also a content fix: was "KYOO-dah"
+    # Letter-spelling rows are untouched and stay excluded from the det. pass.
+    assert "API" not in applied
+
+
+def test_seed_includes_merged_manual_corrections() -> None:
+    applied = seed_corrections.load_applicable_dict()
+    assert applied["OS"] == "oh ess"
+    assert applied["VMs"] == "vee emz"
+    assert applied["Opex"] == "op eks"
+    assert applied["OpenAI"] == "open ay eye"  # fixes the prod "opemai" typo
+    assert applied["retry"] == "ree try"
