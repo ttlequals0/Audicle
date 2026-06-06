@@ -37,7 +37,7 @@ Settings -- provider, voice, prompts, and pronunciation corrections.
 
 A 30-second clip of cloned-voice narration (a news article).
 
-https://github.com/user-attachments/assets/a508b4b9-9913-4b18-9b63-210774eecb85
+https://github.com/user-attachments/assets/4e4e9f05-9da7-4f27-b7e8-41b9dfe1bee3
 
 [Download the MP3](docs/sample.mp3)
 
