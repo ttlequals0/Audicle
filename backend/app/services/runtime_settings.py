@@ -43,6 +43,17 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "TTS_CHUNK_TARGET_WORDS",
         "TTS_CHUNK_MAX_WORDS",
         "TTS_CHUNK_SILENCE_MS",
+        # Audio-QA thresholds: tunable live since they need empirical tuning
+        # against real failures. The frame/hop sizes stay env-only (structural).
+        "AUDIO_ANALYSIS_ENABLED",
+        "AUDIO_ANALYSIS_MAX_REGEN",
+        "AUDIO_ANALYSIS_MIN_RMS_CV",
+        "AUDIO_ANALYSIS_MIN_CREST",
+        "AUDIO_ANALYSIS_MAX_ZCR",
+        "AUDIO_ANALYSIS_MAX_SILENT_FRACTION",
+        "AUDIO_ANALYSIS_WORDS_PER_SEC",
+        "AUDIO_ANALYSIS_MAX_DURATION_RATIO",
+        "AUDIO_ANALYSIS_MIN_DURATION_RATIO",
         "RSS_CACHE_MAX_AGE_SECONDS",
         "MIN_CLEANUP_CHARS",
         "MAX_PROMPT_LENGTH_BYTES",

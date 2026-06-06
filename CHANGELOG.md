@@ -6,6 +6,51 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-06-05
+
+### Added
+
+- Post-TTS audio quality pass. After each chunk is synthesized, the backend
+  scores the audio with cheap numpy metrics (per-frame RMS envelope variation,
+  crest factor, zero-crossing rate, silent fraction, and a duration-vs-word-count
+  ratio) and regenerates the chunk when it came back as a flat drone, steady
+  noise, near-silence, or an over-long repetition. Chatterbox is
+  non-deterministic, so a re-gen usually recovers; on persistent failure the last
+  attempt is kept and logged, never failing the episode. Each regeneration sends
+  a distinct seed override so a fixed `CHATTERBOX_SEED` still yields different
+  audio on retry (otherwise the bad take would reproduce exactly). Lives in
+  `backend/app/services/audio_analysis.py`, hooked into the TTS stage. Tunable via
+  the `AUDIO_ANALYSIS_*` settings (also operator-tunable at runtime), or disabled
+  with `AUDIO_ANALYSIS_ENABLED=false`.
+- `CHATTERBOX_SEED` (default 1234) seeds Chatterbox generation so a chunk reads
+  the same way run-to-run; set 0 to restore the prior random behavior. The
+  wrapper's `/generate` accepts an optional per-request `seed` override that the
+  backend uses to vary regenerations.
+- `scripts/retune_respellings.py` (the one-time lowercase transform of the seed
+  list) and `scripts/tts_respell_probe.py` (synthesizes respelling variants on the
+  wrapper for listening, to validate pronunciation by ear).
+
+### Changed
+
+- Chatterbox sampling temperature default lowered from 0.8 to 0.5 to cut the
+  variance that made a word read correctly most of the time then wrong once.
+- Seed pronunciation list re-tuned for Chatterbox: every ALL-CAPS stress syllable
+  in a respelling is lowercased (`FEB-roo-air-ee` becomes `feb-roo-air-ee`,
+  `LIN-uks` becomes `lin-uks`), since Chatterbox reads a run of capitals as
+  letters to spell out. Letter-spelling rows (`A P I`) keep their single capitals.
+  The same change is applied to the month respelling map.
+- The five manual corrections from the live dictionary (OS, VMs, Opex, OpenAI,
+  retry) are now part of the bundled seed list, with the `opemai` typo fixed to
+  `OpenAI`. The `CUDA` respelling is corrected from `KYOO-dah` (cue-dah) to
+  `koo-duh`.
+
+### Fixed
+
+- Currency amounts written with a spelled-out magnitude now read correctly:
+  "$3 million" was spoken as "three dollars million" and is now "three million
+  dollars". A following noun is left alone, so "$3 millionaire" still expands only
+  the amount.
+
 ## [0.18.0] - 2026-06-05
 
 ### Added

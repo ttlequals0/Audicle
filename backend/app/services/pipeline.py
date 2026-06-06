@@ -32,6 +32,7 @@ from app.services import (
     article_prep,
     artwork,
     audio,
+    audio_analysis,
     chunker,
     cleanup_output,
     corrections,
@@ -357,8 +358,12 @@ _SPELLABLE_NUMBER_RE = re.compile(
 # "five hundred million dollars" while a bare "500m north" stays meters (left to
 # the LLM prompt). Trailing (?!\w) keeps "$500kg" out (k then g) so a mis-suffixed
 # token falls through untouched rather than being read wrong.
+# The magnitude may be glued as a single letter ("$3M") or written as a word
+# after a space ("$3 million"). The word branch needs (?!\w) so "$3 millionaire"
+# expands only the "$3" and leaves the noun alone.
 _CURRENCY_RE = re.compile(
-    r"(?<!\w)([$€£])\s?(\d{1,3}(?:,\d{3})*(?:\.\d+)?)([kKmMbBtT])?(?!\w)"
+    r"(?<!\w)([$€£])\s?(\d{1,3}(?:,\d{3})*(?:\.\d+)?)"
+    r"(?:([kKmMbBtT])|\s+((?i:thousand|million|billion|trillion)))?(?!\w)"
 )
 _CURRENCY_WORDS = {"$": "dollars", "€": "euros", "£": "pounds"}
 _MAGNITUDE_WORDS = {"k": "thousand", "m": "million", "b": "billion", "t": "trillion"}
@@ -438,10 +443,13 @@ def _normalize_currency(text: str) -> str:
     """
 
     def repl(match: re.Match[str]) -> str:
-        symbol, number, magnitude = match.group(1), match.group(2), match.group(3)
+        symbol, number = match.group(1), match.group(2)
+        mag_letter, mag_word = match.group(3), match.group(4)
         words = _spell_number(number)
-        if magnitude:
-            words = f"{words} {_MAGNITUDE_WORDS[magnitude.lower()]}"
+        if mag_letter:
+            words = f"{words} {_MAGNITUDE_WORDS[mag_letter.lower()]}"
+        elif mag_word:
+            words = f"{words} {mag_word.lower()}"
         return f"{words} {_CURRENCY_WORDS[symbol]}"
 
     return _CURRENCY_RE.sub(repl, text)
@@ -612,19 +620,21 @@ def _normalize_acronyms(text: str, keep: frozenset[str] | set[str] = _ACRONYM_KE
 # dodges the homographs entirely -- lowercase "august" (the adjective, stressed
 # aw-GUST not AW-gust), "may", and "march" are left untouched. February matches
 # the seed's existing respelling.
+# Lowercased respellings: Chatterbox reads ALL-CAPS stress syllables as letters
+# to spell out ("F-E-B"), so stress is encoded by syllable split, not capitals.
 _MONTH_RESPELL = {
-    "January": "JAN-yoo-air-ee",
-    "February": "FEB-roo-air-ee",
+    "January": "jan-yoo-air-ee",
+    "February": "feb-roo-air-ee",
     "March": "march",
-    "April": "AY-pril",
+    "April": "ay-pril",
     "May": "may",
     "June": "joon",
-    "July": "joo-LYE",
-    "August": "AW-gust",
-    "September": "sep-TEM-ber",
-    "October": "ock-TOH-ber",
-    "November": "no-VEM-ber",
-    "December": "dee-SEM-ber",
+    "July": "joo-lye",
+    "August": "aw-gust",
+    "September": "sep-tem-ber",
+    "October": "ock-toh-ber",
+    "November": "no-vem-ber",
+    "December": "dee-sem-ber",
 }
 _MONTH_RE = re.compile(r"\b(" + "|".join(_MONTH_RESPELL) + r")\b")
 
@@ -776,6 +786,95 @@ async def _stage_chunk(corrected: str, settings: Settings) -> list[str]:
     return pieces
 
 
+# A fixed wrapper seed would reproduce the *same* bad audio on every regeneration,
+# defeating the quality loop. So a regen attempt sends a distinct, deterministic
+# seed override (per chunk + attempt); attempt 0 sends none, keeping the wrapper's
+# configured seed for the reproducible baseline.
+_REGEN_SEED_BASE = 0x9E3779B1
+
+
+def _regen_seed(chunk_index: int, attempt: int) -> int:
+    return (_REGEN_SEED_BASE + chunk_index * 131 + attempt) & 0xFFFFFFFF
+
+
+async def _generate_chunk_quality_checked(
+    job: jobs.Job,
+    text: str,
+    index: int,
+    settings: Settings,
+    pronunciations: dict[str, str] | None,
+) -> tts.GenerateResult:
+    """Synthesize one chunk, then (if enabled) analyze the audio and regenerate
+    it when it came back as a drone / noise / repetition.
+
+    Chatterbox is non-deterministic, so a re-gen usually recovers. The wrapper
+    overwrites the same ``{episode_id}_chunk_{index}.wav`` each call, so on
+    persistent failure we keep the *last* attempt (earlier ones are gone from
+    disk) and log a WARN -- a degraded chunk never fails the whole episode.
+    Analysis errors are swallowed: it must never become a new failure mode."""
+
+    word_count = len(text.split())
+    # max(0, ...) so a misconfigured negative regen count can't make the loop
+    # body skip and return None (the field is operator-tunable at runtime).
+    max_extra = max(0, settings.AUDIO_ANALYSIS_MAX_REGEN) if settings.AUDIO_ANALYSIS_ENABLED else 0
+
+    result = None
+    for attempt in range(max_extra + 1):  # 1 baseline + up to max_extra regenerations
+        result = await tts.generate_chunk_with_retry(
+            text=text,
+            episode_id=job.episode_id,
+            chunk_index=index,
+            settings=settings,
+            pronunciations=pronunciations,
+            seed=None if attempt == 0 else _regen_seed(index, attempt),
+        )
+        if not settings.AUDIO_ANALYSIS_ENABLED:
+            return result
+        try:
+            verdict = audio_analysis.analyze_wav_path(result.wav_path, word_count, settings)
+        except audio.AudioError as exc:
+            logger.warning(
+                "Chunk audio analysis failed; passing chunk through",
+                extra={"event": "chunk_analysis_error", "chunk_index": index, "error": str(exc)},
+            )
+            return result
+        if verdict.ok:
+            if attempt > 0:
+                logger.info(
+                    "Chunk passed after regeneration",
+                    extra={
+                        "event": "chunk_regen_recovered",
+                        "chunk_index": index,
+                        "attempts": attempt + 1,
+                    },
+                )
+            return result
+        logger.warning(
+            "Bad chunk audio detected",
+            extra={
+                "event": "chunk_quality_bad",
+                "chunk_index": index,
+                "attempt": attempt + 1,
+                "reasons": list(verdict.reasons),
+                "rms_cv": verdict.metrics.rms_cv,
+                "crest_factor": verdict.metrics.crest_factor,
+                "zero_crossing_rate": verdict.metrics.zero_crossing_rate,
+                "silent_fraction": verdict.metrics.silent_fraction,
+                "duration_ratio": verdict.metrics.duration_ratio,
+            },
+        )
+
+    logger.warning(
+        "Chunk still degraded after max regenerations; keeping last attempt",
+        extra={
+            "event": "chunk_quality_unresolved",
+            "chunk_index": index,
+            "attempts": max_extra + 1,
+        },
+    )
+    return result
+
+
 async def _stage_tts(
     job: jobs.Job, chunks: list[str], settings: Settings
 ) -> list[tts.GenerateResult]:
@@ -793,12 +892,8 @@ async def _stage_tts(
         with database.connection(settings.DATA_DIR) as conn:
             pron_maps = [lexicon.pronunciations_for(conn, text) for text in chunks]
     for index, text in enumerate(chunks):
-        result = await tts.generate_chunk_with_retry(
-            text=text,
-            episode_id=job.episode_id,
-            chunk_index=index,
-            settings=settings,
-            pronunciations=pron_maps[index],
+        result = await _generate_chunk_quality_checked(
+            job, text, index, settings, pron_maps[index]
         )
         results.append(result)
         _set_progress(job.id, index + 1, total, settings)

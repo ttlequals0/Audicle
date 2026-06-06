@@ -63,9 +63,12 @@ services:
       - DATA_DIR=/data
       - TTS_REFERENCE_PATH=/app/reference/voice.wav
       # Chatterbox generate knobs; defaults are a neutral straight read.
+      # TEMPERATURE 0.5 (down from 0.8) trims sampling variance; SEED makes a
+      # chunk reproducible (audio-QA regens override it per attempt), 0 disables.
       - CHATTERBOX_EXAGGERATION=${CHATTERBOX_EXAGGERATION:-0.0}
       - CHATTERBOX_CFG_WEIGHT=${CHATTERBOX_CFG_WEIGHT:-0.0}
-      - CHATTERBOX_TEMPERATURE=${CHATTERBOX_TEMPERATURE:-0.8}
+      - CHATTERBOX_TEMPERATURE=${CHATTERBOX_TEMPERATURE:-0.5}
+      - CHATTERBOX_SEED=${CHATTERBOX_SEED:-1234}
       # XTTS knobs; used only when TTS_ENGINE=xtts.
       - XTTS_TEMPERATURE=${XTTS_TEMPERATURE:-0.65}
       - XTTS_LENGTH_PENALTY=${XTTS_LENGTH_PENALTY:-1.0}

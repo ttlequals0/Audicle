@@ -74,6 +74,12 @@ def _loaded_engine(model: FakeChatterboxModel | None = None) -> ChatterboxEngine
     engine = ChatterboxEngine(_config())
     engine._model = model or FakeChatterboxModel()
     engine.sample_rate = engine._model.sr
+    # _run_inference seeds before generating (default seed != 0); a no-op torch
+    # stub lets the inference tests run without the real torch dependency.
+    engine._torch = types.SimpleNamespace(
+        manual_seed=lambda _s: None,
+        cuda=types.SimpleNamespace(is_available=lambda: False, manual_seed_all=lambda _s: None),
+    )
     return engine
 
 
@@ -94,6 +100,18 @@ def test_factory_selects_chatterbox_engine(monkeypatch: pytest.MonkeyPatch) -> N
     from main import _default_engine_factory
 
     assert isinstance(_default_engine_factory(), ChatterboxEngine)
+
+
+def test_from_env_chatterbox_seed_and_temperature_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CHATTERBOX_SEED", raising=False)
+    monkeypatch.delenv("CHATTERBOX_TEMPERATURE", raising=False)
+    cfg = Config.from_env()
+    # Determinism on by default; temperature below Turbo's 0.8 to cut sampling
+    # variance (the "right dozens of times then wrong once" failure).
+    assert cfg.chatterbox_seed == 1234
+    assert cfg.chatterbox_temperature == 0.5
 
 
 # --- reference lifecycle ---------------------------------------------------
@@ -179,13 +197,75 @@ def test_run_inference_rejects_when_gpu_busy() -> None:
         engine._gpu_lock.release()
 
 
+def test_run_inference_seeds_before_generate_when_seed_nonzero() -> None:
+    model = FakeChatterboxModel()
+    engine = _loaded_engine(model)
+    object.__setattr__(engine.config, "chatterbox_seed", 1234)
+    seeded: list[int] = []
+    engine._torch = types.SimpleNamespace(
+        manual_seed=lambda s: seeded.append(s),
+        cuda=types.SimpleNamespace(is_available=lambda: False, manual_seed_all=lambda s: None),
+    )
+    engine._run_inference("Hello world.")
+    assert seeded == [1234]
+    assert model.generate_calls == ["Hello world."]
+
+
+def test_run_inference_skips_seed_when_zero() -> None:
+    model = FakeChatterboxModel()
+    engine = _loaded_engine(model)
+    object.__setattr__(engine.config, "chatterbox_seed", 0)
+    seeded: list[int] = []
+    engine._torch = types.SimpleNamespace(
+        manual_seed=lambda s: seeded.append(s),
+        cuda=types.SimpleNamespace(is_available=lambda: False, manual_seed_all=lambda s: None),
+    )
+    engine._run_inference("Hello world.")
+    assert seeded == []
+
+
+def test_run_inference_seed_override_beats_config_seed() -> None:
+    # A per-request seed (sent on a quality regeneration) must win over the
+    # configured seed so the re-gen produces different audio.
+    model = FakeChatterboxModel()
+    engine = _loaded_engine(model)
+    object.__setattr__(engine.config, "chatterbox_seed", 1234)
+    seeded: list[int] = []
+    engine._torch = types.SimpleNamespace(
+        manual_seed=lambda s: seeded.append(s),
+        cuda=types.SimpleNamespace(is_available=lambda: False, manual_seed_all=lambda s: None),
+    )
+    engine._run_inference("Hello world.", seed=999)
+    assert seeded == [999]
+
+
+def test_set_seed_masks_out_of_range_for_numpy() -> None:
+    # np.random.seed rejects values outside [0, 2**32-1]; a large/negative
+    # operator seed must be masked rather than crash inference.
+    model = FakeChatterboxModel()
+    engine = _loaded_engine(model)
+    object.__setattr__(engine.config, "chatterbox_seed", 2**40 + 7)
+    engine._torch = types.SimpleNamespace(
+        manual_seed=lambda _s: None,
+        cuda=types.SimpleNamespace(is_available=lambda: False, manual_seed_all=lambda _s: None),
+    )
+    engine._run_inference("Hello world.")  # must not raise ValueError from numpy
+
+
 async def test_synthesize_encodes_mono_pcm16_wav() -> None:
     model = FakeChatterboxModel(piece_secs=0.2)
     engine = _loaded_engine(model)
-    # synthesize only touches torch for the CUDA-OOM except clause; a stub with a
-    # never-raised OutOfMemoryError lets us exercise the encode path without torch.
+    # synthesize touches torch for the CUDA-OOM except clause and for seeding; a
+    # stub with a never-raised OutOfMemoryError plus no-op seed calls lets us
+    # exercise the encode path without torch.
     engine._torch = types.SimpleNamespace(
-        cuda=types.SimpleNamespace(OutOfMemoryError=RuntimeError, empty_cache=lambda: None)
+        manual_seed=lambda _s: None,
+        cuda=types.SimpleNamespace(
+            OutOfMemoryError=RuntimeError,
+            empty_cache=lambda: None,
+            is_available=lambda: False,
+            manual_seed_all=lambda _s: None,
+        ),
     )
     wav_bytes = await engine.synthesize("Hello world.")
     with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
