@@ -78,7 +78,13 @@ def analyze_chunk(
     frame_n = max(1, round(settings.AUDIO_ANALYSIS_FRAME_MS * sample_rate / 1000))
     hop_n = max(1, round(settings.AUDIO_ANALYSIS_HOP_MS * sample_rate / 1000))
 
-    expected_secs = word_count / settings.AUDIO_ANALYSIS_WORDS_PER_SEC if word_count else 0.0
+    # Add a fixed per-chunk overhead so the words-per-second model doesn't call a
+    # 1-2 word chunk (~1s of audio) "overlong" -- its silence + single-word floor
+    # dominates the linear estimate.
+    expected_secs = (
+        settings.AUDIO_ANALYSIS_DURATION_OVERHEAD_SECS
+        + word_count / settings.AUDIO_ANALYSIS_WORDS_PER_SEC
+    ) if word_count else 0.0
     duration_ratio = duration_secs / expected_secs if expected_secs else 1.0
 
     # Too short to frame: don't flag (a tiny legitimate chunk must pass).

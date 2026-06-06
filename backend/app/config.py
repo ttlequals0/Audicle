@@ -199,6 +199,9 @@ class Settings(BaseSettings):
     AUDIO_ANALYSIS_MAX_ZCR: float = 0.35  # above = broadband noise (with low rms_cv)
     AUDIO_ANALYSIS_MAX_SILENT_FRACTION: float = 0.85
     AUDIO_ANALYSIS_WORDS_PER_SEC: float = 2.7
+    # Fixed per-chunk cost (inter-piece silence + a single word floor) added to
+    # the word-count estimate, so a 1-2 word chunk isn't a false "overlong".
+    AUDIO_ANALYSIS_DURATION_OVERHEAD_SECS: float = 1.0
     AUDIO_ANALYSIS_MAX_DURATION_RATIO: float = 2.0  # over-long => repetition
     AUDIO_ANALYSIS_MIN_DURATION_RATIO: float = 0.25  # too-short => truncation
 
