@@ -62,6 +62,29 @@ def test_get_jpg_serves_disk_file_with_image_content_type(env: Path) -> None:
     assert response.content == b"FAKE_JPG"
 
 
+def test_head_jpg_returns_200_with_headers_and_no_body(env: Path) -> None:
+    # Artwork fetchers issue HEAD before GET; the route must answer it, not 405.
+    media = _seed_episode(env, id_="abc", transcript_vtt=None)
+    media.mkdir(parents=True, exist_ok=True)
+    (media / "abc.jpg").write_bytes(b"FAKE_JPG")
+    with _client(env) as client:
+        response = client.head("/media/abc.jpg")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/jpeg"
+    assert response.content == b""
+
+
+def test_head_mp3_returns_200_with_headers_and_no_body(env: Path) -> None:
+    media = _seed_episode(env, id_="abc", transcript_vtt="WEBVTT\n")
+    media.mkdir(parents=True, exist_ok=True)
+    (media / "abc.mp3").write_bytes(b"FAKE_MP3")
+    with _client(env) as client:
+        response = client.head("/media/abc.mp3")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/mpeg"
+    assert response.content == b""
+
+
 def test_get_vtt_serves_transcript_from_db_with_cache_header(env: Path) -> None:
     _seed_episode(env, id_="abc", transcript_vtt="WEBVTT\n\n1\n00:00:00.000 --> 00:00:01.000\nhi\n")
     with _client(env) as client:

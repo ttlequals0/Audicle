@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from email.utils import format_datetime, parsedate_to_datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 
 from app.config import Settings, get_settings
 from app.core import database
@@ -30,11 +30,16 @@ from app.services import slug as slug_module
 router = APIRouter(prefix="/rss", tags=["rss"])
 
 
-@router.get("/{slug}.xml")
+# GET + HEAD: Apple Podcasts and other platforms issue a HEAD before GET and
+# treat a 405 as a hard failure, so the feed must answer HEAD with the same
+# headers and an empty body.
+@router.api_route("/{slug}.xml", methods=["GET", "HEAD"])
 async def get_rss(
     slug: str,
+    request: Request,
     base_settings: Annotated[Settings, Depends(get_settings)],
     if_modified_since: Annotated[str | None, Header()] = None,
+    if_none_match: Annotated[str | None, Header()] = None,
 ) -> Response:
     # Apply the runtime_settings overlay so an operator PUT to
     # /api/v1/settings (FEED_TITLE, FEED_DESCRIPTION, FEED_LANGUAGE, etc.)
@@ -52,13 +57,18 @@ async def get_rss(
         guid_epoch = settings_store.get_feed_guid_epoch(conn)
 
     last_build = _last_build_datetime(latest)
-    not_modified = _is_not_modified(if_modified_since, last_build)
+    etag = _feed_etag(last_build, guid_epoch, len(rows))
+    media_type = "application/rss+xml; charset=utf-8"
     headers = {
         "Last-Modified": format_datetime(last_build, usegmt=True),
         "Cache-Control": f"public, max-age={settings.RSS_CACHE_MAX_AGE_SECONDS}",
+        "ETag": etag,
     }
-    if not_modified:
+    if _is_not_modified(if_modified_since, last_build) or _etag_matches(if_none_match, etag):
         return Response(status_code=304, headers=headers)
+    # HEAD: headers only, and skip the (gzip-able) render entirely.
+    if request.method == "HEAD":
+        return Response(status_code=200, headers=headers, media_type=media_type)
 
     body = feed.render(
         rows,
@@ -67,11 +77,22 @@ async def get_rss(
         last_build=last_build,
         feed_guid_epoch=guid_epoch,
     )
-    return Response(
-        content=body,
-        media_type="application/rss+xml; charset=utf-8",
-        headers=headers,
-    )
+    return Response(content=body, media_type=media_type, headers=headers)
+
+
+def _feed_etag(last_build: datetime, guid_epoch: int, episode_count: int) -> str:
+    """Weak validator: changes when an episode updates (last_build), the feed is
+    recreated (guid_epoch), or the episode count changes -- the same inputs that
+    drive Last-Modified, so it never goes stale relative to it."""
+
+    return f'W/"{int(last_build.timestamp())}-{guid_epoch}-{episode_count}"'
+
+
+def _etag_matches(if_none_match: str | None, etag: str) -> bool:
+    if not if_none_match:
+        return False
+    candidates = {token.strip() for token in if_none_match.split(",")}
+    return etag in candidates or "*" in candidates
 
 
 def _last_build_datetime(latest: str | None) -> datetime:

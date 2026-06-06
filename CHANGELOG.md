@@ -6,6 +6,20 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.19.3] - 2026-06-06
+
+### Fixed
+
+- RSS feed and `/media/*` endpoints now answer `HEAD` requests instead of
+  returning `405`. Apple Podcasts treats a feed that rejects HEAD as a fatal
+  error, and artwork/enclosure fetchers that issue a HEAD before GET would abort,
+  which is why custom episode artwork was not appearing in some apps. Both the
+  feed route and the audio/image/transcript routes accept `GET` and `HEAD`; HEAD
+  returns the same headers with no body.
+- RSS feed now sends an `ETag` (weak validator derived from the build time, feed
+  GUID epoch, and episode count) and honors `If-None-Match`, alongside the
+  existing `Last-Modified`/`If-Modified-Since` conditional handling.
+
 ## [0.19.2] - 2026-06-06
 
 ### Fixed

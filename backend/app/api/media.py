@@ -49,7 +49,7 @@ def _safe_path(root: Path, name: str) -> Path:
     return candidate
 
 
-@router.get("/{episode_id}.mp3")
+@router.api_route("/{episode_id}.mp3", methods=["GET", "HEAD"])
 async def get_mp3(
     episode_id: str,
     settings: Annotated[Settings, Depends(get_settings)],
@@ -65,7 +65,7 @@ async def get_mp3(
     )
 
 
-@router.get("/{episode_id}.jpg")
+@router.api_route("/{episode_id}.jpg", methods=["GET", "HEAD"])
 async def get_jpg(
     episode_id: str,
     settings: Annotated[Settings, Depends(get_settings)],
@@ -81,7 +81,7 @@ async def get_jpg(
     )
 
 
-@router.get("/{episode_id}.vtt")
+@router.api_route("/{episode_id}.vtt", methods=["GET", "HEAD"])
 async def get_vtt(
     episode_id: str,
     settings: Annotated[Settings, Depends(get_settings)],
@@ -101,7 +101,7 @@ async def get_vtt(
     )
 
 
-@router.get("/{episode_id}.txt")
+@router.api_route("/{episode_id}.txt", methods=["GET", "HEAD"])
 async def get_cleaned_text(
     episode_id: str,
     settings: Annotated[Settings, Depends(get_settings)],
