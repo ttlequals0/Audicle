@@ -506,3 +506,17 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #3a3a45;
 }
+
+/* iOS Safari zooms the page in (and never resets) when a sub-16px input is
+   focused. 16px is the threshold, so raise form controls to it on touch devices
+   -- this leaves the compact desktop sizing (.field 15px, .hero-input 14px)
+   untouched. Unlayered + the :not() selector give it higher priority than the
+   text-xs utility on the cleanup textarea. Checkboxes/radios are skipped (no
+   text entry, no zoom). No viewport user-scalable hack, so pinch-to-zoom stays. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}

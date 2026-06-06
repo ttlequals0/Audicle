@@ -6,6 +6,17 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.19.2] - 2026-06-06
+
+### Fixed
+
+- Mobile: focusing a text field no longer zooms the whole UI in (and leaves it
+  zoomed). iOS Safari auto-zooms when a focused input is under 16px, and the app's
+  form controls were 14-15px (the cleanup textarea 12px). Form controls are now
+  raised to 16px on touch devices via `@media (pointer: coarse)`, so the zoom
+  never triggers; the compact desktop sizing is unchanged and pinch-to-zoom is
+  preserved (no `user-scalable` viewport hack).
+
 ## [0.19.1] - 2026-06-06
 
 ### Fixed
