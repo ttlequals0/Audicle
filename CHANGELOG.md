@@ -6,6 +6,18 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-06-06
+
+### Fixed
+
+- Audio-QA `overlong` check no longer false-positives on 1-2 word chunks. The
+  words-per-second estimate ignored the fixed per-chunk overhead (inter-piece
+  silence plus a single-word floor), so a 1-word chunk that reads in about a
+  second looked roughly 3.5x too long and got regenerated up to the cap for
+  nothing. A configurable `AUDIO_ANALYSIS_DURATION_OVERHEAD_SECS` (default 1.0)
+  is added to the expected duration; genuine over-long repetitions and truncated
+  chunks are still caught.
+
 ## [0.19.0] - 2026-06-05
 
 ### Added

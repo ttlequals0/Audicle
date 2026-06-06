@@ -81,6 +81,16 @@ def test_flags_overlong_duration(env: Path) -> None:
     assert "overlong" in verdict.reasons
 
 
+def test_short_chunk_not_flagged_overlong(env: Path) -> None:
+    # Regression (prod chunk 119): a 1-word chunk that reads in ~1s is normal,
+    # not "overlong". The plain words-per-second model called it ~3.5x too long
+    # because it ignores the fixed per-chunk overhead (silence + a single word).
+    verdict = audio_analysis.analyze_chunk(
+        _speechlike(duration_secs=1.0), _SR, word_count=1, settings=get_settings()
+    )
+    assert "overlong" not in verdict.reasons
+
+
 def test_flags_mostly_silent(env: Path) -> None:
     verdict = audio_analysis.analyze_chunk(
         _mostly_silent(), _SR, word_count=5, settings=get_settings()
