@@ -54,6 +54,26 @@ def test_get_rss_returns_200_with_xml_body(env: Path) -> None:
     assert len(items) == 1
 
 
+def test_head_rss_returns_200_with_headers_and_no_body(env: Path) -> None:
+    # Apple Podcasts and other platforms issue HEAD before GET; the route must
+    # answer HEAD with 200 + headers, not 405 (feed-validator FATAL).
+    _seed(env)
+    with _client(env) as client:
+        response = client.head("/rss/test_feed.xml")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/rss+xml")
+    assert response.headers.get("last-modified")
+    assert response.headers.get("etag")
+    assert response.content == b""
+
+
+def test_get_rss_emits_etag(env: Path) -> None:
+    _seed(env)
+    with _client(env) as client:
+        response = client.get("/rss/test_feed.xml")
+    assert response.headers.get("etag")
+
+
 def test_get_rss_emits_cache_control_header(env: Path) -> None:
     _seed(env)
     with _client(env) as client:
