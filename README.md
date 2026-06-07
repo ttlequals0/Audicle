@@ -172,6 +172,10 @@ The Audicle name and logo are reserved; see `branding/README.md`.
 ## Architecture
 
 ```
+        paywall bypass: a matched host's teaser triggers a re-scrape via
+        Googlebot / Freedium / a custom proxy (or a clean fail)
+        |
+        v
 URL --> extract (Firecrawl) --> cleanup (LLM) --> corrections (regex)
                                                        |
                                                        v
@@ -183,6 +187,8 @@ URL --> extract (Firecrawl) --> cleanup (LLM) --> corrections (regex)
                                                        v
                                           finalize (write DB + RSS)
 ```
+
+The paywall bypass is operator-configured -- see "Paywalled articles" above.
 
 Two containers: the backend (FastAPI + SQLite) and the TTS wrapper (separate so GPU memory stays isolated and the model only reloads when the voice changes). They share a `/data` volume so the backend can read what the wrapper produces.
 
