@@ -842,19 +842,16 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
       <div className="builtin-note">
         <span className="builtin-note-tag">built-in</span>
         <p className="builtin-note-body">
-          Built-in fallbacks always apply:{" "}
-          {initial.builtin.map((b) => `${b.host} -> ${b.proxy}`).join(", ")}. Rules you
-          add below take priority; a row left on "use default" follows the global
-          default strategy above.
+          Built-in:{" "}
+          {initial.builtin.map((b) => `${b.host} -> ${b.proxy}`).join(", ")}. Your rules
+          below win on a host collision; a "use default" row uses the strategy above.
         </p>
       </div>
       <p className="text-mute text-xs">
-        domain: the article host to bypass (e.g. washingtonpost.com). strategy:
-        googlebot (re-fetch the page as Googlebot), freedium (Medium reader mirror),
-        custom (your own reader-proxy URL template containing {"{url}"}), or none
-        (reject the teaser instead of narrating a stub episode). When a paywalled
-        article extracts below the threshold, the matching strategy is tried before
-        the job is failed.
+        When a listed host scrapes below the threshold, Audicle retries with its strategy
+        before failing the job. domain: the host to bypass. strategy: googlebot (re-fetch
+        as Googlebot), freedium (Medium mirror), custom (your own {"{url}"} template), none
+        (skip the retry and fail rather than narrate the stub).
       </p>
 
       <div className="flex flex-wrap items-end gap-4">

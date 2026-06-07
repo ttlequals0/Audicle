@@ -728,6 +728,79 @@ async def test_normalize_llm_short_output_falls_back_to_input(
     assert out == long_text  # original window preserved, not the "x"
 
 
+async def test_normalize_llm_strips_preamble_via_marker_contract(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A model that prepends conversational commentary but wraps the respelled
+    text in the begin/end markers must have the commentary dropped, not narrated."""
+
+    database.run_migrations(env)
+    monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _t, _n: None)
+    body = "The council approved the budget after a long debate. " * 20
+
+    async def _preamble(_system, _user, _settings, **_kwargs):
+        return (
+            "No pronunciation reference was provided alongside the text, so there "
+            "are no terms to change. Here is the text reproduced in full:\n\n"
+            f"<<<AUDICLE_BEGIN>>>\n{body}\n<<<AUDICLE_END>>>"
+        )
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _preamble)
+    out = await pipeline._pronounce_with_llm("job", body, get_settings())
+    assert "reproduced in full" not in out
+    assert "No pronunciation reference" not in out
+    assert "council approved the budget" in out
+
+
+async def test_normalize_llm_retries_when_model_ignores_markers(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A first reply with no markers (preamble glued onto the bare text) is retried
+    once; the retry's marker'd content is what survives, with the preamble dropped."""
+
+    database.run_migrations(env)
+    monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _t, _n: None)
+    body = "The council approved the budget after a long debate. " * 20
+    outputs = iter(
+        [
+            "No pronunciation reference was provided, so there are no terms to "
+            "change. Here is the text reproduced in full:\n\n" + body,
+            f"<<<AUDICLE_BEGIN>>>\n{body}\n<<<AUDICLE_END>>>",
+        ]
+    )
+    calls = {"n": 0}
+
+    async def _fake(_system, _user, _settings, **_kwargs):
+        calls["n"] += 1
+        return next(outputs)
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _fake)
+    out = await pipeline._pronounce_with_llm("job", body, get_settings())
+    assert calls["n"] == 2  # retried once when the first reply had no markers
+    assert "reproduced in full" not in out
+    assert "council approved the budget" in out
+
+
+async def test_normalize_llm_no_markers_keeps_window_verbatim(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the model never emits markers (even on retry), the window is kept
+    verbatim -- a real first paragraph that opens like a preamble ("Here is...")
+    must not be dropped by the cleanup preamble heuristic."""
+
+    database.run_migrations(env)
+    monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _t, _n: None)
+    window = "Here is the key finding.\n\n" + "The budget passed after a long debate. " * 20
+
+    async def _no_markers(_system, _user, _settings, **_kwargs):
+        return window  # never wraps in markers, on either attempt
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _no_markers)
+    out = await pipeline._pronounce_with_llm("job", window, get_settings())
+    assert "Here is the key finding" in out  # not stripped as a preamble
+    assert "budget passed after a long debate" in out
+
+
 # --- cleanup: boilerplate-only window drop ---------------------------------
 
 

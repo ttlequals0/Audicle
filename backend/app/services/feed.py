@@ -140,12 +140,17 @@ def render(
 
     for ep in episodes:
         item = fg.add_entry(order="append")
+        # The updated_at epoch versions both the GUID and the enclosure ?v=.
+        bust = _cache_bust(ep.updated_at)
         guid_value = f"{ep.id}-{feed_guid_epoch}" if feed_guid_epoch else ep.id
-        # A reprocessed episode (revision > 1) gets a fresh GUID so podcast
-        # clients, which key "already downloaded" on the GUID, re-fetch the
-        # regenerated audio. First renders keep the stable GUID (no churn).
-        if ep.revision > 1:
-            guid_value = f"{guid_value}-r{ep.revision}"
+        # Append the version token so any audio regeneration gets a fresh GUID: an
+        # in-place reprocess OR a delete-then-resubmit, which resets `revision` to 1
+        # and would otherwise reuse the prior GUID. Podcast clients key "already
+        # downloaded" on the GUID, so a stable GUID leaves them on the old enclosure.
+        # The token moves only on finalize, so an unchanged episode keeps a stable
+        # GUID across renders.
+        if bust is not None:
+            guid_value = f"{guid_value}-v{bust}"
         item.id(guid_value)
         item.guid(guid_value, permalink=False)
         if ep.title:
@@ -156,7 +161,6 @@ def render(
         item.description(_episode_description_html(ep))
         item.podcast.itunes_summary(_episode_summary(ep))
         item.pubDate(_parse_iso(ep.pub_date) or last_build)
-        bust = _cache_bust(ep.updated_at)
         if ep.audio_path:
             audio_url = _media_url(settings.BASE_URL, ep.id, "mp3", bust)
             item.enclosure(

@@ -6,6 +6,30 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-06-06
+
+### Fixed
+
+- The LLM pronunciation pass no longer narrates a conversational preamble. Some
+  models prepend a note ("...here is the text reproduced in full:") instead of
+  just respelling, and it was ending up in the audio. The pass now uses the same
+  begin/end marker contract as the cleanup stage, with one retry when the model
+  ignores it; if it still won't comply, the window is kept verbatim rather than
+  risk dropping a real paragraph or leaking the note.
+- Re-processing an article now reliably forces podcast apps to re-download. The
+  episode GUID carries a version token from the audio's last-write time (the same
+  value the enclosure already uses), so a regenerated episode always gets a fresh
+  GUID. Before, deleting an episode and re-submitting the URL reused the old GUID
+  (the per-episode revision counter resets on a fresh insert), so apps that key
+  "already downloaded" on the GUID kept the stale audio. Note: shipping this
+  changes every episode's GUID once, so clients re-download all episodes the first
+  time they refresh after the upgrade.
+
+### Docs
+
+- README documents the paywall bypass feature (strategies, Settings, API).
+- Tightened the wording in the article-proxy Settings section.
+
 ## [0.20.0] - 2026-06-06
 
 ### Added

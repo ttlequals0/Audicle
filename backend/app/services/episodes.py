@@ -132,9 +132,9 @@ def upsert(
     entered the feed), while ``pub_date`` is bumped to now so a reprocessed
     episode re-surfaces as new in podcast clients and re-sorts to the top of
     the feed. ``updated_at`` bumps too so RSS clients see a fresh
-    ``lastBuildDate``. ``revision`` increments on the reprocess (update) branch
-    so the feed can hand the episode a new GUID and clients re-download the
-    regenerated audio rather than keeping the stale enclosure they already have.
+    ``lastBuildDate`` and because the feed versions the episode GUID by
+    ``updated_at`` -- a bumped GUID is what makes clients re-download the
+    regenerated audio. ``revision`` still increments here as an audit counter.
     """
 
     conn.execute(

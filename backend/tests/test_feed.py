@@ -25,6 +25,7 @@ def _episode(
     pub_date: str = "2026-05-28T18:00:00Z",
     summary: str | None = None,
     revision: int = 1,
+    updated_at: str | None = None,
 ) -> Episode:
     return Episode(
         id=id,
@@ -38,7 +39,7 @@ def _episode(
         duration_secs=duration_secs,
         pub_date=pub_date,
         created_at=pub_date,
-        updated_at=pub_date,
+        updated_at=updated_at or pub_date,
         summary=summary,
         revision=revision,
     )
@@ -187,19 +188,29 @@ def test_item_enclosure_missing_file_reports_zero_length(env: Path) -> None:
     assert int(enclosure.get("length")) == 0
 
 
-def test_item_guid_stable_on_first_render(env: Path) -> None:
-    ep = _episode(id="abc", revision=1)
+def _item_guid(ep: Episode, env: Path) -> str:
     body = _render([ep], env=env)
-    guid = DET.fromstring(body).find("channel/item/guid")
-    assert guid.text == "abc"
+    return DET.fromstring(body).find("channel/item/guid").text
 
 
-def test_item_guid_gets_revision_suffix_after_reprocess(env: Path) -> None:
-    # A reprocessed episode (revision > 1) gets a fresh GUID so clients re-download.
-    ep = _episode(id="abc", revision=3)
-    body = _render([ep], env=env)
-    guid = DET.fromstring(body).find("channel/item/guid")
-    assert guid.text == "abc-r3"
+def test_item_guid_carries_updated_at_version_token(env: Path) -> None:
+    # The GUID embeds the updated_at epoch (same token the enclosure uses for ?v=).
+    ep = _episode(id="abc", updated_at="2026-05-28T18:00:00Z")
+    assert _item_guid(ep, env) == f"abc-v{feed._cache_bust('2026-05-28T18:00:00Z')}"
+
+
+def test_item_guid_stable_when_updated_at_unchanged(env: Path) -> None:
+    # No churn: an episode whose audio hasn't changed keeps the same GUID.
+    ep = _episode(id="abc", updated_at="2026-05-28T18:00:00Z")
+    assert _item_guid(ep, env) == _item_guid(ep, env)
+
+
+def test_item_guid_changes_when_audio_regenerated(env: Path) -> None:
+    # A later finalize -- in-place reprocess OR a delete-then-resubmit (which resets
+    # `revision` to 1) -- must yield a different GUID so clients re-download.
+    g1 = _item_guid(_episode(id="abc", updated_at="2026-05-28T18:00:00Z"), env)
+    g2 = _item_guid(_episode(id="abc", revision=1, updated_at="2026-06-07T01:31:08Z"), env)
+    assert g1 != g2
 
 
 def test_item_includes_itunes_duration_in_hms(env: Path) -> None:
@@ -367,12 +378,13 @@ def test_hms_handles_zero_and_negative(env: Path) -> None:
     assert feed._hms(86399) == "23:59:59"
 
 
-def test_item_guid_is_bare_episode_id_without_epoch(env: Path) -> None:
-    """Back-compat: epoch 0 (never rotated) leaves item guids as the bare id."""
+def test_item_guid_has_no_epoch_segment_when_epoch_zero(env: Path) -> None:
+    """Epoch 0 (never rotated) leaves the id un-salted; only the version token is
+    appended."""
 
-    body = _render([_episode(id="abc123")], env=env)
+    body = _render([_episode(id="abc123", updated_at="2026-05-28T18:00:00Z")], env=env)
     item = DET.fromstring(body).find("channel").find("item")
-    assert item.find("guid").text == "abc123"
+    assert item.find("guid").text == f"abc123-v{feed._cache_bust('2026-05-28T18:00:00Z')}"
 
 
 def test_item_guid_salted_with_feed_guid_epoch(env: Path) -> None:
@@ -387,7 +399,8 @@ def test_item_guid_salted_with_feed_guid_epoch(env: Path) -> None:
         feed_guid_epoch=3,
     )
     item = DET.fromstring(body).find("channel").find("item")
-    assert item.find("guid").text == "abc123-3"
+    guid = item.find("guid").text
+    assert guid.startswith("abc123-3-v")  # epoch suffix plus version token
     # Enclosure still points at the real file (bare id, not salted).
     assert "abc123.mp3" in item.find("enclosure").get("url")
 
