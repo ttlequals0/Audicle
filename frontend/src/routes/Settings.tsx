@@ -39,6 +39,11 @@ const GROUPS: Record<string, string[]> = {
   ],
   Connections: ["FIRECRAWL_URL", "FIRECRAWL_API_KEY", "TTS_URL"],
   TTS: ["TTS_CHUNK_TARGET_WORDS", "TTS_CHUNK_MAX_WORDS", "TTS_CHUNK_SILENCE_MS"],
+  Verification: [
+    "WHISPER_VERIFY_ENABLED",
+    "WHISPER_DIVERGENCE_THRESHOLD",
+    "WHISPER_VERIFY_MIN_WORDS",
+  ],
   Cleanup: ["MIN_CLEANUP_CHARS", "MAX_PROMPT_LENGTH_BYTES"],
   Retention: ["RETENTION_DAYS"],
   RSS: ["RSS_CACHE_MAX_AGE_SECONDS"],
@@ -181,6 +186,13 @@ export default function SettingsRoute() {
             {group === "Connections" && (
               <p className="mono-xs text-mute mb-3">
                 // firecrawl api key is optional -- leave blank for an open self-hosted instance
+              </p>
+            )}
+            {group === "Verification" && (
+              <p className="mono-xs text-mute mb-3">
+                // re-transcribes each chunk and regenerates it when the audio drifts from
+                the text. needs WHISPER_ENABLED on the tts wrapper (loads the model); these
+                toggle the policy live. enabled=true/false, threshold 0-1 (higher = stricter)
               </p>
             )}
             {visible.map((key) => (

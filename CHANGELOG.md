@@ -6,6 +6,17 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-06-07
+
+### Changed
+
+- The ASR verification policy is now operator-tunable at runtime from the Settings
+  page (and `PUT /api/v1/settings`), no redeploy needed: `WHISPER_VERIFY_ENABLED`,
+  `WHISPER_DIVERGENCE_THRESHOLD`, and `WHISPER_VERIFY_MIN_WORDS` join the
+  runtime-settings allowlist alongside the audio-QA thresholds. The wrapper's
+  `WHISPER_ENABLED` (which loads the model) stays env-only -- it is a
+  separate-container startup capability, not a per-job policy.
+
 ## [0.21.0] - 2026-06-07
 
 ### Added
