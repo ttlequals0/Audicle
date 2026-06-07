@@ -45,7 +45,7 @@ async def test_pickup_runs_pipeline_against_a_queued_job(
     database.run_migrations(env)
 
     # Stub extract + LLM so the test doesn't reach the network.
-    async def _fake_extract(url, settings):
+    async def _fake_extract(url, settings, registry=None):
         return extraction.ExtractionResult(
             markdown="# Example\n\nbody " * 200,
             metadata={"title": "Example article"},

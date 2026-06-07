@@ -16,7 +16,7 @@ def _stub_full_chain(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub extract + llm.generate so Phase 3 pipeline tests don't reach the
     network. Cleanup output is long enough to clear MIN_CLEANUP_CHARS."""
 
-    async def _fake_extract(_url, _settings):
+    async def _fake_extract(_url, _settings, _registry=None):
         return extraction.ExtractionResult(markdown="raw " * 250, metadata={"title": "Example"})
 
     async def _fake_llm(_system, _user, _settings, **_kwargs):
@@ -131,7 +131,7 @@ async def test_pipeline_marks_failed_with_stage_and_error_on_extraction_failure(
 ) -> None:
     database.run_migrations(env)
 
-    async def _bad_extract(url, settings):
+    async def _bad_extract(url, settings, registry=None):
         raise extraction.ExtractionPermanentError("Firecrawl said no")
 
     monkeypatch.setattr(extraction, "extract", _bad_extract)
@@ -151,7 +151,7 @@ async def test_pipeline_marks_failed_with_timeout_error_on_job_timeout(
 ) -> None:
     database.run_migrations(env)
 
-    async def _slow_extract(url, settings):
+    async def _slow_extract(url, settings, registry=None):
         await asyncio.sleep(2)
         return extraction.ExtractionResult(markdown="x" * 1000, metadata={})
 
@@ -176,7 +176,7 @@ async def test_pipeline_marks_failed_when_cleanup_returns_too_short(
 
     database.run_migrations(env)
 
-    async def _fake_extract(_url, _settings):
+    async def _fake_extract(_url, _settings, _registry=None):
         return extraction.ExtractionResult(markdown="real article body " * 200, metadata={})
 
     async def _short_llm(_system, _user, _settings, **_kwargs):
@@ -202,7 +202,7 @@ async def test_pipeline_retries_cleanup_on_transient_llm_provider_error(
 
     database.run_migrations(env)
 
-    async def _fake_extract(_url, _settings):
+    async def _fake_extract(_url, _settings, _registry=None):
         return extraction.ExtractionResult(markdown="x " * 500, metadata={})
 
     attempts = {"n": 0}
@@ -243,7 +243,7 @@ async def test_pipeline_does_not_retry_on_llm_request_error(
 
     database.run_migrations(env)
 
-    async def _fake_extract(_url, _settings):
+    async def _fake_extract(_url, _settings, _registry=None):
         return extraction.ExtractionResult(markdown="x " * 500, metadata={})
 
     attempts = {"n": 0}
@@ -329,7 +329,7 @@ async def test_pipeline_writes_artwork_jpg_and_reaches_transcript(
 
     database.run_migrations(env)
 
-    async def _fake_extract(_url, _settings):
+    async def _fake_extract(_url, _settings, _registry=None):
         return extraction.ExtractionResult(
             markdown="raw " * 250,
             metadata={
@@ -487,7 +487,7 @@ async def test_pipeline_finalize_upserts_episode_row(
     database.run_migrations(env)
     _stub_full_chain(monkeypatch)
 
-    async def _fake_extract_with_title(_url, _settings):
+    async def _fake_extract_with_title(_url, _settings, _registry=None):
         return extraction.ExtractionResult(
             markdown="raw " * 250,
             metadata={"title": "Test Article", "author": "Test Author"},
@@ -531,7 +531,7 @@ async def test_pipeline_finalize_falls_back_author_to_feed_author(
     database.run_migrations(env)
     _stub_full_chain(monkeypatch)
 
-    async def _fake_extract_no_author(_url, _settings):
+    async def _fake_extract_no_author(_url, _settings, _registry=None):
         return extraction.ExtractionResult(
             markdown="raw " * 250,
             metadata={"title": "No Byline"},
@@ -726,6 +726,79 @@ async def test_normalize_llm_short_output_falls_back_to_input(
     long_text = "The council approved the budget after a long debate. " * 20
     out = await pipeline._pronounce_with_llm("job", long_text, get_settings())
     assert out == long_text  # original window preserved, not the "x"
+
+
+async def test_normalize_llm_strips_preamble_via_marker_contract(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A model that prepends conversational commentary but wraps the respelled
+    text in the begin/end markers must have the commentary dropped, not narrated."""
+
+    database.run_migrations(env)
+    monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _t, _n: None)
+    body = "The council approved the budget after a long debate. " * 20
+
+    async def _preamble(_system, _user, _settings, **_kwargs):
+        return (
+            "No pronunciation reference was provided alongside the text, so there "
+            "are no terms to change. Here is the text reproduced in full:\n\n"
+            f"<<<AUDICLE_BEGIN>>>\n{body}\n<<<AUDICLE_END>>>"
+        )
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _preamble)
+    out = await pipeline._pronounce_with_llm("job", body, get_settings())
+    assert "reproduced in full" not in out
+    assert "No pronunciation reference" not in out
+    assert "council approved the budget" in out
+
+
+async def test_normalize_llm_retries_when_model_ignores_markers(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A first reply with no markers (preamble glued onto the bare text) is retried
+    once; the retry's marker'd content is what survives, with the preamble dropped."""
+
+    database.run_migrations(env)
+    monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _t, _n: None)
+    body = "The council approved the budget after a long debate. " * 20
+    outputs = iter(
+        [
+            "No pronunciation reference was provided, so there are no terms to "
+            "change. Here is the text reproduced in full:\n\n" + body,
+            f"<<<AUDICLE_BEGIN>>>\n{body}\n<<<AUDICLE_END>>>",
+        ]
+    )
+    calls = {"n": 0}
+
+    async def _fake(_system, _user, _settings, **_kwargs):
+        calls["n"] += 1
+        return next(outputs)
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _fake)
+    out = await pipeline._pronounce_with_llm("job", body, get_settings())
+    assert calls["n"] == 2  # retried once when the first reply had no markers
+    assert "reproduced in full" not in out
+    assert "council approved the budget" in out
+
+
+async def test_normalize_llm_no_markers_keeps_window_verbatim(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the model never emits markers (even on retry), the window is kept
+    verbatim -- a real first paragraph that opens like a preamble ("Here is...")
+    must not be dropped by the cleanup preamble heuristic."""
+
+    database.run_migrations(env)
+    monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _t, _n: None)
+    window = "Here is the key finding.\n\n" + "The budget passed after a long debate. " * 20
+
+    async def _no_markers(_system, _user, _settings, **_kwargs):
+        return window  # never wraps in markers, on either attempt
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _no_markers)
+    out = await pipeline._pronounce_with_llm("job", window, get_settings())
+    assert "Here is the key finding" in out  # not stripped as a preamble
+    assert "budget passed after a long debate" in out
 
 
 # --- cleanup: boilerplate-only window drop ---------------------------------

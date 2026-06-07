@@ -24,6 +24,7 @@ from app.api.v1 import prompt as prompt_routes
 from app.api.v1 import purge as purge_routes
 from app.api.v1 import reference as reference_routes
 from app.api.v1 import settings as settings_routes
+from app.api.v1 import source_fallbacks as source_fallbacks_routes
 from app.api.v1 import status as status_routes
 from app.api.v1 import submit as submit_routes
 
@@ -39,6 +40,7 @@ admin.include_router(submit_routes.router)
 admin.include_router(status_routes.router)
 admin.include_router(prompt_routes.router)
 admin.include_router(corrections_routes.router)
+admin.include_router(source_fallbacks_routes.router)
 admin.include_router(purge_routes.router)
 admin.include_router(feed_routes.router)
 admin.include_router(settings_routes.router)

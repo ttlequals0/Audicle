@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.19.3
+  version: 0.20.1
 paths:
   /health/live:
     get:
@@ -358,6 +358,49 @@ paths:
           content:
             application/json:
               schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/source-fallbacks:
+    get:
+      tags:
+      - source-fallbacks
+      summary: Read paywall extraction fallback config
+      operationId: read_source_fallbacks_api_v1_source_fallbacks_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Read Source Fallbacks Api V1 Source Fallbacks Get
+    put:
+      tags:
+      - source-fallbacks
+      summary: Replace paywall extraction fallback config
+      operationId: write_source_fallbacks_api_v1_source_fallbacks_put
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: true
+              type: object
+              title: Body
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Write Source Fallbacks Api V1 Source Fallbacks Put
         '422':
           description: Validation Error
           content:

@@ -223,3 +223,51 @@ async def test_extract_rejects_success_false(
 
     with pytest.raises(extraction.ExtractionPermanentError, match="success=false"):
         await extraction.extract("https://example.test/article", get_settings())
+
+
+# --- operator registry: googlebot bypass + reject -------------------------------
+
+
+async def test_extract_googlebot_rescrapes_same_url_with_headers(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.services import source_fallbacks as sf
+
+    requests: list[httpx.Request] = []
+    pages = iter([_ok_response("x" * 100), _ok_response("body " * 1000)])  # teaser, then full
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return next(pages)
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    registry = sf.build_registry(
+        [{"host": "washingtonpost.com", "proxy": "googlebot"}],
+        default_proxy="googlebot",
+        min_chars=3000,
+    )
+    url = "https://www.washingtonpost.com/a"
+    result = await extraction.extract(url, get_settings(), registry)
+
+    assert result.markdown.startswith("body ")
+    assert len(requests) == 2
+    direct = json.loads(requests[0].content)
+    googlebot = json.loads(requests[1].content)
+    assert direct["url"] == url and "headers" not in direct
+    assert googlebot["url"] == url  # re-scrape the SAME url, not a rewrite
+    assert "googlebot" in googlebot["headers"]["User-Agent"].lower()
+    assert googlebot["headers"]["X-Forwarded-For"] == "66.249.66.1"
+
+
+async def test_extract_none_strategy_fails_clean_without_extra_calls(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.services import source_fallbacks as sf
+
+    transport = _stub_transport(_ok_response("x" * 100))  # only the direct scrape
+    _patch_async_client(monkeypatch, transport)
+    registry = sf.build_registry(
+        [{"host": "wsj.com", "proxy": "none"}], default_proxy="googlebot", min_chars=3000
+    )
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://www.wsj.com/a", get_settings(), registry)

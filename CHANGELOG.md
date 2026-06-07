@@ -6,6 +6,52 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-06-06
+
+### Fixed
+
+- The LLM pronunciation pass no longer narrates a conversational preamble. Some
+  models prepend a note ("...here is the text reproduced in full:") instead of
+  just respelling, and it was ending up in the audio. The pass now uses the same
+  begin/end marker contract as the cleanup stage, with one retry when the model
+  ignores it; if it still won't comply, the window is kept verbatim rather than
+  risk dropping a real paragraph or leaking the note.
+- Re-processing an article now reliably forces podcast apps to re-download. The
+  episode GUID carries a version token from the audio's last-write time (the same
+  value the enclosure already uses), so a regenerated episode always gets a fresh
+  GUID. Before, deleting an episode and re-submitting the URL reused the old GUID
+  (the per-episode revision counter resets on a fresh insert), so apps that key
+  "already downloaded" on the GUID kept the stale audio. Note: shipping this
+  changes every episode's GUID once, so clients re-download all episodes the first
+  time they refresh after the upgrade.
+
+### Docs
+
+- README documents the paywall bypass feature (strategies, Settings, API).
+- Tightened the wording in the article-proxy Settings section.
+
+## [0.20.0] - 2026-06-06
+
+### Added
+
+- Operator-configurable paywall fallbacks. The Settings page has a new "article
+  proxy / paywall sites" section: pick a default bypass strategy, set the teaser
+  threshold (the character count below which a matched host is treated as a
+  paywall stub), and list per-site rules with their own strategy. Backed by
+  `GET`/`PUT /api/v1/source-fallbacks`.
+- Four bypass strategies. `googlebot` re-scrapes the same URL with a Googlebot
+  user agent and crawler `X-Forwarded-For`, so SEO-metered paywalls serve the
+  full article. `freedium` rewrites the URL to a Freedium reader proxy (Medium).
+  `custom` rewrites to an operator template containing `{url}`. `none` makes a
+  matched host fail cleanly instead of narrating the teaser. The Googlebot fetch
+  is built in natively (via the scrape headers), not a separate service.
+
+### Changed
+
+- The hardcoded Medium to Freedium rule is now the built-in seed; operator rules
+  layer on top and win on a host collision. Built-in rules still apply and are
+  shown in the Settings section.
+
 ## [0.19.3] - 2026-06-06
 
 ### Fixed

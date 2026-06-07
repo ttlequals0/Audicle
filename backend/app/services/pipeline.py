@@ -42,6 +42,8 @@ from app.services import (
     lexicon,
     llm,
     pronounce_convert,
+    source_fallbacks,
+    source_fallbacks_store,
     transcript,
     tts,
 )
@@ -272,7 +274,12 @@ async def _run_stage(
 
 
 async def _stage_extract(job: jobs.Job, settings: Settings) -> extraction.ExtractionResult:
-    result = await extraction.extract(job.url, settings)
+    # Build the effective paywall-fallback registry (operator rules over built-ins)
+    # so extraction routes known paywall hosts through the configured bypass.
+    with database.connection(settings.DATA_DIR) as conn:
+        cfg = source_fallbacks_store.load(conn)
+    registry = source_fallbacks.build_registry(cfg["rules"], cfg["default_proxy"], cfg["min_chars"])
+    result = await extraction.extract(job.url, settings, registry)
     logger.info(
         "Extraction succeeded",
         extra={
@@ -1180,14 +1187,38 @@ async def _pronounce_with_llm(job_id: str, text: str, settings: Settings) -> str
     windows = chunker.pack_paragraphs(text, settings.LLM_CLEANUP_WINDOW_CHARS) or [text]
     out_parts: list[str] = []
     for index, window in enumerate(windows):
+        # Same marker contract as cleanup: wrap the output so any preamble the
+        # model glues on ("...here is the text reproduced in full:") lands outside
+        # the markers and is sliced off by extract_clean_output -- the min-ratio
+        # guard below only catches short output, not preamble-bloated output.
         user_message = (
             "Reproduce the text below in full, copying every sentence in order and "
             "changing only the spelled form of terms that match the pronunciation "
-            "reference. Output the complete text and nothing else."
+            f"reference. Output ONLY the text between a line {cleanup_output.BEGIN_MARKER} "
+            f"and a line {cleanup_output.END_MARKER} -- no commentary outside the markers."
             f"\n\n<text>\n{window}\n</text>"
         )
         try:
-            part = (await _llm_with_retry(system_prompt, user_message, settings)).strip()
+            raw = await _llm_with_retry(system_prompt, user_message, settings)
+            if cleanup_output.BEGIN_MARKER not in raw:
+                # Model ignored the marker contract; one stern retry to force it.
+                raw = await _llm_with_retry(
+                    system_prompt,
+                    "Your previous reply was rejected. Output ONLY the reproduced "
+                    f"text between {cleanup_output.BEGIN_MARKER} and "
+                    f"{cleanup_output.END_MARKER}, with no other words.\n\n" + user_message,
+                    settings,
+                )
+            # Trust only marker-delimited output. If the model defied the contract
+            # twice, keep the window verbatim rather than run extract_clean_output's
+            # preamble heuristic, which is tuned for cleanup and could drop a real
+            # paragraph opening like a preamble ("Here is...") or miss an unrecognized
+            # one; the deterministic backstop still respells this window afterward.
+            part = (
+                cleanup_output.extract_clean_output(raw)
+                if cleanup_output.BEGIN_MARKER in raw
+                else window
+            )
         except Exception:
             logger.warning(
                 "Pronunciation window failed; passing it through unchanged",

@@ -7,10 +7,10 @@ Fire-and-forget: it does not poll for processing completion.
 After importing the signed shortcut, edit the two Text actions at the top to set
 your server URL and admin password (see docs/ios-shortcut.md).
 """
+import os
 import plistlib
 import subprocess
 import sys
-import os
 
 # Group UUIDs for control flow blocks
 GID_IF_URL = "A0000002-0000-0000-0000-000000000001"

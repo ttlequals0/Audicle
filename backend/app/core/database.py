@@ -353,13 +353,12 @@ def _m009_job_started_at(conn: sqlite3.Connection) -> None:
 
 
 def _m010_episode_revision(conn: sqlite3.Connection) -> None:
-    """Add a per-episode render counter so reprocessed episodes get a fresh feed
-    GUID (forcing podcast clients to re-download the new audio).
+    """Add a per-episode reprocess counter. Starts at 1 for every existing/new
+    episode; the finalize upsert increments it on each in-place reprocess.
 
-    Starts at 1 for every existing/new episode; the finalize upsert increments it
-    on each reprocess. The feed appends ``-r{revision}`` to the GUID only when
-    revision > 1, so untouched episodes keep their stable GUID (no back-catalog
-    re-download).
+    Historically the feed GUID carried ``-r{revision}``, but that reset to 1 on a
+    delete-then-resubmit and collided the GUID; the feed now versions the GUID by
+    ``updated_at`` instead. The column is retained as an audit/debug counter.
     """
 
     conn.execute("ALTER TABLE episodes ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")

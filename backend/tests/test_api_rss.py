@@ -167,4 +167,6 @@ def test_get_rss_excludes_episodes_with_null_audio(env: Path) -> None:
         response = client.get("/rss/test_feed.xml")
     root = DET.fromstring(response.content)
     guids = [g.text for g in root.findall("channel/item/guid")]
-    assert guids == ["ep"]
+    # Only the complete "ep" episode appears (the audio-less "half" is excluded);
+    # the guid carries the updated_at version token, so compare the base id.
+    assert len(guids) == 1 and guids[0].split("-v")[0] == "ep"

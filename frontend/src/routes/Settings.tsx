@@ -90,6 +90,10 @@ export default function SettingsRoute() {
     queryKey: ["corrections"],
     queryFn: () => api<Record<string, CorrectionEntry>>("/api/v1/corrections"),
   });
+  const fallbacksQ = useQuery({
+    queryKey: ["source-fallbacks"],
+    queryFn: () => api<SourceFallbacksConfig>("/api/v1/source-fallbacks"),
+  });
   const healthQ = useHealthLive();
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
@@ -243,6 +247,11 @@ export default function SettingsRoute() {
       {correctionsQ.data !== undefined && (
         <CollapsibleSection title="pronunciation corrections">
           <CorrectionsTable initial={correctionsQ.data} />
+        </CollapsibleSection>
+      )}
+      {fallbacksQ.data !== undefined && (
+        <CollapsibleSection title="article proxy / paywall sites">
+          <SourceFallbacksTable initial={fallbacksQ.data} />
         </CollapsibleSection>
       )}
       <CollapsibleSection title="reference voice">
@@ -745,6 +754,191 @@ function CorrectionsTable({ initial }: { initial: Record<string, CorrectionEntry
           onClick={() => reset.mutate()}
         >
           {reset.isPending ? "clearing..." : "clear all"}
+        </button>
+        {msg && <span className="font-mono text-xs text-accent">{msg}</span>}
+      </div>
+    </section>
+  );
+}
+
+interface ProxyOption {
+  key: string;
+  label: string;
+}
+
+interface FallbackRule {
+  host: string;
+  proxy: string;
+  custom_template: string;
+}
+
+interface SourceFallbacksConfig {
+  default_proxy: string;
+  min_chars: number;
+  rules: FallbackRule[];
+  available_proxies: ProxyOption[];
+  builtin: { host: string; proxy: string }[];
+}
+
+interface FallbackRow {
+  id: number;
+  host: string;
+  proxy: string; // "" -> use the global default
+  customTemplate: string;
+}
+
+let _fbRowCounter = 0;
+const newFallbackRow = (rule?: FallbackRule): FallbackRow => ({
+  id: ++_fbRowCounter,
+  host: rule?.host ?? "",
+  proxy: rule?.proxy ?? "",
+  customTemplate: rule?.custom_template ?? "",
+});
+
+function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
+  const qc = useQueryClient();
+  // Lazy init from the initial prop; parent mounts only once the query resolves.
+  const [defaultProxy, setDefaultProxy] = useState(initial.default_proxy);
+  const [minChars, setMinChars] = useState(String(initial.min_chars));
+  const [rows, setRows] = useState<FallbackRow[]>(() =>
+    initial.rules.map((r) => newFallbackRow(r))
+  );
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const proxies = initial.available_proxies;
+  const proxyLabel = (key: string) =>
+    proxies.find((p) => p.key === key)?.label ?? key;
+
+  const m = useMutation({
+    mutationFn: () =>
+      api("/api/v1/source-fallbacks", {
+        method: "PUT",
+        body: JSON.stringify({
+          default_proxy: defaultProxy,
+          min_chars: Number(minChars) || 0,
+          rules: rows
+            .filter((r) => r.host.trim())
+            .map((r) => ({
+              host: r.host.trim(),
+              proxy: r.proxy,
+              custom_template: r.customTemplate.trim(),
+            })),
+        }),
+      }),
+    onSuccess: () => {
+      setMsg("saved");
+      setTimeout(() => setMsg(null), 2000);
+      qc.invalidateQueries({ queryKey: ["source-fallbacks"] });
+    },
+    onError: (e) => {
+      const detail =
+        e instanceof ApiError ? (e.detail as { detail?: string })?.detail : null;
+      setMsg(detail || "save failed");
+    },
+  });
+
+  return (
+    <section className="space-y-3">
+      <div className="builtin-note">
+        <span className="builtin-note-tag">built-in</span>
+        <p className="builtin-note-body">
+          Built-in:{" "}
+          {initial.builtin.map((b) => `${b.host} -> ${b.proxy}`).join(", ")}. Your rules
+          below win on a host collision; a "use default" row uses the strategy above.
+        </p>
+      </div>
+      <p className="text-mute text-xs">
+        When a listed host scrapes below the threshold, Audicle retries with its strategy
+        before failing the job. domain: the host to bypass. strategy: googlebot (re-fetch
+        as Googlebot), freedium (Medium mirror), custom (your own {"{url}"} template), none
+        (skip the retry and fail rather than narrate the stub).
+      </p>
+
+      <div className="flex flex-wrap items-end gap-4">
+        <div>
+          <label className="label" htmlFor="fb-default-proxy">
+            default strategy
+          </label>
+          <select
+            id="fb-default-proxy"
+            className="field w-56"
+            value={defaultProxy}
+            onChange={(e) => setDefaultProxy(e.target.value)}
+          >
+            {proxies.map((p) => (
+              <option key={p.key} value={p.key}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="label" htmlFor="fb-min-chars">
+            teaser threshold (chars)
+          </label>
+          <input
+            id="fb-min-chars"
+            className="field w-36"
+            type="number"
+            min={1}
+            value={minChars}
+            onChange={(e) => setMinChars(e.target.value)}
+          />
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        {rows.map((row) => {
+          const patch = (p: Partial<FallbackRow>) =>
+            setRows((rs) => rs.map((r) => (r.id === row.id ? { ...r, ...p } : r)));
+          return (
+            <div key={row.id} className="flex flex-wrap items-center gap-2">
+              <input
+                className="field flex-1 min-w-[10rem]"
+                placeholder="domain"
+                value={row.host}
+                onChange={(e) => patch({ host: e.target.value })}
+              />
+              <select
+                className="field w-48"
+                value={row.proxy}
+                onChange={(e) => patch({ proxy: e.target.value })}
+              >
+                <option value="">use default ({proxyLabel(defaultProxy)})</option>
+                {proxies.map((p) => (
+                  <option key={p.key} value={p.key}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="text-mute hover:text-danger flex items-center justify-center w-8"
+                onClick={() => setRows((rs) => rs.filter((r) => r.id !== row.id))}
+              >
+                &times;
+              </button>
+              {row.proxy === "custom" && (
+                <input
+                  className="field basis-full min-w-[12rem]"
+                  placeholder="https://reader.example/{url}"
+                  value={row.customTemplate}
+                  onChange={(e) => patch({ customTemplate: e.target.value })}
+                />
+              )}
+            </div>
+          );
+        })}
+        <button
+          className="btn-ghost"
+          onClick={() => setRows((r) => [...r, newFallbackRow()])}
+        >
+          add site
+        </button>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button className="btn-primary" disabled={m.isPending} onClick={() => m.mutate()}>
+          {m.isPending ? "saving..." : "save paywall sites"}
         </button>
         {msg && <span className="font-mono text-xs text-accent">{msg}</span>}
       </div>
