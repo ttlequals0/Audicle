@@ -212,7 +212,11 @@ class Settings(BaseSettings):
     # as a quality failure and regenerated on the same AUDIO_ANALYSIS_MAX_REGEN
     # loop. The wrapper must also have WHISPER_ENABLED=true to load the model.
     WHISPER_VERIFY_ENABLED: bool = False
-    WHISPER_DIVERGENCE_THRESHOLD: float = 0.20  # 0..1; above this = regenerate
+    # 0..1; above this = regenerate. 0.35 rather than a tighter value because ASR
+    # mishears technical jargon (execve, hex, paths) on code-heavy articles, which
+    # inflates divergence even when the audio is fine; this catches gross dropout
+    # and hallucination without over-regenerating. Tune live via Settings.
+    WHISPER_DIVERGENCE_THRESHOLD: float = 0.35
     WHISPER_VERIFY_MIN_WORDS: int = 8  # skip tiny chunks where ASR noise dominates
 
     # Artwork.

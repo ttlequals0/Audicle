@@ -6,6 +6,18 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.21.2] - 2026-06-07
+
+### Changed
+
+- Raised the default `WHISPER_DIVERGENCE_THRESHOLD` from 0.20 to 0.35. On
+  code-heavy articles the ASR mishears technical jargon (syscalls, hex, paths),
+  which inflates divergence and over-regenerates even when the audio is fine;
+  0.35 still catches gross dropout and hallucination. Tunable live via Settings.
+- `/health/ready` now surfaces the wrapper's `whisper_enabled`, `whisper_model`,
+  and `whisper_loaded` under `components.tts_wrapper`, so an operator can confirm
+  ASR verification is loaded from the API instead of the wrapper logs.
+
 ## [0.21.1] - 2026-06-07
 
 ### Changed

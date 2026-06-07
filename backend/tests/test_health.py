@@ -78,6 +78,39 @@ def test_health_alias_returns_same_shape(env: Path, monkeypatch) -> None:
     assert ready["components"] == alias["components"]
 
 
+async def test_probe_tts_wrapper_surfaces_whisper_fields(monkeypatch) -> None:
+    """The wrapper's whisper_* health fields are passed through to
+    components.tts_wrapper so an operator can confirm ASR verification is loaded
+    without reading the wrapper logs."""
+
+    import httpx
+    from app.api import health as health_mod
+
+    payload = {
+        "ok": True,
+        "model_loaded": True,
+        "reference_loaded": True,
+        "version": "0.21.2",
+        "engine": "chatterbox",
+        "device": "cuda",
+        "whisper_enabled": True,
+        "whisper_model": "base",
+        "whisper_loaded": True,
+    }
+    transport = httpx.MockTransport(lambda _req: httpx.Response(200, json=payload))
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda *a, **kw: original(*a, **{**kw, "transport": transport})
+    )
+
+    status, detail = await health_mod._probe_tts_wrapper("http://tts-wrapper:8000", 2.0)
+    assert status == "ok"
+    assert detail["whisper_enabled"] is True
+    assert detail["whisper_model"] == "base"
+    assert detail["whisper_loaded"] is True
+    assert detail["engine"] == "chatterbox"  # existing fields still pass through
+
+
 def test_health_ready_503_when_db_unreachable(env: Path, monkeypatch) -> None:
     # Let the lifespan migration succeed against the real DB, then break only
     # the health endpoint's connect.
