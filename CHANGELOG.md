@@ -6,6 +6,57 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.21.2] - 2026-06-07
+
+### Changed
+
+- Raised the default `WHISPER_DIVERGENCE_THRESHOLD` from 0.20 to 0.35. On
+  code-heavy articles the ASR mishears technical jargon (syscalls, hex, paths),
+  which inflates divergence and over-regenerates even when the audio is fine;
+  0.35 still catches gross dropout and hallucination. Tunable live via Settings.
+- `/health/ready` now surfaces the wrapper's `whisper_enabled`, `whisper_model`,
+  and `whisper_loaded` under `components.tts_wrapper`, so an operator can confirm
+  ASR verification is loaded from the API instead of the wrapper logs.
+
+## [0.21.1] - 2026-06-07
+
+### Changed
+
+- The ASR verification policy is now operator-tunable at runtime from the Settings
+  page (and `PUT /api/v1/settings`), no redeploy needed: `WHISPER_VERIFY_ENABLED`,
+  `WHISPER_DIVERGENCE_THRESHOLD`, and `WHISPER_VERIFY_MIN_WORDS` join the
+  runtime-settings allowlist alongside the audio-QA thresholds. The wrapper's
+  `WHISPER_ENABLED` (which loads the model) stays env-only -- it is a
+  separate-container startup capability, not a per-job policy.
+
+## [0.21.0] - 2026-06-07
+
+### Added
+
+- Optional post-TTS ASR verification. When enabled, the GPU wrapper transcribes
+  each produced chunk with faster-whisper and the backend compares that transcript
+  to the text it asked the wrapper to speak. A high word-level divergence (dropped
+  content, a hallucinated run, a leaked preamble) regenerates the chunk on the same
+  budget as the existing audio analysis. The transcription is blind -- the expected
+  text is never used as a Whisper prompt -- so the comparison stays honest. Off by
+  default; it takes both `WHISPER_ENABLED` on the wrapper (loads the model) and
+  `WHISPER_VERIFY_ENABLED` on the backend, with `WHISPER_MODEL` and
+  `WHISPER_DIVERGENCE_THRESHOLD` to tune the speed/strictness trade. faster-whisper
+  (CTranslate2) ships in the wrapper image but loads the model only when enabled.
+
+### Changed
+
+- The chunker now self-heals two cases that previously failed an article. A run-on
+  where two sentences are glued with no space (`end.Next`) gets a boundary inserted
+  before splitting, sparing decimals and all-caps abbreviations. A long sentence
+  with no comma or semicolon to break on falls back to a whitespace split instead
+  of raising; only a single word longer than the character cap is still treated as
+  unsplittable. No content is ever truncated.
+- Bumped react-router 6.30.3 -> 6.30.4 (and `@remix-run/router` 1.23.2 -> 1.23.3),
+  clearing GHSA-2j2x-hqr9-3h42. The advisory is an open redirect via `redirect()`,
+  which the app does not use (declarative `<BrowserRouter>` routing), so there was
+  no exposure; the bump keeps the dependency current.
+
 ## [0.20.1] - 2026-06-06
 
 ### Fixed

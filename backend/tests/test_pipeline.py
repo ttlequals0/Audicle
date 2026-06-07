@@ -33,7 +33,7 @@ def _stub_full_chain(monkeypatch: pytest.MonkeyPatch) -> None:
 
     from app.services import audio, tts
 
-    async def _fake_tts(text, episode_id, chunk_index, settings, pronunciations=None, seed=None):
+    async def _fake_tts(text, episode_id, chunk_index, settings, pronunciations=None, seed=None, verify=False):
         _ = text  # acknowledge
         _ = settings
         return tts.GenerateResult(
@@ -65,7 +65,7 @@ def _stub_tts_and_audio(monkeypatch: pytest.MonkeyPatch) -> None:
 
     from app.services import audio, tts
 
-    async def _fake_tts(text, episode_id, chunk_index, settings, pronunciations=None, seed=None):
+    async def _fake_tts(text, episode_id, chunk_index, settings, pronunciations=None, seed=None, verify=False):
         _ = text
         _ = settings
         return tts.GenerateResult(
@@ -438,11 +438,11 @@ async def test_pipeline_transcript_stage_rejects_length_mismatch(
 
     from app.services import tts as tts_module
 
-    async def _drop_one(text, episode_id, chunk_index, settings, pronunciations=None, seed=None):
+    async def _drop_one(text, episode_id, chunk_index, settings, pronunciations=None, seed=None, verify=False):
         result = await _stub_tts_for_extra(text, episode_id, chunk_index, settings)
         return result
 
-    async def _stub_tts_for_extra(text, episode_id, chunk_index, settings, pronunciations=None, seed=None):
+    async def _stub_tts_for_extra(text, episode_id, chunk_index, settings, pronunciations=None, seed=None, verify=False):
         return tts_module.GenerateResult(
             wav_path=f"/tmp/{episode_id}_chunk_{chunk_index}.wav",
             duration_secs=1.0,
@@ -452,7 +452,7 @@ async def test_pipeline_transcript_stage_rejects_length_mismatch(
     call_count = {"n": 0}
     real_tts = _drop_one
 
-    async def _short_tts(text, episode_id, chunk_index, settings, pronunciations=None, seed=None):
+    async def _short_tts(text, episode_id, chunk_index, settings, pronunciations=None, seed=None, verify=False):
         call_count["n"] += 1
         # Return only for first call; subsequent calls still execute but the
         # test patches _stage_transcript's inputs by intercepting the chunker.
@@ -1161,7 +1161,7 @@ async def test_chunk_quality_check_regenerates_bad_chunk(
     calls = {"n": 0}
     seeds: list[int | None] = []
 
-    async def _fake_tts(text, episode_id, chunk_index, settings, pronunciations=None, seed=None):
+    async def _fake_tts(text, episode_id, chunk_index, settings, pronunciations=None, seed=None, verify=False):
         calls["n"] += 1
         seeds.append(seed)
         _write_drone_wav(wav) if calls["n"] == 1 else _write_speechlike_wav(wav)
@@ -1189,7 +1189,7 @@ async def test_chunk_quality_check_keeps_last_after_max_regen(
     wav = tmp_path / "ep_chunk_0.wav"
     calls = {"n": 0}
 
-    async def _fake_tts(text, episode_id, chunk_index, settings, pronunciations=None, seed=None):
+    async def _fake_tts(text, episode_id, chunk_index, settings, pronunciations=None, seed=None, verify=False):
         calls["n"] += 1
         _write_drone_wav(wav)  # always bad
         return tts.GenerateResult(wav_path=str(wav), duration_secs=1.0, sample_rate=24000)
@@ -1215,7 +1215,7 @@ async def test_chunk_quality_check_disabled_calls_once(
     wav = tmp_path / "ep_chunk_0.wav"
     calls = {"n": 0}
 
-    async def _fake_tts(text, episode_id, chunk_index, settings, pronunciations=None, seed=None):
+    async def _fake_tts(text, episode_id, chunk_index, settings, pronunciations=None, seed=None, verify=False):
         calls["n"] += 1
         _write_drone_wav(wav)  # bad, but analysis is off so no regen
         return tts.GenerateResult(wav_path=str(wav), duration_secs=1.0, sample_rate=24000)
@@ -1226,3 +1226,76 @@ async def test_chunk_quality_check_disabled_calls_once(
         job, "two words here now", 0, get_settings(), None
     )
     assert calls["n"] == 1
+
+
+async def test_chunk_asr_verify_regenerates_on_divergence(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Isolate the ASR path: audio analysis off, whisper verify on.
+    monkeypatch.setenv("AUDIO_ANALYSIS_ENABLED", "false")
+    monkeypatch.setenv("WHISPER_VERIFY_ENABLED", "true")
+    get_settings.cache_clear()
+    database.run_migrations(env)
+    from app.services import tts
+
+    text = "this chunk has clearly more than eight spoken words in it"
+    calls = {"n": 0}
+    verifies: list[bool] = []
+
+    async def _fake_tts(
+        text, episode_id, chunk_index, settings, pronunciations=None, seed=None, verify=False
+    ):
+        calls["n"] += 1
+        verifies.append(verify)
+        # Diverge on the first attempt, match the asked-for text on the regen.
+        transcript = (
+            "totally different hallucinated nonsense audio here right now okay"
+            if calls["n"] == 1
+            else text
+        )
+        return tts.GenerateResult(
+            wav_path=str(tmp_path / "ep_chunk_0.wav"),
+            duration_secs=1.0,
+            sample_rate=24000,
+            transcript=transcript,
+        )
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    job = _seed_job(env)
+    result = await pipeline._generate_chunk_quality_checked(job, text, 0, get_settings(), None)
+    assert calls["n"] == 2  # diverged once, matched on regen
+    assert all(verifies)  # verify flag sent on every attempt
+    assert result.transcript == text
+
+
+async def test_chunk_asr_verify_skips_short_chunk(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("AUDIO_ANALYSIS_ENABLED", "false")
+    monkeypatch.setenv("WHISPER_VERIFY_ENABLED", "true")
+    get_settings.cache_clear()
+    database.run_migrations(env)
+    from app.services import tts
+
+    calls = {"n": 0}
+    verifies: list[bool] = []
+
+    async def _fake_tts(
+        text, episode_id, chunk_index, settings, pronunciations=None, seed=None, verify=False
+    ):
+        calls["n"] += 1
+        verifies.append(verify)
+        return tts.GenerateResult(
+            wav_path=str(tmp_path / "ep_chunk_0.wav"),
+            duration_secs=1.0,
+            sample_rate=24000,
+            transcript="totally unrelated transcript that would diverge",
+        )
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    job = _seed_job(env)
+    # 3 words is below WHISPER_VERIFY_MIN_WORDS (8): verify is not requested and
+    # the divergent transcript is ignored, so there is no regeneration.
+    await pipeline._generate_chunk_quality_checked(job, "three short words", 0, get_settings(), None)
+    assert calls["n"] == 1
+    assert verifies == [False]

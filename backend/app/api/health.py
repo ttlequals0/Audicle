@@ -213,9 +213,12 @@ async def _probe_tts_wrapper(base: str | None, timeout_secs: float) -> tuple[str
     """``GET {base}/health`` -> ``(check_status, component_detail)``.
 
     The wrapper reports its own ``engine``/``version``/``torch``/``coqui_tts``/
-    ``device``/``model_loaded``; surface that subset under
-    ``components.tts_wrapper`` (``engine`` names the live backend so the swap is
-    observable, e.g. ``chatterbox``; ``coqui_tts`` is null on non-XTTS engines).
+    ``device``/``model_loaded`` plus the ASR-verify capability
+    (``whisper_enabled``/``whisper_model``/``whisper_loaded``); surface that
+    subset under ``components.tts_wrapper`` (``engine`` names the live backend so
+    the swap is observable, e.g. ``chatterbox``; ``coqui_tts`` is null on non-XTTS
+    engines; the ``whisper_*`` fields let an operator confirm verification is
+    actually loaded without reading the wrapper logs).
     """
 
     if not base:
@@ -234,7 +237,17 @@ async def _probe_tts_wrapper(base: str | None, timeout_secs: float) -> tuple[str
         payload = {}
     detail = {
         key: payload[key]
-        for key in ("engine", "version", "torch", "coqui_tts", "device", "model_loaded")
+        for key in (
+            "engine",
+            "version",
+            "torch",
+            "coqui_tts",
+            "device",
+            "model_loaded",
+            "whisper_enabled",
+            "whisper_model",
+            "whisper_loaded",
+        )
         if key in payload
     }
     return ("ok" if r.is_success else f"http_{r.status_code}"), detail

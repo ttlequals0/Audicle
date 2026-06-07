@@ -31,6 +31,7 @@ from app.core.paths import file_size_or_zero, media_dir
 from app.services import (
     article_prep,
     artwork,
+    asr_verify,
     audio,
     audio_analysis,
     chunker,
@@ -811,21 +812,36 @@ async def _generate_chunk_quality_checked(
     settings: Settings,
     pronunciations: dict[str, str] | None,
 ) -> tts.GenerateResult:
-    """Synthesize one chunk, then (if enabled) analyze the audio and regenerate
-    it when it came back as a drone / noise / repetition.
+    """Synthesize one chunk, then (if enabled) check the audio and regenerate it
+    when it came back degraded.
+
+    Two independent checks gate a chunk, either of which can trigger a regen:
+    the signal-level audio analysis (drone / noise / repetition) and, when
+    WHISPER_VERIFY_ENABLED, an ASR divergence check that compares a faster-whisper
+    transcript of the produced audio against the text we asked it to speak
+    (catches dropout, hallucination, leaked preamble). Both share the
+    AUDIO_ANALYSIS_MAX_REGEN budget.
 
     Chatterbox is non-deterministic, so a re-gen usually recovers. The wrapper
     overwrites the same ``{episode_id}_chunk_{index}.wav`` each call, so on
     persistent failure we keep the *last* attempt (earlier ones are gone from
     disk) and log a WARN -- a degraded chunk never fails the whole episode.
-    Analysis errors are swallowed: it must never become a new failure mode."""
+    Analysis errors are swallowed: they must never become a new failure mode."""
 
     word_count = len(text.split())
+    audio_enabled = settings.AUDIO_ANALYSIS_ENABLED
+    # Skip ASR on tiny chunks where transcription noise dominates the divergence.
+    verify_enabled = (
+        settings.WHISPER_VERIFY_ENABLED and word_count >= settings.WHISPER_VERIFY_MIN_WORDS
+    )
     # max(0, ...) so a misconfigured negative regen count can't make the loop
     # body skip and return None (the field is operator-tunable at runtime).
-    max_extra = max(0, settings.AUDIO_ANALYSIS_MAX_REGEN) if settings.AUDIO_ANALYSIS_ENABLED else 0
+    max_extra = (
+        max(0, settings.AUDIO_ANALYSIS_MAX_REGEN) if (audio_enabled or verify_enabled) else 0
+    )
 
     result = None
+    last_reasons: list[str] = []
     for attempt in range(max_extra + 1):  # 1 baseline + up to max_extra regenerations
         result = await tts.generate_chunk_with_retry(
             text=text,
@@ -834,18 +850,33 @@ async def _generate_chunk_quality_checked(
             settings=settings,
             pronunciations=pronunciations,
             seed=None if attempt == 0 else _regen_seed(index, attempt),
+            verify=verify_enabled,
         )
-        if not settings.AUDIO_ANALYSIS_ENABLED:
+        if not (audio_enabled or verify_enabled):
             return result
-        try:
-            verdict = audio_analysis.analyze_wav_path(result.wav_path, word_count, settings)
-        except audio.AudioError as exc:
-            logger.warning(
-                "Chunk audio analysis failed; passing chunk through",
-                extra={"event": "chunk_analysis_error", "chunk_index": index, "error": str(exc)},
-            )
-            return result
-        if verdict.ok:
+
+        reasons: list[str] = []
+        verdict = None
+        if audio_enabled:
+            try:
+                verdict = audio_analysis.analyze_wav_path(result.wav_path, word_count, settings)
+            except audio.AudioError as exc:
+                logger.warning(
+                    "Chunk audio analysis failed; passing chunk through",
+                    extra={"event": "chunk_analysis_error", "chunk_index": index, "error": str(exc)},
+                )
+                return result
+            if not verdict.ok:
+                reasons.extend(verdict.reasons)
+
+        asr_div: float | None = None
+        if verify_enabled and result.transcript is not None:
+            asr_div = asr_verify.divergence(text, result.transcript)
+            if asr_div > settings.WHISPER_DIVERGENCE_THRESHOLD:
+                reasons.append("asr_divergence")
+
+        last_reasons = reasons
+        if not reasons:
             if attempt > 0:
                 logger.info(
                     "Chunk passed after regeneration",
@@ -856,20 +887,22 @@ async def _generate_chunk_quality_checked(
                     },
                 )
             return result
-        logger.warning(
-            "Bad chunk audio detected",
-            extra={
-                "event": "chunk_quality_bad",
-                "chunk_index": index,
-                "attempt": attempt + 1,
-                "reasons": list(verdict.reasons),
-                "rms_cv": verdict.metrics.rms_cv,
-                "crest_factor": verdict.metrics.crest_factor,
-                "zero_crossing_rate": verdict.metrics.zero_crossing_rate,
-                "silent_fraction": verdict.metrics.silent_fraction,
-                "duration_ratio": verdict.metrics.duration_ratio,
-            },
-        )
+        log_extra: dict[str, Any] = {
+            "event": "chunk_quality_bad",
+            "chunk_index": index,
+            "attempt": attempt + 1,
+            "reasons": reasons,
+            "asr_divergence": asr_div,
+        }
+        if verdict is not None:
+            log_extra.update(
+                rms_cv=verdict.metrics.rms_cv,
+                crest_factor=verdict.metrics.crest_factor,
+                zero_crossing_rate=verdict.metrics.zero_crossing_rate,
+                silent_fraction=verdict.metrics.silent_fraction,
+                duration_ratio=verdict.metrics.duration_ratio,
+            )
+        logger.warning("Bad chunk audio detected", extra=log_extra)
 
     logger.warning(
         "Chunk still degraded after max regenerations; keeping last attempt",
@@ -877,6 +910,7 @@ async def _generate_chunk_quality_checked(
             "event": "chunk_quality_unresolved",
             "chunk_index": index,
             "attempts": max_extra + 1,
+            "reasons": last_reasons,
         },
     )
     return result

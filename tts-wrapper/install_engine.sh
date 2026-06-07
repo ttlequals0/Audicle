@@ -32,6 +32,12 @@ case "$backend" in
     ;;
 esac
 
+# faster-whisper (CTranslate2) for the optional post-TTS ASR verification pass.
+# Installed as its own step so it resolves against the already-installed engine;
+# CTranslate2 is independent of the engines' torch stack. The image always ships
+# it, but the model loads only when an operator sets WHISPER_ENABLED=true.
+pip install --no-cache-dir ".[whisper]"
+
 # Patch transitive deps the resolver pins to vulnerable versions. setuptools is
 # capped <81: >=78.1.1 clears CVE-2025-47273, but setuptools 81 removed the
 # bundled pkg_resources, which resemble-perth (chatterbox's watermarker) imports

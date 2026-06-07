@@ -55,6 +55,13 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "AUDIO_ANALYSIS_DURATION_OVERHEAD_SECS",
         "AUDIO_ANALYSIS_MAX_DURATION_RATIO",
         "AUDIO_ANALYSIS_MIN_DURATION_RATIO",
+        # Post-TTS ASR verification policy. Tunable live so an operator can turn
+        # the gate on/off and adjust strictness without a restart. The wrapper's
+        # WHISPER_ENABLED (which loads the model) stays env-only -- it is a
+        # separate-container startup capability, not a per-job policy.
+        "WHISPER_VERIFY_ENABLED",
+        "WHISPER_DIVERGENCE_THRESHOLD",
+        "WHISPER_VERIFY_MIN_WORDS",
         "RSS_CACHE_MAX_AGE_SECONDS",
         "MIN_CLEANUP_CHARS",
         "MAX_PROMPT_LENGTH_BYTES",

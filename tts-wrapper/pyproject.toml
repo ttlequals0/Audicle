@@ -1,6 +1,6 @@
 [project]
 name = "audicle-tts-wrapper"
-version = "0.20.1"
+version = "0.21.2"
 description = "FastAPI TTS wrapper for Audicle (Chatterbox / XTTS-v2 / StyleTTS2)."
 requires-python = ">=3.11,<3.13"
 # 3.11 lower bound: torch wheels for the TTS engines lag the latest Python.
@@ -39,6 +39,11 @@ styletts2 = [
     "gruut[en]>=2.4",
 ]
 chatterbox = ["chatterbox-tts>=0.1.7"]
+# whisper: optional faster-whisper (CTranslate2) ASR for the post-TTS verification
+# pass. CTranslate2 is independent of the engines' torch stack, so it composes
+# with any engine extra. Installed into every image but import-gated at runtime by
+# WHISPER_ENABLED -- the model only loads when an operator turns verification on.
+whisper = ["faster-whisper>=1.0"]
 # NOTE: chatterbox-tts pins ``diffusers==0.29.0`` transitively, which carries two
 # HIGH advisories (CVE-2026-44513, CVE-2026-45804) -- both ``trust_remote_code`` /
 # TOCTOU remote-code-load bypasses, fixed only in diffusers 0.38.0. Not reachable

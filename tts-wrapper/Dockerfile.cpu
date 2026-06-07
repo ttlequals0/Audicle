@@ -40,7 +40,7 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY pyproject.toml ./
-COPY config.py engine.py log_setup.py main.py style_engine.py chatterbox_engine.py install_engine.sh ./
+COPY config.py engine.py log_setup.py main.py style_engine.py chatterbox_engine.py whisper_verify.py install_engine.sh ./
 # torch AND torchaudio are installed first from the CPU index with matching
 # versions: every engine imports torchaudio, and if it comes from PyPI while
 # torch is the CPU-index build the native extension fails to load (ABI mismatch).
