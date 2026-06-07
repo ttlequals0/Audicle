@@ -30,6 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from config import Config
 from engine import Engine, GPUOutOfMemoryError, InferenceBusyError, XTTSEngine
 from log_setup import setup_logging
+from whisper_verify import WhisperVerifier
 
 setup_logging()
 logger = logging.getLogger("tts.main")
@@ -93,12 +94,18 @@ class GenerateRequest(BaseModel):
     # a quality regeneration so the re-gen uses a different seed than the bad take;
     # omitted on the first attempt so the wrapper's configured seed applies.
     seed: int | None = None
+    # When true and the wrapper has Whisper enabled, transcribe the produced
+    # audio with faster-whisper and return it as `transcript`. Backward-compatible:
+    # the backend only sends it when WHISPER_VERIFY_ENABLED is on.
+    verify: bool = False
 
 
 class GenerateResponse(BaseModel):
     wav_path: str
     duration_secs: float
     sample_rate: int
+    # faster-whisper transcript when verification ran; None otherwise.
+    transcript: str | None = None
 
 
 class HealthResponse(BaseModel):
@@ -112,6 +119,9 @@ class HealthResponse(BaseModel):
     sample_rate: int | None = None
     engine: str | None = None
     supports_phonemes: bool | None = None
+    whisper_enabled: bool | None = None
+    whisper_model: str | None = None
+    whisper_loaded: bool | None = None
 
 
 def _default_engine_factory() -> Engine:
@@ -131,16 +141,27 @@ def create_app(
     *,
     engine: Engine | None = None,
     data_dir: Path | None = None,
+    verifier: WhisperVerifier | None = None,
 ) -> FastAPI:
     """Build a FastAPI instance backed by ``engine``.
 
     Tests pass a fake :class:`Engine` so they exercise the HTTP contract
     without importing Coqui TTS. Production calls this with no args and gets
     the :class:`XTTSEngine` via :func:`_default_engine_factory`.
+
+    ``verifier`` is the optional faster-whisper transcriber; when omitted it is
+    built from the environment only if ``WHISPER_ENABLED`` is set, so the
+    default path (and the tests) never import faster-whisper.
     """
 
+    cfg = Config.from_env()
     chosen_engine = engine if engine is not None else _default_engine_factory()
     chosen_data_dir = data_dir or Path(os.environ.get("DATA_DIR", "/data"))
+    chosen_verifier = verifier
+    if chosen_verifier is None and cfg.whisper_enabled:
+        chosen_verifier = WhisperVerifier(
+            cfg.whisper_model, cfg.whisper_device, cfg.whisper_compute_type
+        )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -156,6 +177,16 @@ def create_app(
             # via the supported Exception contract (not via SystemExit, which
             # bypasses it and can leak into the asyncio cancellation paths).
             raise
+        # Warm the ASR model at startup (not inside the first /generate, where a
+        # multi-GB download would blow the per-request timeout and leave early
+        # chunks unverified). A whisper load failure must not take the wrapper
+        # down -- verification is optional, so log and degrade to no transcript.
+        if chosen_verifier is not None:
+            try:
+                await asyncio.to_thread(chosen_verifier.load)
+                logger.info("Whisper model loaded", extra={"event": "whisper_ready"})
+            except Exception:
+                logger.exception("Whisper load failed", extra={"event": "whisper_load_failed"})
         yield
         logger.info("TTS wrapper shutting down")
 
@@ -207,6 +238,9 @@ def create_app(
             # getattr with defaults so a minimal fake/legacy engine still serves.
             "engine": getattr(engine, "name", None),
             "supports_phonemes": getattr(engine, "supports_phonemes", None),
+            "whisper_enabled": cfg.whisper_enabled,
+            "whisper_model": chosen_verifier.model_name if chosen_verifier else None,
+            "whisper_loaded": bool(chosen_verifier.loaded) if chosen_verifier else False,
         }
         if not ok:
             # 503 body includes a diagnostic "error".
@@ -293,7 +327,32 @@ def create_app(
                     status_code=503, detail={"error": "inference busy"}
                 ) from exc
 
-        inference_ms = int((time.perf_counter() - inference_started) * 1000)
+            # Measure synthesis latency before the optional ASR step so
+            # tts_chunk_done.inference_ms stays pure synth time.
+            inference_ms = int((time.perf_counter() - inference_started) * 1000)
+
+            # Optional ASR verification, under the same lock so it never runs
+            # GPU work concurrently with another chunk's synthesis. A failure
+            # here must never fail the chunk -- the backend just gets no
+            # transcript and skips its divergence check for this chunk.
+            transcript: str | None = None
+            if body.verify and chosen_verifier is not None:
+                try:
+                    transcript = await asyncio.wait_for(
+                        asyncio.to_thread(chosen_verifier.transcribe, wav_bytes, cfg.language),
+                        timeout=_REQUEST_INFERENCE_TIMEOUT_SECONDS,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "ASR verification failed; returning audio without transcript",
+                        extra={
+                            "event": "whisper_verify_error",
+                            "episode_id": body.episode_id,
+                            "chunk_index": body.chunk_index,
+                            "error": str(exc),
+                        },
+                    )
+                    transcript = None
 
         out_dir = chosen_data_dir / "media"
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -330,6 +389,7 @@ def create_app(
             wav_path=str(wav_path),
             duration_secs=duration,
             sample_rate=engine.sample_rate,
+            transcript=transcript,
         )
 
     @app.post("/reload")

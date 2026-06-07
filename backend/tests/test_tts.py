@@ -57,6 +57,42 @@ async def test_generate_chunk_sends_expected_payload(
     assert req.url.path == "/generate"
     body = json.loads(req.content)
     assert body == {"text": "hello", "episode_id": "ep-1", "chunk_index": 3}
+    # No transcript field in the response => None on the result.
+    assert result.transcript is None
+
+
+async def test_generate_chunk_verify_flag_sets_payload_field(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport, captured = _capture_transport(response=_ok_generate())
+    _patch_async_client(monkeypatch, transport)
+
+    await tts.generate_chunk("hello", "ep-1", 3, get_settings(), verify=True)
+
+    body = json.loads(captured["request"].content)
+    assert body["verify"] is True
+
+
+async def test_generate_chunk_parses_transcript(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    response = httpx.Response(
+        200,
+        content=json.dumps(
+            {
+                "wav_path": "/data/media/abc_chunk_0.wav",
+                "duration_secs": 12.3,
+                "sample_rate": 24000,
+                "transcript": "the spoken words",
+            }
+        ).encode(),
+        headers={"content-type": "application/json"},
+    )
+    transport, _captured = _capture_transport(response=response)
+    _patch_async_client(monkeypatch, transport)
+
+    result = await tts.generate_chunk("hello", "ep-1", 3, get_settings(), verify=True)
+    assert result.transcript == "the spoken words"
 
 
 async def test_generate_chunk_5xx_raises_provider_error(

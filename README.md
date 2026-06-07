@@ -182,6 +182,10 @@ URL --> extract (Firecrawl) --> cleanup (LLM) --> corrections (regex)
                                               chunk + TTS (Chatterbox)
                                                        |
                                                        v
+                                   quality gate: audio QA + optional
+                                   Whisper ASR verify --> regen on fail
+                                                       |
+                                                       v
                                        audio (ffmpeg) + artwork + VTT
                                                        |
                                                        v
@@ -189,6 +193,16 @@ URL --> extract (Firecrawl) --> cleanup (LLM) --> corrections (regex)
 ```
 
 The paywall bypass is operator-configured -- see "Paywalled articles" above.
+
+The chunker self-heals before TTS: it splits run-on sentences that arrive glued together (`end.Next`) and, when a long sentence has no comma or semicolon to break on, falls back to a whitespace split instead of failing the job. Only a single word longer than the character cap is treated as unsplittable.
+
+### TTS verification
+
+Every chunk passes a quality gate before it reaches the audio stage. The signal-level audio analysis catches a take that came back as a flat drone, steady noise, or a repetition; a bad take is regenerated with a fresh seed (Chatterbox is non-deterministic, so a re-gen usually recovers).
+
+You can add a second, optional check: ASR verification. When it is on, the GPU wrapper transcribes each produced chunk with [faster-whisper](https://github.com/SYSTRAN/faster-whisper) and the backend compares that transcript to the text it asked the wrapper to speak. A high word-level divergence means the audio does not say what it should -- dropped content, a hallucinated run, or a leaked preamble -- and the chunk is regenerated on the same budget. The transcription is blind (the expected text is never fed to Whisper as a prompt), so the comparison stays honest.
+
+It is off by default and adds latency per chunk, so it takes two switches: `WHISPER_ENABLED=true` on the wrapper (loads the model) and `WHISPER_VERIFY_ENABLED=true` on the backend (requests and acts on the transcript). Tune `WHISPER_MODEL` for the accuracy/speed trade and `WHISPER_DIVERGENCE_THRESHOLD` for how strict the gate is. See `.env.example` for the full set.
 
 Two containers: the backend (FastAPI + SQLite) and the TTS wrapper (separate so GPU memory stays isolated and the model only reloads when the voice changes). They share a `/data` volume so the backend can read what the wrapper produces.
 

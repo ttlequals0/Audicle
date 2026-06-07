@@ -102,11 +102,12 @@ def test_chunk_falls_back_to_comma_split_on_long_sentence(
         assert len(chunk.split()) <= 10
 
 
-def test_chunk_hard_aborts_on_unsplittable_sentence(
-    env: Path, monkeypatch: pytest.MonkeyPatch
+def test_chunk_whitespace_splits_commaless_long_sentence(
+    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A sentence with no commas/semicolons that exceeds max_words has no
-    safe breakpoint; chunker raises rather than truncate or force-split."""
+    """A comma/semicolon-less sentence over max_words no longer fails the job:
+    it falls back to a whitespace split (every word preserved, no reorder) and
+    logs chunk_whitespace_split."""
 
     monkeypatch.setenv("TTS_CHUNK_TARGET_WORDS", "8")
     monkeypatch.setenv("TTS_CHUNK_MAX_WORDS", "10")
@@ -116,10 +117,68 @@ def test_chunk_hard_aborts_on_unsplittable_sentence(
         "this sentence has fifteen words but no commas to allow a safe fallback breakpoint anywhere"
     )
 
-    with pytest.raises(chunker.UnsplittableSentenceError) as exc_info:
+    with caplog.at_level(logging.WARNING, logger="app.services.chunker"):
+        result = chunker.chunk(text, get_settings())
+
+    assert len(result) >= 2
+    # No content lost or reordered across the whitespace split.
+    assert " ".join(result).split() == text.split()
+    assert any(
+        getattr(rec, "event", "") == "chunk_whitespace_split" for rec in caplog.records
+    ), [(r.name, getattr(r, "event", "")) for r in caplog.records]
+
+
+def test_chunk_raises_on_single_over_cap_token(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lone whitespace-free token longer than the char cap is genuinely
+    unsplittable -- the whitespace fallback re-raises rather than mid-word cut."""
+
+    monkeypatch.setenv("TTS_CHUNK_TARGET_WORDS", "1000")
+    monkeypatch.setenv("TTS_CHUNK_MAX_WORDS", "1000")
+    monkeypatch.setenv("TTS_CHUNK_MAX_CHARS", "60")
+    get_settings.cache_clear()
+
+    text = "Short start. " + "x" * 200 + " trailing words here to force a split."
+    with pytest.raises(chunker.UnsplittableSentenceError):
         chunker.chunk(text, get_settings())
-    assert exc_info.value.word_count >= 10
-    assert "this sentence has" in exc_info.value.sentence_preview
+
+
+def test_insert_runon_boundaries_splits_glued_sentences() -> None:
+    assert chunker._insert_runon_boundaries("end.Next one") == "end. Next one"
+    assert chunker._insert_runon_boundaries("Wait!Really?Yes") == "Wait! Really? Yes"
+    # A closing quote between the period and the next sentence still splits.
+    assert (
+        chunker._insert_runon_boundaries('he said "Go."Then left')
+        == 'he said "Go." Then left'
+    )
+
+
+def test_insert_runon_boundaries_spares_abbreviations_and_decimals() -> None:
+    # All-caps abbreviation: an uppercase letter precedes the dot, so no insert.
+    assert chunker._insert_runon_boundaries("the U.S.A today") == "the U.S.A today"
+    # Decimal: a digit follows the dot, so no insert.
+    assert chunker._insert_runon_boundaries("pi is 3.14 exactly") == "pi is 3.14 exactly"
+
+
+def test_chunk_splits_runon_glued_sentence(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A run-on with no space after the period is split into two chunks once a
+    boundary space is inserted, where before it was one oversized sentence."""
+
+    monkeypatch.setenv("TTS_CHUNK_TARGET_WORDS", "3")
+    monkeypatch.setenv("TTS_CHUNK_MAX_WORDS", "5")
+    get_settings.cache_clear()
+
+    result = chunker.chunk("First sentence here.Second sentence here.", get_settings())
+    assert result == ["First sentence here.", "Second sentence here."]
+
+
+def test_chunk_heals_runon_in_short_paragraph(env: Path) -> None:
+    """A short paragraph that fits in one chunk still has its glued boundary
+    repaired -- the heal runs before the size check, not only in the splitter."""
+
+    result = chunker.chunk("First sentence here.Second sentence here.", get_settings())
+    assert result == ["First sentence here. Second sentence here."]
 
 
 def test_chunk_char_cap_overrides_word_count(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:

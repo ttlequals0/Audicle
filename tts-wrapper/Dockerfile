@@ -49,7 +49,7 @@ WORKDIR /app
 # engine.py registers the XTTS config classes via torch.serialization.
 # add_safe_globals before load so the trusted checkpoint deserializes.
 COPY pyproject.toml ./
-COPY config.py engine.py log_setup.py main.py style_engine.py chatterbox_engine.py install_engine.sh ./
+COPY config.py engine.py log_setup.py main.py style_engine.py chatterbox_engine.py whisper_verify.py install_engine.sh ./
 # TTS_BACKEND selects which engine extra to install (xtts | styletts2 |
 # chatterbox); the engine is then chosen at runtime via TTS_ENGINE. install_engine.sh
 # (shared with Dockerfile.cpu) installs exactly one engine plus security patches;

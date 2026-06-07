@@ -82,10 +82,38 @@ class FakeEngine:
         self.reference_loaded = True
 
 
+class FakeVerifier:
+    """Stand-in for WhisperVerifier; never imports faster-whisper."""
+
+    def __init__(self, *, returns: str = "transcribed text", raises: bool = False) -> None:
+        self.model_name = "fake"
+        self.loaded = False
+        self.load_calls = 0
+        self.returns = returns
+        self.raises = raises
+        self.calls: list[bytes] = []
+
+    def load(self) -> None:
+        self.load_calls += 1
+        self.loaded = True
+
+    def transcribe(self, wav_bytes: bytes, language: str = "en") -> str:
+        self.calls.append(wav_bytes)
+        if self.raises:
+            raise RuntimeError("simulated whisper failure")
+        return self.returns
+
+
 def _client(engine: Engine, tmp_path: Path) -> TestClient:
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     return TestClient(create_app(engine=engine, data_dir=data_dir))
+
+
+def _client_with_verifier(engine: Engine, verifier: FakeVerifier, tmp_path: Path) -> TestClient:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    return TestClient(create_app(engine=engine, data_dir=data_dir, verifier=verifier))
 
 
 # --- /health --------------------------------------------------------------
@@ -177,6 +205,59 @@ def test_generate_writes_wav_and_returns_path_duration_rate(tmp_path: Path) -> N
     # 2 second silent WAV
     assert 1.95 <= body["duration_secs"] <= 2.05
     assert engine.synthesize_calls == ["hello there"]
+    # With no verifier wired and verify not requested, transcript is null.
+    assert body["transcript"] is None
+
+
+def test_verifier_warmed_at_startup(tmp_path: Path) -> None:
+    engine = FakeEngine()
+    verifier = FakeVerifier()
+    with _client_with_verifier(engine, verifier, tmp_path) as client:
+        # Entering the TestClient context runs lifespan startup, which warms the
+        # model so the first /generate doesn't pay the load cost.
+        assert verifier.load_calls == 1
+        assert verifier.loaded is True
+        body = client.get("/health").json()
+    assert body["whisper_loaded"] is True
+
+
+def test_generate_verify_returns_transcript(tmp_path: Path) -> None:
+    engine = FakeEngine()
+    verifier = FakeVerifier(returns="hello there")
+    with _client_with_verifier(engine, verifier, tmp_path) as client:
+        response = client.post(
+            "/generate",
+            json={"text": "hello there", "episode_id": "ep-1", "chunk_index": 0, "verify": True},
+        )
+    assert response.status_code == 200, response.text
+    assert response.json()["transcript"] == "hello there"
+    assert len(verifier.calls) == 1  # transcribed the produced audio once
+
+
+def test_generate_without_verify_skips_transcription(tmp_path: Path) -> None:
+    engine = FakeEngine()
+    verifier = FakeVerifier()
+    with _client_with_verifier(engine, verifier, tmp_path) as client:
+        response = client.post(
+            "/generate",
+            json={"text": "hello there", "episode_id": "ep-1", "chunk_index": 0},
+        )
+    assert response.status_code == 200
+    assert response.json()["transcript"] is None
+    assert verifier.calls == []  # verify not requested => verifier untouched
+
+
+def test_generate_verify_failure_does_not_fail_chunk(tmp_path: Path) -> None:
+    engine = FakeEngine()
+    verifier = FakeVerifier(raises=True)
+    with _client_with_verifier(engine, verifier, tmp_path) as client:
+        response = client.post(
+            "/generate",
+            json={"text": "hello there", "episode_id": "ep-1", "chunk_index": 0, "verify": True},
+        )
+    # ASR failure degrades to no transcript; the chunk still succeeds.
+    assert response.status_code == 200
+    assert response.json()["transcript"] is None
 
 
 def test_generate_rejects_blank_text(tmp_path: Path) -> None:

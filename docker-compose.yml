@@ -75,16 +75,24 @@ services:
       - XTTS_REPETITION_PENALTY=${XTTS_REPETITION_PENALTY:-2.0}
       - XTTS_TOP_K=${XTTS_TOP_K:-50}
       - XTTS_TOP_P=${XTTS_TOP_P:-0.85}
+      # Post-TTS ASR verification (off by default). WHISPER_ENABLED loads the
+      # faster-whisper model here; the backend's WHISPER_VERIFY_ENABLED (via .env)
+      # decides whether to request a transcript per chunk. WHISPER_DEVICE defaults
+      # to TTS_DEVICE and WHISPER_COMPUTE_TYPE to a matching type (cuda -> float16,
+      # cpu -> int8); add them here only to override.
+      - WHISPER_ENABLED=${WHISPER_ENABLED:-false}
+      - WHISPER_MODEL=${WHISPER_MODEL:-base}
     volumes:
       - ./data:/data
       # Reference voice: read-only here; the app writes voice.wav (host edit or
       # UI upload) and the wrapper reloads it. No voice yet just means /generate
       # is unavailable until one is committed.
       - ./backend/app/reference:/app/reference:ro
-      # Multi-GB model weights download on first run (Chatterbox from HuggingFace).
-      # HF_HOME/TTS_HOME point at /data/hf_cache and /data/tts_home (see the
-      # wrapper Dockerfile), so the ./data bind mount above already persists them
-      # across recreation -- no separate cache volume needed.
+      # Multi-GB model weights download on first run (Chatterbox from HuggingFace,
+      # and the faster-whisper model when WHISPER_ENABLED=true). HF_HOME/TTS_HOME
+      # point at /data/hf_cache and /data/tts_home (see the wrapper Dockerfile), so
+      # the ./data bind mount above already persists them across recreation -- no
+      # separate cache volume needed.
     deploy:
       resources:
         reservations:

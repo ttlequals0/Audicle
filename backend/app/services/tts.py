@@ -56,6 +56,9 @@ class GenerateResult:
     """Absolute path inside the shared ``/data`` volume."""
     duration_secs: float
     sample_rate: int
+    transcript: str | None = None
+    """faster-whisper transcript of the produced audio, when ``verify`` was
+    requested and the wrapper has Whisper enabled; otherwise ``None``."""
 
 
 async def generate_chunk(
@@ -65,6 +68,7 @@ async def generate_chunk(
     settings: Settings,
     pronunciations: dict[str, str] | None = None,
     seed: int | None = None,
+    verify: bool = False,
 ) -> GenerateResult:
     """POST a single chunk to the wrapper's ``/generate`` endpoint."""
 
@@ -74,12 +78,14 @@ async def generate_chunk(
         "episode_id": episode_id,
         "chunk_index": chunk_index,
     }
-    # Only attach the IPA map / seed when set, so an older wrapper (extra="forbid")
-    # never receives an unexpected field.
+    # Only attach the IPA map / seed / verify flag when set, so an older wrapper
+    # (extra="forbid") never receives an unexpected field.
     if pronunciations:
         payload["pronunciations"] = pronunciations
     if seed is not None:
         payload["seed"] = seed
+    if verify:
+        payload["verify"] = True
     timeout = httpx.Timeout(settings.TTS_HTTP_TIMEOUT_SECONDS)
 
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -104,11 +110,13 @@ async def generate_chunk(
     if not isinstance(body, dict):
         raise TTSRequestError(f"TTS returned non-object JSON: {type(body).__name__}")
 
+    raw_transcript = body.get("transcript")
     try:
         result = GenerateResult(
             wav_path=str(body["wav_path"]),
             duration_secs=float(body["duration_secs"]),
             sample_rate=int(body["sample_rate"]),
+            transcript=str(raw_transcript) if raw_transcript is not None else None,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise TTSRequestError(f"Unexpected TTS response shape: {exc}") from exc
@@ -122,6 +130,7 @@ async def generate_chunk_with_retry(
     settings: Settings,
     pronunciations: dict[str, str] | None = None,
     seed: int | None = None,
+    verify: bool = False,
 ) -> GenerateResult:
     """Per-chunk TTS call with retry on transient failures.
 
@@ -141,7 +150,7 @@ async def generate_chunk_with_retry(
         async for attempt in retrying:
             with attempt:
                 return await generate_chunk(
-                    text, episode_id, chunk_index, settings, pronunciations, seed
+                    text, episode_id, chunk_index, settings, pronunciations, seed, verify
                 )
     except RetryError as exc:
         inner = exc.last_attempt.exception()

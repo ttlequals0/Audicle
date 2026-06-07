@@ -3,17 +3,20 @@
 Order of fallback when a paragraph doesn't fit:
 
 1. Split on paragraph boundaries (``\\n\\n``). Greedy-pack into chunks of
-   ``TTS_CHUNK_TARGET_WORDS`` words.
+   ``TTS_CHUNK_TARGET_WORDS`` words. Glued run-ons (``end.Next``) are healed
+   into ``end. Next`` first so the sentence splitter can see them.
 2. If a single sentence (or paragraph treated as one) exceeds the target,
    split it on sentence boundaries.
 3. If a sentence still exceeds the max, fall back to comma / semicolon
    splits and emit a WARN log so an article with many such cases is
    visible in Loki (event=chunk_fallback_split).
-4. If even comma/semicolon splits can't fit a piece under
-   ``TTS_CHUNK_MAX_WORDS``/``TTS_CHUNK_MAX_CHARS``, raise
-   :class:`UnsplittableSentenceError` so the pipeline marks the job
-   ``failed`` with stage=chunk and a sentence-preview error rather than
-   silently truncating content.
+4. If a piece still has no comma / semicolon to break on, fall back to a
+   whitespace split (event=chunk_whitespace_split). This preserves every
+   word -- it never truncates -- and only risks a less natural pause.
+5. Only a single whitespace-free token longer than ``TTS_CHUNK_MAX_CHARS``
+   is genuinely unsplittable; that raises :class:`UnsplittableSentenceError`
+   so the pipeline marks the job ``failed`` with stage=chunk and a
+   sentence-preview error rather than forcing a mid-word cut.
 """
 
 from __future__ import annotations
@@ -32,6 +35,18 @@ logger = logging.getLogger("app.services.chunker")
 # abbreviations into spoken form.
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
 _COMMA_OR_SEMI = re.compile(r"\s*([;,])\s+")
+
+# Run-on boundary: extraction sometimes glues two sentences with no space
+# ("...end.Next..."). The whitespace-required _SENTENCE_BOUNDARY can't split
+# those, so the run-on stays one oversized "sentence" and is pushed to the
+# comma/semicolon fallback or fails. Insert a space only at a real boundary:
+# a lowercase letter or digit, then .!?, an optional closing quote/bracket,
+# then an uppercase letter. The lowercase/digit prefix spares all-caps
+# abbreviations ("U.S.A", uppercase before the dot) and the uppercase suffix
+# spares decimals ("3.14", a digit follows). English-targeted: Python's re has
+# no \p{Lu}, so this uses ASCII case classes, which is fine for the
+# English-only narration the cleanup stage produces.
+_RUNON_BOUNDARY = re.compile(r"([a-z0-9])([.!?])([\"')\]]?)([A-Z])")
 
 
 class UnsplittableSentenceError(Exception):
@@ -116,6 +131,11 @@ def pack_paragraphs(text: str, max_chars: int) -> list[str]:
 
 
 def _chunk_paragraph(paragraph: str, limits: ChunkerLimits, *, base_chunk_index: int) -> list[str]:
+    # Heal glued run-ons ("end.Next" -> "end. Next") before measuring, so even a
+    # short paragraph that fits in one chunk gets the boundary repaired instead of
+    # sending the run-on to TTS unsplit (the early return below skips the sentence
+    # splitter, which is the other place this would otherwise happen).
+    paragraph = _insert_runon_boundaries(paragraph)
     word_count = len(paragraph.split())
     char_count = len(paragraph)
     if word_count <= limits.target_words and char_count <= limits.max_chars:
@@ -125,7 +145,19 @@ def _chunk_paragraph(paragraph: str, limits: ChunkerLimits, *, base_chunk_index:
     return _pack(sentences, limits, base_chunk_index=base_chunk_index)
 
 
+def _insert_runon_boundaries(text: str) -> str:
+    """Add a space at glued sentence boundaries (``end.Next`` -> ``end. Next``).
+
+    See ``_RUNON_BOUNDARY`` for why this is conservative; it never touches
+    decimals or all-caps abbreviations.
+    """
+
+    return _RUNON_BOUNDARY.sub(r"\1\2\3 \4", text)
+
+
 def _split_sentences(paragraph: str) -> list[str]:
+    # Run-on boundaries are already healed by _chunk_paragraph (the only caller)
+    # before the text reaches here.
     sentences = _SENTENCE_BOUNDARY.split(paragraph)
     return [s.strip() for s in sentences if s.strip()]
 
@@ -206,9 +238,10 @@ def _fallback_split_sentence(sentence: str, limits: ChunkerLimits, chunk_index: 
         i += 2
     pieces = [p for p, _sep in pieces_with_sep]
     if len(pieces) <= 1:
-        # No comma / semicolon found, or only one effective piece -- nothing
-        # we can do without forcing a mid-word split or truncating content.
-        raise UnsplittableSentenceError(sentence, len(sentence.split()), len(sentence))
+        # No comma / semicolon to split on. Rather than fail the whole job,
+        # fall back to a whitespace split: it preserves every word and only
+        # risks a less natural pause. A single over-cap token still re-raises.
+        return _fallback_split_on_whitespace(sentence, limits, chunk_index)
 
     logger.warning(
         "Chunk fallback: comma/semicolon split",
@@ -221,33 +254,93 @@ def _fallback_split_sentence(sentence: str, limits: ChunkerLimits, chunk_index: 
         },
     )
 
-    # Re-pack the pieces under the same target/max rules. A piece that's
-    # itself oversize is genuinely unsplittable -- raise rather than truncate.
-    # Preserves the original separator (; vs ,) so XTTS-v2 prosody pauses
-    # match what the cleanup stage produced.
+    # Re-pack the pieces under the same target/max rules. A comma/semicolon
+    # fragment that is itself over the cap (no inner comma to split on) is
+    # whitespace-split rather than failing the job. Preserves the original
+    # separator (; vs ,) so XTTS-v2 prosody pauses match the cleanup output.
     chunks: list[str] = []
     current: list[tuple[str, str]] = []
     current_words = 0
     current_chars = 0
 
-    for piece, sep in pieces_with_sep:
-        p_words = len(piece.split())
-        p_chars = len(piece)
-        if p_words > limits.max_words or p_chars > limits.max_chars:
-            raise UnsplittableSentenceError(piece, p_words, p_chars)
-        if current and (
-            current_words + p_words > limits.target_words
-            or current_chars + p_chars + 2 > limits.max_chars
-        ):
+    def _flush_current() -> None:
+        nonlocal current, current_words, current_chars
+        if current:
             chunks.append(_join_pieces(current))
             current = []
             current_words = 0
             current_chars = 0
+
+    for piece, sep in pieces_with_sep:
+        p_words = len(piece.split())
+        p_chars = len(piece)
+        if p_words > limits.max_words or p_chars > limits.max_chars:
+            # This fragment is over the cap on its own; flush what we have and
+            # whitespace-split the fragment.
+            _flush_current()
+            chunks.extend(_fallback_split_on_whitespace(piece, limits, chunk_index))
+            continue
+        if current and (
+            current_words + p_words > limits.target_words
+            or current_chars + p_chars + 2 > limits.max_chars
+        ):
+            _flush_current()
         current.append((piece, sep))
         current_words += p_words
         current_chars += p_chars + (2 if current_chars else 0)
+    _flush_current()
+    return chunks
+
+
+def _fallback_split_on_whitespace(
+    sentence: str, limits: ChunkerLimits, chunk_index: int
+) -> list[str]:
+    """Last-resort split of a comma/semicolon-less oversize sentence on spaces.
+
+    Greedy-packs words into pieces under the target word count and the absolute
+    char cap. A whitespace split preserves every word -- it is not truncation --
+    it only risks a less natural pause. A single whitespace-free token that is
+    itself over the char cap is genuinely unsplittable and re-raises.
+    """
+
+    words = sentence.split()
+    chunks: list[str] = []
+    current: list[str] = []
+    current_words = 0
+    current_chars = 0
+
+    for word in words:
+        w_chars = len(word)
+        if w_chars > limits.max_chars:
+            # A lone token longer than the hard char cap can't be placed without
+            # a mid-word cut; surface it rather than truncate.
+            raise UnsplittableSentenceError(word, 1, w_chars)
+        sep = 1 if current else 0
+        if current and (
+            current_words + 1 > limits.target_words
+            or current_chars + sep + w_chars > limits.max_chars
+        ):
+            chunks.append(" ".join(current))
+            current = []
+            current_words = 0
+            current_chars = 0
+            sep = 0
+        current.append(word)
+        current_words += 1
+        current_chars += sep + w_chars
     if current:
-        chunks.append(_join_pieces(current))
+        chunks.append(" ".join(current))
+
+    logger.warning(
+        "Chunk fallback: whitespace split",
+        extra={
+            "event": "chunk_whitespace_split",
+            "sentence_len_words": len(words),
+            "sentence_len_chars": len(sentence),
+            "chunk_index": chunk_index,
+            "piece_count": len(chunks),
+        },
+    )
     return chunks
 
 
