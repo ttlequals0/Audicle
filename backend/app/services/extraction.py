@@ -21,7 +21,7 @@ from tenacity import (
 )
 
 from app.config import Settings
-from app.services.source_fallbacks import candidate_urls, match
+from app.services.source_fallbacks import SourceFallback, candidate_attempts, match
 
 logger = logging.getLogger("app.services.extraction")
 
@@ -55,12 +55,18 @@ class ExtractionTooShortError(ExtractionPermanentError):
     """
 
 
-async def extract(url: str, settings: Settings) -> ExtractionResult:
+async def extract(
+    url: str,
+    settings: Settings,
+    registry: tuple[SourceFallback, ...] | None = None,
+) -> ExtractionResult:
     """Scrape ``url`` via Firecrawl and validate the result.
 
     For hosts with a known paywall/JS gate (see ``source_fallbacks``), a direct
-    scrape that comes back below the source's ``min_chars`` is retried against a
-    reader-proxy rewrite (e.g. Medium -> Freedium) before giving up.
+    scrape that comes back below the source's ``min_chars`` is retried with a bypass
+    strategy (re-scrape as Googlebot, a reader-proxy rewrite, or a clean fail) before
+    giving up. ``registry`` is the effective rule set (operator config merged over the
+    built-ins); ``None`` uses the built-ins only.
 
     Raises:
         ExtractionTransientError: every retry exhausted on a retryable failure.
@@ -69,8 +75,8 @@ async def extract(url: str, settings: Settings) -> ExtractionResult:
     """
 
     # A matched rule raises the bar (teasers clear the global floor) and supplies
-    # the reader-proxy rewrites. Disabling the feature reverts to plain behavior.
-    rule = match(url) if settings.EXTRACTION_FALLBACKS_ENABLED else None
+    # the bypass attempts. Disabling the feature reverts to plain behavior.
+    rule = match(url, registry) if settings.EXTRACTION_FALLBACKS_ENABLED else None
     floor = rule.min_chars if rule else settings.MIN_EXTRACTION_CHARS
 
     timeout = httpx.Timeout(settings.FIRECRAWL_TIMEOUT_SECONDS)
@@ -87,11 +93,13 @@ async def extract(url: str, settings: Settings) -> ExtractionResult:
         if len(result.markdown) >= floor:
             return result
 
-        # Direct scrape too short for this source: try reader-proxy fallbacks.
+        # Direct scrape too short for this source: try the bypass attempts. Each
+        # attempt is a (target_url, headers) pair -- "googlebot" re-scrapes the same
+        # url with crawler headers, a proxy strategy rewrites the url.
         if rule is not None:
-            for label, candidate in candidate_urls(rule, url):
+            for label, candidate, target_headers in candidate_attempts(rule, url):
                 try:
-                    alt = await _scrape(client, candidate, settings)
+                    alt = await _scrape(client, candidate, settings, headers=target_headers or None)
                 except ExtractionError as exc:
                     logger.warning(
                         "Extraction fallback attempt failed",
@@ -120,7 +128,9 @@ async def extract(url: str, settings: Settings) -> ExtractionResult:
     )
 
 
-def _build_payload(url: str, settings: Settings) -> dict[str, Any]:
+def _build_payload(
+    url: str, settings: Settings, extra_headers: dict[str, str] | None = None
+) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "url": url,
         "formats": ["markdown"],
@@ -129,14 +139,23 @@ def _build_payload(url: str, settings: Settings) -> dict[str, Any]:
     }
     if settings.firecrawl_exclude_tags:
         payload["excludeTags"] = settings.firecrawl_exclude_tags
+    # Firecrawl forwards these to the target site -- the Googlebot bypass sends a
+    # crawler User-Agent + X-Forwarded-For here.
+    if extra_headers:
+        payload["headers"] = extra_headers
     return payload
 
 
-async def _scrape(client: httpx.AsyncClient, url: str, settings: Settings) -> ExtractionResult:
+async def _scrape(
+    client: httpx.AsyncClient,
+    url: str,
+    settings: Settings,
+    headers: dict[str, str] | None = None,
+) -> ExtractionResult:
     """One scrape (with retries) -> ExtractionResult. Length is validated by the caller."""
 
     endpoint = f"{settings.FIRECRAWL_URL.rstrip('/')}/v1/scrape"
-    payload = _build_payload(url, settings)
+    payload = _build_payload(url, settings, headers)
     try:
         response = await _post_with_retry(client, endpoint, payload, settings)
     except RetryError as exc:

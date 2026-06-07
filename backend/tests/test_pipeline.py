@@ -16,7 +16,7 @@ def _stub_full_chain(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub extract + llm.generate so Phase 3 pipeline tests don't reach the
     network. Cleanup output is long enough to clear MIN_CLEANUP_CHARS."""
 
-    async def _fake_extract(_url, _settings):
+    async def _fake_extract(_url, _settings, _registry=None):
         return extraction.ExtractionResult(markdown="raw " * 250, metadata={"title": "Example"})
 
     async def _fake_llm(_system, _user, _settings, **_kwargs):
@@ -131,7 +131,7 @@ async def test_pipeline_marks_failed_with_stage_and_error_on_extraction_failure(
 ) -> None:
     database.run_migrations(env)
 
-    async def _bad_extract(url, settings):
+    async def _bad_extract(url, settings, registry=None):
         raise extraction.ExtractionPermanentError("Firecrawl said no")
 
     monkeypatch.setattr(extraction, "extract", _bad_extract)
@@ -151,7 +151,7 @@ async def test_pipeline_marks_failed_with_timeout_error_on_job_timeout(
 ) -> None:
     database.run_migrations(env)
 
-    async def _slow_extract(url, settings):
+    async def _slow_extract(url, settings, registry=None):
         await asyncio.sleep(2)
         return extraction.ExtractionResult(markdown="x" * 1000, metadata={})
 
@@ -176,7 +176,7 @@ async def test_pipeline_marks_failed_when_cleanup_returns_too_short(
 
     database.run_migrations(env)
 
-    async def _fake_extract(_url, _settings):
+    async def _fake_extract(_url, _settings, _registry=None):
         return extraction.ExtractionResult(markdown="real article body " * 200, metadata={})
 
     async def _short_llm(_system, _user, _settings, **_kwargs):
@@ -202,7 +202,7 @@ async def test_pipeline_retries_cleanup_on_transient_llm_provider_error(
 
     database.run_migrations(env)
 
-    async def _fake_extract(_url, _settings):
+    async def _fake_extract(_url, _settings, _registry=None):
         return extraction.ExtractionResult(markdown="x " * 500, metadata={})
 
     attempts = {"n": 0}
@@ -243,7 +243,7 @@ async def test_pipeline_does_not_retry_on_llm_request_error(
 
     database.run_migrations(env)
 
-    async def _fake_extract(_url, _settings):
+    async def _fake_extract(_url, _settings, _registry=None):
         return extraction.ExtractionResult(markdown="x " * 500, metadata={})
 
     attempts = {"n": 0}
@@ -329,7 +329,7 @@ async def test_pipeline_writes_artwork_jpg_and_reaches_transcript(
 
     database.run_migrations(env)
 
-    async def _fake_extract(_url, _settings):
+    async def _fake_extract(_url, _settings, _registry=None):
         return extraction.ExtractionResult(
             markdown="raw " * 250,
             metadata={
@@ -487,7 +487,7 @@ async def test_pipeline_finalize_upserts_episode_row(
     database.run_migrations(env)
     _stub_full_chain(monkeypatch)
 
-    async def _fake_extract_with_title(_url, _settings):
+    async def _fake_extract_with_title(_url, _settings, _registry=None):
         return extraction.ExtractionResult(
             markdown="raw " * 250,
             metadata={"title": "Test Article", "author": "Test Author"},
@@ -531,7 +531,7 @@ async def test_pipeline_finalize_falls_back_author_to_feed_author(
     database.run_migrations(env)
     _stub_full_chain(monkeypatch)
 
-    async def _fake_extract_no_author(_url, _settings):
+    async def _fake_extract_no_author(_url, _settings, _registry=None):
         return extraction.ExtractionResult(
             markdown="raw " * 250,
             metadata={"title": "No Byline"},

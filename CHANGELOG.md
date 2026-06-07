@@ -6,6 +6,28 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-06-06
+
+### Added
+
+- Operator-configurable paywall fallbacks. The Settings page has a new "article
+  proxy / paywall sites" section: pick a default bypass strategy, set the teaser
+  threshold (the character count below which a matched host is treated as a
+  paywall stub), and list per-site rules with their own strategy. Backed by
+  `GET`/`PUT /api/v1/source-fallbacks`.
+- Four bypass strategies. `googlebot` re-scrapes the same URL with a Googlebot
+  user agent and crawler `X-Forwarded-For`, so SEO-metered paywalls serve the
+  full article. `freedium` rewrites the URL to a Freedium reader proxy (Medium).
+  `custom` rewrites to an operator template containing `{url}`. `none` makes a
+  matched host fail cleanly instead of narrating the teaser. The Googlebot fetch
+  is built in natively (via the scrape headers), not a separate service.
+
+### Changed
+
+- The hardcoded Medium to Freedium rule is now the built-in seed; operator rules
+  layer on top and win on a host collision. Built-in rules still apply and are
+  shown in the Settings section.
+
 ## [0.19.3] - 2026-06-06
 
 ### Fixed

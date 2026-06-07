@@ -42,6 +42,8 @@ from app.services import (
     lexicon,
     llm,
     pronounce_convert,
+    source_fallbacks,
+    source_fallbacks_store,
     transcript,
     tts,
 )
@@ -272,7 +274,12 @@ async def _run_stage(
 
 
 async def _stage_extract(job: jobs.Job, settings: Settings) -> extraction.ExtractionResult:
-    result = await extraction.extract(job.url, settings)
+    # Build the effective paywall-fallback registry (operator rules over built-ins)
+    # so extraction routes known paywall hosts through the configured bypass.
+    with database.connection(settings.DATA_DIR) as conn:
+        cfg = source_fallbacks_store.load(conn)
+    registry = source_fallbacks.build_registry(cfg["rules"], cfg["default_proxy"], cfg["min_chars"])
+    result = await extraction.extract(job.url, settings, registry)
     logger.info(
         "Extraction succeeded",
         extra={
