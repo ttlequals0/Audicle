@@ -59,6 +59,42 @@ def test_candidate_attempts_none_is_empty() -> None:
     assert sf.candidate_attempts(rule, "https://wsj.com/a") == []
 
 
+def test_build_registry_global_default_catch_all_applies_to_any_host() -> None:
+    # With a global_floor and a real default_proxy, build_registry appends a
+    # lowest-priority catch-all so the default proxy matches any host, at the hard
+    # MIN_EXTRACTION_CHARS (near-empty) trigger floor.
+    reg = sf.build_registry([], "googlebot", 3000, global_floor=500)
+    rule = sf.match("https://unlisted.test/a", reg)
+    assert rule is not None and rule.catch_all
+    assert rule.proxy == "googlebot"
+    assert rule.min_chars == 500
+    _, target, headers = sf.candidate_attempts(rule, "https://unlisted.test/a")[0]
+    assert target == "https://unlisted.test/a"  # googlebot re-scrapes the same url
+    assert "googlebot" in headers["User-Agent"].lower()
+
+
+def test_build_registry_per_host_rule_overrides_global_catch_all() -> None:
+    reg = sf.build_registry([{"host": "medium.com", "proxy": "freedium"}], "googlebot", 3000, 500)
+    rule = sf.match("https://medium.com/p/x", reg)
+    assert rule is not None and not rule.catch_all
+    # The per-host rule wins and keeps its higher teaser floor, not the global one.
+    assert rule.proxy == "freedium" and rule.min_chars == 3000
+
+
+def test_build_registry_no_catch_all_without_global_default() -> None:
+    # default_proxy "none"/"" or global_floor 0 -> no catch-all (plain behavior).
+    assert sf.match("https://unlisted.test/a", sf.build_registry([], "none", 3000, 500)) is None
+    assert sf.match("https://unlisted.test/a", sf.build_registry([], "", 3000, 500)) is None
+    assert sf.match("https://unlisted.test/a", sf.build_registry([], "googlebot", 3000)) is None
+
+
+def test_build_registry_per_host_none_opts_out_of_global_catch_all() -> None:
+    reg = sf.build_registry([{"host": "wsj.com", "proxy": "none"}], "googlebot", 3000, 500)
+    rule = sf.match("https://www.wsj.com/a", reg)
+    assert rule is not None and rule.proxy == "none" and not rule.catch_all
+    assert sf.candidate_attempts(rule, "https://www.wsj.com/a") == []
+
+
 def test_build_registry_operator_overrides_builtin_and_uses_default_proxy() -> None:
     rules = [
         {"host": "washingtonpost.com"},  # no proxy -> default

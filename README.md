@@ -148,7 +148,7 @@ Two notes the docs page doesn't repeat:
 
 Some sites hand a scraper only a teaser and hide the rest behind a paywall. That teaser is long enough to look like a real article but turns into a 25-second junk episode. The "article proxy / paywall sites" section in Settings lets you route those hosts through a bypass strategy.
 
-You pick a default strategy and a teaser threshold (the character count below which a matched host is treated as a stub), then list per-site overrides. When a matched host scrapes below the threshold, Audicle retries with the strategy before giving up; if the retry still comes back short, the job fails cleanly instead of narrating the stub. Same thing behind `GET`/`PUT /api/v1/source-fallbacks`.
+You pick a default strategy and a teaser threshold, then list per-site overrides. The default strategy applies to any host: when a scrape comes back near-empty (below `MIN_EXTRACTION_CHARS`, i.e. a hard block that returned almost nothing), Audicle retries through the default before giving up. Per-site rules are overrides -- a listed host uses its own strategy and its own (higher) teaser threshold, so a partial teaser that clears the global floor still triggers a retry; a host set to `none` opts out. If the retry still comes back short, the job fails cleanly instead of narrating the stub. A legitimately short article (above the floor) is left alone. Same thing behind `GET`/`PUT /api/v1/source-fallbacks`.
 
 The strategies:
 
@@ -157,7 +157,7 @@ The strategies:
 - `custom`: rewrite to your own reader-proxy template, any URL containing `{url}`.
 - `none`: don't try anything. A matched host that comes back short just fails, which is what you want for a hard paywall you'd rather skip than narrate.
 
-A built-in Medium-to-Freedium rule ships on by default. Your own rules layer on top and win when they collide on a host. The whole thing is gated by `EXTRACTION_FALLBACKS_ENABLED`; set it false to always use the direct scrape.
+A built-in Medium-to-Freedium rule ships on by default. Your own rules layer on top and win when they collide on a host. The whole thing is gated by `EXTRACTION_FALLBACKS_ENABLED`; set it false to always use the direct scrape (no default-proxy retry either).
 
 Cloudflare and bot-challenge pages are a separate problem from paywalls, so they're handled automatically, not as a per-host strategy. When a scrape comes back looking like a challenge ("Just a moment...", "Checking your browser", a Cloudflare Ray ID), Audicle re-fetches the URL through your own [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) and pulls the article out of the solved HTML. It fires only on a detected challenge, for any host, and only if you've set `FLARESOLVERR_URL` (env or live in Settings); Audicle doesn't bundle one.
 

@@ -279,7 +279,12 @@ async def _stage_extract(job: jobs.Job, settings: Settings) -> extraction.Extrac
     # so extraction routes known paywall hosts through the configured bypass.
     with database.connection(settings.DATA_DIR) as conn:
         cfg = source_fallbacks_store.load(conn)
-    registry = source_fallbacks.build_registry(cfg["rules"], cfg["default_proxy"], cfg["min_chars"])
+    # The registry includes a global-default catch-all (when default_proxy is set)
+    # so the default proxy applies to any host on a near-empty scrape; per-host
+    # rules override it. global_floor is the hard MIN_EXTRACTION_CHARS trigger.
+    registry = source_fallbacks.build_registry(
+        cfg["rules"], cfg["default_proxy"], cfg["min_chars"], settings.MIN_EXTRACTION_CHARS
+    )
     result = await extraction.extract(job.url, settings, registry)
     logger.info(
         "Extraction succeeded",

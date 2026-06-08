@@ -50,6 +50,9 @@ class SourceFallback:
     custom_template: str  # used only when proxy == "custom"
     # A direct scrape shorter than this (for a matched host) triggers the fallback.
     min_chars: int
+    # The global-default catch-all: matches any host (lowest priority). Operator
+    # and built-in rules above it win on host match; see ``build_registry``.
+    catch_all: bool = False
 
 
 # Built-in seed: Freedium reliably serves the full Medium body.
@@ -76,7 +79,9 @@ def match(url: str, registry: tuple[SourceFallback, ...] | None = None) -> Sourc
     rules = BUILTIN if registry is None else registry
     host = (urlsplit(url).hostname or "").lower()
     for rule in rules:
-        if any(host == suffix or host.endswith("." + suffix) for suffix in rule.host_suffixes):
+        if rule.catch_all or any(
+            host == suffix or host.endswith("." + suffix) for suffix in rule.host_suffixes
+        ):
             return rule
     return None
 
@@ -100,12 +105,21 @@ def candidate_attempts(
 
 
 def build_registry(
-    operator_rules: list[dict[str, str]], default_proxy: str, min_chars: int
+    operator_rules: list[dict[str, str]],
+    default_proxy: str,
+    min_chars: int,
+    global_floor: int = 0,
 ) -> tuple[SourceFallback, ...]:
     """Resolve operator rows to ``SourceFallback`` and merge over ``BUILTIN``.
 
     Operator rules come first so they win on host collision (``match`` returns the first
     match). Each row needs a ``host``; ``proxy`` falls back to ``default_proxy``.
+
+    When ``global_floor`` > 0 and ``default_proxy`` is a real strategy (not ``""`` or
+    ``"none"``), a lowest-priority catch-all is appended so the default proxy applies
+    to *any* host whose scrape is near-empty (below ``global_floor``, the hard
+    ``MIN_EXTRACTION_CHARS``). Operator and built-in rules above it win on host match
+    and keep their higher teaser floors; a host opts out with a ``proxy="none"`` rule.
     """
 
     operator = tuple(
@@ -119,4 +133,16 @@ def build_registry(
         for row in operator_rules
         if row.get("host")
     )
-    return operator + BUILTIN
+    registry = operator + BUILTIN
+    if global_floor > 0 and default_proxy and default_proxy != "none":
+        registry += (
+            SourceFallback(
+                name=f"global:{default_proxy}",
+                host_suffixes=(),
+                proxy=default_proxy,
+                custom_template="",
+                min_chars=global_floor,
+                catch_all=True,
+            ),
+        )
+    return registry

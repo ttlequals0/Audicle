@@ -64,14 +64,17 @@ async def extract(
 ) -> ExtractionResult:
     """Scrape ``url`` via Firecrawl and validate the result.
 
-    For hosts with a known paywall (see ``source_fallbacks``), a direct scrape that
-    comes back below the source's ``min_chars`` is retried with the host's bypass
-    strategy (re-scrape as Googlebot, a reader-proxy rewrite, or a clean fail).
+    A direct scrape that comes back below its floor is retried with a bypass
+    strategy. ``registry`` is the effective rule set: per-host rules (operator config
+    over built-ins) plus, when the operator set a global default proxy, a
+    lowest-priority catch-all so the default applies to *any* host whose scrape is
+    near-empty (below ``MIN_EXTRACTION_CHARS``). A per-host rule overrides the
+    catch-all, winning on host match and keeping its higher teaser floor (a known
+    paywall serves a teaser that clears the global floor but is useless to narrate).
     Separately, and for any host, a below-floor scrape that looks like a Cloudflare/
     bot-challenge page is automatically re-fetched through FlareSolverr (when
     ``FLARESOLVERR_URL`` is set) -- gated on challenge detection so a plain teaser
-    never triggers a browser solve. ``registry`` is the effective rule set (operator
-    config merged over the built-ins); ``None`` uses the built-ins only.
+    never triggers a browser solve. ``None`` uses the built-ins only.
 
     Raises:
         ExtractionTransientError: every retry exhausted on a retryable failure.
@@ -79,8 +82,9 @@ async def extract(
         ExtractionTooShortError: no candidate cleared the minimum length.
     """
 
-    # A matched rule raises the bar (teasers clear the global floor) and supplies
-    # the bypass attempts. Disabling the feature reverts to plain behavior.
+    # A matched rule (per-host override or the global-default catch-all) raises the
+    # bar (teasers clear the global floor) and supplies the bypass attempts.
+    # Disabling the feature reverts to plain behavior.
     rule = match(url, registry) if settings.EXTRACTION_FALLBACKS_ENABLED else None
     floor = rule.min_chars if rule else settings.MIN_EXTRACTION_CHARS
 
@@ -127,7 +131,7 @@ async def extract(
         # still came back short (previously silent).
         if rule is None:
             logger.info(
-                "Direct scrape below floor; no source-fallback rule for host",
+                "Direct scrape below floor; no per-host rule and no global default proxy",
                 extra={
                     "event": "extraction_no_fallback_rule",
                     "host": (urlsplit(url).hostname or "").lower(),

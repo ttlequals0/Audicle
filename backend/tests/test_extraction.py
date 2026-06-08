@@ -422,3 +422,96 @@ async def test_extract_none_strategy_fails_clean_without_extra_calls(
     )
     with pytest.raises(extraction.ExtractionTooShortError):
         await extraction.extract("https://www.wsj.com/a", get_settings(), registry)
+
+
+# --- global default proxy: applies to any host, near-empty trigger --------------
+
+
+def _global_default_registry(default_proxy: str = "googlebot"):
+    # A registry whose only entry is the global-default catch-all (no per-host
+    # rules and no built-ins), so an unlisted host exercises the catch-all path.
+    from app.services import source_fallbacks as sf
+
+    return tuple(r for r in sf.build_registry([], default_proxy, 3000, global_floor=500) if r.catch_all)
+
+
+async def test_extract_global_default_proxy_fires_on_near_empty_scrape(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No per-host rule, but a global default proxy is configured (catch-all in the
+    # registry): a near-empty direct scrape (below MIN_EXTRACTION_CHARS, the NYT
+    # hard-block case) auto-escalates to the global googlebot re-scrape of the same url.
+    requests: list[httpx.Request] = []
+    pages = iter([_ok_response("x" * 100), _ok_response("body " * 1000)])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return next(pages)
+
+    # Isolate the catch-all path from the (separate) FlareSolverr branch.
+    monkeypatch.setenv("FLARESOLVERR_URL", "")
+    get_settings.cache_clear()
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    url = "https://unlisted.test/a"
+    result = await extraction.extract(url, get_settings(), _global_default_registry())
+    assert result.markdown.startswith("body ")
+    assert len(requests) == 2
+    googlebot = json.loads(requests[1].content)
+    assert googlebot["url"] == url  # re-scrape the SAME url
+    assert "googlebot" in googlebot["headers"]["User-Agent"].lower()
+
+
+async def test_extract_global_default_proxy_skips_legit_short_article(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A legitimately short article (>= MIN_EXTRACTION_CHARS) is returned directly
+    # even with a global default catch-all -- the proxy fires only on a near-empty
+    # scrape, so a single HTTP call is made (the stub asserts on a second).
+    monkeypatch.setenv("FLARESOLVERR_URL", "")
+    get_settings.cache_clear()
+    transport = _stub_transport(_ok_response("word " * 200))  # 1000 chars >= 500 floor
+    _patch_async_client(monkeypatch, transport)
+    result = await extraction.extract(
+        "https://unlisted.test/a", get_settings(), _global_default_registry()
+    )
+    assert result.markdown.startswith("word ")
+
+
+async def test_extract_builtin_rule_floor_wins_over_global_catch_all(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # With BOTH a per-host rule (builtin Medium, floor 3000) and the global googlebot
+    # catch-all (floor 500) in the registry, a Medium teaser above 500 but below 3000
+    # must trigger the Medium rule's freedium bypass -- NOT the catch-all -- because
+    # match() returns the per-host rule first. Guards against the catch-all hijacking
+    # a host that has a higher-floor rule and narrating a teaser as the article.
+    from app.services import source_fallbacks as sf
+
+    monkeypatch.setenv("FLARESOLVERR_URL", "")
+    get_settings.cache_clear()
+    requests: list[httpx.Request] = []
+    pages = iter([_ok_response("teaser " * 215), _ok_response("body " * 1000)])  # ~1505 chars
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return next(pages)
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    registry = sf.build_registry([], "googlebot", 3000, global_floor=500)  # Medium builtin + catch-all
+    result = await extraction.extract(_MEDIUM_URL, get_settings(), registry)
+    assert result.markdown.startswith("body ")
+    assert len(requests) == 2
+    bypass = json.loads(requests[1].content)
+    assert bypass["url"].startswith("https://freedium")  # Medium rule's freedium, not googlebot
+    assert "headers" not in bypass  # googlebot would have set crawler headers
+
+
+async def test_extract_no_global_default_keeps_plain_behavior(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No catch-all (default_proxy "none") means no global fallback: a near-empty
+    # scrape with no per-host rule fails cleanly without any proxy call.
+    transport = _stub_transport(_ok_response("x" * 100))  # only the direct scrape
+    _patch_async_client(monkeypatch, transport)
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://unlisted.test/a", get_settings(), registry=())

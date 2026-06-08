@@ -6,6 +6,21 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-06-08
+
+### Changed
+
+- The global default bypass proxy now applies to every article, not only to hosts
+  with an explicit rule. When a direct scrape comes back near-empty (below
+  `MIN_EXTRACTION_CHARS`) and no per-host rule matches, Audicle retries through the
+  configured default proxy (e.g. the built-in Googlebot fetch) for any host -- so a
+  hard-blocked paywall no longer fails silently just because it had no rule. Per-host
+  rules are overrides: they win on host match, keep their higher teaser floor (to
+  catch partial teasers), and a rule with `proxy=none` opts a host out. A
+  legitimately short article (at or above the floor) is returned as-is, so the global
+  proxy never fires on normal content. The FlareSolverr challenge escalation (0.22.0)
+  is unchanged and still runs first when a scrape looks like a bot-challenge page.
+
 ## [0.23.0] - 2026-06-08
 
 ### Changed
