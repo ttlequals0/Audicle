@@ -8,12 +8,10 @@ a clean ``ExtractionResult`` or a typed exception.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
-import trafilatura
 from tenacity import (
     AsyncRetrying,
     RetryError,
@@ -23,38 +21,22 @@ from tenacity import (
 )
 
 from app.config import Settings
-from app.services.source_fallbacks import SourceFallback, candidate_attempts, match
+from app.services import flaresolverr
+from app.services.source_fallbacks import Attempt, SourceFallback, candidate_attempts, match
 
 logger = logging.getLogger("app.services.extraction")
 
 
-@dataclass(frozen=True)
-class ExtractionResult:
-    """Parsed Firecrawl response. ``markdown`` is the cleaned-page body; metadata
-    holds anything later phases may want (title, og:image, author)."""
-
-    markdown: str
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-class ExtractionError(Exception):
-    """Base class so callers can do a single except for any extraction failure."""
-
-
-class ExtractionTransientError(ExtractionError):
-    """5xx, connection refused, timeout. Tenacity retries these."""
-
-
-class ExtractionPermanentError(ExtractionError):
-    """4xx, malformed response, or any other non-retryable failure."""
-
-
-class ExtractionTooShortError(ExtractionPermanentError):
-    """No scrape (direct or fallback) cleared the minimum length.
-
-    The floor is ``MIN_EXTRACTION_CHARS`` by default, or a source-specific
-    ``min_chars`` when a ``source_fallbacks`` rule matched the host.
-    """
+# Re-exported from extraction_types so existing ``extraction.ExtractionResult`` /
+# ``extraction.ExtractionTooShortError`` references (pipeline, tests) keep working
+# while the FlareSolverr engine imports the same types without a circular dependency.
+from app.services.extraction_types import (  # noqa: E402
+    ExtractionError,
+    ExtractionPermanentError,
+    ExtractionResult,
+    ExtractionTooShortError,
+    ExtractionTransientError,
+)
 
 
 async def extract(
@@ -93,6 +75,7 @@ async def extract(
     floor = (
         settings.MIN_EXTRACTION_CHARS if (rule is None or flaresolverr_rule) else rule.min_chars
     )
+    host = (urlsplit(url).hostname or "").lower()
 
     timeout = httpx.Timeout(settings.FIRECRAWL_TIMEOUT_SECONDS)
     # Bearer auth only when a key is configured; an open self-hosted Firecrawl
@@ -110,91 +93,88 @@ async def extract(
         # Best result seen across direct + every bypass, and whether the browser
         # solver was attempted -- together they classify the failure message.
         best_chars = len(result.markdown)
-        solver_tried = False
 
-        # FlareSolverr: fetch the URL through the operator's solver (a real browser).
-        # Three triggers, all needing FLARESOLVERR_URL: (1) CHALLENGE -- the scrape
-        # looks like a Cloudflare/bot-challenge page. (2) HARD-BLOCK -- the scrape came
-        # back near-empty (below MIN_EXTRACTION_CHARS), i.e. the site served almost
-        # nothing (a 403/IP block like NYT) where a headers-only fetch can't help and
-        # the solver's residential browser can. (3) HOST-RULE -- the matched host
-        # explicitly selected the "flaresolverr" strategy. All bounded: a plain teaser
-        # (real text >= MIN_EXTRACTION_CHARS) never pays for a browser solve.
-        is_challenge = _looks_like_challenge(result)
+        # Build one ordered bypass plan. FlareSolverr auto-escalates for ANY host when
+        # the scrape looks like a Cloudflare challenge or is near-empty (a hard 403/IP
+        # block) -- unless the rule already routes to the solver -- then the rule's own
+        # strategy attempts. Every attempt (browser or Firecrawl re-scrape) runs through
+        # one dispatcher, so a plain teaser (real text) never pays for a browser solve.
+        attempts: list[Attempt] = []
+        solver_configured = bool(settings.FLARESOLVERR_URL.strip())
         near_empty = len(result.markdown) < settings.MIN_EXTRACTION_CHARS
-        if settings.FLARESOLVERR_URL.strip() and (is_challenge or flaresolverr_rule or near_empty):
-            solver_tried = True
-            trigger = (
-                "host-rule" if flaresolverr_rule else "challenge" if is_challenge else "hard-block"
-            )
-            logger.info(
-                "Routing below-floor scrape through FlareSolverr",
-                extra={
-                    "event": "extraction_flaresolverr_route",
-                    "trigger": trigger,
-                    "host": (urlsplit(url).hostname or "").lower(),
-                    "rule": rule.name if rule is not None else None,
-                    "primary_chars": len(result.markdown),
-                },
-            )
-            alt = await _fetch_via_flaresolverr(url, settings)
-            label = f"{trigger}#flaresolverr"
-            if alt is not None:
-                best_chars = max(best_chars, len(alt.markdown))
-                # The solver returns the full page (no teaser to filter), so accept it
-                # against the hard MIN_EXTRACTION_CHARS, not a rule's higher teaser floor
-                # (a near-empty scrape can route here even under a googlebot rule).
-                if len(alt.markdown) >= settings.MIN_EXTRACTION_CHARS:
-                    _log_fallback_used(label, result.markdown, alt.markdown)
-                    return alt
-                _log_fallback_short(label, len(alt.markdown), settings.MIN_EXTRACTION_CHARS)
+        if solver_configured and not flaresolverr_rule and (
+            flaresolverr.looks_like_challenge(result) or near_empty
+        ):
+            trigger = "challenge" if flaresolverr.looks_like_challenge(result) else "hard-block"
+            attempts.append(Attempt(f"{trigger}#flaresolverr", "flaresolverr", url))
+        if rule is not None:
+            attempts += candidate_attempts(rule, url)
 
-        # Per-host paywall strategy. A matched rule supplies the bypass attempts
-        # ("googlebot" re-scrapes the same url with crawler headers; "freedium" /
-        # "custom" rewrite the url). Logged either way so the path is traceable:
-        # which strategy ran, or that no rule matched, plus when an attempt ran but
-        # still came back short (previously silent).
         if rule is None:
             logger.info(
                 "Direct scrape below floor; no per-host rule and no global default proxy",
                 extra={
                     "event": "extraction_no_fallback_rule",
-                    "host": (urlsplit(url).hostname or "").lower(),
+                    "host": host,
                     "primary_chars": len(result.markdown),
                     "floor": floor,
                 },
             )
-        elif not flaresolverr_rule:
-            # flaresolverr rules were already handled above via the solver; their
-            # candidate_attempts is empty, so skip the misleading "attempting bypass".
-            logger.info(
-                "Direct scrape below floor; attempting bypass",
-                extra={
-                    "event": "extraction_fallback_start",
-                    "rule": rule.name,
-                    "strategy": rule.proxy,
-                    "primary_chars": len(result.markdown),
-                    "floor": floor,
-                },
-            )
-            for label, candidate, target_headers in candidate_attempts(rule, url):
+
+        solver_tried = False
+        fallback_start_logged = False
+        for attempt in attempts:
+            if attempt.engine == "flaresolverr":
+                if not solver_configured:  # a flaresolverr rule but no solver URL set
+                    continue
+                solver_tried = True
+                logger.info(
+                    "Routing below-floor scrape through FlareSolverr",
+                    extra={
+                        "event": "extraction_flaresolverr_route",
+                        "trigger": attempt.label.split("#")[0],
+                        "host": host,
+                        "rule": rule.name if rule is not None else None,
+                        "primary_chars": len(result.markdown),
+                    },
+                )
+                alt = await flaresolverr.fetch(attempt.url, settings, attempt.cookies)
+                # The solver returns the full page (no teaser to filter), so accept it
+                # against the hard MIN_EXTRACTION_CHARS, not a rule's higher teaser floor.
+                accept_floor = settings.MIN_EXTRACTION_CHARS
+            else:  # firecrawl re-scrape (googlebot/freedium/custom)
+                if not fallback_start_logged:
+                    logger.info(
+                        "Direct scrape below floor; attempting bypass",
+                        extra={
+                            "event": "extraction_fallback_start",
+                            "rule": rule.name if rule is not None else None,
+                            "strategy": rule.proxy if rule is not None else None,
+                            "primary_chars": len(result.markdown),
+                            "floor": floor,
+                        },
+                    )
+                    fallback_start_logged = True
                 try:
-                    alt = await _scrape(client, candidate, settings, headers=target_headers or None)
+                    alt = await _scrape(client, attempt.url, settings, headers=attempt.headers or None)
                 except ExtractionError as exc:
                     logger.warning(
                         "Extraction fallback attempt failed",
                         extra={
                             "event": "extraction_fallback_failed",
-                            "fallback": label,
+                            "fallback": attempt.label,
                             "error": str(exc),
                         },
                     )
                     continue
-                best_chars = max(best_chars, len(alt.markdown))
-                if len(alt.markdown) >= floor:
-                    _log_fallback_used(label, result.markdown, alt.markdown)
-                    return alt
-                _log_fallback_short(label, len(alt.markdown), floor)
+                accept_floor = floor
+            if alt is None:
+                continue
+            best_chars = max(best_chars, len(alt.markdown))
+            if len(alt.markdown) >= accept_floor:
+                _log_fallback_used(attempt.label, result.markdown, alt.markdown)
+                return alt
+            _log_fallback_short(attempt.label, len(alt.markdown), accept_floor)
 
     raise ExtractionTooShortError(_too_short_message(best_chars, solver_tried, settings))
 
@@ -220,113 +200,6 @@ def _too_short_message(best_chars: int, solver_tried: bool, settings: Settings) 
         f"Short teaser, {best_chars} chars. Looks like a paywall; add a bypass for "
         "this host in Settings."
     )
-
-
-# Substrings that mark a Cloudflare / bot-challenge interstitial rather than a
-# real article. Matched case-insensitively against a below-floor scrape's
-# markdown + title; chosen to be specific to challenge pages so a real (short)
-# article rarely collides. This is the only thing that triggers a FlareSolverr
-# solve, so a plain paywall teaser never pays for a browser.
-_CHALLENGE_MARKERS = (
-    "just a moment...",
-    "attention required! | cloudflare",
-    "checking your browser before accessing",
-    "enable javascript and cookies to continue",
-    "cf-browser-verification",
-    "challenge-platform",
-    "cloudflare ray id",
-    "verify you are human",
-    "verify you are a human",
-    "ddos-guard",
-    "pardon our interruption",
-    "access to this page has been denied",
-    "sorry, you have been blocked",
-)
-
-
-def _looks_like_challenge(result: ExtractionResult) -> bool:
-    """True when a below-floor scrape looks like a Cloudflare/bot-challenge page
-    (the case FlareSolverr is meant to solve) rather than a real short article."""
-
-    haystack = f"{result.markdown} {result.metadata.get('title', '')}".lower()
-    return any(marker in haystack for marker in _CHALLENGE_MARKERS)
-
-
-async def _fetch_via_flaresolverr(url: str, settings: Settings) -> ExtractionResult | None:
-    """Solve and fetch ``url`` through FlareSolverr, returning article markdown.
-
-    FlareSolverr runs a real browser to clear a Cloudflare/JS challenge and hands
-    back the solved HTML; trafilatura pulls the article body out of it. Any failure
-    (unset URL, solver error, non-200 target, empty extraction) returns ``None`` so
-    the caller falls through to the too-short error -- this never raises, so a flaky
-    solver can't turn a clean teaser-fail into a stack trace. Uses its own client
-    (no Firecrawl bearer/timeout) and matches the public FlareSolverr ``/v1`` shape.
-    """
-
-    endpoint = settings.FLARESOLVERR_URL.strip().rstrip("/")
-    if not endpoint:
-        return None
-    if not endpoint.endswith("/v1"):
-        endpoint = f"{endpoint}/v1"
-    # The read budget must exceed the solver's own maxTimeout so we don't cancel
-    # it mid-solve; +30s covers browser spin-up plus our network hop. Connect is
-    # kept short so an unreachable solver fails fast instead of stalling the
-    # worker for the whole read budget.
-    read_timeout = settings.FLARESOLVERR_MAX_TIMEOUT_MS / 1000 + 30
-    timeout = httpx.Timeout(read_timeout, connect=10.0)
-    payload = {
-        "cmd": "request.get",
-        "url": url,
-        "maxTimeout": settings.FLARESOLVERR_MAX_TIMEOUT_MS,
-    }
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(endpoint, json=payload)
-    except httpx.HTTPError as exc:
-        logger.warning(
-            "FlareSolverr request failed",
-            extra={"event": "flaresolverr_unreachable", "error": str(exc)},
-        )
-        return None
-
-    try:
-        body = response.json()
-    except ValueError:
-        logger.warning("FlareSolverr returned non-JSON", extra={"event": "flaresolverr_bad_response"})
-        return None
-    if not isinstance(body, dict) or body.get("status") != "ok":
-        message = body.get("message") if isinstance(body, dict) else None
-        logger.warning(
-            "FlareSolverr did not solve the challenge",
-            extra={"event": "flaresolverr_error", "message": message},
-        )
-        return None
-
-    # A truthy non-dict solution (list/str from a malformed or hostile solver)
-    # would make solution.get(...) raise AttributeError -- guard it like `body`.
-    solution = body.get("solution")
-    if not isinstance(solution, dict):
-        logger.warning("FlareSolverr returned no solution", extra={"event": "flaresolverr_no_solution"})
-        return None
-    if solution.get("status") != 200:
-        logger.warning(
-            "FlareSolverr fetched a non-200 page",
-            extra={"event": "flaresolverr_target_status", "status": solution.get("status")},
-        )
-        return None
-    html = solution.get("response")
-    if not isinstance(html, str):
-        logger.warning("FlareSolverr response was not HTML text", extra={"event": "flaresolverr_bad_html"})
-        return None
-
-    markdown, metadata = _html_to_markdown(html)
-    if not markdown:
-        logger.warning(
-            "FlareSolverr HTML yielded no article text",
-            extra={"event": "flaresolverr_empty_extract"},
-        )
-        return None
-    return ExtractionResult(markdown=markdown, metadata=metadata)
 
 
 def _log_fallback_used(label: str, primary_markdown: str, alt_markdown: str) -> None:
@@ -357,52 +230,6 @@ def _log_fallback_short(label: str, alt_chars: int, floor: int) -> None:
             "floor": floor,
         },
     )
-
-
-# Cap the solved HTML before lxml builds a DOM (several times the source size in
-# memory) so a pathologically large, attacker-controlled page can't OOM the
-# worker. No real article is anywhere near this; the artwork path caps downloads
-# for the same reason (ARTWORK_MAX_DOWNLOAD_BYTES).
-_MAX_SOLVED_HTML_CHARS = 8_000_000
-
-
-def _html_to_markdown(html: str) -> tuple[str, dict[str, Any]]:
-    """Extract the main article body from raw HTML as markdown, plus best-effort
-    title/author/og:image metadata mapped into the same keys the finalize and
-    artwork stages already read from Firecrawl. Returns ``("", {})`` when there is
-    no extractable article. Never raises -- the HTML is attacker-controlled."""
-
-    if not html.strip():
-        return "", {}
-    if len(html) > _MAX_SOLVED_HTML_CHARS:
-        logger.warning(
-            "FlareSolverr HTML exceeds the size cap; skipping",
-            extra={"event": "flaresolverr_html_oversize", "chars": len(html)},
-        )
-        return "", {}
-    try:
-        markdown = (
-            trafilatura.extract(
-                html, output_format="markdown", include_comments=False, include_tables=True
-            )
-            or ""
-        )
-        meta = trafilatura.extract_metadata(html)
-    except Exception:  # adversarial HTML; never fail extraction on a parse error
-        logger.warning(
-            "trafilatura could not parse the FlareSolverr HTML",
-            extra={"event": "flaresolverr_parse_error"},
-        )
-        return "", {}
-    metadata: dict[str, Any] = {}
-    if meta is not None:
-        if getattr(meta, "title", None):
-            metadata["title"] = meta.title
-        if getattr(meta, "author", None):
-            metadata["author"] = meta.author
-        if getattr(meta, "image", None):
-            metadata["ogImage"] = meta.image  # the key artwork._extract_og_image reads first
-    return markdown.strip(), metadata
 
 
 def _build_payload(

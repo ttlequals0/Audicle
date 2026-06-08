@@ -21,13 +21,16 @@ def test_builtin_medium_uses_freedium_above_global_floor() -> None:
     assert rule.min_chars > 500
 
 
-def test_flaresolverr_is_a_selectable_strategy_with_no_firecrawl_attempts() -> None:
-    # FlareSolverr is selectable per-host (for hosts that hard-block the scraper IP),
-    # but extract() handles it via the solver -- candidate_attempts yields nothing,
-    # so it never produces a (mis-routed) Firecrawl re-scrape.
+def test_flaresolverr_is_a_selectable_per_host_attempt() -> None:
+    # FlareSolverr is selectable per-host (for hosts that hard-block the scraper IP);
+    # candidate_attempts yields one flaresolverr-engine Attempt (a browser fetch), not
+    # a Firecrawl re-scrape.
     assert "flaresolverr" in sf.PROXY_KEYS
     rule = sf.SourceFallback("operator:nytimes.com", ("nytimes.com",), "flaresolverr", "", 500)
-    assert sf.candidate_attempts(rule, "https://www.nytimes.com/a") == []
+    attempts = sf.candidate_attempts(rule, "https://www.nytimes.com/a")
+    assert len(attempts) == 1
+    assert attempts[0].engine == "flaresolverr"
+    assert attempts[0].url == "https://www.nytimes.com/a"
 
 
 def test_candidate_attempts_googlebot_rescrapes_same_url_with_headers() -> None:
@@ -35,26 +38,28 @@ def test_candidate_attempts_googlebot_rescrapes_same_url_with_headers() -> None:
     url = "https://www.washingtonpost.com/a"
     attempts = sf.candidate_attempts(rule, url)
     assert len(attempts) == 1
-    _, target, headers = attempts[0]
-    assert target == url  # same URL, not a rewrite
-    assert "googlebot" in headers["User-Agent"].lower()
-    assert headers["X-Forwarded-For"] == "66.249.66.1"
+    attempt = attempts[0]
+    assert attempt.engine == "firecrawl"
+    assert attempt.url == url  # same URL, not a rewrite
+    assert "googlebot" in attempt.headers["User-Agent"].lower()
+    assert attempt.headers["X-Forwarded-For"] == "66.249.66.1"
 
 
 def test_candidate_attempts_freedium_two_rewrites_no_headers() -> None:
     rule = sf.SourceFallback("medium", ("medium.com",), "freedium", "", 3000)
     url = "https://medium.com/p/abc"
     attempts = sf.candidate_attempts(rule, url)
-    assert [(t, h) for _, t, h in attempts] == [
-        (f"https://freedium.cfd/{url}", {}),
-        (f"https://freedium-mirror.cfd/{url}", {}),
+    assert all(a.engine == "firecrawl" and a.headers == {} for a in attempts)
+    assert [a.url for a in attempts] == [
+        f"https://freedium.cfd/{url}",
+        f"https://freedium-mirror.cfd/{url}",
     ]
 
 
 def test_candidate_attempts_custom_template() -> None:
     rule = sf.SourceFallback("x", ("x.com",), "custom", "https://rd.example/{url}", 3000)
     attempts = sf.candidate_attempts(rule, "https://x.com/a")
-    assert attempts == [("x#custom", "https://rd.example/https://x.com/a", {})]
+    assert attempts == [sf.Attempt("x#custom", "firecrawl", "https://rd.example/https://x.com/a")]
 
 
 def test_candidate_attempts_none_is_empty() -> None:
@@ -71,9 +76,9 @@ def test_build_registry_global_default_catch_all_applies_to_any_host() -> None:
     assert rule is not None and rule.catch_all
     assert rule.proxy == "googlebot"
     assert rule.min_chars == 500
-    _, target, headers = sf.candidate_attempts(rule, "https://unlisted.test/a")[0]
-    assert target == "https://unlisted.test/a"  # googlebot re-scrapes the same url
-    assert "googlebot" in headers["User-Agent"].lower()
+    attempt = sf.candidate_attempts(rule, "https://unlisted.test/a")[0]
+    assert attempt.url == "https://unlisted.test/a"  # googlebot re-scrapes the same url
+    assert "googlebot" in attempt.headers["User-Agent"].lower()
 
 
 def test_build_registry_per_host_rule_overrides_global_catch_all() -> None:

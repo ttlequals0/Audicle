@@ -31,12 +31,27 @@ detected as a Cloudflare/bot-challenge page (see ``extraction._looks_like_challe
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 # The built-in "Ladder" technique: re-scrape the original URL with these headers.
 GOOGLEBOT_UA = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
 GOOGLEBOT_XFF = "66.249.66.1"
+
+
+@dataclass(frozen=True)
+class Attempt:
+    """One bypass attempt, engine-tagged so the extractor runs every strategy through
+    one loop. ``engine`` is ``"firecrawl"`` (re-scrape ``url`` with ``headers`` -- the
+    googlebot/freedium/custom recipes) or ``"flaresolverr"`` (fetch ``url`` through the
+    solver's real browser). ``cookies`` is the operator's session for that host, used
+    only by the flaresolverr engine (a raw ``name=value; ...`` Cookie string)."""
+
+    label: str
+    engine: str
+    url: str
+    headers: dict[str, str] = field(default_factory=dict)
+    cookies: str = ""
 
 # Proxy strategy keys offered to operators.
 PROXY_KEYS = ("googlebot", "freedium", "custom", "none", "flaresolverr")
@@ -58,6 +73,10 @@ class SourceFallback:
     # The global-default catch-all: matches any host (lowest priority). Operator
     # and built-in rules above it win on host match; see ``build_registry``.
     catch_all: bool = False
+    # Operator's session cookies for this host (raw ``name=value; ...``), sent to the
+    # target only via the flaresolverr engine so a paid subscriber can fetch gated
+    # content. A secret -- masked in the API, never logged.
+    cookies: str = ""
 
 
 # Built-in seed: Freedium reliably serves the full Medium body.
@@ -91,24 +110,25 @@ def match(url: str, registry: tuple[SourceFallback, ...] | None = None) -> Sourc
     return None
 
 
-def candidate_attempts(
-    rule: SourceFallback, url: str
-) -> list[tuple[str, str, dict[str, str]]]:
-    """Ordered ``(label, target_url, request_headers)`` attempts for the rule's strategy."""
+def candidate_attempts(rule: SourceFallback, url: str) -> list[Attempt]:
+    """Ordered bypass ``Attempt``s for the rule's strategy (engine-tagged)."""
 
     if rule.proxy == "googlebot":
         # The built-in "Ladder" technique: re-scrape the same URL as Googlebot.
-        return [(f"{rule.name}#googlebot", url, {"User-Agent": GOOGLEBOT_UA, "X-Forwarded-For": GOOGLEBOT_XFF})]
+        headers = {"User-Agent": GOOGLEBOT_UA, "X-Forwarded-For": GOOGLEBOT_XFF}
+        return [Attempt(f"{rule.name}#googlebot", "firecrawl", url, headers)]
     if rule.proxy == "freedium":
         return [
-            (f"{rule.name}#freedium{index}", template.format(url=url), {})
+            Attempt(f"{rule.name}#freedium{index}", "firecrawl", template.format(url=url))
             for index, template in enumerate(_FREEDIUM_TEMPLATES)
         ]
     if rule.proxy == "custom" and rule.custom_template:
-        return [(f"{rule.name}#custom", rule.custom_template.format(url=url), {})]
-    # "none"/reject, "custom" without a template, or "flaresolverr" (which extract()
-    # handles via the solver, not a Firecrawl re-scrape).
-    return []
+        return [Attempt(f"{rule.name}#custom", "firecrawl", rule.custom_template.format(url=url))]
+    if rule.proxy == "flaresolverr":
+        # The solver fetches the original URL in a real browser, carrying the rule's
+        # cookies; labelled "host-rule" since the operator selected it for this host.
+        return [Attempt("host-rule#flaresolverr", "flaresolverr", url, cookies=rule.cookies)]
+    return []  # "none"/reject, or "custom" without a template
 
 
 def build_registry(

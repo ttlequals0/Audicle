@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 from app.config import get_settings
-from app.services import extraction
+from app.services import extraction, flaresolverr
 
 
 @pytest.fixture
@@ -178,8 +178,8 @@ def test_looks_like_challenge_detects_cloudflare_and_spares_real_articles() -> N
         markdown="A normal short article about kubernetes and verifying releases.",
         metadata={"title": "Release notes"},
     )
-    assert extraction._looks_like_challenge(challenge) is True
-    assert extraction._looks_like_challenge(article) is False
+    assert flaresolverr.looks_like_challenge(challenge) is True
+    assert flaresolverr.looks_like_challenge(article) is False
 
 
 async def test_extract_logs_which_strategy_ran_and_when_it_falls_short(
