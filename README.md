@@ -159,6 +159,8 @@ The strategies:
 
 A built-in Medium-to-Freedium rule ships on by default. Your own rules layer on top and win when they collide on a host. The whole thing is gated by `EXTRACTION_FALLBACKS_ENABLED`; set it false to always use the direct scrape.
 
+Cloudflare and bot-challenge pages are a separate problem from paywalls, so they're handled automatically, not as a per-host strategy. When a scrape comes back looking like a challenge ("Just a moment...", "Checking your browser", a Cloudflare Ray ID), Audicle re-fetches the URL through your own [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) and pulls the article out of the solved HTML. It fires only on a detected challenge, for any host, and only if you've set `FLARESOLVERR_URL` (env or live in Settings); Audicle doesn't bundle one.
+
 ## Licensing notes
 
 The application code is MIT. A few things downstream of it have their own terms:
@@ -172,7 +174,8 @@ The Audicle name and logo are reserved; see `branding/README.md`.
 
 ```
         paywall bypass: a matched host's teaser triggers a re-scrape via
-        Googlebot / Freedium / a custom proxy (or a clean fail)
+        Googlebot / Freedium / a custom proxy (or a clean fail);
+        a detected Cloudflare challenge auto-routes through FlareSolverr
         |
         v
 URL --> extract (Firecrawl) --> cleanup (LLM) --> corrections (regex)

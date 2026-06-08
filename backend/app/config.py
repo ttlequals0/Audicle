@@ -94,6 +94,12 @@ class Settings(BaseSettings):
     # comes back below that source's bar, retry via a reader-proxy rewrite (e.g.
     # Medium -> Freedium). False disables fallbacks (direct scrapes only).
     EXTRACTION_FALLBACKS_ENABLED: bool = True
+    # FlareSolverr endpoint for the "flaresolverr" bypass strategy (a Cloudflare/
+    # JS-challenge solver). Include the /v1 path (the client appends it if missing).
+    # Empty disables the strategy (a matched host using it fails cleanly). Operators
+    # point this at their own FlareSolverr; Audicle does not bundle one.
+    FLARESOLVERR_URL: str = "http://flaresolverr:8191/v1"
+    FLARESOLVERR_MAX_TIMEOUT_MS: int = 60000  # solver's own per-request browser budget
     # Firecrawl scrape filtering so chrome (nav, cookie banners, footers) is
     # dropped before the LLM ever sees it. onlyMainContent is Firecrawl's
     # main-article heuristic; excludeTags drops elements by tag/selector.

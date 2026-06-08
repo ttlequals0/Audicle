@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import httpx
@@ -70,6 +71,156 @@ async def test_extract_happy_path(env: Path, monkeypatch: pytest.MonkeyPatch) ->
     result = await extraction.extract("https://example.test/article", get_settings())
     assert result.markdown.startswith("body ")
     assert result.metadata["title"] == "ok"
+
+
+def _flaresolverr_ok(html: str) -> httpx.Response:
+    """A FlareSolverr /v1 success: status ok, target 200, solved HTML in solution."""
+
+    return httpx.Response(
+        200,
+        json={
+            "status": "ok",
+            "solution": {"url": "x", "status": 200, "response": html, "userAgent": "ua"},
+        },
+    )
+
+
+def _gated_article_html() -> str:
+    body = "".join(
+        f"<p>Paragraph {i} of the real article body, with enough words that trafilatura "
+        f"keeps it as genuine content rather than navigation chrome or a cookie banner.</p>"
+        for i in range(8)
+    )
+    head = (
+        "<title>Gated Article</title>"
+        '<meta property="og:image" content="https://gated.test/cover.jpg">'
+        '<meta name="author" content="Jane Doe">'
+    )
+    return f"<html><head>{head}</head><body><article><h1>Gated Article</h1>{body}</article></body></html>"
+
+
+def _challenge_response() -> httpx.Response:
+    """A Firecrawl scrape that came back as a Cloudflare challenge page (short, with
+    challenge markers) -- the only thing that triggers a FlareSolverr escalation."""
+
+    md = "Just a moment... Enable JavaScript and cookies to continue. Cloudflare Ray ID: abc123"
+    return httpx.Response(
+        200,
+        content=json.dumps(
+            {"success": True, "data": {"markdown": md, "metadata": {"title": "Just a moment..."}}}
+        ).encode(),
+        headers={"content-type": "application/json"},
+    )
+
+
+async def test_extract_challenge_page_escalates_to_flaresolverr(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The direct scrape comes back as a Cloudflare challenge page; that is detected
+    # and auto-escalated to FlareSolverr (no per-host rule needed). trafilatura turns
+    # the solved HTML into markdown, mapping title/author/og:image into the keys
+    # finalize and artwork expect.
+    transport = _stub_transport(_challenge_response(), _flaresolverr_ok(_gated_article_html()))
+    _patch_async_client(monkeypatch, transport)
+    result = await extraction.extract("https://gated.test/post", get_settings())
+    assert "real article body" in result.markdown
+    assert result.metadata.get("title") == "Gated Article"
+    assert result.metadata.get("author") == "Jane Doe"
+    assert result.metadata.get("ogImage") == "https://gated.test/cover.jpg"
+
+
+async def test_extract_plain_teaser_does_not_escalate_to_flaresolverr(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.services.source_fallbacks import SourceFallback
+
+    # A plain (non-challenge) teaser must NOT trigger the solver, even though it is
+    # below the floor: only the host's googlebot strategy runs. If FlareSolverr were
+    # wrongly called it would consume a third response and _stub_transport asserts.
+    transport = _stub_transport(_ok_response("short teaser"), _ok_response("still short"))
+    _patch_async_client(monkeypatch, transport)
+    registry = (SourceFallback("operator:gated.test", ("gated.test",), "googlebot", "", 3000),)
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://gated.test/post", get_settings(), registry=registry)
+
+
+async def test_extract_challenge_malformed_solution_fails_clean(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A solver that returns status ok but a non-dict solution must not raise (the
+    # contract is "never raises"); it falls through to the too-short error.
+    bad = httpx.Response(200, json={"status": "ok", "solution": ["not", "a", "dict"]})
+    transport = _stub_transport(_challenge_response(), bad)
+    _patch_async_client(monkeypatch, transport)
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://gated.test/post", get_settings())
+
+
+def test_looks_like_challenge_detects_cloudflare_and_spares_real_articles() -> None:
+    challenge = extraction.ExtractionResult(
+        markdown="Checking your browser before accessing. Cloudflare Ray ID: x",
+        metadata={"title": "Just a moment..."},
+    )
+    article = extraction.ExtractionResult(
+        markdown="A normal short article about kubernetes and verifying releases.",
+        metadata={"title": "Release notes"},
+    )
+    assert extraction._looks_like_challenge(challenge) is True
+    assert extraction._looks_like_challenge(article) is False
+
+
+async def test_extract_logs_which_strategy_ran_and_when_it_falls_short(
+    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from app.services.source_fallbacks import SourceFallback
+
+    # Direct scrape AND the googlebot re-scrape both come back short (the hard-
+    # paywall case): the bypass ran but didn't help, which must be visible -- the
+    # selected strategy and the below-floor result are both logged.
+    transport = _stub_transport(_ok_response("short teaser"), _ok_response("still short"))
+    _patch_async_client(monkeypatch, transport)
+    registry = (SourceFallback("operator:gated.test", ("gated.test",), "googlebot", "", 3000),)
+    with (
+        caplog.at_level(logging.INFO, logger="app.services.extraction"),
+        pytest.raises(extraction.ExtractionTooShortError),
+    ):
+        await extraction.extract("https://gated.test/post", get_settings(), registry=registry)
+    events = [getattr(r, "event", "") for r in caplog.records]
+    assert "extraction_fallback_start" in events
+    assert "extraction_fallback_short" in events
+    start = next(r for r in caplog.records if getattr(r, "event", "") == "extraction_fallback_start")
+    assert start.strategy == "googlebot"  # the log records which strategy was tried
+
+
+async def test_extract_logs_when_no_rule_matches_the_host(
+    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A short scrape with no matching rule logs that no bypass was even possible,
+    # so "why didn't it use a proxy" is answerable from logs.
+    transport = _stub_transport(_ok_response("short"))
+    _patch_async_client(monkeypatch, transport)
+    with (
+        caplog.at_level(logging.INFO, logger="app.services.extraction"),
+        pytest.raises(extraction.ExtractionTooShortError),
+    ):
+        await extraction.extract("https://unlisted.test/a", get_settings())
+    rec = next(
+        r for r in caplog.records if getattr(r, "event", "") == "extraction_no_fallback_rule"
+    )
+    assert rec.host == "unlisted.test"
+
+
+async def test_extract_challenge_unconfigured_flaresolverr_fails_clean(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A challenge page is detected but no solver is configured: no HTTP call is made
+    # and the scrape fails cleanly rather than raising on a missing service.
+    monkeypatch.setenv("FLARESOLVERR_URL", "")
+    get_settings.cache_clear()
+    transport = _stub_transport(_challenge_response())  # only the direct scrape
+    _patch_async_client(monkeypatch, transport)
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://gated.test/post", get_settings())
 
 
 async def test_extract_sends_main_content_filtering(

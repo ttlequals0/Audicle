@@ -40,6 +40,9 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "FIRECRAWL_URL",
         "FIRECRAWL_API_KEY",
         "TTS_URL",
+        # FlareSolverr endpoint for the flaresolverr paywall strategy; operator-
+        # tunable so they can point at their own solver without an env edit.
+        "FLARESOLVERR_URL",
         "TTS_CHUNK_TARGET_WORDS",
         "TTS_CHUNK_MAX_WORDS",
         "TTS_CHUNK_SILENCE_MS",

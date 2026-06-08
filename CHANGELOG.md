@@ -21,6 +21,31 @@ work lives under `[Unreleased]`.
   `/health` response. Text-level lexicon corrections (the respelling path) are
   unchanged and still applied upstream in the backend pipeline.
 
+## [0.22.0] - 2026-06-07
+
+### Added
+
+- Automatic Cloudflare/bot-challenge bypass via FlareSolverr. When a scrape comes
+  back as a challenge page (Firecrawl couldn't clear it -- "Just a moment...",
+  "Checking your browser", a Cloudflare Ray ID, etc.), Audicle re-fetches the URL
+  through an operator-run FlareSolverr and extracts the article from the solved HTML
+  with trafilatura -- for any host, no per-site rule needed. It is gated on challenge
+  detection, so a plain paywall teaser never triggers an expensive browser solve. Set
+  `FLARESOLVERR_URL` via env or live from Settings (`PUT /api/v1/settings`); unset
+  disables it. Audicle does not bundle a solver. Paywalls remain the job of the
+  per-host strategies (googlebot/freedium/custom); FlareSolverr is the separate
+  challenge escape hatch.
+
+### Changed
+
+- The extraction fallback path is now fully traceable in logs. It records which
+  bypass strategy ran for a matched host (`extraction_fallback_start`), when a
+  fallback ran but still came back below the floor (`extraction_fallback_short`,
+  previously silent -- a hard subscription paywall that ignores the Googlebot
+  fetch looked like nothing happened), and when a short scrape had no matching
+  rule (`extraction_no_fallback_rule`). "Why did the proxy not help" is now
+  answerable from logs alone.
+
 ## [0.21.2] - 2026-06-07
 
 ### Changed

@@ -21,6 +21,12 @@ def test_builtin_medium_uses_freedium_above_global_floor() -> None:
     assert rule.min_chars > 500
 
 
+def test_flaresolverr_is_not_a_selectable_strategy() -> None:
+    # FlareSolverr is a detection-gated escalation in the extractor, not a per-host
+    # strategy -- it must not appear in the selectable proxy keys.
+    assert "flaresolverr" not in sf.PROXY_KEYS
+
+
 def test_candidate_attempts_googlebot_rescrapes_same_url_with_headers() -> None:
     rule = sf.SourceFallback("wapo", ("washingtonpost.com",), "googlebot", "", 3000)
     url = "https://www.washingtonpost.com/a"

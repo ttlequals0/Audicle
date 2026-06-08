@@ -14,6 +14,12 @@ Strategies (``proxy`` key on a rule):
 - ``custom`` -- rewrite to an operator-supplied template (must contain ``{url}``).
 - ``none`` -- no attempt; a sub-threshold teaser fails the job cleanly.
 
+FlareSolverr is NOT a per-host strategy here: the extractor escalates to it
+automatically, for any host, when a below-floor scrape is detected as a
+Cloudflare/bot-challenge page (see ``extraction._looks_like_challenge`` /
+``_fetch_via_flaresolverr``). It is a separate, detection-gated path, not a
+strategy an operator selects.
+
 ``BUILTIN`` ships a Medium -> Freedium rule. Operators layer their own host rules on top
 (``build_registry``); an operator rule wins over a built-in rule for the same host.
 """

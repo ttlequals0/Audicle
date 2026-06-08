@@ -1,6 +1,6 @@
 [project]
 name = "audicle"
-version = "0.23.0"
+version = "0.24.0"
 description = "Self-hosted service that turns article URLs into a Podcasting 2.0 feed."
 requires-python = ">=3.13"
 license = { text = "MIT" }
@@ -13,6 +13,10 @@ dependencies = [
     "pydantic-settings>=2.6",
     "httpx>=0.27",
     "tenacity>=9.0",
+    # HTML -> article markdown for the FlareSolverr extraction strategy. That
+    # service returns solved HTML (not a URL Firecrawl can scrape), so trafilatura
+    # pulls the main article body out of it before the cleanup stage.
+    "trafilatura>=2.0",
     # Phase 5 audio pipeline. CPU-only torch wheel because the main app never
     # runs GPU inference -- that's the tts-wrapper container's job. soundfile
     # handles WAV I/O without torchaudio's TorchCodec dependency.
