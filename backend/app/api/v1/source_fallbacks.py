@@ -24,6 +24,7 @@ _PROXY_LABELS = {
     "googlebot": "Built-in (Googlebot fetch)",
     "freedium": "Freedium (Medium)",
     "custom": "Custom URL template",
+    "flaresolverr": "FlareSolverr (Cloudflare bypass)",
     "none": "None / reject",
 }
 _AVAILABLE_PROXIES = [

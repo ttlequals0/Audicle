@@ -155,6 +155,7 @@ The strategies:
 - `googlebot` (the default): re-fetch the same URL with a Googlebot user agent and a crawler `X-Forwarded-For`. SEO-metered paywalls serve the full article to the crawler, so this is the one that works most often. It runs through the scrape headers, not a separate proxy container.
 - `freedium`: rewrite the URL to a Freedium reader proxy. Best for Medium.
 - `custom`: rewrite to your own reader-proxy template, any URL containing `{url}`.
+- `flaresolverr`: re-fetch the URL through your own [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) (a Cloudflare/JS-challenge solver), then pull the article body out of the solved HTML. For hosts that block the scraper outright, not just paywall it. Point `FLARESOLVERR_URL` at your solver (env or live in Settings); Audicle doesn't bundle one.
 - `none`: don't try anything. A matched host that comes back short just fails, which is what you want for a hard paywall you'd rather skip than narrate.
 
 A built-in Medium-to-Freedium rule ships on by default. Your own rules layer on top and win when they collide on a host. The whole thing is gated by `EXTRACTION_FALLBACKS_ENABLED`; set it false to always use the direct scrape.
@@ -173,7 +174,7 @@ The Audicle name and logo are reserved; see `branding/README.md`.
 
 ```
         paywall bypass: a matched host's teaser triggers a re-scrape via
-        Googlebot / Freedium / a custom proxy (or a clean fail)
+        Googlebot / Freedium / a custom proxy / FlareSolverr (or a clean fail)
         |
         v
 URL --> extract (Firecrawl) --> cleanup (LLM) --> corrections (regex)

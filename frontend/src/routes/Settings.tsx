@@ -37,7 +37,7 @@ const GROUPS: Record<string, string[]> = {
     "FEED_EXPLICIT",
     "FEED_ARTWORK_URL",
   ],
-  Connections: ["FIRECRAWL_URL", "FIRECRAWL_API_KEY", "TTS_URL"],
+  Connections: ["FIRECRAWL_URL", "FIRECRAWL_API_KEY", "TTS_URL", "FLARESOLVERR_URL"],
   TTS: ["TTS_CHUNK_TARGET_WORDS", "TTS_CHUNK_MAX_WORDS", "TTS_CHUNK_SILENCE_MS"],
   Verification: [
     "WHISPER_VERIFY_ENABLED",
@@ -862,7 +862,8 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
       <p className="text-mute text-xs">
         When a listed host scrapes below the threshold, Audicle retries with its strategy
         before failing the job. domain: the host to bypass. strategy: googlebot (re-fetch
-        as Googlebot), freedium (Medium mirror), custom (your own {"{url}"} template), none
+        as Googlebot), freedium (Medium mirror), custom (your own {"{url}"} template),
+        flaresolverr (solve via your FlareSolverr, set FLARESOLVERR_URL above), none
         (skip the retry and fail rather than narrate the stub).
       </p>
 

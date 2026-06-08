@@ -12,6 +12,11 @@ Strategies (``proxy`` key on a rule):
   via the scrape ``headers`` rather than a separate proxy service.
 - ``freedium`` -- rewrite the URL to a Freedium reader proxy (best for Medium).
 - ``custom`` -- rewrite to an operator-supplied template (must contain ``{url}``).
+- ``flaresolverr`` -- re-fetch the SAME url through an operator-run FlareSolverr
+  (a Cloudflare/JS-challenge solver). Unlike the other strategies this does not
+  produce a Firecrawl target URL: the extractor POSTs to FlareSolverr and reads
+  the solved HTML directly (see ``extraction._fetch_via_flaresolverr``), so it has
+  no ``candidate_attempts`` entry here.
 - ``none`` -- no attempt; a sub-threshold teaser fails the job cleanly.
 
 ``BUILTIN`` ships a Medium -> Freedium rule. Operators layer their own host rules on top
@@ -28,7 +33,7 @@ GOOGLEBOT_UA = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/b
 GOOGLEBOT_XFF = "66.249.66.1"
 
 # Proxy strategy keys offered to operators.
-PROXY_KEYS = ("googlebot", "freedium", "custom", "none")
+PROXY_KEYS = ("googlebot", "freedium", "custom", "flaresolverr", "none")
 
 _FREEDIUM_TEMPLATES = ("https://freedium.cfd/{url}", "https://freedium-mirror.cfd/{url}")
 

@@ -72,6 +72,90 @@ async def test_extract_happy_path(env: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert result.metadata["title"] == "ok"
 
 
+def _flaresolverr_ok(html: str) -> httpx.Response:
+    """A FlareSolverr /v1 success: status ok, target 200, solved HTML in solution."""
+
+    return httpx.Response(
+        200,
+        json={
+            "status": "ok",
+            "solution": {"url": "x", "status": 200, "response": html, "userAgent": "ua"},
+        },
+    )
+
+
+def _gated_article_html() -> str:
+    body = "".join(
+        f"<p>Paragraph {i} of the real article body, with enough words that trafilatura "
+        f"keeps it as genuine content rather than navigation chrome or a cookie banner.</p>"
+        for i in range(8)
+    )
+    head = (
+        "<title>Gated Article</title>"
+        '<meta property="og:image" content="https://gated.test/cover.jpg">'
+        '<meta name="author" content="Jane Doe">'
+    )
+    return f"<html><head>{head}</head><body><article><h1>Gated Article</h1>{body}</article></body></html>"
+
+
+def _flaresolverr_registry() -> tuple:
+    from app.services.source_fallbacks import SourceFallback
+
+    return (
+        SourceFallback(
+            name="operator:gated.test",
+            host_suffixes=("gated.test",),
+            proxy="flaresolverr",
+            custom_template="",
+            min_chars=200,
+        ),
+    )
+
+
+async def test_extract_flaresolverr_fallback_used(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Direct Firecrawl scrape returns a short teaser; the flaresolverr strategy then
+    # re-fetches via the solver and trafilatura turns the solved HTML into markdown,
+    # mapping title/author/og:image into the keys finalize and artwork expect.
+    transport = _stub_transport(_ok_response("short teaser"), _flaresolverr_ok(_gated_article_html()))
+    _patch_async_client(monkeypatch, transport)
+    result = await extraction.extract(
+        "https://gated.test/post", get_settings(), registry=_flaresolverr_registry()
+    )
+    assert "real article body" in result.markdown
+    assert result.metadata.get("title") == "Gated Article"
+    assert result.metadata.get("author") == "Jane Doe"
+    assert result.metadata.get("ogImage") == "https://gated.test/cover.jpg"
+
+
+async def test_extract_flaresolverr_malformed_solution_fails_clean(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A solver that returns status ok but a non-dict solution must not raise
+    # (the contract is "never raises"); it falls through to the too-short error.
+    bad = httpx.Response(200, json={"status": "ok", "solution": ["not", "a", "dict"]})
+    transport = _stub_transport(_ok_response("short teaser"), bad)
+    _patch_async_client(monkeypatch, transport)
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract(
+            "https://gated.test/post", get_settings(), registry=_flaresolverr_registry()
+        )
+
+
+async def test_extract_flaresolverr_unconfigured_url_fails_clean(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No solver configured: the strategy is skipped (no HTTP call) and the short
+    # scrape fails cleanly rather than raising on a missing service.
+    monkeypatch.setenv("FLARESOLVERR_URL", "")
+    get_settings.cache_clear()
+    transport = _stub_transport(_ok_response("short"))  # only the direct scrape
+    _patch_async_client(monkeypatch, transport)
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract(
+            "https://gated.test/post", get_settings(), registry=_flaresolverr_registry()
+        )
+
+
 async def test_extract_sends_main_content_filtering(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
