@@ -20,6 +20,16 @@ work lives under `[Unreleased]`.
   solver. This complements the existing built-in Googlebot "Ladder" technique,
   which already covers SEO-metered paywalls without an external service.
 
+### Changed
+
+- The extraction fallback path is now fully traceable in logs. It records which
+  bypass strategy ran for a matched host (`extraction_fallback_start`), when a
+  fallback ran but still came back below the floor (`extraction_fallback_short`,
+  previously silent -- a hard subscription paywall that ignores the Googlebot
+  fetch looked like nothing happened), and when a short scrape had no matching
+  rule (`extraction_no_fallback_rule`). "Why did the proxy not help" is now
+  answerable from logs alone.
+
 ## [0.21.2] - 2026-06-07
 
 ### Changed

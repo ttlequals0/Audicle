@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import httpx
@@ -139,6 +140,47 @@ async def test_extract_flaresolverr_malformed_solution_fails_clean(
         await extraction.extract(
             "https://gated.test/post", get_settings(), registry=_flaresolverr_registry()
         )
+
+
+async def test_extract_logs_which_strategy_ran_and_when_it_falls_short(
+    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from app.services.source_fallbacks import SourceFallback
+
+    # Direct scrape AND the googlebot re-scrape both come back short (the hard-
+    # paywall case): the bypass ran but didn't help, which must be visible -- the
+    # selected strategy and the below-floor result are both logged.
+    transport = _stub_transport(_ok_response("short teaser"), _ok_response("still short"))
+    _patch_async_client(monkeypatch, transport)
+    registry = (SourceFallback("operator:gated.test", ("gated.test",), "googlebot", "", 3000),)
+    with (
+        caplog.at_level(logging.INFO, logger="app.services.extraction"),
+        pytest.raises(extraction.ExtractionTooShortError),
+    ):
+        await extraction.extract("https://gated.test/post", get_settings(), registry=registry)
+    events = [getattr(r, "event", "") for r in caplog.records]
+    assert "extraction_fallback_start" in events
+    assert "extraction_fallback_short" in events
+    start = next(r for r in caplog.records if getattr(r, "event", "") == "extraction_fallback_start")
+    assert start.strategy == "googlebot"  # the log records which strategy was tried
+
+
+async def test_extract_logs_when_no_rule_matches_the_host(
+    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A short scrape with no matching rule logs that no bypass was even possible,
+    # so "why didn't it use a proxy" is answerable from logs.
+    transport = _stub_transport(_ok_response("short"))
+    _patch_async_client(monkeypatch, transport)
+    with (
+        caplog.at_level(logging.INFO, logger="app.services.extraction"),
+        pytest.raises(extraction.ExtractionTooShortError),
+    ):
+        await extraction.extract("https://unlisted.test/a", get_settings())
+    rec = next(
+        r for r in caplog.records if getattr(r, "event", "") == "extraction_no_fallback_rule"
+    )
+    assert rec.host == "unlisted.test"
 
 
 async def test_extract_flaresolverr_unconfigured_url_fails_clean(

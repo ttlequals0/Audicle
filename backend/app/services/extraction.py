@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 import trafilatura
@@ -94,16 +95,44 @@ async def extract(
         if len(result.markdown) >= floor:
             return result
 
-        # Direct scrape too short for this source: try the bypass attempts. Each
-        # attempt is a (target_url, headers) pair -- "googlebot" re-scrapes the same
-        # url with crawler headers, a proxy strategy rewrites the url. FlareSolverr
-        # is the exception: it doesn't yield a Firecrawl target, so it re-fetches
-        # the original url through the solver and returns the solved HTML directly.
+        # Direct scrape is below this source's floor. Log what happens next so the
+        # bypass path is fully traceable: which strategy ran (or that no rule
+        # matched, so nothing could), and -- crucially -- when a fallback ran but
+        # still came back short (e.g. a hard paywall ignoring the Googlebot fetch),
+        # which was previously silent.
+        if rule is None:
+            logger.info(
+                "Direct scrape below floor; no source-fallback rule for host",
+                extra={
+                    "event": "extraction_no_fallback_rule",
+                    "host": (urlsplit(url).hostname or "").lower(),
+                    "primary_chars": len(result.markdown),
+                    "floor": floor,
+                },
+            )
+        else:
+            logger.info(
+                "Direct scrape below floor; attempting bypass",
+                extra={
+                    "event": "extraction_fallback_start",
+                    "rule": rule.name,
+                    "strategy": rule.proxy,
+                    "primary_chars": len(result.markdown),
+                    "floor": floor,
+                },
+            )
+
+        # "googlebot" re-scrapes the same url with crawler headers, a proxy
+        # strategy rewrites the url. FlareSolverr is the exception: it doesn't
+        # yield a Firecrawl target, so it re-fetches the original url through the
+        # solver and returns the solved HTML directly.
         if rule is not None and rule.proxy == "flaresolverr":
             alt = await _fetch_via_flaresolverr(url, settings)
             if alt is not None and len(alt.markdown) >= floor:
                 _log_fallback_used(f"{rule.name}#flaresolverr", result.markdown, alt.markdown)
                 return alt
+            if alt is not None:
+                _log_fallback_short(f"{rule.name}#flaresolverr", len(alt.markdown), floor)
         elif rule is not None:
             for label, candidate, target_headers in candidate_attempts(rule, url):
                 try:
@@ -121,6 +150,7 @@ async def extract(
                 if len(alt.markdown) >= floor:
                     _log_fallback_used(label, result.markdown, alt.markdown)
                     return alt
+                _log_fallback_short(label, len(alt.markdown), floor)
 
     floor_desc = f"min_chars={floor} for {rule.name}" if rule else f"MIN_EXTRACTION_CHARS={floor}"
     raise ExtractionTooShortError(
@@ -215,6 +245,22 @@ def _log_fallback_used(label: str, primary_markdown: str, alt_markdown: str) -> 
             "fallback": label,
             "primary_chars": len(primary_markdown),
             "markdown_chars": len(alt_markdown),
+        },
+    )
+
+
+def _log_fallback_short(label: str, alt_chars: int, floor: int) -> None:
+    """A fallback attempt ran but came back below the floor. Logged so a bypass
+    that runs yet doesn't help (e.g. a hard subscription paywall serving the same
+    teaser to the Googlebot fetch) is visible in logs instead of silent."""
+
+    logger.info(
+        "Extraction fallback attempt below floor",
+        extra={
+            "event": "extraction_fallback_short",
+            "fallback": label,
+            "markdown_chars": alt_chars,
+            "floor": floor,
         },
     )
 
