@@ -107,17 +107,26 @@ async def extract(
         result = await _scrape(client, url, settings)
         if len(result.markdown) >= floor:
             return result
+        # Best result seen across direct + every bypass, and whether the browser
+        # solver was attempted -- together they classify the failure message.
+        best_chars = len(result.markdown)
+        solver_tried = False
 
         # FlareSolverr: fetch the URL through the operator's solver (a real browser).
-        # Two triggers, both needing FLARESOLVERR_URL: (1) AUTOMATIC -- the scrape
-        # looks like a Cloudflare/bot-challenge page, for any host, so Firecrawl
-        # couldn't clear it; gated on detection so a plain teaser never pays for a
-        # browser solve. (2) PER-HOST -- the matched host selected the "flaresolverr"
-        # strategy because it hard-blocks the scraper IP (e.g. a 403 to datacenter
-        # IPs), where the headers-only Googlebot fetch can't help and the solver runs
-        # Chrome from a residential IP. Unset FLARESOLVERR_URL disables both.
-        if settings.FLARESOLVERR_URL.strip() and (_looks_like_challenge(result) or flaresolverr_rule):
-            trigger = "host-rule" if flaresolverr_rule else "challenge"
+        # Three triggers, all needing FLARESOLVERR_URL: (1) CHALLENGE -- the scrape
+        # looks like a Cloudflare/bot-challenge page. (2) HARD-BLOCK -- the scrape came
+        # back near-empty (below MIN_EXTRACTION_CHARS), i.e. the site served almost
+        # nothing (a 403/IP block like NYT) where a headers-only fetch can't help and
+        # the solver's residential browser can. (3) HOST-RULE -- the matched host
+        # explicitly selected the "flaresolverr" strategy. All bounded: a plain teaser
+        # (real text >= MIN_EXTRACTION_CHARS) never pays for a browser solve.
+        is_challenge = _looks_like_challenge(result)
+        near_empty = len(result.markdown) < settings.MIN_EXTRACTION_CHARS
+        if settings.FLARESOLVERR_URL.strip() and (is_challenge or flaresolverr_rule or near_empty):
+            solver_tried = True
+            trigger = (
+                "host-rule" if flaresolverr_rule else "challenge" if is_challenge else "hard-block"
+            )
             logger.info(
                 "Routing below-floor scrape through FlareSolverr",
                 extra={
@@ -130,11 +139,15 @@ async def extract(
             )
             alt = await _fetch_via_flaresolverr(url, settings)
             label = f"{trigger}#flaresolverr"
-            if alt is not None and len(alt.markdown) >= floor:
-                _log_fallback_used(label, result.markdown, alt.markdown)
-                return alt
             if alt is not None:
-                _log_fallback_short(label, len(alt.markdown), floor)
+                best_chars = max(best_chars, len(alt.markdown))
+                # The solver returns the full page (no teaser to filter), so accept it
+                # against the hard MIN_EXTRACTION_CHARS, not a rule's higher teaser floor
+                # (a near-empty scrape can route here even under a googlebot rule).
+                if len(alt.markdown) >= settings.MIN_EXTRACTION_CHARS:
+                    _log_fallback_used(label, result.markdown, alt.markdown)
+                    return alt
+                _log_fallback_short(label, len(alt.markdown), settings.MIN_EXTRACTION_CHARS)
 
         # Per-host paywall strategy. A matched rule supplies the bypass attempts
         # ("googlebot" re-scrapes the same url with crawler headers; "freedium" /
@@ -177,14 +190,35 @@ async def extract(
                         },
                     )
                     continue
+                best_chars = max(best_chars, len(alt.markdown))
                 if len(alt.markdown) >= floor:
                     _log_fallback_used(label, result.markdown, alt.markdown)
                     return alt
                 _log_fallback_short(label, len(alt.markdown), floor)
 
-    floor_desc = f"min_chars={floor} for {rule.name}" if rule else f"MIN_EXTRACTION_CHARS={floor}"
-    raise ExtractionTooShortError(
-        f"Extracted markdown is {len(result.markdown)} chars, below {floor_desc}"
+    raise ExtractionTooShortError(_too_short_message(best_chars, solver_tried, settings))
+
+
+def _too_short_message(best_chars: int, solver_tried: bool, settings: Settings) -> str:
+    """Short, plain failure reason for the Home UI: what kind of block, and the fix.
+
+    Keyed on whether the browser solver was tried, not just the char count: if the
+    solver fired and still came up short, an IP/UA swap won't help. Otherwise a
+    near-empty scrape (below ``MIN_EXTRACTION_CHARS``) is a hard 403/IP block whose
+    fix is FlareSolverr; anything above that is a metered teaser the operator can
+    route through a per-host bypass.
+    """
+
+    if solver_tried:
+        return "Blocked: the browser bypass couldn't get the article. The site likely needs a login."
+    if best_chars < settings.MIN_EXTRACTION_CHARS:
+        return (
+            "Hard block: the site sent almost nothing. Set FLARESOLVERR_URL in "
+            "Connections to retry in a browser."
+        )
+    return (
+        f"Short teaser, {best_chars} chars. Looks like a paywall; add a bypass for "
+        "this host in Settings."
     )
 
 

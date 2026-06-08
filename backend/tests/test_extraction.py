@@ -24,6 +24,18 @@ def fast_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
     get_settings.cache_clear()
 
 
+@pytest.fixture
+def no_flaresolverr(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Disable the automatic FlareSolverr escalation so a test can exercise the plain
+    or proxy path on a near-empty scrape without the solver pre-empting it (a
+    near-empty scrape auto-routes to FlareSolverr when FLARESOLVERR_URL is set)."""
+
+    monkeypatch.setenv("FLARESOLVERR_URL", "")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+
+
 def _ok_response(markdown: str = "x" * 1000) -> httpx.Response:
     return httpx.Response(
         200,
@@ -134,10 +146,11 @@ async def test_extract_plain_teaser_does_not_escalate_to_flaresolverr(
 ) -> None:
     from app.services.source_fallbacks import SourceFallback
 
-    # A plain (non-challenge) teaser must NOT trigger the solver, even though it is
-    # below the floor: only the host's googlebot strategy runs. If FlareSolverr were
-    # wrongly called it would consume a third response and _stub_transport asserts.
-    transport = _stub_transport(_ok_response("short teaser"), _ok_response("still short"))
+    # A real teaser (>= MIN_EXTRACTION_CHARS, so NOT near-empty) below the rule's 3000
+    # floor must NOT trigger the solver even with FLARESOLVERR_URL set -- only the
+    # host's googlebot strategy runs. If FlareSolverr were wrongly called it would
+    # consume a third response and _stub_transport asserts.
+    transport = _stub_transport(_ok_response("word " * 200), _ok_response("word " * 150))
     _patch_async_client(monkeypatch, transport)
     registry = (SourceFallback("operator:gated.test", ("gated.test",), "googlebot", "", 3000),)
     with pytest.raises(extraction.ExtractionTooShortError):
@@ -170,13 +183,14 @@ def test_looks_like_challenge_detects_cloudflare_and_spares_real_articles() -> N
 
 
 async def test_extract_logs_which_strategy_ran_and_when_it_falls_short(
-    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, no_flaresolverr
 ) -> None:
     from app.services.source_fallbacks import SourceFallback
 
     # Direct scrape AND the googlebot re-scrape both come back short (the hard-
     # paywall case): the bypass ran but didn't help, which must be visible -- the
-    # selected strategy and the below-floor result are both logged.
+    # selected strategy and the below-floor result are both logged. (no_flaresolverr so
+    # the near-empty scrape exercises googlebot, not the auto solver.)
     transport = _stub_transport(_ok_response("short teaser"), _ok_response("still short"))
     _patch_async_client(monkeypatch, transport)
     registry = (SourceFallback("operator:gated.test", ("gated.test",), "googlebot", "", 3000),)
@@ -193,10 +207,11 @@ async def test_extract_logs_which_strategy_ran_and_when_it_falls_short(
 
 
 async def test_extract_logs_when_no_rule_matches_the_host(
-    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, no_flaresolverr
 ) -> None:
     # A short scrape with no matching rule logs that no bypass was even possible,
-    # so "why didn't it use a proxy" is answerable from logs.
+    # so "why didn't it use a proxy" is answerable from logs. (no_flaresolverr so the
+    # near-empty scrape doesn't auto-route to the solver first.)
     transport = _stub_transport(_ok_response("short"))
     _patch_async_client(monkeypatch, transport)
     with (
@@ -310,7 +325,9 @@ async def test_extract_exhausts_retries_on_persistent_5xx(
         await extraction.extract("https://example.test/article", get_settings())
 
 
-async def test_extract_rejects_short_markdown(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_extract_rejects_short_markdown(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr
+) -> None:
     transport = _stub_transport(_ok_response("tiny"))
     _patch_async_client(monkeypatch, transport)
 
@@ -380,7 +397,7 @@ async def test_extract_rejects_success_false(
 
 
 async def test_extract_googlebot_rescrapes_same_url_with_headers(
-    env: Path, monkeypatch: pytest.MonkeyPatch
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr
 ) -> None:
     from app.services import source_fallbacks as sf
 
@@ -411,7 +428,7 @@ async def test_extract_googlebot_rescrapes_same_url_with_headers(
 
 
 async def test_extract_none_strategy_fails_clean_without_extra_calls(
-    env: Path, monkeypatch: pytest.MonkeyPatch
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr
 ) -> None:
     from app.services import source_fallbacks as sf
 
@@ -548,7 +565,7 @@ async def test_extract_flaresolverr_rule_unconfigured_fails_clean(
 
 
 async def test_extract_no_global_default_keeps_plain_behavior(
-    env: Path, monkeypatch: pytest.MonkeyPatch
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr
 ) -> None:
     # No catch-all (default_proxy "none") means no global fallback: a near-empty
     # scrape with no per-host rule fails cleanly without any proxy call.
@@ -556,3 +573,86 @@ async def test_extract_no_global_default_keeps_plain_behavior(
     _patch_async_client(monkeypatch, transport)
     with pytest.raises(extraction.ExtractionTooShortError):
         await extraction.extract("https://unlisted.test/a", get_settings(), registry=())
+
+
+# --- 0.26.0: auto-escalate to FlareSolverr on a near-empty (hard-block) scrape ----
+
+
+async def test_extract_near_empty_auto_routes_to_flaresolverr_without_rule(
+    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The 0.26.0 behavior: a near-empty scrape (a hard 403/IP block) auto-routes to
+    # FlareSolverr for ANY host with FLARESOLVERR_URL set -- no per-host rule needed,
+    # no challenge markers needed -- logged as trigger="hard-block".
+    transport = _stub_transport(
+        _ok_response("Access Denied"),  # direct: near-empty, not a challenge page
+        _flaresolverr_ok(_gated_article_html()),  # solver gets the full article
+    )
+    _patch_async_client(monkeypatch, transport)
+    with caplog.at_level(logging.INFO, logger="app.services.extraction"):
+        result = await extraction.extract("https://hardblock.test/post", get_settings())
+    assert "real article body" in result.markdown
+    route = next(
+        r for r in caplog.records if getattr(r, "event", "") == "extraction_flaresolverr_route"
+    )
+    assert route.trigger == "hard-block"
+
+
+async def test_too_short_message_hard_block_no_solver(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr
+) -> None:
+    # Near-empty + no solver configured: the failure tells the operator the fix.
+    transport = _stub_transport(_ok_response("Access Denied"))
+    _patch_async_client(monkeypatch, transport)
+    with pytest.raises(extraction.ExtractionTooShortError, match="Set FLARESOLVERR_URL"):
+        await extraction.extract("https://hardblock.test/a", get_settings())
+
+
+async def test_too_short_message_hard_block_solver_failed(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Near-empty + solver configured but it also comes back empty: distinct message.
+    transport = _stub_transport(
+        _ok_response("Access Denied"),  # direct: hard block
+        _flaresolverr_ok(""),  # solver returns empty HTML -> nothing extracted
+    )
+    _patch_async_client(monkeypatch, transport)
+    with pytest.raises(extraction.ExtractionTooShortError, match="browser bypass couldn't get"):
+        await extraction.extract("https://hardblock.test/a", get_settings())
+
+
+async def test_extract_near_empty_routes_to_solver_before_googlebot_rule(
+    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Precedence: a near-empty scrape on a host that has a googlebot rule still routes
+    # to the solver FIRST (hard-block beats the host's googlebot choice, since the IP
+    # block makes a headers-only re-fetch futile). The solver gets the article.
+    from app.services.source_fallbacks import SourceFallback
+
+    transport = _stub_transport(
+        _ok_response("Access Denied"),  # direct: near-empty
+        _flaresolverr_ok(_gated_article_html()),  # solver fires before googlebot
+    )
+    _patch_async_client(monkeypatch, transport)
+    registry = (SourceFallback("operator:gated.test", ("gated.test",), "googlebot", "", 3000),)
+    with caplog.at_level(logging.INFO, logger="app.services.extraction"):
+        result = await extraction.extract("https://gated.test/post", get_settings(), registry)
+    assert "real article body" in result.markdown
+    route = next(
+        r for r in caplog.records if getattr(r, "event", "") == "extraction_flaresolverr_route"
+    )
+    assert route.trigger == "hard-block"
+
+
+async def test_too_short_message_teaser(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A real teaser (>= MIN_EXTRACTION_CHARS, below the rule floor) is classified as a
+    # paywall teaser, not a hard block -- the solver never fires (not near-empty).
+    from app.services.source_fallbacks import SourceFallback
+
+    transport = _stub_transport(_ok_response("word " * 200), _ok_response("word " * 200))
+    _patch_async_client(monkeypatch, transport)
+    registry = (SourceFallback("operator:teaser.test", ("teaser.test",), "googlebot", "", 3000),)
+    with pytest.raises(extraction.ExtractionTooShortError, match="Short teaser"):
+        await extraction.extract("https://teaser.test/a", get_settings(), registry=registry)

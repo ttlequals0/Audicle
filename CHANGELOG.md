@@ -6,6 +6,23 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-06-08
+
+### Changed
+
+- FlareSolverr now escalates automatically on a hard block, not just on a detected
+  Cloudflare challenge. When a scrape comes back near-empty (below
+  `MIN_EXTRACTION_CHARS`) -- the signature of a 403/IP block like the NYT, where the
+  site served almost nothing -- Audicle retries through the solver for any host with
+  `FLARESOLVERR_URL` set, no per-host rule needed. It stays bounded: a real article
+  or a partial teaser (which returns actual text) never pays for a browser solve. The
+  per-host `flaresolverr` strategy (0.25.0) remains as an explicit override.
+- Extraction failures now explain themselves. Instead of "Extracted markdown is 0
+  chars, below MIN_EXTRACTION_CHARS=500", a failed job says what kind of block it hit
+  and the fix: a hard block with no solver configured points at `FLARESOLVERR_URL`; a
+  hard block the solver couldn't clear says the site likely needs a login; a short
+  teaser suggests adding a per-host bypass. The message shows in the Home job list.
+
 ## [0.25.0] - 2026-06-08
 
 ### Added
