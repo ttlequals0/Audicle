@@ -6,6 +6,37 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-06-08
+
+### Added
+
+- Per-host cookie jar for subscriber paywalls. A `flaresolverr` rule can now carry
+  your own logged-in session cookies (`name=value; name2=value2`), and the solver
+  sends them to the target so it fetches the full article as you. This is the only
+  way past a hard subscriber wall that never serves the body to a logged-out request
+  (e.g. Crain's / Chicago Business), where a fresh solver session still just gets the
+  teaser. Set it per host in Settings under the `flaresolverr` strategy. The value is
+  a session secret: it is held with the other secrets, never logged, and reads back
+  masked once saved.
+
+### Fixed
+
+- A `flaresolverr` host rule no longer gets swallowed by its own teaser. The rule's
+  teaser floor (`min_chars`, default 3000) now gates the decision to escalate, so a
+  ~1 KB stub drops below it and the solver fires -- previously the stub cleared the
+  hard 500-char floor and was accepted before the browser fetch ever ran.
+- Reprocess and config changes now take effect on the next run. Firecrawl caches a
+  scrape by URL, so reprocessing an article (or flipping its bypass rule) could return
+  the same stale teaser; the scrape now asks for a fresh fetch (`maxAge=0`) every time.
+
+### Changed
+
+- Internal: the bypass strategies (Googlebot, Freedium, custom, FlareSolverr) now run
+  through one `Attempt` abstraction and a single dispatch loop instead of FlareSolverr
+  being a hand-coded special case. The FlareSolverr engine moved to its own
+  `flaresolverr.py` module. No behavior change -- the existing test suite passes
+  untouched -- but the cookie jar above is built cleanly on top rather than bolted on.
+
 ## [0.26.0] - 2026-06-08
 
 ### Changed

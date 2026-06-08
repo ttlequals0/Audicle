@@ -782,6 +782,7 @@ interface FallbackRule {
   host: string;
   proxy: string;
   custom_template: string;
+  cookies: string;
 }
 
 interface SourceFallbacksConfig {
@@ -797,6 +798,7 @@ interface FallbackRow {
   host: string;
   proxy: string; // "" -> use the global default
   customTemplate: string;
+  cookies: string; // sentinel ("********") when a jar is stored; "" clears it
 }
 
 let _fbRowCounter = 0;
@@ -805,6 +807,7 @@ const newFallbackRow = (rule?: FallbackRule): FallbackRow => ({
   host: rule?.host ?? "",
   proxy: rule?.proxy ?? "",
   customTemplate: rule?.custom_template ?? "",
+  cookies: rule?.cookies ?? "",
 });
 
 function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
@@ -834,6 +837,9 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
               host: r.host.trim(),
               proxy: r.proxy,
               custom_template: r.customTemplate.trim(),
+              // Cookies only apply to the flaresolverr strategy; switching away clears the
+              // jar so the session secret isn't silently retained on a rule that won't use it.
+              cookies: r.proxy === "flaresolverr" ? r.cookies.trim() : "",
             })),
         }),
       }),
@@ -868,6 +874,12 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
         hosts that hard-block the scraper IP with a 403, e.g. NYT; needs FLARESOLVERR_URL),
         none (skip the retry and fail rather than narrate the stub). Cloudflare/bot-challenge
         pages also trigger FlareSolverr automatically when FLARESOLVERR_URL is set.
+      </p>
+      <p className="text-mute text-xs">
+        cookie jar (flaresolverr only): paste your own logged-in session cookies for a host
+        you subscribe to and the solver fetches the full article as you. A session cookie is
+        full account access, so use a dedicated login where you can. Held with the other
+        secrets and never echoed back -- the field reads masked once saved.
       </p>
 
       <div className="flex flex-wrap items-end gap-4">
@@ -939,6 +951,16 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
                   placeholder="https://reader.example/{url}"
                   value={row.customTemplate}
                   onChange={(e) => patch({ customTemplate: e.target.value })}
+                />
+              )}
+              {row.proxy === "flaresolverr" && (
+                <input
+                  className="field basis-full min-w-[12rem] font-mono"
+                  type="password"
+                  autoComplete="off"
+                  placeholder="cookie jar (optional): name=value; name2=value2"
+                  value={row.cookies}
+                  onChange={(e) => patch({ cookies: e.target.value })}
                 />
               )}
             </div>

@@ -30,9 +30,9 @@ def test_save_then_load_round_trips_and_normalizes_rules(env: Path) -> None:
         cfg = store.load(conn)
     assert cfg["default_proxy"] == "freedium"
     assert cfg["min_chars"] == 2500
-    # host lowercased, custom_template defaulted
+    # host lowercased, custom_template and cookies defaulted
     assert cfg["rules"] == [
-        {"host": "washingtonpost.com", "proxy": "none", "custom_template": ""}
+        {"host": "washingtonpost.com", "proxy": "none", "custom_template": "", "cookies": ""}
     ]
 
 

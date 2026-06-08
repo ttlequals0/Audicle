@@ -155,7 +155,7 @@ The strategies:
 - `googlebot` (the default): re-fetch the same URL with a Googlebot user agent and a crawler `X-Forwarded-For`. SEO-metered paywalls serve the full article to the crawler, so this is the one that works most often. It runs through the scrape headers, not a separate proxy container.
 - `freedium`: rewrite the URL to a Freedium reader proxy. Best for Medium.
 - `custom`: rewrite to your own reader-proxy template, any URL containing `{url}`.
-- `flaresolverr`: fetch the page through your FlareSolverr (a real browser) instead of Firecrawl. For hosts that hard-block the scraper's datacenter IP with a 403 (e.g. the NYT), where the Googlebot header trick can't help -- the solver runs Chrome from a residential IP and the publisher serves the article normally. Needs `FLARESOLVERR_URL` set. Since 0.26.0 Audicle does this automatically on any hard block (see below), so this per-host setting is now mainly an explicit override -- e.g. to force the solver for a host that returns a teaser rather than a near-empty page.
+- `flaresolverr`: fetch the page through your FlareSolverr (a real browser) instead of Firecrawl. For hosts that hard-block the scraper's datacenter IP with a 403 (e.g. the NYT), where the Googlebot header trick can't help -- the solver runs Chrome from a residential IP and the publisher serves the article normally. Needs `FLARESOLVERR_URL` set. Since 0.26.0 Audicle does this automatically on any hard block (see below), so this per-host setting is now mainly an explicit override -- e.g. to force the solver for a host that returns a teaser rather than a near-empty page. A `flaresolverr` rule can also carry a cookie jar (below) for sites you subscribe to.
 - `none`: don't try anything. A matched host that comes back short just fails, which is what you want for a hard paywall you'd rather skip than narrate.
 
 A built-in Medium-to-Freedium rule ships on by default. Your own rules layer on top and win when they collide on a host. The whole thing is gated by `EXTRACTION_FALLBACKS_ENABLED`; set it false to always use the direct scrape (no default-proxy retry either).
@@ -163,6 +163,12 @@ A built-in Medium-to-Freedium rule ships on by default. Your own rules layer on 
 Hard blocks are handled automatically, not as a per-host strategy. If you've set `FLARESOLVERR_URL` (env or live in Settings), Audicle re-fetches through your own [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) -- a real browser from a residential IP -- and pulls the article out of the solved HTML. It fires for any host in two cases: a scrape that looks like a Cloudflare challenge ("Just a moment...", a Ray ID), or a near-empty scrape (below `MIN_EXTRACTION_CHARS`) -- the signature of a 403/IP block where the site served almost nothing. It stays bounded: a real article or a partial teaser never triggers a browser solve. Audicle doesn't bundle a solver.
 
 When extraction still fails, the job says why: a hard block with no solver set points you at `FLARESOLVERR_URL`; a hard block the solver couldn't clear means the site likely needs a login; a short teaser means add a per-host bypass.
+
+### Subscriber paywalls (cookie jar)
+
+Some walls never serve the body to a logged-out request, no matter the IP -- a hard subscriber paywall like Crain's / Chicago Business hands every anonymous reader the same teaser, so even a fresh FlareSolverr session gets nothing more. If you pay for the site, point the host at the `flaresolverr` strategy and paste your own logged-in session cookies into its cookie jar (`name=value; name2=value2`, as you'd copy them from your browser). The solver then fetches the article as you and pulls the full text.
+
+A session cookie is full account access, so use a dedicated login where the site allows one, and treat the jar like a password. Audicle holds it with the other secrets, never writes it to a log, and reads it back masked once saved -- re-saving the masked value keeps the stored cookies, clearing the field removes them. Needs `FLARESOLVERR_URL` set.
 
 ## Licensing notes
 

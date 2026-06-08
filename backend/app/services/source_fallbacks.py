@@ -14,14 +14,14 @@ Strategies (``proxy`` key on a rule):
 - ``custom`` -- rewrite to an operator-supplied template (must contain ``{url}``).
 - ``none`` -- no attempt; a sub-threshold teaser fails the job cleanly.
 - ``flaresolverr`` -- fetch the URL through FlareSolverr's real browser (see
-  ``extraction._fetch_via_flaresolverr``). For hosts that hard-block the scraper's
-  IP (e.g. NYT returns 403 to datacenter IPs), where the headers-only Googlebot
-  fetch can't help; the operator's solver runs Chrome from a residential IP.
-  Handled specially in ``extract`` (not via ``candidate_attempts``), so it needs
-  ``FLARESOLVERR_URL`` set.
+  ``flaresolverr.fetch``), carrying the rule's cookie jar when set. For hosts that
+  hard-block the scraper's IP (e.g. NYT returns 403 to datacenter IPs), where the
+  headers-only Googlebot fetch can't help; the operator's solver runs Chrome from a
+  residential IP. Emitted as a flaresolverr-engine ``Attempt`` like every strategy, so
+  it needs ``FLARESOLVERR_URL`` set.
 
 FlareSolverr also runs automatically, for any host, when a below-floor scrape is
-detected as a Cloudflare/bot-challenge page (see ``extraction._looks_like_challenge``)
+detected as a Cloudflare/bot-challenge page (see ``flaresolverr.looks_like_challenge``)
 -- that detection-gated path is independent of whether a host selects the
 ``flaresolverr`` strategy above.
 
@@ -156,6 +156,7 @@ def build_registry(
             proxy=row.get("proxy") or default_proxy,
             custom_template=row.get("custom_template", ""),
             min_chars=min_chars,
+            cookies=row.get("cookies", ""),
         )
         for row in operator_rules
         if row.get("host")

@@ -22,21 +22,20 @@ from tenacity import (
 
 from app.config import Settings
 from app.services import flaresolverr
-from app.services.source_fallbacks import Attempt, SourceFallback, candidate_attempts, match
 
-logger = logging.getLogger("app.services.extraction")
-
-
-# Re-exported from extraction_types so existing ``extraction.ExtractionResult`` /
-# ``extraction.ExtractionTooShortError`` references (pipeline, tests) keep working
-# while the FlareSolverr engine imports the same types without a circular dependency.
-from app.services.extraction_types import (  # noqa: E402
+# Re-exported so existing ``extraction.ExtractionResult`` / ``extraction.ExtractionTooShortError``
+# references (pipeline, tests) keep working now that the types live in extraction_types, which
+# the FlareSolverr engine also imports without a circular dependency.
+from app.services.extraction_types import (
     ExtractionError,
     ExtractionPermanentError,
     ExtractionResult,
     ExtractionTooShortError,
     ExtractionTransientError,
 )
+from app.services.source_fallbacks import Attempt, SourceFallback, candidate_attempts, match
+
+logger = logging.getLogger("app.services.extraction")
 
 
 async def extract(
@@ -68,13 +67,11 @@ async def extract(
     # bar (teasers clear the global floor) and supplies the bypass attempts.
     # Disabling the feature reverts to plain behavior.
     rule = match(url, registry) if settings.EXTRACTION_FALLBACKS_ENABLED else None
-    # FlareSolverr fetches the full page via a real browser (no teaser to filter), so a
-    # flaresolverr rule uses the hard MIN_EXTRACTION_CHARS floor rather than the higher
-    # teaser min_chars the googlebot/freedium strategies need to spot a stub.
-    flaresolverr_rule = rule is not None and rule.proxy == "flaresolverr"
-    floor = (
-        settings.MIN_EXTRACTION_CHARS if (rule is None or flaresolverr_rule) else rule.min_chars
-    )
+    # A flaresolverr rule keeps the rule's teaser floor like every strategy, so a
+    # teaser paywall (real text but below the floor) drops below it and routes to the
+    # solver instead of being silently returned. The solver's full-page result is then
+    # accepted against the hard MIN_EXTRACTION_CHARS in the loop.
+    floor = settings.MIN_EXTRACTION_CHARS if rule is None else rule.min_chars
     host = (urlsplit(url).hostname or "").lower()
 
     timeout = httpx.Timeout(settings.FIRECRAWL_TIMEOUT_SECONDS)
@@ -94,21 +91,21 @@ async def extract(
         # solver was attempted -- together they classify the failure message.
         best_chars = len(result.markdown)
 
-        # Build one ordered bypass plan. FlareSolverr auto-escalates for ANY host when
-        # the scrape looks like a Cloudflare challenge or is near-empty (a hard 403/IP
-        # block) -- unless the rule already routes to the solver -- then the rule's own
-        # strategy attempts. Every attempt (browser or Firecrawl re-scrape) runs through
-        # one dispatcher, so a plain teaser (real text) never pays for a browser solve.
-        attempts: list[Attempt] = []
+        # Build one ordered bypass plan. The rule's own strategy supplies its attempts
+        # (googlebot/freedium/custom/flaresolverr); on top, FlareSolverr auto-escalates
+        # for ANY host when the scrape looks like a Cloudflare challenge or is near-empty
+        # (a hard 403/IP block) -- unless the plan already routes to the solver. The auto
+        # attempt is prepended so the browser solve runs first. Every attempt (browser or
+        # Firecrawl re-scrape) runs through one dispatcher, so a plain teaser (real text)
+        # never pays for a browser solve.
+        attempts: list[Attempt] = candidate_attempts(rule, url) if rule is not None else []
         solver_configured = bool(settings.FLARESOLVERR_URL.strip())
         near_empty = len(result.markdown) < settings.MIN_EXTRACTION_CHARS
-        if solver_configured and not flaresolverr_rule and (
-            flaresolverr.looks_like_challenge(result) or near_empty
-        ):
-            trigger = "challenge" if flaresolverr.looks_like_challenge(result) else "hard-block"
-            attempts.append(Attempt(f"{trigger}#flaresolverr", "flaresolverr", url))
-        if rule is not None:
-            attempts += candidate_attempts(rule, url)
+        if solver_configured and not any(a.engine == "flaresolverr" for a in attempts):
+            is_challenge = flaresolverr.looks_like_challenge(result)
+            if is_challenge or near_empty:
+                trigger = "challenge" if is_challenge else "hard-block"
+                attempts.insert(0, Attempt(f"{trigger}#flaresolverr", "flaresolverr", url))
 
         if rule is None:
             logger.info(
@@ -139,9 +136,14 @@ async def extract(
                     },
                 )
                 alt = await flaresolverr.fetch(attempt.url, settings, attempt.cookies)
-                # The solver returns the full page (no teaser to filter), so accept it
-                # against the hard MIN_EXTRACTION_CHARS, not a rule's higher teaser floor.
-                accept_floor = settings.MIN_EXTRACTION_CHARS
+                # Auto-escalation (challenge/hard-block) fired on a near-empty page with no
+                # teaser to filter, so accept the solver's full page against the hard MIN. A
+                # host-rule solver runs because the host serves a teaser, so hold its result
+                # to the rule's teaser floor like every other strategy -- a stale/missing
+                # cookie that returns the same teaser then fails cleanly instead of narrating it.
+                accept_floor = (
+                    floor if attempt.label.startswith("host-rule#") else settings.MIN_EXTRACTION_CHARS
+                )
             else:  # firecrawl re-scrape (googlebot/freedium/custom)
                 if not fallback_start_logged:
                     logger.info(
@@ -240,6 +242,10 @@ def _build_payload(
         "formats": ["markdown"],
         "onlyMainContent": settings.FIRECRAWL_ONLY_MAIN_CONTENT,
         "removeBase64Images": settings.FIRECRAWL_REMOVE_BASE64_IMAGES,
+        # Force a fresh scrape every time: Firecrawl caches by URL, so without this a
+        # reprocess (or a re-submit after changing a bypass rule/cookies) would get the
+        # stale cached result and ignore the new config.
+        "maxAge": 0,
     }
     if settings.firecrawl_exclude_tags:
         payload["excludeTags"] = settings.firecrawl_exclude_tags

@@ -98,10 +98,13 @@ def _flaresolverr_ok(html: str) -> httpx.Response:
 
 
 def _gated_article_html() -> str:
+    # 40 paragraphs so the solved markdown is well above a 3000-char teaser floor: a
+    # host-rule solver result is held to that floor, so the stub must represent the real
+    # full article, not a teaser-length body.
     body = "".join(
         f"<p>Paragraph {i} of the real article body, with enough words that trafilatura "
         f"keeps it as genuine content rather than navigation chrome or a cookie banner.</p>"
-        for i in range(8)
+        for i in range(40)
     )
     head = (
         "<title>Gated Article</title>"
@@ -656,3 +659,64 @@ async def test_too_short_message_teaser(
     registry = (SourceFallback("operator:teaser.test", ("teaser.test",), "googlebot", "", 3000),)
     with pytest.raises(extraction.ExtractionTooShortError, match="Short teaser"):
         await extraction.extract("https://teaser.test/a", get_settings(), registry=registry)
+
+
+# --- 0.27.0: flaresolverr fires on a teaser, forwards cookies, fresh scrape ----
+
+
+async def test_extract_flaresolverr_rule_fires_on_a_teaser(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A flaresolverr rule now uses the rule's teaser floor for the direct check, so a
+    # teaser (>= MIN but < the 3000 floor) routes to the solver instead of being
+    # returned as the stub. Without the fix the 1000-char teaser would be returned.
+    from app.services.source_fallbacks import SourceFallback
+
+    transport = _stub_transport(
+        _ok_response("word " * 200),  # direct: ~1000-char teaser, >= 500 but < 3000
+        _flaresolverr_ok(_gated_article_html()),  # solver gets the full article
+    )
+    _patch_async_client(monkeypatch, transport)
+    registry = (SourceFallback("operator:teaser.test", ("teaser.test",), "flaresolverr", "", 3000),)
+    result = await extraction.extract("https://teaser.test/post", get_settings(), registry)
+    assert "real article body" in result.markdown
+
+
+async def test_extract_flaresolverr_rule_forwards_cookies_to_solver(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.services.source_fallbacks import SourceFallback
+
+    captured: dict = {}
+    pages = iter([_ok_response("Access Denied"), _flaresolverr_ok(_gated_article_html())])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "flaresolverr":  # the solver POST, not the Firecrawl scrape
+            captured.update(json.loads(request.content))
+        return next(pages)
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    registry = (
+        SourceFallback("op", ("gated.test",), "flaresolverr", "", 500, cookies="sid=abc; t=1"),
+    )
+    await extraction.extract("https://gated.test/post", get_settings(), registry)
+    assert captured.get("cookies") == [
+        {"name": "sid", "value": "abc", "domain": "gated.test"},
+        {"name": "t", "value": "1", "domain": "gated.test"},
+    ]
+
+
+async def test_extract_sends_maxage_zero_for_a_fresh_scrape(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Firecrawl caches by URL; maxAge=0 forces a fresh fetch so reprocess/config changes
+    # apply instead of returning a stale cached scrape.
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return _ok_response("body " * 200)
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    await extraction.extract("https://example.test/article", get_settings())
+    assert captured["maxAge"] == 0

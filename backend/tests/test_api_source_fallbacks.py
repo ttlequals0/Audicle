@@ -44,7 +44,7 @@ def test_put_round_trips_and_normalizes(client: TestClient) -> None:
         got = client.get("/api/v1/source-fallbacks").json()
     assert got["min_chars"] == 3500
     assert got["rules"] == [
-        {"host": "washingtonpost.com", "proxy": "none", "custom_template": ""}
+        {"host": "washingtonpost.com", "proxy": "none", "custom_template": "", "cookies": ""}
     ]
 
 
@@ -55,6 +55,58 @@ def test_put_rejects_bad_proxy_400(client: TestClient) -> None:
             json={"default_proxy": "bogus", "min_chars": 3000, "rules": []},
         )
     assert response.status_code == 400
+
+
+def test_cookies_masked_on_read_and_preserved_on_resave(client: TestClient, env: Path) -> None:
+    from app.services import source_fallbacks_store
+
+    rule = {"host": "nytimes.com", "proxy": "flaresolverr", "cookies": "sess=secret123"}
+    with client:
+        client.put(
+            "/api/v1/source-fallbacks",
+            json={"default_proxy": "googlebot", "min_chars": 3000, "rules": [rule]},
+        )
+        got = client.get("/api/v1/source-fallbacks").json()
+        masked = got["rules"][0]["cookies"]
+        assert masked == "********"  # never echo the real value
+        # Re-saving with the sentinel keeps the stored cookies (the UI never saw them).
+        client.put(
+            "/api/v1/source-fallbacks",
+            json={
+                "default_proxy": "googlebot",
+                "min_chars": 3000,
+                "rules": [{"host": "nytimes.com", "proxy": "flaresolverr", "cookies": masked}],
+            },
+        )
+    with database.connection(env) as conn:
+        stored = source_fallbacks_store.load(conn)
+    assert stored["rules"][0]["cookies"] == "sess=secret123"  # real value survived
+
+
+def test_cookies_can_be_cleared_with_empty_string(client: TestClient, env: Path) -> None:
+    from app.services import source_fallbacks_store
+
+    with client:
+        client.put(
+            "/api/v1/source-fallbacks",
+            json={
+                "default_proxy": "googlebot",
+                "min_chars": 3000,
+                "rules": [{"host": "nytimes.com", "proxy": "flaresolverr", "cookies": "sess=x"}],
+            },
+        )
+        # Sending "" (not the sentinel) clears the cookies.
+        client.put(
+            "/api/v1/source-fallbacks",
+            json={
+                "default_proxy": "googlebot",
+                "min_chars": 3000,
+                "rules": [{"host": "nytimes.com", "proxy": "flaresolverr", "cookies": ""}],
+            },
+        )
+    with database.connection(env) as conn:
+        stored = source_fallbacks_store.load(conn)
+    assert stored["rules"][0]["cookies"] == ""
 
 
 def test_put_rejects_flaresolverr_as_global_default_400(client: TestClient) -> None:

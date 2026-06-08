@@ -24,6 +24,9 @@ _DEFAULT_MIN_CHARS = 3000
 # A bare host after lowercasing: letters/digits/dots/hyphens only (no scheme, path,
 # port, or whitespace). Guards against an operator pasting a full article URL.
 _HOST_RE = re.compile(r"^[a-z0-9.-]+$")
+# A real session cookie header is a few KB at most; cap well above that so a
+# pasted blob can't bloat the settings row, but don't reject a legitimate session.
+_MAX_COOKIE_CHARS = 16384
 
 
 def _defaults() -> dict[str, Any]:
@@ -36,6 +39,9 @@ def _normalize_rule(raw: dict[str, Any]) -> dict[str, str]:
         # "" -> use the global default (resolved by build_registry).
         "proxy": str(raw.get("proxy") or "").strip(),
         "custom_template": str(raw.get("custom_template", "")).strip(),
+        # Operator session cookies for the host, forwarded only via the flaresolverr
+        # engine. A secret -- masked by the API; the store keeps it verbatim.
+        "cookies": str(raw.get("cookies", "")).strip(),
     }
 
 
@@ -95,6 +101,8 @@ def _validate(config: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"rule proxy must be one of {list(PROXY_KEYS)} (or empty for default)")
         if rule["proxy"] == "custom":
             _validate_custom_template(rule["custom_template"])
+        if len(rule["cookies"]) > _MAX_COOKIE_CHARS:
+            raise ValueError(f"cookies for {rule['host']} exceed {_MAX_COOKIE_CHARS} chars")
         rules.append(rule)
     return {"default_proxy": default_proxy, "min_chars": min_chars, "rules": rules}
 
