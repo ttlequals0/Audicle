@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import httpx
 import pytest
 from app.core import database
 from app.main import create_app
@@ -26,6 +27,7 @@ def test_get_defaults_with_available_proxies_and_builtin(client: TestClient) -> 
         "custom",
         "none",
         "flaresolverr",
+        "archive",
     }
     assert any(b["host"] == "medium.com" for b in body["builtin"])
 
@@ -145,3 +147,52 @@ def test_put_rejects_custom_without_placeholder_400(client: TestClient) -> None:
             },
         )
     assert response.status_code == 400
+
+
+def test_test_endpoint_reports_chars_without_leaking_cookies(
+    client: TestClient, env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Stub Firecrawl so the test endpoint's extract() returns a full article with no
+    # network call; the response must report chars/strategy but never the cookie value.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"success": True, "data": {"markdown": "word " * 800, "metadata": {"title": "T"}}},
+        )
+
+    original = httpx.AsyncClient
+    transport = httpx.MockTransport(handler)
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda *a, **k: original(*a, **{**k, "transport": transport})
+    )
+    with client:
+        client.put(
+            "/api/v1/source-fallbacks",
+            json={
+                "default_proxy": "googlebot",
+                "min_chars": 3000,
+                "rules": [
+                    {"host": "gated.test", "proxy": "flaresolverr", "cookies": "sess=secret123"}
+                ],
+            },
+        )
+        resp = client.post("/api/v1/source-fallbacks/test", json={"url": "https://gated.test/a"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["chars"] > 3000
+    assert body["strategy"] == "flaresolverr"
+    assert "secret123" not in resp.text  # the cookie value is never echoed
+
+
+def test_test_endpoint_requires_a_url(client: TestClient) -> None:
+    with client:
+        resp = client.post("/api/v1/source-fallbacks/test", json={})
+    assert resp.status_code == 400
+
+
+def test_test_endpoint_rejects_non_http_url(client: TestClient) -> None:
+    # file://, gopher://, etc. are rejected before reaching Firecrawl/the solver.
+    with client:
+        resp = client.post("/api/v1/source-fallbacks/test", json={"url": "file:///etc/passwd"})
+    assert resp.status_code == 400

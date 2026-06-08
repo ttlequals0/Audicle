@@ -14,10 +14,10 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
-import trafilatura
 
 from app.config import Settings
 from app.services.extraction_types import ExtractionResult
+from app.services.html_markdown import html_to_markdown
 
 logger = logging.getLogger("app.services.flaresolverr")
 
@@ -137,7 +137,7 @@ async def fetch(url: str, settings: Settings, cookies: str = "") -> ExtractionRe
         logger.warning("FlareSolverr response was not HTML text", extra={"event": "flaresolverr_bad_html"})
         return None
 
-    markdown, metadata = _html_to_markdown(html)
+    markdown, metadata = html_to_markdown(html)
     if not markdown:
         logger.warning(
             "FlareSolverr HTML yielded no article text",
@@ -145,49 +145,3 @@ async def fetch(url: str, settings: Settings, cookies: str = "") -> ExtractionRe
         )
         return None
     return ExtractionResult(markdown=markdown, metadata=metadata)
-
-
-# Cap the solved HTML before lxml builds a DOM (several times the source size in
-# memory) so a pathologically large, attacker-controlled page can't OOM the
-# worker. No real article is anywhere near this; the artwork path caps downloads
-# for the same reason (ARTWORK_MAX_DOWNLOAD_BYTES).
-_MAX_SOLVED_HTML_CHARS = 8_000_000
-
-
-def _html_to_markdown(html: str) -> tuple[str, dict[str, Any]]:
-    """Extract the main article body from raw HTML as markdown, plus best-effort
-    title/author/og:image metadata mapped into the same keys the finalize and
-    artwork stages already read from Firecrawl. Returns ``("", {})`` when there is
-    no extractable article. Never raises -- the HTML is attacker-controlled."""
-
-    if not html.strip():
-        return "", {}
-    if len(html) > _MAX_SOLVED_HTML_CHARS:
-        logger.warning(
-            "FlareSolverr HTML exceeds the size cap; skipping",
-            extra={"event": "flaresolverr_html_oversize", "chars": len(html)},
-        )
-        return "", {}
-    try:
-        markdown = (
-            trafilatura.extract(
-                html, output_format="markdown", include_comments=False, include_tables=True
-            )
-            or ""
-        )
-        meta = trafilatura.extract_metadata(html)
-    except Exception:  # adversarial HTML; never fail extraction on a parse error
-        logger.warning(
-            "trafilatura could not parse the FlareSolverr HTML",
-            extra={"event": "flaresolverr_parse_error"},
-        )
-        return "", {}
-    metadata: dict[str, Any] = {}
-    if meta is not None:
-        if getattr(meta, "title", None):
-            metadata["title"] = meta.title
-        if getattr(meta, "author", None):
-            metadata["author"] = meta.author
-        if getattr(meta, "image", None):
-            metadata["ogImage"] = meta.image  # the key artwork._extract_og_image reads first
-    return markdown.strip(), metadata

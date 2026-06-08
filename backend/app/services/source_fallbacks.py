@@ -52,9 +52,14 @@ class Attempt:
     url: str
     headers: dict[str, str] = field(default_factory=dict)
     cookies: str = ""
+    # True when the operator selected this strategy for the host (via a rule), False for
+    # an auto-escalation attempt the extractor synthesised. A host-rule browser/archive
+    # grab is held to the rule's teaser floor (an archived/solved teaser is still a
+    # teaser); an auto attempt accepts against the hard MIN. Set by ``candidate_attempts``.
+    is_host_rule: bool = False
 
 # Proxy strategy keys offered to operators.
-PROXY_KEYS = ("googlebot", "freedium", "custom", "none", "flaresolverr")
+PROXY_KEYS = ("googlebot", "freedium", "custom", "none", "flaresolverr", "archive")
 
 _FREEDIUM_TEMPLATES = ("https://freedium.cfd/{url}", "https://freedium-mirror.cfd/{url}")
 
@@ -116,18 +121,34 @@ def candidate_attempts(rule: SourceFallback, url: str) -> list[Attempt]:
     if rule.proxy == "googlebot":
         # The built-in "Ladder" technique: re-scrape the same URL as Googlebot.
         headers = {"User-Agent": GOOGLEBOT_UA, "X-Forwarded-For": GOOGLEBOT_XFF}
-        return [Attempt(f"{rule.name}#googlebot", "firecrawl", url, headers)]
+        return [Attempt(f"{rule.name}#googlebot", "firecrawl", url, headers, is_host_rule=True)]
     if rule.proxy == "freedium":
         return [
-            Attempt(f"{rule.name}#freedium{index}", "firecrawl", template.format(url=url))
+            Attempt(
+                f"{rule.name}#freedium{index}",
+                "firecrawl",
+                template.format(url=url),
+                is_host_rule=True,
+            )
             for index, template in enumerate(_FREEDIUM_TEMPLATES)
         ]
     if rule.proxy == "custom" and rule.custom_template:
-        return [Attempt(f"{rule.name}#custom", "firecrawl", rule.custom_template.format(url=url))]
+        return [
+            Attempt(
+                f"{rule.name}#custom",
+                "firecrawl",
+                rule.custom_template.format(url=url),
+                is_host_rule=True,
+            )
+        ]
     if rule.proxy == "flaresolverr":
-        # The solver fetches the original URL in a real browser, carrying the rule's
-        # cookies; labelled "host-rule" since the operator selected it for this host.
-        return [Attempt("host-rule#flaresolverr", "flaresolverr", url, cookies=rule.cookies)]
+        # The solver fetches the original URL in a real browser, carrying the rule's cookies.
+        return [
+            Attempt("host-rule#flaresolverr", "flaresolverr", url, cookies=rule.cookies, is_host_rule=True)
+        ]
+    if rule.proxy == "archive":
+        # Pull the article from a public archive (Wayback, then archive.today). No cookies.
+        return [Attempt("host-rule#archive", "archive", url, is_host_rule=True)]
     return []  # "none"/reject, or "custom" without a template
 
 

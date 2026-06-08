@@ -43,6 +43,8 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         # FlareSolverr endpoint for the flaresolverr paywall strategy; operator-
         # tunable so they can point at their own solver without an env edit.
         "FLARESOLVERR_URL",
+        # Try a Wayback capture as a last resort on a hard block; tunable live.
+        "ARCHIVE_FALLBACK_ENABLED",
         "TTS_CHUNK_TARGET_WORDS",
         "TTS_CHUNK_MAX_WORDS",
         "TTS_CHUNK_SILENCE_MS",

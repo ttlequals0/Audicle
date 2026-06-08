@@ -855,6 +855,29 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
     },
   });
 
+  // Run the saved rules against one URL so the operator can confirm a rule (and its
+  // cookie jar) actually fetches the article. Never returns the cookie value.
+  const [testUrl, setTestUrl] = useState("");
+  const [testResult, setTestResult] = useState<string | null>(null);
+  const testM = useMutation({
+    mutationFn: () =>
+      api<{ ok: boolean; chars: number; strategy: string | null; title?: string; detail?: string }>(
+        "/api/v1/source-fallbacks/test",
+        { method: "POST", body: JSON.stringify({ url: testUrl.trim() }) }
+      ),
+    onSuccess: (r) =>
+      setTestResult(
+        r.ok
+          ? `ok: ${r.chars.toLocaleString()} chars via ${r.strategy ?? "direct scrape"}` +
+              (r.title ? ` -- ${r.title}` : "")
+          : `no full article: ${r.detail || "came back below the threshold"}`
+      ),
+    onError: (e) =>
+      setTestResult(
+        (e instanceof ApiError ? (e.detail as { detail?: string })?.detail : null) || "test failed"
+      ),
+  });
+
   return (
     <section className="space-y-3">
       <div className="builtin-note">
@@ -872,14 +895,20 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
         Googlebot), freedium (Medium mirror), custom (your own {"{url}"} template),
         flaresolverr (fetch via your FlareSolverr browser from a residential IP -- for
         hosts that hard-block the scraper IP with a 403, e.g. NYT; needs FLARESOLVERR_URL),
-        none (skip the retry and fail rather than narrate the stub). Cloudflare/bot-challenge
-        pages also trigger FlareSolverr automatically when FLARESOLVERR_URL is set.
+        archive (pull a saved copy from the Wayback Machine, then archive.today via
+        FlareSolverr), none (skip the retry and fail rather than narrate the stub).
+        Cloudflare/bot-challenge pages also trigger FlareSolverr automatically when
+        FLARESOLVERR_URL is set, and Wayback is tried as a last resort on any hard block. A
+        teaser padded out with related-article chrome is judged by the page's own declared
+        article length, so it still routes to a bypass instead of being narrated.
       </p>
       <p className="text-mute text-xs">
         cookie jar (flaresolverr only): paste your own logged-in session cookies for a host
         you subscribe to and the solver fetches the full article as you. A session cookie is
         full account access, so use a dedicated login where you can. Held with the other
-        secrets and never echoed back -- the field reads masked once saved.
+        secrets and never echoed back -- the field reads masked once saved. To grab the
+        cookies, open DevTools -&gt; Network, reload the logged-in page, click the document
+        request, and copy its Cookie header. Use "test a URL" below to confirm they work.
       </p>
 
       <div className="flex flex-wrap items-end gap-4">
@@ -979,6 +1008,28 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
           {m.isPending ? "saving..." : "save paywall sites"}
         </button>
         {msg && <span className="font-mono text-xs text-accent">{msg}</span>}
+      </div>
+
+      <div className="space-y-1 pt-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            className="field flex-1 min-w-[12rem]"
+            placeholder="test a URL against the saved rules"
+            value={testUrl}
+            onChange={(e) => setTestUrl(e.target.value)}
+          />
+          <button
+            className="btn-ghost"
+            disabled={testM.isPending || !testUrl.trim()}
+            onClick={() => {
+              setTestResult(null);
+              testM.mutate();
+            }}
+          >
+            {testM.isPending ? "testing..." : "test"}
+          </button>
+        </div>
+        {testResult && <p className="text-mute text-xs font-mono">{testResult}</p>}
       </div>
     </section>
   );

@@ -100,6 +100,11 @@ class Settings(BaseSettings):
     # point this at their own FlareSolverr; Audicle does not bundle one.
     FLARESOLVERR_URL: str = "http://flaresolverr:8191/v1"
     FLARESOLVERR_MAX_TIMEOUT_MS: int = 60000  # solver's own per-request browser budget
+    # Archive fallback: when a scrape is near-empty (a hard block) and no other bypass
+    # recovered the article, try a Wayback Machine capture before failing. No cookies,
+    # no bot wall; archive.today (via FlareSolverr) is opt-in per host, not automatic.
+    ARCHIVE_FALLBACK_ENABLED: bool = True
+    WAYBACK_TIMEOUT_SECONDS: int = 30
     # Firecrawl scrape filtering so chrome (nav, cookie banners, footers) is
     # dropped before the LLM ever sees it. onlyMainContent is Firecrawl's
     # main-article heuristic; excludeTags drops elements by tag/selector.

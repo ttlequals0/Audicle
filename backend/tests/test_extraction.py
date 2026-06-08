@@ -36,11 +36,48 @@ def no_flaresolverr(monkeypatch: pytest.MonkeyPatch) -> None:
     get_settings.cache_clear()
 
 
+@pytest.fixture
+def no_archive(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Disable the automatic Wayback last-resort so a hard-block test can assert its
+    exact call sequence without the archive lookup adding an HTTP call (a near-empty
+    scrape auto-appends an archive attempt when ARCHIVE_FALLBACK_ENABLED)."""
+
+    monkeypatch.setenv("ARCHIVE_FALLBACK_ENABLED", "false")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+
+
 def _ok_response(markdown: str = "x" * 1000) -> httpx.Response:
     return httpx.Response(
         200,
         content=json.dumps(
             {"success": True, "data": {"markdown": markdown, "metadata": {"title": "ok"}}}
+        ).encode(),
+        headers={"content-type": "application/json"},
+    )
+
+
+def _ok_response_with_jsonld(markdown: str, article_body: str) -> httpx.Response:
+    """A Firecrawl scrape whose rawHtml carries a JSON-LD articleBody -- used to test
+    that a chrome-inflated teaser is judged by the publisher's declared body length."""
+
+    raw_html = (
+        '<html><head><script type="application/ld+json">'
+        + json.dumps({"@type": "NewsArticle", "articleBody": article_body})
+        + "</script></head><body>page</body></html>"
+    )
+    return httpx.Response(
+        200,
+        content=json.dumps(
+            {
+                "success": True,
+                "data": {
+                    "markdown": markdown,
+                    "metadata": {"title": "ok"},
+                    "rawHtml": raw_html,
+                },
+            }
         ).encode(),
         headers={"content-type": "application/json"},
     )
@@ -161,7 +198,7 @@ async def test_extract_plain_teaser_does_not_escalate_to_flaresolverr(
 
 
 async def test_extract_challenge_malformed_solution_fails_clean(
-    env: Path, monkeypatch: pytest.MonkeyPatch
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_archive
 ) -> None:
     # A solver that returns status ok but a non-dict solution must not raise (the
     # contract is "never raises"); it falls through to the too-short error.
@@ -186,7 +223,11 @@ def test_looks_like_challenge_detects_cloudflare_and_spares_real_articles() -> N
 
 
 async def test_extract_logs_which_strategy_ran_and_when_it_falls_short(
-    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, no_flaresolverr
+    env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    no_flaresolverr,
+    no_archive,
 ) -> None:
     from app.services.source_fallbacks import SourceFallback
 
@@ -210,7 +251,11 @@ async def test_extract_logs_which_strategy_ran_and_when_it_falls_short(
 
 
 async def test_extract_logs_when_no_rule_matches_the_host(
-    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, no_flaresolverr
+    env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    no_flaresolverr,
+    no_archive,
 ) -> None:
     # A short scrape with no matching rule logs that no bypass was even possible,
     # so "why didn't it use a proxy" is answerable from logs. (no_flaresolverr so the
@@ -229,7 +274,7 @@ async def test_extract_logs_when_no_rule_matches_the_host(
 
 
 async def test_extract_challenge_unconfigured_flaresolverr_fails_clean(
-    env: Path, monkeypatch: pytest.MonkeyPatch
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_archive
 ) -> None:
     # A challenge page is detected but no solver is configured: no HTTP call is made
     # and the scrape fails cleanly rather than raising on a missing service.
@@ -329,7 +374,7 @@ async def test_extract_exhausts_retries_on_persistent_5xx(
 
 
 async def test_extract_rejects_short_markdown(
-    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, no_archive
 ) -> None:
     transport = _stub_transport(_ok_response("tiny"))
     _patch_async_client(monkeypatch, transport)
@@ -431,7 +476,7 @@ async def test_extract_googlebot_rescrapes_same_url_with_headers(
 
 
 async def test_extract_none_strategy_fails_clean_without_extra_calls(
-    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, no_archive
 ) -> None:
     from app.services import source_fallbacks as sf
 
@@ -552,7 +597,7 @@ async def test_extract_per_host_flaresolverr_rule_routes_through_solver(
 
 
 async def test_extract_flaresolverr_rule_unconfigured_fails_clean(
-    env: Path, monkeypatch: pytest.MonkeyPatch
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_archive
 ) -> None:
     # A flaresolverr rule with no solver configured makes no extra call (its
     # candidate_attempts is empty) and fails cleanly rather than narrating the stub.
@@ -568,7 +613,7 @@ async def test_extract_flaresolverr_rule_unconfigured_fails_clean(
 
 
 async def test_extract_no_global_default_keeps_plain_behavior(
-    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, no_archive
 ) -> None:
     # No catch-all (default_proxy "none") means no global fallback: a near-empty
     # scrape with no per-host rule fails cleanly without any proxy call.
@@ -602,7 +647,7 @@ async def test_extract_near_empty_auto_routes_to_flaresolverr_without_rule(
 
 
 async def test_too_short_message_hard_block_no_solver(
-    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, no_archive
 ) -> None:
     # Near-empty + no solver configured: the failure tells the operator the fix.
     transport = _stub_transport(_ok_response("Access Denied"))
@@ -612,7 +657,7 @@ async def test_too_short_message_hard_block_no_solver(
 
 
 async def test_too_short_message_hard_block_solver_failed(
-    env: Path, monkeypatch: pytest.MonkeyPatch
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_archive
 ) -> None:
     # Near-empty + solver configured but it also comes back empty: distinct message.
     transport = _stub_transport(
@@ -720,3 +765,90 @@ async def test_extract_sends_maxage_zero_for_a_fresh_scrape(
     _patch_async_client(monkeypatch, httpx.MockTransport(handler))
     await extraction.extract("https://example.test/article", get_settings())
     assert captured["maxAge"] == 0
+
+
+# --- 0.28.0: JSON-LD articleBody teaser detection (chrome inflation) -------------
+
+
+async def test_extract_jsonld_articlebody_routes_chrome_inflated_teaser(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A ruled host returns a teaser whose related-article chrome pads the markdown past
+    # the 3000 floor, but the page's JSON-LD declares only a 176-char body. A0 trusts
+    # the declared body, sees a teaser, and routes to the solver instead of narrating
+    # the chrome. Without the fix the 3500-char chrome scrape would be returned as-is.
+    from app.services.source_fallbacks import SourceFallback
+
+    transport = _stub_transport(
+        _ok_response_with_jsonld("word " * 700, "x" * 176),  # ~3500 chars, JSON-LD=176
+        _flaresolverr_ok(_gated_article_html()),  # solver gets the real article
+    )
+    _patch_async_client(monkeypatch, transport)
+    registry = (SourceFallback("op", ("gated.test",), "flaresolverr", "", 3000, cookies="sid=1"),)
+    result = await extraction.extract("https://gated.test/post", get_settings(), registry)
+    assert "real article body" in result.markdown
+
+
+async def test_extract_jsonld_articlebody_left_alone_without_a_rule(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr
+) -> None:
+    # A host with no rule keeps the plain scraped length even if its JSON-LD body is
+    # short -- free sites are untouched, so a chrome-heavy but unflagged page is
+    # accepted on the direct scrape (no bypass, no extra HTTP call).
+    transport = _stub_transport(_ok_response_with_jsonld("word " * 700, "x" * 176))
+    _patch_async_client(monkeypatch, transport)
+    result = await extraction.extract("https://free.test/post", get_settings())
+    assert result.markdown.startswith("word ")
+
+
+# --- 0.28.0: archive engine dispatch + expired-cookie message --------------------
+
+
+def _wayback_handler(firecrawl: httpx.Response):
+    """A MockTransport handler: web.archive.org serves a CDX row + a full capture;
+    any other host gets the given Firecrawl response."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "web.archive.org":
+            if "/cdx/" in request.url.path:
+                return httpx.Response(200, json=[["timestamp"], ["20260608120000"]])
+            return httpx.Response(200, text=_gated_article_html())
+        return firecrawl
+
+    return handler
+
+
+async def test_extract_archive_rule_pulls_from_wayback(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr
+) -> None:
+    from app.services.source_fallbacks import SourceFallback
+
+    transport = httpx.MockTransport(_wayback_handler(_ok_response("word " * 40)))
+    _patch_async_client(monkeypatch, transport)
+    registry = (SourceFallback("op", ("gated.test",), "archive", "", 3000),)
+    result = await extraction.extract("https://gated.test/post", get_settings(), registry)
+    assert "real article body" in result.markdown
+
+
+async def test_extract_auto_archive_last_resort_on_hard_block(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr
+) -> None:
+    # Near-empty scrape, no per-host rule: the automatic Wayback last resort recovers it.
+    transport = httpx.MockTransport(_wayback_handler(_ok_response("Access Denied")))
+    _patch_async_client(monkeypatch, transport)
+    result = await extraction.extract("https://hardblock.test/a", get_settings())
+    assert "real article body" in result.markdown
+
+
+async def test_too_short_message_solver_with_cookies_suggests_expired(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_archive
+) -> None:
+    # The solver ran with saved cookies but still got nothing -> the message points at
+    # expired/invalid cookies rather than a generic "needs a login".
+    from app.services.source_fallbacks import SourceFallback
+
+    transport = _stub_transport(_ok_response("Access Denied"), _flaresolverr_ok(""))
+    _patch_async_client(monkeypatch, transport)
+    registry = (SourceFallback("op", ("gated.test",), "flaresolverr", "", 3000, cookies="sid=abc"),)
+    with pytest.raises(extraction.ExtractionTooShortError, match="expired or invalid"):
+        await extraction.extract("https://gated.test/a", get_settings(), registry=registry)

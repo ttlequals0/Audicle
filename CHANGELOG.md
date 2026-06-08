@@ -6,6 +6,38 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-06-08
+
+### Fixed
+
+- A paywall teaser padded with related-article chrome no longer slips through as a real
+  article. Some sites (e.g. Crain's Chicago Business) serve a one-paragraph lede plus a
+  "Recommended For You" / "Latest News" rail, and the scraped markdown clears the teaser
+  threshold on chrome alone -- so the bypass never fired and the episode was the lede read
+  aloud followed by unrelated headlines. For a host with a bypass rule, the floor decision
+  now uses the page's own JSON-LD `articleBody` length when it declares one, so the lede is
+  seen for what it is and routes to the bypass. Hosts with no rule are untouched.
+
+### Added
+
+- `archive` is a new bypass strategy and an automatic last resort. It pulls a saved copy of
+  the article from the Wayback Machine (a clean API, no bot wall, no cookies), and -- as an
+  opt-in per-host fallback -- from archive.today through FlareSolverr. When a scrape is a
+  hard block and nothing else recovered the article, a Wayback capture is tried before the
+  job fails (`ARCHIVE_FALLBACK_ENABLED`, on by default). This helps metered, soft, and older
+  articles that were archived while free; it is not a fix for a hard subscriber wall, which
+  still needs your own cookies.
+- A "test a URL" control in the paywall settings runs the saved rules against one link and
+  reports what came back -- the character count and the strategy that matched -- so you can
+  confirm a rule (and its cookie jar) actually fetches the full article. It never echoes the
+  cookie value.
+
+### Changed
+
+- A failed bypass now distinguishes an expired cookie jar from a missing one: when the
+  browser solver ran with saved cookies and still got a teaser, the job says the cookies
+  look expired or invalid and to re-paste them, rather than the generic "needs a login".
+
 ## [0.27.0] - 2026-06-08
 
 ### Added

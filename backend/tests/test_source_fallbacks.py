@@ -59,12 +59,21 @@ def test_candidate_attempts_freedium_two_rewrites_no_headers() -> None:
 def test_candidate_attempts_custom_template() -> None:
     rule = sf.SourceFallback("x", ("x.com",), "custom", "https://rd.example/{url}", 3000)
     attempts = sf.candidate_attempts(rule, "https://x.com/a")
-    assert attempts == [sf.Attempt("x#custom", "firecrawl", "https://rd.example/https://x.com/a")]
+    assert attempts == [
+        sf.Attempt("x#custom", "firecrawl", "https://rd.example/https://x.com/a", is_host_rule=True)
+    ]
 
 
 def test_candidate_attempts_none_is_empty() -> None:
     rule = sf.SourceFallback("wsj", ("wsj.com",), "none", "", 3000)
     assert sf.candidate_attempts(rule, "https://wsj.com/a") == []
+
+
+def test_candidate_attempts_archive() -> None:
+    rule = sf.SourceFallback("op", ("x.com",), "archive", "", 3000)
+    assert sf.candidate_attempts(rule, "https://x.com/a") == [
+        sf.Attempt("host-rule#archive", "archive", "https://x.com/a", is_host_rule=True)
+    ]
 
 
 def test_build_registry_global_default_catch_all_applies_to_any_host() -> None:

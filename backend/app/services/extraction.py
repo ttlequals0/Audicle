@@ -7,7 +7,9 @@ a clean ``ExtractionResult`` or a typed exception.
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -21,7 +23,7 @@ from tenacity import (
 )
 
 from app.config import Settings
-from app.services import flaresolverr
+from app.services import archive, flaresolverr
 
 # Re-exported so existing ``extraction.ExtractionResult`` / ``extraction.ExtractionTooShortError``
 # references (pipeline, tests) keep working now that the types live in extraction_types, which
@@ -84,12 +86,14 @@ async def extract(
     )
 
     async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
-        result = await _scrape(client, url, settings)
-        if len(result.markdown) >= floor:
+        # Only a flagged host pays for rawHtml + the JSON-LD teaser check; a free article
+        # with no rule keeps the plain scrape, so the common path stays cheap.
+        result = await _scrape(client, url, settings, detect_teaser=rule is not None)
+        if _effective_chars(result, rule, floor) >= floor:
             return result
         # Best result seen across direct + every bypass, and whether the browser
         # solver was attempted -- together they classify the failure message.
-        best_chars = len(result.markdown)
+        best_chars = _effective_chars(result, rule, floor)
 
         # Build one ordered bypass plan. The rule's own strategy supplies its attempts
         # (googlebot/freedium/custom/flaresolverr); on top, FlareSolverr auto-escalates
@@ -100,12 +104,24 @@ async def extract(
         # never pays for a browser solve.
         attempts: list[Attempt] = candidate_attempts(rule, url) if rule is not None else []
         solver_configured = bool(settings.FLARESOLVERR_URL.strip())
-        near_empty = len(result.markdown) < settings.MIN_EXTRACTION_CHARS
+        near_empty = (
+            _effective_chars(result, rule, settings.MIN_EXTRACTION_CHARS)
+            < settings.MIN_EXTRACTION_CHARS
+        )
         if solver_configured and not any(a.engine == "flaresolverr" for a in attempts):
             is_challenge = flaresolverr.looks_like_challenge(result)
             if is_challenge or near_empty:
                 trigger = "challenge" if is_challenge else "hard-block"
                 attempts.insert(0, Attempt(f"{trigger}#flaresolverr", "flaresolverr", url))
+        # Last resort for any near-empty scrape: a Wayback capture (no cookies, no bot
+        # wall). Appended last so live strategies and the solver run first; archive.today
+        # (via the solver) stays opt-in behind an explicit per-host archive rule.
+        if (
+            settings.ARCHIVE_FALLBACK_ENABLED
+            and near_empty
+            and not any(a.engine == "archive" for a in attempts)
+        ):
+            attempts.append(Attempt("auto#archive", "archive", url))
 
         if rule is None:
             logger.info(
@@ -119,12 +135,18 @@ async def extract(
             )
 
         solver_tried = False
+        solver_sent_cookies = False
         fallback_start_logged = False
         for attempt in attempts:
+            # A host-rule attempt is held to the rule's teaser floor (an archived or solved
+            # teaser is still a teaser); an auto-escalation attempt accepts the full page
+            # against the hard MIN.
+            accept_floor = floor if attempt.is_host_rule else settings.MIN_EXTRACTION_CHARS
             if attempt.engine == "flaresolverr":
                 if not solver_configured:  # a flaresolverr rule but no solver URL set
                     continue
                 solver_tried = True
+                solver_sent_cookies = solver_sent_cookies or bool(attempt.cookies)
                 logger.info(
                     "Routing below-floor scrape through FlareSolverr",
                     extra={
@@ -136,13 +158,20 @@ async def extract(
                     },
                 )
                 alt = await flaresolverr.fetch(attempt.url, settings, attempt.cookies)
-                # Auto-escalation (challenge/hard-block) fired on a near-empty page with no
-                # teaser to filter, so accept the solver's full page against the hard MIN. A
-                # host-rule solver runs because the host serves a teaser, so hold its result
-                # to the rule's teaser floor like every other strategy -- a stale/missing
-                # cookie that returns the same teaser then fails cleanly instead of narrating it.
-                accept_floor = (
-                    floor if attempt.label.startswith("host-rule#") else settings.MIN_EXTRACTION_CHARS
+            elif attempt.engine == "archive":
+                logger.info(
+                    "Routing below-floor scrape through a web archive",
+                    extra={
+                        "event": "extraction_archive_route",
+                        "host": host,
+                        "rule": rule.name if rule is not None else None,
+                        "primary_chars": len(result.markdown),
+                    },
+                )
+                # A host-rule grab also tries archive.today (via the solver); the auto
+                # last-resort is Wayback-only.
+                alt = await archive.fetch(
+                    attempt.url, settings, include_archive_today=attempt.is_host_rule
                 )
             else:  # firecrawl re-scrape (googlebot/freedium/custom)
                 if not fallback_start_logged:
@@ -158,7 +187,13 @@ async def extract(
                     )
                     fallback_start_logged = True
                 try:
-                    alt = await _scrape(client, attempt.url, settings, headers=attempt.headers or None)
+                    alt = await _scrape(
+                        client,
+                        attempt.url,
+                        settings,
+                        headers=attempt.headers or None,
+                        detect_teaser=True,
+                    )
                 except ExtractionError as exc:
                     logger.warning(
                         "Extraction fallback attempt failed",
@@ -169,30 +204,47 @@ async def extract(
                         },
                     )
                     continue
-                accept_floor = floor
             if alt is None:
                 continue
-            best_chars = max(best_chars, len(alt.markdown))
-            if len(alt.markdown) >= accept_floor:
+            alt_chars = _effective_chars(alt, rule, accept_floor)
+            best_chars = max(best_chars, alt_chars)
+            if alt_chars >= accept_floor:
                 _log_fallback_used(attempt.label, result.markdown, alt.markdown)
                 return alt
-            _log_fallback_short(attempt.label, len(alt.markdown), accept_floor)
+            _log_fallback_short(attempt.label, alt_chars, accept_floor)
 
-    raise ExtractionTooShortError(_too_short_message(best_chars, solver_tried, settings))
+    # Only claim "your cookies look expired" when a solver attempt actually carried
+    # cookies -- an auto-escalation solver runs without them, so the rule merely having
+    # cookies isn't enough.
+    raise ExtractionTooShortError(
+        _too_short_message(best_chars, solver_tried, settings, solver_sent_cookies)
+    )
 
 
-def _too_short_message(best_chars: int, solver_tried: bool, settings: Settings) -> str:
+def _too_short_message(
+    best_chars: int, solver_tried: bool, settings: Settings, cookies_present: bool = False
+) -> str:
     """Short, plain failure reason for the Home UI: what kind of block, and the fix.
 
     Keyed on whether the browser solver was tried, not just the char count: if the
-    solver fired and still came up short, an IP/UA swap won't help. Otherwise a
-    near-empty scrape (below ``MIN_EXTRACTION_CHARS``) is a hard 403/IP block whose
-    fix is FlareSolverr; anything above that is a metered teaser the operator can
-    route through a per-host bypass.
+    solver fired and still came up short, an IP/UA swap won't help. When it ran with the
+    operator's cookies and still got a teaser, the cookies are the likely culprit
+    (expired/invalid); without cookies the site needs a login. Otherwise a near-empty
+    scrape (below ``MIN_EXTRACTION_CHARS``) is a hard 403/IP block whose fix is
+    FlareSolverr; anything above that is a metered teaser to route through a per-host
+    bypass.
     """
 
     if solver_tried:
-        return "Blocked: the browser bypass couldn't get the article. The site likely needs a login."
+        if cookies_present:
+            return (
+                "Blocked: the browser bypass ran with your saved cookies but still got a "
+                "teaser. They're likely expired or invalid -- re-paste them in Settings."
+            )
+        return (
+            "Blocked: the browser bypass couldn't get the article. The site likely needs "
+            "a login -- add your subscriber cookies for it in Settings."
+        )
     if best_chars < settings.MIN_EXTRACTION_CHARS:
         return (
             "Hard block: the site sent almost nothing. Set FLARESOLVERR_URL in "
@@ -234,12 +286,76 @@ def _log_fallback_short(label: str, alt_chars: int, floor: int) -> None:
     )
 
 
+_LD_SCRIPT_RE = re.compile(
+    r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _iter_ld_nodes(data: Any) -> Any:
+    """Yield dict nodes from a parsed JSON-LD blob, flattening the ``@graph`` wrapper
+    and top-level lists so an ``articleBody`` is found wherever the page puts it."""
+
+    if isinstance(data, dict):
+        graph = data.get("@graph")
+        if isinstance(graph, list):
+            for item in graph:
+                if isinstance(item, dict):
+                    yield item
+        yield data
+    elif isinstance(data, list):
+        for item in data:
+            yield from _iter_ld_nodes(item)
+
+
+def _article_body_chars(raw_html: str) -> int | None:
+    """Length of the longest JSON-LD ``articleBody`` the page declares, or None.
+
+    This is the publisher's own article text, so it ignores the related-article and
+    navigation chrome that can pad a scraped teaser past the floor. Never raises --
+    the HTML and its embedded JSON are attacker-controlled."""
+
+    if not raw_html:
+        return None
+    best: int | None = None
+    for script in _LD_SCRIPT_RE.finditer(raw_html):
+        try:
+            data = json.loads(script.group(1).strip())
+        except ValueError:
+            continue
+        for node in _iter_ld_nodes(data):
+            body = node.get("articleBody")
+            if isinstance(body, str):
+                best = max(best or 0, len(body.strip()))
+    return best
+
+
+def _effective_chars(result: ExtractionResult, rule: SourceFallback | None, floor: int) -> int:
+    """Body length for the floor decision. For an operator-flagged host (a matched
+    rule), when the page's own JSON-LD says the article body is below the floor but the
+    scraped markdown clears it, the surplus is related-article/nav chrome -- trust the
+    declared body length so the teaser routes to a bypass. Unflagged hosts and pages
+    with no declared body keep the plain scraped length, so free articles are untouched."""
+
+    scraped = len(result.markdown)
+    declared = result.article_chars
+    if rule is not None and declared is not None and declared < floor <= scraped:
+        return declared
+    return scraped
+
+
 def _build_payload(
-    url: str, settings: Settings, extra_headers: dict[str, str] | None = None
+    url: str,
+    settings: Settings,
+    extra_headers: dict[str, str] | None = None,
+    detect_teaser: bool = False,
 ) -> dict[str, Any]:
+    # rawHtml rides along only when we'll read the page's JSON-LD articleBody (a flagged
+    # host) -- it roughly doubles the response, so a free article doesn't pay for it.
+    formats = ["markdown", "rawHtml"] if detect_teaser else ["markdown"]
     payload: dict[str, Any] = {
         "url": url,
-        "formats": ["markdown"],
+        "formats": formats,
         "onlyMainContent": settings.FIRECRAWL_ONLY_MAIN_CONTENT,
         "removeBase64Images": settings.FIRECRAWL_REMOVE_BASE64_IMAGES,
         # Force a fresh scrape every time: Firecrawl caches by URL, so without this a
@@ -261,11 +377,14 @@ async def _scrape(
     url: str,
     settings: Settings,
     headers: dict[str, str] | None = None,
+    detect_teaser: bool = False,
 ) -> ExtractionResult:
-    """One scrape (with retries) -> ExtractionResult. Length is validated by the caller."""
+    """One scrape (with retries) -> ExtractionResult. Length is validated by the caller.
+    ``detect_teaser`` requests rawHtml and records the JSON-LD ``articleBody`` length so a
+    chrome-padded teaser can be told from a real article; off for unflagged hosts."""
 
     endpoint = f"{settings.FIRECRAWL_URL.rstrip('/')}/v1/scrape"
-    payload = _build_payload(url, settings, headers)
+    payload = _build_payload(url, settings, headers, detect_teaser)
     try:
         response = await _post_with_retry(client, endpoint, payload, settings)
     except RetryError as exc:
@@ -284,7 +403,9 @@ async def _scrape(
     metadata = data.get("metadata") or {}
     if not isinstance(metadata, dict):
         metadata = {}
-    return ExtractionResult(markdown=markdown, metadata=metadata)
+    raw_html = data.get("rawHtml")
+    article_chars = _article_body_chars(raw_html) if isinstance(raw_html, str) else None
+    return ExtractionResult(markdown=markdown, metadata=metadata, article_chars=article_chars)
 
 
 async def _post_with_retry(
