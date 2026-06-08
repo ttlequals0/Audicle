@@ -82,7 +82,7 @@ def test_pronounce_as_word_acronym_is_applicable() -> None:
 
 
 def test_ai_seed_uses_spaced_form_not_dotted() -> None:
-    # 'AI' is spelled with spaces, not periods -- XTTS reads a period as a pause
+    # 'AI' is spelled with spaces, not periods -- the engine reads a period as a pause
     # ("A <pause> I"). Like other all-caps spelled-out rows it is NOT in the
     # applicable dict (the deterministic acronym speller produces "A I"); it stays
     # in the seed for the LLM reference.

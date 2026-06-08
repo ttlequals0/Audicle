@@ -56,7 +56,7 @@ That's what this is. If you don't have a GPU, it'll run on CPU too, just slower.
 
 ```
 backend/        FastAPI app, SQLite, the job pipeline
-tts-wrapper/    TTS model server (Chatterbox by default; separate GPU container)
+tts-wrapper/    TTS model server (Chatterbox; separate GPU container)
 frontend/       React + Tailwind operator UI
 data/           runtime artifacts (gitignored: SQLite, MP3, JPG, VTT)
 docker-compose.yml
@@ -163,9 +163,8 @@ A built-in Medium-to-Freedium rule ships on by default. Your own rules layer on 
 
 The application code is MIT. A few things downstream of it have their own terms:
 
-- **Chatterbox** is the default TTS engine. The `chatterbox-tts` library and its model weights are MIT, so unlike the old XTTS-v2 default there is no non-commercial restriction on the model itself. Every output does carry Resemble's inaudible PerTh watermark for provenance, and there is no flag to turn it off.
-- **XTTS-v2 weights** (optional, `TTS_ENGINE=xtts`) ship under the Coqui Public Model Licence 1.0.0 (CPML), which is non-commercial: personal self-hosted use is fine, selling the audio isn't. Coqui shut down and XTTS-v2 is unmaintained, which is why Chatterbox is now the default; XTTS stays selectable as a fallback. The wrapper interface (`POST /generate` + `POST /reload`) is small enough that swapping engines is straightforward.
-- **Wrapper Python pin**: the wrapper Dockerfile pins Python 3.11. `chatterbox-tts` caps `numpy<2` below Python 3.13, and the fallback `coqui-tts` (the maintained `idiap/coqui-ai-TTS` fork) still declares `python_requires<3.13` too. The backend is separate: it requires Python `>=3.13` and ships on a `python:3.14-slim` image.
+- **Chatterbox** is the TTS engine. The `chatterbox-tts` library and its model weights are MIT, so there is no non-commercial restriction on the model itself. Every output does carry Resemble's inaudible PerTh watermark for provenance, and there is no flag to turn it off.
+- **Wrapper Python pin**: the wrapper Dockerfile pins Python 3.11, since `chatterbox-tts` caps `numpy<2` below Python 3.13. The backend is separate: it requires Python `>=3.13` and ships on a `python:3.14-slim` image.
 
 The Audicle name and logo are reserved; see `branding/README.md`.
 

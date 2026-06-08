@@ -14,8 +14,8 @@ Two derivation directions:
   gruut (the respelling IS the pronunciation guide).
 - ``ipa`` -> ``spoken``: the dictionary sources (CMUdict/ISLEX/Wiktionary) carry
   only IPA, so a respelling is derived from it. This direction is lossy; entries
-  produced this way get a lower confidence so the aggressive XTTS apply gate can
-  skip the weak ones.
+  produced this way get a lower confidence so the aggressive base-lexicon apply
+  gate can skip the weak ones.
 
 gruut is MIT and pure-Python (no torch), imported lazily so the backend stays
 importable and fast in environments where the language data is absent.
@@ -32,17 +32,18 @@ logger = logging.getLogger("app.services.pronounce_convert")
 MODES = ("spell", "word", "override")
 
 # Confidence tiers. Curated respellings are trusted; an IPA-derived respelling is
-# lossy. The aggressive XTTS apply (A7) only respells at/above MIN_XTTS_CONFIDENCE.
+# lossy. The aggressive base-lexicon apply (A7) only respells at/above
+# MIN_CONFIDENCE.
 CONF_CURATED = 1.0
 CONF_IPA_FROM_SPOKEN = 0.85
 CONF_SPOKEN_FROM_IPA = 0.55
-MIN_XTTS_CONFIDENCE = 0.8
+MIN_CONFIDENCE = 0.8
 
 _SINGLE_LETTERS_RE = re.compile(r"^(?:[A-Za-z] )+[A-Za-z]$")
 
 # Minimal IPA (gruut/gruut-ipa symbols) -> pseudo-phonetic respelling map. Lossy
-# on purpose: it produces a readable approximation for XTTS, and entries built
-# this way are marked low-confidence. Stress marks are dropped.
+# on purpose: it produces a readable approximation for the engine, and entries
+# built this way are marked low-confidence. Stress marks are dropped.
 _IPA_RESPELL = {
     "tʃ": "ch", "dʒ": "j", "ʃ": "sh", "ʒ": "zh", "θ": "th", "ð": "th",
     "ŋ": "ng", "j": "y", "ɹ": "r", "r": "r", "ɫ": "l", "l": "l",
@@ -168,8 +169,8 @@ def convert_entry(
     ``spoken`` is always produced (required by the schema): supplied verbatim,
     else derived from ``ipa``, else falls back to ``input_text``. ``ipa`` is kept
     if valid, else derived from the spoken form via gruut -- unless ``derive_ipa``
-    is False (bulk builds skip the per-entry gruut call for speed; the phoneme
-    engine phonemizes those terms at synth time instead).
+    is False (bulk builds skip the per-entry gruut call for speed, leaving ipa
+    empty; the PLS export then falls back to the spoken alias for those terms).
     """
 
     confidence = CONF_CURATED
@@ -188,8 +189,9 @@ def convert_entry(
     if ipa and validate_ipa(ipa):
         out_ipa = ipa
     elif derive_ipa:
-        # Derive IPA from the surface form so the entry is usable on the phoneme
-        # engine. A coined respelling phonemizes more faithfully than the input.
+        # Derive IPA from the surface form so the entry can emit a <phoneme> in the
+        # W3C PLS lexicon export. A coined respelling phonemizes more faithfully
+        # than the input.
         out_ipa = to_ipa(derived_spoken) or to_ipa(input_text)
         if out_ipa and spoken:
             confidence = min(confidence, CONF_IPA_FROM_SPOKEN)

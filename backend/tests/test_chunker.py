@@ -211,7 +211,7 @@ def test_chunk_preserves_sentence_punctuation(env: Path) -> None:
 def test_chunk_preserves_semicolons_in_comma_fallback(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Comma/semicolon fallback must keep the original separator. XTTS-v2
+    """Comma/semicolon fallback must keep the original separator. The TTS engine
     treats commas and semicolons with different pause prosody; silently
     rewriting semicolons to commas would change the narrator's pace."""
 

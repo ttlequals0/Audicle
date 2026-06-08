@@ -21,8 +21,8 @@ from engine import InferenceBusyError
 
 
 def _config() -> Config:
-    # Engine field is irrelevant to ChatterboxEngine construction; the chatterbox
-    # knobs and sample_rate come from from_env defaults (0.0/0.0/0.8, 24000).
+    # The chatterbox knobs and sample_rate come from from_env defaults
+    # (exaggeration 0.0, cfg_weight 0.0, temperature 0.5, sample_rate 24000).
     return Config.from_env()
 
 
@@ -90,13 +90,11 @@ def test_engine_attributes_and_lazy_construction() -> None:
     # Constructing must not import torch/chatterbox (only load() does).
     engine = ChatterboxEngine(_config())
     assert engine.name == "chatterbox"
-    assert engine.supports_phonemes is False
     assert engine.model_loaded is False
     assert engine.reference_loaded is False
 
 
-def test_factory_selects_chatterbox_engine(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("TTS_ENGINE", "chatterbox")
+def test_factory_returns_chatterbox_engine() -> None:
     from main import _default_engine_factory
 
     assert isinstance(_default_engine_factory(), ChatterboxEngine)

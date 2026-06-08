@@ -117,7 +117,7 @@ async def check_llm(settings: Settings, *, timeout: float = 5.0) -> CheckResult:
 async def check_tts(settings: Settings) -> CheckResult:
     """Probe the TTS wrapper's ``/health`` endpoint with a startup grace period.
 
-    The wrapper takes 10-30s to load XTTS-v2 + compute speaker embeddings on a
+    The wrapper takes time to load the model + encode the reference voice on a
     cold container start. We poll for up to
     ``TTS_REACHABILITY_GRACE_SECONDS`` (default 60s) with a
     ``TTS_REACHABILITY_PROBE_TIMEOUT`` per attempt, returning the first

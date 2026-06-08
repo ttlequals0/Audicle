@@ -347,7 +347,7 @@ def _normalize_date_months(text: str) -> str:
 
 
 # Grouped thousands (1,234 / 1,234,567) and decimals (3.14, 1,234.56): two number
-# shapes XTTS-v2 reliably garbles. One token must carry a comma group or a
+# shapes the engine reliably garbles. One token must carry a comma group or a
 # decimal point to match -- bare integers (15, 2026), unit-attached numbers
 # (500m), versions (1.2.3), and code-glued digits (x86, startup_32) are
 # deliberately left to the LLM prompt because they are context-dependent (a year
@@ -475,7 +475,7 @@ def _normalize_numbers(text: str) -> str:
 
 
 # snake_case / __dunder code identifiers the LLM/corrections didn't rewrite, read
-# as spaced words so XTTS doesn't hallucinate on the underscores. Dotted file
+# as spaced words so the engine doesn't hallucinate on the underscores. Dotted file
 # tokens (node.js, head64.c) are deliberately left to the LLM cleanup rule
 # ("file or command names become plain spoken language") and explicit seed rows
 # -- a generic word.ext transform here mis-speaks framework names and TLDs.
@@ -503,8 +503,8 @@ _EMPTY_CALL_PARENS_RE = re.compile(r"(?<=\w)\(\)")
 
 
 def _strip_code_artifacts(text: str) -> str:
-    """Remove inline-code noise XTTS can't voice: backticks, ``()`` call syntax,
-    and hex literals (replaced with a spoken phrase)."""
+    """Remove inline-code noise the engine can't voice: backticks, ``()`` call
+    syntax, and hex literals (replaced with a spoken phrase)."""
 
     text = text.replace("`", "")
     text = _HEX_LITERAL_RE.sub("a hexadecimal value", text)
@@ -577,15 +577,15 @@ _LETTER_PLURAL = {
 _ACRONYM_RE = re.compile(r"(?<![A-Za-z0-9-])([A-Z]{2,}[0-9]*)(s)?(?![A-Za-z0-9-])")
 
 
-# Dotted acronyms ("A.I.", "U.S.", "U.S.A.") -- XTTS reads each period as a pause
-# ("A <pause> I"), so collapse the dots to spaced letters the engine voices cleanly.
+# Dotted acronyms ("A.I.", "U.S.", "U.S.A.") -- the engine reads each period as a
+# pause ("A <pause> I"), so collapse the dots to spaced letters it voices cleanly.
 # Uppercase-only (so "e.g."/"i.e." and decimals are untouched); needs 2+ letter-dot
 # pairs so a lone "A." (sentence) doesn't match.
 _DOTTED_ACRONYM_RE = re.compile(r"(?:[A-Z]\.){2,}")
 
 
 def _normalize_dotted_acronyms(text: str) -> str:
-    """Turn "A.I." into "A I" so XTTS doesn't pause on the periods."""
+    """Turn "A.I." into "A I" so the engine doesn't pause on the periods."""
 
     return _DOTTED_ACRONYM_RE.sub(
         lambda m: " ".join(ch for ch in m.group(0) if ch.isalpha()), text
@@ -622,7 +622,7 @@ def _normalize_acronyms(text: str, keep: frozenset[str] | set[str] = _ACRONYM_KE
     return _ACRONYM_RE.sub(repl, text)
 
 
-# Phonetic respellings for all twelve months so XTTS says them correctly
+# Phonetic respellings for all twelve months so the engine says them correctly
 # (February is the notorious one). Keyed on the CAPITALIZED name and matched
 # case-sensitively: month names are always capitalized in real text, so this
 # dodges the homographs entirely -- lowercase "august" (the adjective, stressed
@@ -660,7 +660,7 @@ def _normalize_for_tts(text: str) -> str:
     One ordered pass so future rules have a single home: strip residual markdown
     heading markers, strip inline-code artifacts (backticks, call-parens, hex),
     expand date-context month abbreviations, turn numeric dash-ranges into "to",
-    then spell the number shapes XTTS garbles. Runs at the end of cleanup, before
+    then spell the number shapes the engine garbles. Runs at the end of cleanup, before
     the pronunciation dictionary, so e.g. "Feb 3" becomes "February 3" and the
     corrections dict can then voice it correctly. Code-artifact stripping runs
     before number spelling so a hex literal is gone before the number pass ever
@@ -810,7 +810,6 @@ async def _generate_chunk_quality_checked(
     text: str,
     index: int,
     settings: Settings,
-    pronunciations: dict[str, str] | None,
 ) -> tts.GenerateResult:
     """Synthesize one chunk, then (if enabled) check the audio and regenerate it
     when it came back degraded.
@@ -848,7 +847,6 @@ async def _generate_chunk_quality_checked(
             episode_id=job.episode_id,
             chunk_index=index,
             settings=settings,
-            pronunciations=pronunciations,
             seed=None if attempt == 0 else _regen_seed(index, attempt),
             verify=verify_enabled,
         )
@@ -925,17 +923,8 @@ async def _stage_tts(
 
     results: list[tts.GenerateResult] = []
     total = len(chunks)
-    # On the phoneme engine, build each chunk's IPA override map up front in one
-    # connection (rather than reopening the DB per chunk); the XTTS path sends
-    # text only, so the maps stay None.
-    pron_maps: list[dict[str, str] | None] = [None] * len(chunks)
-    if settings.TTS_ENGINE == "styletts2":
-        with database.connection(settings.DATA_DIR) as conn:
-            pron_maps = [lexicon.pronunciations_for(conn, text) for text in chunks]
     for index, text in enumerate(chunks):
-        result = await _generate_chunk_quality_checked(
-            job, text, index, settings, pron_maps[index]
-        )
+        result = await _generate_chunk_quality_checked(job, text, index, settings)
         results.append(result)
         _set_progress(job.id, index + 1, total, settings)
         logger.info(
@@ -1112,7 +1101,7 @@ def _coerce_str(value: Any) -> str | None:
 
 
 def _apply_base_lexicon(text: str, conn, settings: Settings) -> str:
-    """Aggressive per-token apply of the base lexicon (XTTS path).
+    """Aggressive per-token apply of the base lexicon.
 
     Every plain word is looked up; a ``base`` entry whose respelling differs and
     clears the confidence gate is applied. user/seed rows already ran via the
@@ -1133,7 +1122,7 @@ def _apply_base_lexicon(text: str, conn, settings: Settings) -> str:
         if (
             entry is not None
             and entry.origin == "base"
-            and entry.confidence >= pronounce_convert.MIN_XTTS_CONFIDENCE
+            and entry.confidence >= pronounce_convert.MIN_CONFIDENCE
             and entry.spoken
             and entry.spoken != token
         ):
@@ -1170,8 +1159,8 @@ async def _apply_corrections(text: str, settings: Settings) -> str:
         applied = corrections.apply(spelled, pairs)
         applied = _apply_base_lexicon(applied, conn, settings)
     # Strip periods from dotted acronyms LAST -- catches both article text ("U.S.")
-    # and any dotted respelling a correction injected ("A.I.") -- so XTTS never
-    # pauses mid-acronym.
+    # and any dotted respelling a correction injected ("A.I.") -- so the engine
+    # never pauses mid-acronym.
     result = _normalize_dotted_acronyms(_normalize_identifiers(applied))
     logger.info(
         "Corrections applied",

@@ -1,7 +1,7 @@
 """Wrapper HTTP contract tests using a stub :class:`Engine`.
 
-These tests never import torch or Coqui TTS. The stub generates real WAV
-bytes (silent at the requested sample rate) so the /generate handler can
+These tests never import torch or the TTS model library. The stub generates real
+WAV bytes (silent at the requested sample rate) so the /generate handler can
 write a valid file and the duration calculation can read its header.
 """
 
@@ -32,7 +32,7 @@ def _silent_wav(duration_secs: float = 0.5, sample_rate: int = 24000) -> bytes:
 
 
 class FakeEngine:
-    """Stand-in for XTTSEngine for testing.
+    """Stand-in for ChatterboxEngine for testing.
 
     Implements the :class:`Engine` Protocol; never touches torch.
     """
@@ -63,11 +63,8 @@ class FakeEngine:
         self.model_loaded = True
         self.reference_loaded = True
 
-    async def synthesize(
-        self, text: str, pronunciations: dict[str, str] | None = None, seed: int | None = None
-    ) -> bytes:
+    async def synthesize(self, text: str, seed: int | None = None) -> bytes:
         self.synthesize_calls.append(text)
-        self.last_pronunciations = pronunciations
         self.last_seed = seed
         if self.oom_synthesize:
             raise GPUOutOfMemoryError("simulated OOM")
@@ -125,9 +122,9 @@ def test_health_200_when_model_and_reference_loaded(tmp_path: Path) -> None:
         response = client.get("/health")
     assert response.status_code == 200
     body = response.json()
-    # Core liveness flags are exact; the metadata fields (version/torch/
-    # coqui_tts/device/sample_rate) the main app aggregates into
-    # components.tts_wrapper are environment-dependent, so assert presence.
+    # Core liveness flags are exact; the metadata fields (version/torch/device/
+    # sample_rate) the main app aggregates into components.tts_wrapper are
+    # environment-dependent, so assert presence.
     assert body["ok"] is True
     assert body["model_loaded"] is True
     assert body["reference_loaded"] is True
@@ -136,7 +133,7 @@ def test_health_200_when_model_and_reference_loaded(tmp_path: Path) -> None:
     # literal that drifts on every release.
     version_file = Path(__file__).resolve().parents[2] / "VERSION"
     assert body["version"] == version_file.read_text(encoding="utf-8").strip()
-    for key in ("torch", "coqui_tts", "device", "sample_rate"):
+    for key in ("torch", "device", "sample_rate"):
         assert key in body
 
 

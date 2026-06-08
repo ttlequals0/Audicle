@@ -686,8 +686,8 @@ function CorrectionsTable({ initial }: { initial: Record<string, CorrectionEntry
       <p className="text-mute text-xs">
         word: the source term. spoken: how the TTS should narrate it. mode: spell
         (letter by letter), word (read as written), or override (use spoken). ipa is
-        optional and used only by the phoneme engine. Case-sensitive matches the
-        exact casing only.
+        optional and only feeds the pronunciation-lexicon (PLS) export, not the
+        narration. Case-sensitive matches the exact casing only.
       </p>
       <LexiconLookup />
       <div className="space-y-2">

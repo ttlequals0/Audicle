@@ -6,6 +6,21 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-06-08
+
+### Changed
+
+- **BREAKING:** the TTS wrapper is now Chatterbox-only. The XTTS-v2 and StyleTTS2
+  engines and all of their wiring are removed: the `XTTSEngine` class, the
+  `style_engine.py` module, the `xtts`/`styletts2` install extras, and the
+  `TTS_ENGINE`, `XTTS_*`, and `STYLETTS2_*` environment variables no longer exist.
+  Operators must run the Chatterbox image (the published default); a stack pinned
+  to an XTTS or StyleTTS2 image and setting `TTS_ENGINE`/`XTTS_*`/`STYLETTS2_*` must
+  drop those vars and switch to the Chatterbox image. The wrapper no longer accepts
+  the `pronunciations` field on `/generate`, and `coqui_tts` is gone from its
+  `/health` response. Text-level lexicon corrections (the respelling path) are
+  unchanged and still applied upstream in the backend pipeline.
+
 ## [0.21.2] - 2026-06-07
 
 ### Changed

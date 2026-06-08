@@ -107,22 +107,6 @@ def test_reference_text_includes_homograph_notes(env: Path) -> None:
     assert "Present tense" in ref  # the note context is preserved
 
 
-def test_pronunciations_for_builds_ipa_map(env: Path) -> None:
-    database.run_migrations(env)
-    with database.connection(env) as conn:
-        lexicon.import_readonly(
-            conn,
-            "base",
-            {
-                "Zedonia": {"mode": "override", "spoken": "zeh-DOH-nee-uh", "ipa": "zɛdoʊniə"},
-                "Zelpha": {"mode": "override", "spoken": "zel-fuh"},  # no ipa -> excluded
-            },
-        )
-        conn.commit()
-        out = lexicon.pronunciations_for(conn, "visiting Zedonia and Zelpha today")
-        assert out == {"Zedonia": "zɛdoʊniə"}
-
-
 def test_word_keep_set_includes_word_mode_rows(env: Path) -> None:
     database.run_migrations(env)
     with database.connection(env) as conn:

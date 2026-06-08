@@ -140,34 +140,24 @@ class Settings(BaseSettings):
     # Cleanup prompt + pronunciation corrections.
     MAX_PROMPT_LENGTH_BYTES: int = 10240
     MAX_CORRECTIONS_ENTRIES: int = 500
-    # When true, the full base lexicon is applied to every matching token on the
-    # XTTS path (aggressive). Only high-confidence base respellings are applied so
-    # auto-derived entries can't regress words XTTS already says correctly.
+    # When true, the full base lexicon is applied to every matching token
+    # (aggressive). Only high-confidence base respellings are applied so
+    # auto-derived entries can't regress words the engine already says correctly.
     LEXICON_AGGRESSIVE: bool = True
 
     # TTS wrapper.
     TTS_LANGUAGE: str = "en"
     TTS_DEVICE: Literal["cuda", "cpu"] = "cuda"
-    # Which wrapper engine is live. "styletts2" enables sending the per-chunk IPA
-    # override map (`pronunciations`) to the wrapper; "chatterbox" (default) and
-    # "xtts" send text only (no phoneme injection). Must match the wrapper's
-    # TTS_ENGINE.
-    TTS_ENGINE: Literal["xtts", "styletts2", "chatterbox"] = "chatterbox"
     TTS_HTTP_TIMEOUT_SECONDS: float = 120
     # Used by the per-chunk pipeline call site; defined here so
     # operators can tune .env now without a follow-up rebuild.
     TTS_RETRY_COUNT: int = 3
     TTS_REACHABILITY_GRACE_SECONDS: float = 60
     TTS_REACHABILITY_PROBE_TIMEOUT: float = 10
-    XTTS_TEMPERATURE: float = 0.65
-    XTTS_LENGTH_PENALTY: float = 1.0
-    XTTS_REPETITION_PENALTY: float = 2.0
-    XTTS_TOP_K: int = 50
-    XTTS_TOP_P: float = 0.85
 
     # Chunking.
     # Chunk size = transcript-cue granularity + per-chunk TTS round-trips. The
-    # tts-wrapper splits each chunk into XTTS-safe sentence pieces internally, so
+    # tts-wrapper splits each chunk into engine-safe sentence pieces internally, so
     # chunks do NOT need to be sentence-sized; ~120 words keeps the cue/round-trip
     # count sane (a long article is ~30 chunks, not ~160). MAX stays generous so a
     # long single sentence doesn't trip UnsplittableSentenceError.

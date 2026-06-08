@@ -257,7 +257,7 @@ def _fallback_split_sentence(sentence: str, limits: ChunkerLimits, chunk_index: 
     # Re-pack the pieces under the same target/max rules. A comma/semicolon
     # fragment that is itself over the cap (no inner comma to split on) is
     # whitespace-split rather than failing the job. Preserves the original
-    # separator (; vs ,) so XTTS-v2 prosody pauses match the cleanup output.
+    # separator (; vs ,) so the TTS engine's prosody pauses match the cleanup output.
     chunks: list[str] = []
     current: list[tuple[str, str]] = []
     current_words = 0

@@ -25,7 +25,6 @@ SOFTWARE.
 The Audicle name and logo are reserved (see branding/README.md). This MIT
 license covers the code only, not the brand.
 
-The XTTS-v2 model weights are governed by the Coqui Public Model License
-1.0.0 (CPML), which is non-commercial. Audicle does not redistribute the
-weights; the tts-wrapper container downloads them from Hugging Face on
-first run. Operators are responsible for compliance.
+The Chatterbox model weights are governed by their own upstream license.
+Audicle does not redistribute the weights; the tts-wrapper container downloads
+them from Hugging Face on first run. Operators are responsible for compliance.

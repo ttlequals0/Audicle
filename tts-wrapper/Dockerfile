@@ -8,10 +8,10 @@ FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime AS runtime
 
 # Cache locations target writable paths so the image runs as a non-root user
 # (the compose ``user: 1000:1000``). The model caches live on the persistent
-# ``/data`` volume (multi-GB XTTS/HF weights survive container recreation);
-# the rest go to image-local ``/tmp``. The old ``/root/.cache`` defaults are
-# mode-700 root-owned and crash uid 1000 -- Numba "no locator available" and
-# Coqui "Permission denied: '/root/.cache'" both trace back to that.
+# ``/data`` volume (multi-GB HF weights survive container recreation); the rest
+# go to image-local ``/tmp``. The old ``/root/.cache`` defaults are mode-700
+# root-owned and crash uid 1000 -- Numba "no locator available" and a
+# "Permission denied: '/root/.cache'" both trace back to that.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -20,12 +20,7 @@ ENV PYTHONUNBUFFERED=1 \
     HOME=/tmp \
     XDG_CACHE_HOME=/tmp/.cache \
     NUMBA_CACHE_DIR=/tmp/numba_cache \
-    MPLCONFIGDIR=/tmp/mpl \
-    # Coqui gates the first XTTS-v2 load behind an interactive y/n CPML prompt;
-    # in a container there is no TTY to answer it, so the load hangs/fails.
-    # Self-hosting the wrapper is acceptance of the non-commercial CPML (see the
-    # README license note); agree non-interactively so the model loads headless.
-    COQUI_TOS_AGREED=1
+    MPLCONFIGDIR=/tmp/mpl
 
 # OS deps: curl for healthchecks; libsndfile for soundfile WAV IO; git so the
 # chatterbox backend can install resemble-perth (a git+https dependency).
@@ -38,24 +33,16 @@ RUN apt-get update \
 WORKDIR /app
 
 # Install Python deps from pyproject.toml so this image stays in lockstep with
-# the declared dependency set; no parallel hand-written list to drift.
-# transformers: coqui-tts 0.24 requires >=4.43.0 unbounded but breaks on 5.x, so
-# we pin the 4.48.x line -- >=4.48.0 clears CVE-2024-11392/-11393/-11394 while
-# staying well under the 5.x break. The trailing -U upgrades patch transitive
-# deps the base image / resolver pin to vulnerable versions (urllib3,
-# cryptography, pillow, Brotli, setuptools, wheel). torch is the base image's
-# 2.6.0, which clears CVE-2025-32434 (torch.load RCE). torch 2.6 defaults
-# torch.load to weights_only=True, which would break XTTS checkpoint loading;
-# engine.py registers the XTTS config classes via torch.serialization.
-# add_safe_globals before load so the trusted checkpoint deserializes.
+# the declared dependency set; no parallel hand-written list to drift. The
+# trailing -U in install_engine.sh upgrades patch transitive deps the base image
+# / resolver pin to vulnerable versions (urllib3, cryptography, pillow, Brotli,
+# setuptools, wheel). torch is the base image's 2.6.0, which clears
+# CVE-2025-32434 (torch.load RCE), reused as-is.
 COPY pyproject.toml ./
-COPY config.py engine.py log_setup.py main.py style_engine.py chatterbox_engine.py whisper_verify.py install_engine.sh ./
-# TTS_BACKEND selects which engine extra to install (xtts | styletts2 |
-# chatterbox); the engine is then chosen at runtime via TTS_ENGINE. install_engine.sh
-# (shared with Dockerfile.cpu) installs exactly one engine plus security patches;
-# torch is the base image's 2.6.0 (clears CVE-2025-32434), reused as-is.
-ARG TTS_BACKEND=chatterbox
-RUN sh install_engine.sh "$TTS_BACKEND"
+COPY config.py engine.py log_setup.py main.py chatterbox_engine.py whisper_verify.py install_engine.sh ./
+# install_engine.sh (shared with Dockerfile.cpu) installs the Chatterbox engine
+# plus the optional faster-whisper backend and security patches.
+RUN sh install_engine.sh
 
 EXPOSE 8000
 
