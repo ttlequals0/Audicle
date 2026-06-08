@@ -40,6 +40,11 @@ jobs:
           allow-licenses: MIT, BSD-2-Clause, BSD-3-Clause, Apache-2.0, ISC, MPL-2.0, PSF-2.0, Python-2.0, Unlicense, CC0-1.0, BlueOak-1.0.0, LGPL-2.1-only, LGPL-3.0-or-later, ZPL-2.1
           # Packages whose license metadata is absent/NOASSERTION on the registry
           # but is permissive in the project (pysle MIT; hf-xet/praatio/regex are
-          # Apache/MIT-family) -- exempted by package so they don't block the gate.
-          allow-dependencies-licenses: pkg:pypi/pysle, pkg:pypi/hf-xet, pkg:pypi/praatio, pkg:pypi/regex
+          # Apache/MIT-family; trafilatura is Apache-2.0) -- exempted by package so
+          # they don't block the gate. pykakasi (GPL/LGPL kana romanizer) is a
+          # transitive chatterbox-tts dependency that runs only inside the standalone
+          # GPU wrapper container; it is not linked into or distributed with Audicle's
+          # own source, so it is accepted for self-hosted use (commercial
+          # redistribution of the wrapper image is the operator's responsibility).
+          allow-dependencies-licenses: pkg:pypi/pysle, pkg:pypi/hf-xet, pkg:pypi/praatio, pkg:pypi/regex, pkg:pypi/trafilatura, pkg:pypi/pykakasi
           comment-summary-in-pr: on-failure
