@@ -863,9 +863,11 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
         The default strategy applies to any host whose scrape comes back near-empty (a hard
         block); listed hosts override it with their own strategy and threshold (to catch
         partial teasers). domain: the host to bypass. strategy: googlebot (re-fetch as
-        Googlebot), freedium (Medium mirror), custom (your own {"{url}"} template), none
-        (skip the retry and fail rather than narrate the stub). Cloudflare/bot-challenge
-        pages are handled automatically via FlareSolverr when FLARESOLVERR_URL is set.
+        Googlebot), freedium (Medium mirror), custom (your own {"{url}"} template),
+        flaresolverr (fetch via your FlareSolverr browser from a residential IP -- for
+        hosts that hard-block the scraper IP with a 403, e.g. NYT; needs FLARESOLVERR_URL),
+        none (skip the retry and fail rather than narrate the stub). Cloudflare/bot-challenge
+        pages also trigger FlareSolverr automatically when FLARESOLVERR_URL is set.
       </p>
 
       <div className="flex flex-wrap items-end gap-4">

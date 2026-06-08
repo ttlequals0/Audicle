@@ -86,7 +86,13 @@ async def extract(
     # bar (teasers clear the global floor) and supplies the bypass attempts.
     # Disabling the feature reverts to plain behavior.
     rule = match(url, registry) if settings.EXTRACTION_FALLBACKS_ENABLED else None
-    floor = rule.min_chars if rule else settings.MIN_EXTRACTION_CHARS
+    # FlareSolverr fetches the full page via a real browser (no teaser to filter), so a
+    # flaresolverr rule uses the hard MIN_EXTRACTION_CHARS floor rather than the higher
+    # teaser min_chars the googlebot/freedium strategies need to spot a stub.
+    flaresolverr_rule = rule is not None and rule.proxy == "flaresolverr"
+    floor = (
+        settings.MIN_EXTRACTION_CHARS if (rule is None or flaresolverr_rule) else rule.min_chars
+    )
 
     timeout = httpx.Timeout(settings.FIRECRAWL_TIMEOUT_SECONDS)
     # Bearer auth only when a key is configured; an open self-hosted Firecrawl
@@ -102,27 +108,33 @@ async def extract(
         if len(result.markdown) >= floor:
             return result
 
-        # Automatic FlareSolverr escalation: when a below-floor scrape looks like a
-        # Cloudflare/bot-challenge page (Firecrawl couldn't clear the challenge),
-        # re-fetch via the solver. Gated on challenge DETECTION -- not just a short
-        # scrape -- so a plain teaser/paywall never triggers an expensive browser
-        # solve, and independent of any per-host rule, since a challenge can hit any
-        # host. Configured operators set FLARESOLVERR_URL; unset disables it.
-        if settings.FLARESOLVERR_URL.strip() and _looks_like_challenge(result):
+        # FlareSolverr: fetch the URL through the operator's solver (a real browser).
+        # Two triggers, both needing FLARESOLVERR_URL: (1) AUTOMATIC -- the scrape
+        # looks like a Cloudflare/bot-challenge page, for any host, so Firecrawl
+        # couldn't clear it; gated on detection so a plain teaser never pays for a
+        # browser solve. (2) PER-HOST -- the matched host selected the "flaresolverr"
+        # strategy because it hard-blocks the scraper IP (e.g. a 403 to datacenter
+        # IPs), where the headers-only Googlebot fetch can't help and the solver runs
+        # Chrome from a residential IP. Unset FLARESOLVERR_URL disables both.
+        if settings.FLARESOLVERR_URL.strip() and (_looks_like_challenge(result) or flaresolverr_rule):
+            trigger = "host-rule" if flaresolverr_rule else "challenge"
             logger.info(
-                "Bot-challenge page detected; escalating to FlareSolverr",
+                "Routing below-floor scrape through FlareSolverr",
                 extra={
-                    "event": "extraction_challenge_detected",
+                    "event": "extraction_flaresolverr_route",
+                    "trigger": trigger,
                     "host": (urlsplit(url).hostname or "").lower(),
+                    "rule": rule.name if rule is not None else None,
                     "primary_chars": len(result.markdown),
                 },
             )
             alt = await _fetch_via_flaresolverr(url, settings)
+            label = f"{trigger}#flaresolverr"
             if alt is not None and len(alt.markdown) >= floor:
-                _log_fallback_used("challenge#flaresolverr", result.markdown, alt.markdown)
+                _log_fallback_used(label, result.markdown, alt.markdown)
                 return alt
             if alt is not None:
-                _log_fallback_short("challenge#flaresolverr", len(alt.markdown), floor)
+                _log_fallback_short(label, len(alt.markdown), floor)
 
         # Per-host paywall strategy. A matched rule supplies the bypass attempts
         # ("googlebot" re-scrapes the same url with crawler headers; "freedium" /
@@ -139,7 +151,9 @@ async def extract(
                     "floor": floor,
                 },
             )
-        else:
+        elif not flaresolverr_rule:
+            # flaresolverr rules were already handled above via the solver; their
+            # candidate_attempts is empty, so skip the misleading "attempting bypass".
             logger.info(
                 "Direct scrape below floor; attempting bypass",
                 extra={

@@ -25,6 +25,7 @@ _PROXY_LABELS = {
     "freedium": "Freedium (Medium)",
     "custom": "Custom URL template",
     "none": "None / reject",
+    "flaresolverr": "FlareSolverr (browser; hard blocks)",
 }
 _AVAILABLE_PROXIES = [
     {"key": key, "label": _PROXY_LABELS[key]} for key in source_fallbacks.PROXY_KEYS

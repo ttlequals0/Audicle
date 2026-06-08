@@ -64,6 +64,11 @@ def _validate(config: dict[str, Any]) -> dict[str, Any]:
     if default_proxy == "custom":
         # There is no global template field, so a custom default can never render.
         raise ValueError("default_proxy cannot be 'custom'; set custom per-site instead")
+    if default_proxy == "flaresolverr":
+        # FlareSolverr runs a real browser; as a global default it would route every
+        # below-floor scrape through an expensive solve, defeating the challenge gate.
+        # It is a per-host remedy for hosts that hard-block the scraper IP.
+        raise ValueError("default_proxy cannot be 'flaresolverr'; set it per-site instead")
     raw_min = config.get("min_chars", _DEFAULT_MIN_CHARS)
     if isinstance(raw_min, bool):  # bool is an int subclass; True would coerce to 1
         raise ValueError("min_chars must be an integer")

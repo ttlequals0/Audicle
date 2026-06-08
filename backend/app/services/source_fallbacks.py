@@ -13,12 +13,17 @@ Strategies (``proxy`` key on a rule):
 - ``freedium`` -- rewrite the URL to a Freedium reader proxy (best for Medium).
 - ``custom`` -- rewrite to an operator-supplied template (must contain ``{url}``).
 - ``none`` -- no attempt; a sub-threshold teaser fails the job cleanly.
+- ``flaresolverr`` -- fetch the URL through FlareSolverr's real browser (see
+  ``extraction._fetch_via_flaresolverr``). For hosts that hard-block the scraper's
+  IP (e.g. NYT returns 403 to datacenter IPs), where the headers-only Googlebot
+  fetch can't help; the operator's solver runs Chrome from a residential IP.
+  Handled specially in ``extract`` (not via ``candidate_attempts``), so it needs
+  ``FLARESOLVERR_URL`` set.
 
-FlareSolverr is NOT a per-host strategy here: the extractor escalates to it
-automatically, for any host, when a below-floor scrape is detected as a
-Cloudflare/bot-challenge page (see ``extraction._looks_like_challenge`` /
-``_fetch_via_flaresolverr``). It is a separate, detection-gated path, not a
-strategy an operator selects.
+FlareSolverr also runs automatically, for any host, when a below-floor scrape is
+detected as a Cloudflare/bot-challenge page (see ``extraction._looks_like_challenge``)
+-- that detection-gated path is independent of whether a host selects the
+``flaresolverr`` strategy above.
 
 ``BUILTIN`` ships a Medium -> Freedium rule. Operators layer their own host rules on top
 (``build_registry``); an operator rule wins over a built-in rule for the same host.
@@ -34,7 +39,7 @@ GOOGLEBOT_UA = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/b
 GOOGLEBOT_XFF = "66.249.66.1"
 
 # Proxy strategy keys offered to operators.
-PROXY_KEYS = ("googlebot", "freedium", "custom", "none")
+PROXY_KEYS = ("googlebot", "freedium", "custom", "none", "flaresolverr")
 
 _FREEDIUM_TEMPLATES = ("https://freedium.cfd/{url}", "https://freedium-mirror.cfd/{url}")
 
@@ -101,7 +106,9 @@ def candidate_attempts(
         ]
     if rule.proxy == "custom" and rule.custom_template:
         return [(f"{rule.name}#custom", rule.custom_template.format(url=url), {})]
-    return []  # "none"/reject, or "custom" without a template
+    # "none"/reject, "custom" without a template, or "flaresolverr" (which extract()
+    # handles via the solver, not a Firecrawl re-scrape).
+    return []
 
 
 def build_registry(

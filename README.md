@@ -155,6 +155,7 @@ The strategies:
 - `googlebot` (the default): re-fetch the same URL with a Googlebot user agent and a crawler `X-Forwarded-For`. SEO-metered paywalls serve the full article to the crawler, so this is the one that works most often. It runs through the scrape headers, not a separate proxy container.
 - `freedium`: rewrite the URL to a Freedium reader proxy. Best for Medium.
 - `custom`: rewrite to your own reader-proxy template, any URL containing `{url}`.
+- `flaresolverr`: fetch the page through your FlareSolverr (a real browser) instead of Firecrawl. For hosts that hard-block the scraper's datacenter IP with a 403 (e.g. the NYT), where the Googlebot header trick can't help -- the solver runs Chrome from a residential IP and the publisher serves the article normally. Needs `FLARESOLVERR_URL` set. Unlike the automatic challenge bypass, this fires for the host regardless of whether the block looks like a Cloudflare page.
 - `none`: don't try anything. A matched host that comes back short just fails, which is what you want for a hard paywall you'd rather skip than narrate.
 
 A built-in Medium-to-Freedium rule ships on by default. Your own rules layer on top and win when they collide on a host. The whole thing is gated by `EXTRACTION_FALLBACKS_ENABLED`; set it false to always use the direct scrape (no default-proxy retry either).

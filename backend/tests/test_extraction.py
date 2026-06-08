@@ -506,6 +506,47 @@ async def test_extract_builtin_rule_floor_wins_over_global_catch_all(
     assert "headers" not in bypass  # googlebot would have set crawler headers
 
 
+# --- per-host flaresolverr strategy: hard-block hosts route through the solver ----
+
+
+async def test_extract_per_host_flaresolverr_rule_routes_through_solver(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A host that hard-blocks the scraper IP returns a short, NON-challenge body (no
+    # Cloudflare markers). A per-host "flaresolverr" rule routes it through the solver
+    # anyway -- triggered by the rule, not challenge detection -- and its article is used.
+    # min_chars=3000 (the teaser floor) but the solved article is ~1231 chars: a
+    # flaresolverr rule is judged against MIN_EXTRACTION_CHARS (500), not the teaser bar,
+    # because the solver returns the full page (no teaser to filter).
+    transport = _stub_transport(
+        _ok_response("Access Denied"),  # direct scrape: short, not a challenge page
+        _flaresolverr_ok(_gated_article_html()),  # FlareSolverr solve
+    )
+    _patch_async_client(monkeypatch, transport)
+    from app.services.source_fallbacks import SourceFallback
+
+    registry = (SourceFallback("operator:gated.test", ("gated.test",), "flaresolverr", "", 3000),)
+    result = await extraction.extract("https://gated.test/post", get_settings(), registry)
+    assert "real article body" in result.markdown
+    assert result.metadata.get("title") == "Gated Article"
+
+
+async def test_extract_flaresolverr_rule_unconfigured_fails_clean(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A flaresolverr rule with no solver configured makes no extra call (its
+    # candidate_attempts is empty) and fails cleanly rather than narrating the stub.
+    monkeypatch.setenv("FLARESOLVERR_URL", "")
+    get_settings.cache_clear()
+    transport = _stub_transport(_ok_response("Access Denied"))  # only the direct scrape
+    _patch_async_client(monkeypatch, transport)
+    from app.services.source_fallbacks import SourceFallback
+
+    registry = (SourceFallback("operator:gated.test", ("gated.test",), "flaresolverr", "", 500),)
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://gated.test/post", get_settings(), registry)
+
+
 async def test_extract_no_global_default_keeps_plain_behavior(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

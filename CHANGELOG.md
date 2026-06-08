@@ -6,6 +6,20 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-06-08
+
+### Added
+
+- `flaresolverr` is now a selectable per-host bypass strategy. Some publishers
+  hard-block the scraper's datacenter IP outright (e.g. the NYT returns a 403 to
+  datacenter IPs, so Firecrawl gets nothing and the Googlebot header trick can't
+  help). Pointing such a host at the `flaresolverr` strategy routes it through the
+  operator's FlareSolverr, which fetches the page with a real browser from a
+  residential IP -- where the publisher serves the article normally. This is in
+  addition to the automatic challenge-gated FlareSolverr escalation (0.22.0); the
+  per-host strategy fires regardless of challenge detection, so it covers plain
+  403/IP blocks that aren't a Cloudflare interstitial. Needs `FLARESOLVERR_URL` set.
+
 ## [0.24.0] - 2026-06-08
 
 ### Changed
