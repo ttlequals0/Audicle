@@ -21,12 +21,10 @@ def test_builtin_medium_uses_freedium_above_global_floor() -> None:
     assert rule.min_chars > 500
 
 
-def test_flaresolverr_is_an_offered_strategy_with_no_candidate_attempts() -> None:
-    # flaresolverr is a valid strategy, but it is driven by the extractor (a POST
-    # to the solver), not by a Firecrawl target URL -- so it yields no candidates.
-    assert "flaresolverr" in sf.PROXY_KEYS
-    rule = sf.SourceFallback("op", ("gated.test",), "flaresolverr", "", 3000)
-    assert sf.candidate_attempts(rule, "https://gated.test/post") == []
+def test_flaresolverr_is_not_a_selectable_strategy() -> None:
+    # FlareSolverr is a detection-gated escalation in the extractor, not a per-host
+    # strategy -- it must not appear in the selectable proxy keys.
+    assert "flaresolverr" not in sf.PROXY_KEYS
 
 
 def test_candidate_attempts_googlebot_rescrapes_same_url_with_headers() -> None:

@@ -24,7 +24,6 @@ def test_get_defaults_with_available_proxies_and_builtin(client: TestClient) -> 
         "googlebot",
         "freedium",
         "custom",
-        "flaresolverr",
         "none",
     }
     assert any(b["host"] == "medium.com" for b in body["builtin"])

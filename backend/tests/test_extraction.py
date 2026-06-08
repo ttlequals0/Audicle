@@ -99,47 +99,74 @@ def _gated_article_html() -> str:
     return f"<html><head>{head}</head><body><article><h1>Gated Article</h1>{body}</article></body></html>"
 
 
-def _flaresolverr_registry() -> tuple:
-    from app.services.source_fallbacks import SourceFallback
+def _challenge_response() -> httpx.Response:
+    """A Firecrawl scrape that came back as a Cloudflare challenge page (short, with
+    challenge markers) -- the only thing that triggers a FlareSolverr escalation."""
 
-    return (
-        SourceFallback(
-            name="operator:gated.test",
-            host_suffixes=("gated.test",),
-            proxy="flaresolverr",
-            custom_template="",
-            min_chars=200,
-        ),
+    md = "Just a moment... Enable JavaScript and cookies to continue. Cloudflare Ray ID: abc123"
+    return httpx.Response(
+        200,
+        content=json.dumps(
+            {"success": True, "data": {"markdown": md, "metadata": {"title": "Just a moment..."}}}
+        ).encode(),
+        headers={"content-type": "application/json"},
     )
 
 
-async def test_extract_flaresolverr_fallback_used(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Direct Firecrawl scrape returns a short teaser; the flaresolverr strategy then
-    # re-fetches via the solver and trafilatura turns the solved HTML into markdown,
-    # mapping title/author/og:image into the keys finalize and artwork expect.
-    transport = _stub_transport(_ok_response("short teaser"), _flaresolverr_ok(_gated_article_html()))
+async def test_extract_challenge_page_escalates_to_flaresolverr(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The direct scrape comes back as a Cloudflare challenge page; that is detected
+    # and auto-escalated to FlareSolverr (no per-host rule needed). trafilatura turns
+    # the solved HTML into markdown, mapping title/author/og:image into the keys
+    # finalize and artwork expect.
+    transport = _stub_transport(_challenge_response(), _flaresolverr_ok(_gated_article_html()))
     _patch_async_client(monkeypatch, transport)
-    result = await extraction.extract(
-        "https://gated.test/post", get_settings(), registry=_flaresolverr_registry()
-    )
+    result = await extraction.extract("https://gated.test/post", get_settings())
     assert "real article body" in result.markdown
     assert result.metadata.get("title") == "Gated Article"
     assert result.metadata.get("author") == "Jane Doe"
     assert result.metadata.get("ogImage") == "https://gated.test/cover.jpg"
 
 
-async def test_extract_flaresolverr_malformed_solution_fails_clean(
+async def test_extract_plain_teaser_does_not_escalate_to_flaresolverr(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A solver that returns status ok but a non-dict solution must not raise
-    # (the contract is "never raises"); it falls through to the too-short error.
+    from app.services.source_fallbacks import SourceFallback
+
+    # A plain (non-challenge) teaser must NOT trigger the solver, even though it is
+    # below the floor: only the host's googlebot strategy runs. If FlareSolverr were
+    # wrongly called it would consume a third response and _stub_transport asserts.
+    transport = _stub_transport(_ok_response("short teaser"), _ok_response("still short"))
+    _patch_async_client(monkeypatch, transport)
+    registry = (SourceFallback("operator:gated.test", ("gated.test",), "googlebot", "", 3000),)
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://gated.test/post", get_settings(), registry=registry)
+
+
+async def test_extract_challenge_malformed_solution_fails_clean(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A solver that returns status ok but a non-dict solution must not raise (the
+    # contract is "never raises"); it falls through to the too-short error.
     bad = httpx.Response(200, json={"status": "ok", "solution": ["not", "a", "dict"]})
-    transport = _stub_transport(_ok_response("short teaser"), bad)
+    transport = _stub_transport(_challenge_response(), bad)
     _patch_async_client(monkeypatch, transport)
     with pytest.raises(extraction.ExtractionTooShortError):
-        await extraction.extract(
-            "https://gated.test/post", get_settings(), registry=_flaresolverr_registry()
-        )
+        await extraction.extract("https://gated.test/post", get_settings())
+
+
+def test_looks_like_challenge_detects_cloudflare_and_spares_real_articles() -> None:
+    challenge = extraction.ExtractionResult(
+        markdown="Checking your browser before accessing. Cloudflare Ray ID: x",
+        metadata={"title": "Just a moment..."},
+    )
+    article = extraction.ExtractionResult(
+        markdown="A normal short article about kubernetes and verifying releases.",
+        metadata={"title": "Release notes"},
+    )
+    assert extraction._looks_like_challenge(challenge) is True
+    assert extraction._looks_like_challenge(article) is False
 
 
 async def test_extract_logs_which_strategy_ran_and_when_it_falls_short(
@@ -183,19 +210,17 @@ async def test_extract_logs_when_no_rule_matches_the_host(
     assert rec.host == "unlisted.test"
 
 
-async def test_extract_flaresolverr_unconfigured_url_fails_clean(
+async def test_extract_challenge_unconfigured_flaresolverr_fails_clean(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # No solver configured: the strategy is skipped (no HTTP call) and the short
-    # scrape fails cleanly rather than raising on a missing service.
+    # A challenge page is detected but no solver is configured: no HTTP call is made
+    # and the scrape fails cleanly rather than raising on a missing service.
     monkeypatch.setenv("FLARESOLVERR_URL", "")
     get_settings.cache_clear()
-    transport = _stub_transport(_ok_response("short"))  # only the direct scrape
+    transport = _stub_transport(_challenge_response())  # only the direct scrape
     _patch_async_client(monkeypatch, transport)
     with pytest.raises(extraction.ExtractionTooShortError):
-        await extraction.extract(
-            "https://gated.test/post", get_settings(), registry=_flaresolverr_registry()
-        )
+        await extraction.extract("https://gated.test/post", get_settings())
 
 
 async def test_extract_sends_main_content_filtering(

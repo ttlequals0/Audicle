@@ -10,15 +10,16 @@ work lives under `[Unreleased]`.
 
 ### Added
 
-- FlareSolverr paywall-bypass strategy. A new `flaresolverr` option in the
-  source-fallbacks system: for a matched host whose direct scrape comes back
-  short, Audicle re-fetches the URL through an operator-run FlareSolverr (a
-  Cloudflare/JS-challenge solver), then extracts the article body from the solved
-  HTML with trafilatura. Pick it per-host (or as the default) in the Settings page
-  / `PUT /api/v1/source-fallbacks`. The endpoint is `FLARESOLVERR_URL` -- set via
-  env or live from Settings (`PUT /api/v1/settings`); Audicle does not bundle a
-  solver. This complements the existing built-in Googlebot "Ladder" technique,
-  which already covers SEO-metered paywalls without an external service.
+- Automatic Cloudflare/bot-challenge bypass via FlareSolverr. When a scrape comes
+  back as a challenge page (Firecrawl couldn't clear it -- "Just a moment...",
+  "Checking your browser", a Cloudflare Ray ID, etc.), Audicle re-fetches the URL
+  through an operator-run FlareSolverr and extracts the article from the solved HTML
+  with trafilatura -- for any host, no per-site rule needed. It is gated on challenge
+  detection, so a plain paywall teaser never triggers an expensive browser solve. Set
+  `FLARESOLVERR_URL` via env or live from Settings (`PUT /api/v1/settings`); unset
+  disables it. Audicle does not bundle a solver. Paywalls remain the job of the
+  per-host strategies (googlebot/freedium/custom); FlareSolverr is the separate
+  challenge escape hatch.
 
 ### Changed
 

@@ -862,9 +862,9 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
       <p className="text-mute text-xs">
         When a listed host scrapes below the threshold, Audicle retries with its strategy
         before failing the job. domain: the host to bypass. strategy: googlebot (re-fetch
-        as Googlebot), freedium (Medium mirror), custom (your own {"{url}"} template),
-        flaresolverr (solve via your FlareSolverr, set FLARESOLVERR_URL above), none
-        (skip the retry and fail rather than narrate the stub).
+        as Googlebot), freedium (Medium mirror), custom (your own {"{url}"} template), none
+        (skip the retry and fail rather than narrate the stub). Cloudflare/bot-challenge
+        pages are handled automatically via FlareSolverr when FLARESOLVERR_URL is set.
       </p>
 
       <div className="flex flex-wrap items-end gap-4">

@@ -64,11 +64,14 @@ async def extract(
 ) -> ExtractionResult:
     """Scrape ``url`` via Firecrawl and validate the result.
 
-    For hosts with a known paywall/JS gate (see ``source_fallbacks``), a direct
-    scrape that comes back below the source's ``min_chars`` is retried with a bypass
-    strategy (re-scrape as Googlebot, a reader-proxy rewrite, or a clean fail) before
-    giving up. ``registry`` is the effective rule set (operator config merged over the
-    built-ins); ``None`` uses the built-ins only.
+    For hosts with a known paywall (see ``source_fallbacks``), a direct scrape that
+    comes back below the source's ``min_chars`` is retried with the host's bypass
+    strategy (re-scrape as Googlebot, a reader-proxy rewrite, or a clean fail).
+    Separately, and for any host, a below-floor scrape that looks like a Cloudflare/
+    bot-challenge page is automatically re-fetched through FlareSolverr (when
+    ``FLARESOLVERR_URL`` is set) -- gated on challenge detection so a plain teaser
+    never triggers a browser solve. ``registry`` is the effective rule set (operator
+    config merged over the built-ins); ``None`` uses the built-ins only.
 
     Raises:
         ExtractionTransientError: every retry exhausted on a retryable failure.
@@ -95,11 +98,33 @@ async def extract(
         if len(result.markdown) >= floor:
             return result
 
-        # Direct scrape is below this source's floor. Log what happens next so the
-        # bypass path is fully traceable: which strategy ran (or that no rule
-        # matched, so nothing could), and -- crucially -- when a fallback ran but
-        # still came back short (e.g. a hard paywall ignoring the Googlebot fetch),
-        # which was previously silent.
+        # Automatic FlareSolverr escalation: when a below-floor scrape looks like a
+        # Cloudflare/bot-challenge page (Firecrawl couldn't clear the challenge),
+        # re-fetch via the solver. Gated on challenge DETECTION -- not just a short
+        # scrape -- so a plain teaser/paywall never triggers an expensive browser
+        # solve, and independent of any per-host rule, since a challenge can hit any
+        # host. Configured operators set FLARESOLVERR_URL; unset disables it.
+        if settings.FLARESOLVERR_URL.strip() and _looks_like_challenge(result):
+            logger.info(
+                "Bot-challenge page detected; escalating to FlareSolverr",
+                extra={
+                    "event": "extraction_challenge_detected",
+                    "host": (urlsplit(url).hostname or "").lower(),
+                    "primary_chars": len(result.markdown),
+                },
+            )
+            alt = await _fetch_via_flaresolverr(url, settings)
+            if alt is not None and len(alt.markdown) >= floor:
+                _log_fallback_used("challenge#flaresolverr", result.markdown, alt.markdown)
+                return alt
+            if alt is not None:
+                _log_fallback_short("challenge#flaresolverr", len(alt.markdown), floor)
+
+        # Per-host paywall strategy. A matched rule supplies the bypass attempts
+        # ("googlebot" re-scrapes the same url with crawler headers; "freedium" /
+        # "custom" rewrite the url). Logged either way so the path is traceable:
+        # which strategy ran, or that no rule matched, plus when an attempt ran but
+        # still came back short (previously silent).
         if rule is None:
             logger.info(
                 "Direct scrape below floor; no source-fallback rule for host",
@@ -121,19 +146,6 @@ async def extract(
                     "floor": floor,
                 },
             )
-
-        # "googlebot" re-scrapes the same url with crawler headers, a proxy
-        # strategy rewrites the url. FlareSolverr is the exception: it doesn't
-        # yield a Firecrawl target, so it re-fetches the original url through the
-        # solver and returns the solved HTML directly.
-        if rule is not None and rule.proxy == "flaresolverr":
-            alt = await _fetch_via_flaresolverr(url, settings)
-            if alt is not None and len(alt.markdown) >= floor:
-                _log_fallback_used(f"{rule.name}#flaresolverr", result.markdown, alt.markdown)
-                return alt
-            if alt is not None:
-                _log_fallback_short(f"{rule.name}#flaresolverr", len(alt.markdown), floor)
-        elif rule is not None:
             for label, candidate, target_headers in candidate_attempts(rule, url):
                 try:
                     alt = await _scrape(client, candidate, settings, headers=target_headers or None)
@@ -156,6 +168,36 @@ async def extract(
     raise ExtractionTooShortError(
         f"Extracted markdown is {len(result.markdown)} chars, below {floor_desc}"
     )
+
+
+# Substrings that mark a Cloudflare / bot-challenge interstitial rather than a
+# real article. Matched case-insensitively against a below-floor scrape's
+# markdown + title; chosen to be specific to challenge pages so a real (short)
+# article rarely collides. This is the only thing that triggers a FlareSolverr
+# solve, so a plain paywall teaser never pays for a browser.
+_CHALLENGE_MARKERS = (
+    "just a moment...",
+    "attention required! | cloudflare",
+    "checking your browser before accessing",
+    "enable javascript and cookies to continue",
+    "cf-browser-verification",
+    "challenge-platform",
+    "cloudflare ray id",
+    "verify you are human",
+    "verify you are a human",
+    "ddos-guard",
+    "pardon our interruption",
+    "access to this page has been denied",
+    "sorry, you have been blocked",
+)
+
+
+def _looks_like_challenge(result: ExtractionResult) -> bool:
+    """True when a below-floor scrape looks like a Cloudflare/bot-challenge page
+    (the case FlareSolverr is meant to solve) rather than a real short article."""
+
+    haystack = f"{result.markdown} {result.metadata.get('title', '')}".lower()
+    return any(marker in haystack for marker in _CHALLENGE_MARKERS)
 
 
 async def _fetch_via_flaresolverr(url: str, settings: Settings) -> ExtractionResult | None:
