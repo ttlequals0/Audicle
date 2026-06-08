@@ -25,6 +25,13 @@ jobs:
         with:
           # Block merges that introduce a high-severity CVE on a runtime dep.
           fail-on-severity: high
+          # Accepted advisories (reviewed, not auto-fixable, not reachable here):
+          # both are diffusers `trust_remote_code` bypasses. diffusers is pinned to
+          # ==0.29.0 by chatterbox-tts (the GPU wrapper's TTS model), so it can't be
+          # bumped without forking the model. The vulnerable path (loading an
+          # attacker-supplied custom/remote pipeline) is never exercised: the wrapper
+          # only ever loads the fixed, pinned Chatterbox model via from_pretrained().
+          allow-ghsas: GHSA-98h9-4798-4q5v, GHSA-7wx4-6vff-v64p
           # The MIT/BSD/Apache/PSF set covers what we already use. LGPL-2.1/3.0 and
           # ZPL-2.1 were added deliberately: the gruut phonemizer (used for IPA
           # derivation) pulls num2words (LGPL) and pytz (MIT AND ZPL-2.1). LGPL/ZPL
