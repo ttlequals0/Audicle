@@ -56,7 +56,7 @@ That's what this is. If you don't have a GPU, it'll run on CPU too, just slower.
 
 ```
 backend/        FastAPI app, SQLite, the job pipeline
-tts-wrapper/    TTS model server (Chatterbox by default; separate GPU container)
+tts-wrapper/    TTS model server (Chatterbox; separate GPU container)
 frontend/       React + Tailwind operator UI
 data/           runtime artifacts (gitignored: SQLite, MP3, JPG, VTT)
 docker-compose.yml
@@ -148,24 +148,37 @@ Two notes the docs page doesn't repeat:
 
 Some sites hand a scraper only a teaser and hide the rest behind a paywall. That teaser is long enough to look like a real article but turns into a 25-second junk episode. The "article proxy / paywall sites" section in Settings lets you route those hosts through a bypass strategy.
 
-You pick a default strategy and a teaser threshold (the character count below which a matched host is treated as a stub), then list per-site overrides. When a matched host scrapes below the threshold, Audicle retries with the strategy before giving up; if the retry still comes back short, the job fails cleanly instead of narrating the stub. Same thing behind `GET`/`PUT /api/v1/source-fallbacks`.
+You pick a default strategy and a teaser threshold, then list per-site overrides. The default strategy applies to any host: when a scrape comes back near-empty (below `MIN_EXTRACTION_CHARS`, i.e. a hard block that returned almost nothing), Audicle retries through the default before giving up. Per-site rules are overrides -- a listed host uses its own strategy and its own (higher) teaser threshold, so a partial teaser that clears the global floor still triggers a retry; a host set to `none` opts out. If the retry still comes back short, the job fails cleanly instead of narrating the stub. A legitimately short article (above the floor) is left alone. Same thing behind `GET`/`PUT /api/v1/source-fallbacks`.
 
 The strategies:
 
 - `googlebot` (the default): re-fetch the same URL with a Googlebot user agent and a crawler `X-Forwarded-For`. SEO-metered paywalls serve the full article to the crawler, so this is the one that works most often. It runs through the scrape headers, not a separate proxy container.
 - `freedium`: rewrite the URL to a Freedium reader proxy. Best for Medium.
 - `custom`: rewrite to your own reader-proxy template, any URL containing `{url}`.
+- `flaresolverr`: fetch the page through your FlareSolverr (a real browser) instead of Firecrawl. For hosts that hard-block the scraper's datacenter IP with a 403 (e.g. the NYT), where the Googlebot header trick can't help -- the solver runs Chrome from a residential IP and the publisher serves the article normally. Needs `FLARESOLVERR_URL` set. Since 0.26.0 Audicle does this automatically on any hard block (see below), so this per-host setting is now mainly an explicit override -- e.g. to force the solver for a host that returns a teaser rather than a near-empty page. A `flaresolverr` rule can also carry a cookie jar (below) for sites you subscribe to.
+- `archive`: pull a saved copy of the article from a public archive. Tries the [Wayback Machine](https://web.archive.org) first (a clean API, no bot wall, no cookies), then archive.today through FlareSolverr. Useful when a metered or soft wall, or an older article, was archived while it was still free. It is not a way past a hard subscriber wall: if no free copy was ever archived, there is nothing to fetch.
 - `none`: don't try anything. A matched host that comes back short just fails, which is what you want for a hard paywall you'd rather skip than narrate.
 
-A built-in Medium-to-Freedium rule ships on by default. Your own rules layer on top and win when they collide on a host. The whole thing is gated by `EXTRACTION_FALLBACKS_ENABLED`; set it false to always use the direct scrape.
+A built-in Medium-to-Freedium rule ships on by default. Your own rules layer on top and win when they collide on a host. The whole thing is gated by `EXTRACTION_FALLBACKS_ENABLED`; set it false to always use the direct scrape (no default-proxy retry either).
+
+Some sites pad a one-paragraph teaser with a "Recommended For You" rail and a "Latest News" list, so the scraped text clears the teaser threshold on chrome alone and the bypass never fires. For a host with a rule, Audicle reads the page's own JSON-LD `articleBody` length and judges the teaser by that, so the lede is caught and routed to the bypass. Use the "test a URL" button in the paywall settings to run your rules against one link and see how many characters come back and which strategy matched -- the quickest way to confirm a cookie jar still works.
+
+Hard blocks are handled automatically, not as a per-host strategy. If you've set `FLARESOLVERR_URL` (env or live in Settings), Audicle re-fetches through your own [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) -- a real browser from a residential IP -- and pulls the article out of the solved HTML. It fires for any host in two cases: a scrape that looks like a Cloudflare challenge ("Just a moment...", a Ray ID), or a near-empty scrape (below `MIN_EXTRACTION_CHARS`) -- the signature of a 403/IP block where the site served almost nothing. It stays bounded: a real article or a partial teaser never triggers a browser solve. Audicle doesn't bundle a solver. As a final automatic step, when a hard block isn't recovered any other way, Audicle tries a Wayback capture before failing (`ARCHIVE_FALLBACK_ENABLED`, on by default).
+
+When extraction still fails, the job says why: a hard block with no solver set points you at `FLARESOLVERR_URL`; a hard block the solver couldn't clear means the site likely needs a login; a short teaser means add a per-host bypass.
+
+### Subscriber paywalls (cookie jar)
+
+Some walls never serve the body to a logged-out request, no matter the IP -- a hard subscriber paywall like Crain's / Chicago Business hands every anonymous reader the same teaser, so even a fresh FlareSolverr session gets nothing more. If you pay for the site, point the host at the `flaresolverr` strategy and paste your own logged-in session cookies into its cookie jar (`name=value; name2=value2`, as you'd copy them from your browser). The solver then fetches the article as you and pulls the full text.
+
+A session cookie is full account access, so use a dedicated login where the site allows one, and treat the jar like a password. Audicle holds it with the other secrets, never writes it to a log, and reads it back masked once saved -- re-saving the masked value keeps the stored cookies, clearing the field removes them. Needs `FLARESOLVERR_URL` set.
 
 ## Licensing notes
 
 The application code is MIT. A few things downstream of it have their own terms:
 
-- **Chatterbox** is the default TTS engine. The `chatterbox-tts` library and its model weights are MIT, so unlike the old XTTS-v2 default there is no non-commercial restriction on the model itself. Every output does carry Resemble's inaudible PerTh watermark for provenance, and there is no flag to turn it off.
-- **XTTS-v2 weights** (optional, `TTS_ENGINE=xtts`) ship under the Coqui Public Model Licence 1.0.0 (CPML), which is non-commercial: personal self-hosted use is fine, selling the audio isn't. Coqui shut down and XTTS-v2 is unmaintained, which is why Chatterbox is now the default; XTTS stays selectable as a fallback. The wrapper interface (`POST /generate` + `POST /reload`) is small enough that swapping engines is straightforward.
-- **Wrapper Python pin**: the wrapper Dockerfile pins Python 3.11. `chatterbox-tts` caps `numpy<2` below Python 3.13, and the fallback `coqui-tts` (the maintained `idiap/coqui-ai-TTS` fork) still declares `python_requires<3.13` too. The backend is separate: it requires Python `>=3.13` and ships on a `python:3.14-slim` image.
+- **Chatterbox** is the TTS engine. The `chatterbox-tts` library and its model weights are MIT, so there is no non-commercial restriction on the model itself. Every output does carry Resemble's inaudible PerTh watermark for provenance, and there is no flag to turn it off.
+- **Wrapper Python pin**: the wrapper Dockerfile pins Python 3.11, since `chatterbox-tts` caps `numpy<2` below Python 3.13. The backend is separate: it requires Python `>=3.13` and ships on a `python:3.14-slim` image.
 
 The Audicle name and logo are reserved; see `branding/README.md`.
 
@@ -173,7 +186,8 @@ The Audicle name and logo are reserved; see `branding/README.md`.
 
 ```
         paywall bypass: a matched host's teaser triggers a re-scrape via
-        Googlebot / Freedium / a custom proxy (or a clean fail)
+        Googlebot / Freedium / a custom proxy (or a clean fail);
+        a detected Cloudflare challenge auto-routes through FlareSolverr
         |
         v
 URL --> extract (Firecrawl) --> cleanup (LLM) --> corrections (regex)

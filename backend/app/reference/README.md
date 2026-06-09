@@ -1,6 +1,6 @@
 # Reference Voice (`voice.wav`)
 
-The XTTS-v2 wrapper conditions on a single short voice sample to colour every
+The Chatterbox wrapper conditions on a single short voice sample to colour every
 synthesis call. Drop your clip at `backend/app/reference/voice.wav`; the
 container bind-mounts it read-only into the wrapper at
 `/app/reference/voice.wav`.
@@ -10,7 +10,7 @@ container bind-mounts it read-only into the wrapper at
 | Property | Recommended | Hard limits (enforced by `/api/v1/reference/commit`) |
 |---|---|---|
 | Format | WAV (PCM, 16-bit) | WAV that Python's `wave` module can read |
-| Channels | mono | mono or stereo (XTTS mixes down internally) |
+| Channels | mono | mono or stereo (mixed down internally) |
 | Sample rate | 24 kHz | 16-48 kHz |
 | Duration | 8-12 seconds | 3-60 seconds |
 | Loudness | -20 to -16 LUFS | n/a |
@@ -29,15 +29,13 @@ Three reasonable paths:
    corpora. Verify the licence allows derivative work (LJSpeech and VCTK
    are CC0 / CC BY 4.0).
 3. **Synthesize one** from a paid voice provider you have rights to.
-   Don't use a celebrity voice you don't own; the XTTS weights happily
-   reproduce it.
+   Don't use a celebrity voice you don't own; the model happily reproduces it.
 
 ## Licence note
 
-The XTTS-v2 model weights are governed by the Coqui Public Model Licence
-1.0.0 (CPML). It is non-commercial. Personal self-hosted use is fine; do
-not redistribute generated audio commercially without checking the licence
-text in the `tts-wrapper/` directory.
+Chatterbox (Resemble AI) is MIT-licensed and embeds an inaudible PerTh
+watermark in its output. Personal self-hosted use is fine; check the model's
+licence before redistributing generated audio commercially.
 
 ## Verifying
 

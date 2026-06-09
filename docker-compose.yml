@@ -55,9 +55,6 @@ services:
     # ttlequals0/audicle-tts:*-cpu image and set TTS_DEVICE=cpu (5-10x slower).
     image: ttlequals0/audicle-tts:latest
     environment:
-      # Engine: chatterbox (default) | xtts | styletts2. Must match the image's
-      # build-arg TTS_BACKEND -- each engine is installed into its own image.
-      - TTS_ENGINE=${TTS_ENGINE:-chatterbox}
       - TTS_DEVICE=${TTS_DEVICE:-cuda}
       - TTS_LANGUAGE=${TTS_LANGUAGE:-en}
       - DATA_DIR=/data
@@ -69,12 +66,10 @@ services:
       - CHATTERBOX_CFG_WEIGHT=${CHATTERBOX_CFG_WEIGHT:-0.0}
       - CHATTERBOX_TEMPERATURE=${CHATTERBOX_TEMPERATURE:-0.5}
       - CHATTERBOX_SEED=${CHATTERBOX_SEED:-1234}
-      # XTTS knobs; used only when TTS_ENGINE=xtts.
-      - XTTS_TEMPERATURE=${XTTS_TEMPERATURE:-0.65}
-      - XTTS_LENGTH_PENALTY=${XTTS_LENGTH_PENALTY:-1.0}
-      - XTTS_REPETITION_PENALTY=${XTTS_REPETITION_PENALTY:-2.0}
-      - XTTS_TOP_K=${XTTS_TOP_K:-50}
-      - XTTS_TOP_P=${XTTS_TOP_P:-0.85}
+      # Per-piece char cap fed to the model; SAMPLE_RATE is provisional (the
+      # model's own rate replaces it at load).
+      - TTS_MAX_CHARS=${TTS_MAX_CHARS:-200}
+      - TTS_SAMPLE_RATE=${TTS_SAMPLE_RATE:-24000}
       # Post-TTS ASR verification (off by default). WHISPER_ENABLED loads the
       # faster-whisper model here; the backend's WHISPER_VERIFY_ENABLED (via .env)
       # decides whether to request a transcript per chunk. WHISPER_DEVICE defaults

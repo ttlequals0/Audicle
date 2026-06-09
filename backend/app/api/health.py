@@ -93,8 +93,8 @@ async def health_ready(request: Request, response: Response) -> dict[str, Any]:
     checks["llm"] = _coerce_result(llm_result)
 
     # Per build plan: aggregate component-level detail (wrapper version/torch/
-    # coqui_tts/device from its /health, LLM + Firecrawl reachability) alongside
-    # the local app/python/ffmpeg versions.
+    # device from its /health, LLM + Firecrawl reachability) alongside the local
+    # app/python/ffmpeg versions.
     # _ffmpeg_version() runs a blocking subprocess; off-thread it so a wedged or
     # slow ffmpeg (failures aren't cached, so they re-run every probe) can't stall
     # the event loop for the full 2s timeout. Mirrors the worker retention sweep.
@@ -212,13 +212,12 @@ async def _probe_http(
 async def _probe_tts_wrapper(base: str | None, timeout_secs: float) -> tuple[str, dict[str, Any]]:
     """``GET {base}/health`` -> ``(check_status, component_detail)``.
 
-    The wrapper reports its own ``engine``/``version``/``torch``/``coqui_tts``/
-    ``device``/``model_loaded`` plus the ASR-verify capability
+    The wrapper reports its own ``engine``/``version``/``torch``/``device``/
+    ``model_loaded`` plus the ASR-verify capability
     (``whisper_enabled``/``whisper_model``/``whisper_loaded``); surface that
-    subset under ``components.tts_wrapper`` (``engine`` names the live backend so
-    the swap is observable, e.g. ``chatterbox``; ``coqui_tts`` is null on non-XTTS
-    engines; the ``whisper_*`` fields let an operator confirm verification is
-    actually loaded without reading the wrapper logs).
+    subset under ``components.tts_wrapper`` (``engine`` names the live backend,
+    e.g. ``chatterbox``; the ``whisper_*`` fields let an operator confirm
+    verification is actually loaded without reading the wrapper logs).
     """
 
     if not base:
@@ -241,7 +240,6 @@ async def _probe_tts_wrapper(base: str | None, timeout_secs: float) -> tuple[str
             "engine",
             "version",
             "torch",
-            "coqui_tts",
             "device",
             "model_loaded",
             "whisper_enabled",

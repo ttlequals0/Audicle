@@ -31,7 +31,7 @@ export default function Login() {
       if (e instanceof ApiError) {
         if (e.status === 423) setError("account locked - wait and retry");
         else if (e.status === 401) setError("invalid password");
-        else if (e.status === 400) setError("no password is set; auth is open");
+        else if (e.status === 400) setError("no password set; auth is open");
         else setError(`error ${e.status}`);
       } else {
         setError((e as Error).message);

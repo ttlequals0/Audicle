@@ -294,8 +294,8 @@ def source_wikiabbrev(cache: Path, limit: int | None) -> Iterator[tuple[str, dic
                 continue
             seen.add(abbr)
             # Low confidence: this is noisy crowd data whose "abbreviated" forms
-            # include real words ("the" abbreviating "these"). Below the XTTS apply
-            # gate so it is ingested/searchable but never deterministically applied.
+            # include real words ("the" abbreviating "these"). Below the base-lexicon
+            # apply gate so it is ingested/searchable but never deterministically applied.
             yield abbr, {"spoken": exp, "notes": f"abbreviation of {exp}", "confidence": 0.4}
 
 
@@ -335,7 +335,7 @@ def source_world_cities(cache: Path, limit: int | None) -> Iterator[tuple[str, d
         if not name or name in seen or not name[0].isalpha():
             continue
         seen.add(name)
-        yield name, {}  # name only; phoneme engine derives IPA at synth time
+        yield name, {}  # name only; no IPA derived (PLS export falls back to the spoken alias)
 
 
 _SOURCES = {
@@ -379,7 +379,7 @@ def build(out_path: Path, only: list[str], limit: int | None, cache: Path) -> di
                 "ipa": converted.ipa,
                 "case_sensitive": converted.case_sensitive,
                 # A source may pin a confidence (e.g. noisy abbreviation data below
-                # the XTTS apply gate); otherwise use the converter's score.
+                # the base-lexicon apply gate); otherwise use the converter's score.
                 "confidence": hint.get("confidence", converted.confidence),
                 "source": name,
                 "notes": hint.get("notes"),

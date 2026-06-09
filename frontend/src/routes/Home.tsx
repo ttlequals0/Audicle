@@ -134,8 +134,10 @@ export default function Home() {
                     <p className="text-sm mt-1 truncate text-dim">
                       {j.episode_id} &middot; {j.stage ?? "-"}
                       {progressSuffix(j)}
-                      {j.error && <span className="text-danger"> &middot; {j.error}</span>}
                     </p>
+                    {/* Own line, wrapping (not truncated), so the failure reason and
+                        its fix stay readable. */}
+                    {j.error && <p className="text-sm mt-1 text-danger break-words">{j.error}</p>}
                   </div>
                   <div className="flex flex-col items-end gap-1 flex-shrink-0">
                     <span className={`tag ${statusTag(j.status)}`}>{j.status}</span>

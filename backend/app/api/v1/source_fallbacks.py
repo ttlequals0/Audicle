@@ -11,10 +11,11 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import AnyHttpUrl
 
 from app.config import Settings, get_settings
 from app.core import database
-from app.services import source_fallbacks, source_fallbacks_store
+from app.services import extraction, runtime_settings, source_fallbacks, source_fallbacks_store
 
 router = APIRouter(tags=["source-fallbacks"])
 
@@ -25,6 +26,8 @@ _PROXY_LABELS = {
     "freedium": "Freedium (Medium)",
     "custom": "Custom URL template",
     "none": "None / reject",
+    "flaresolverr": "FlareSolverr (browser; hard blocks)",
+    "archive": "Archive (Wayback / archive.today)",
 }
 _AVAILABLE_PROXIES = [
     {"key": key, "label": _PROXY_LABELS[key]} for key in source_fallbacks.PROXY_KEYS
@@ -37,8 +40,14 @@ _BUILTIN = [
 ]
 
 
-def _response(config: dict[str, Any]) -> dict[str, Any]:
-    return {**config, "available_proxies": _AVAILABLE_PROXIES, "builtin": _BUILTIN}
+def _masked_response(config: dict[str, Any]) -> dict[str, Any]:
+    # Cookies are session secrets: never echo them. The sentinel just signals "a
+    # cookie jar is set" so the UI can show the field as configured.
+    rules = [
+        {**rule, "cookies": runtime_settings.MASK_SENTINEL if rule.get("cookies") else ""}
+        for rule in config.get("rules", [])
+    ]
+    return {**config, "rules": rules, "available_proxies": _AVAILABLE_PROXIES, "builtin": _BUILTIN}
 
 
 @router.get("/source-fallbacks", summary="Read paywall extraction fallback config")
@@ -46,7 +55,7 @@ def read_source_fallbacks(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> dict[str, Any]:
     with database.connection(settings.DATA_DIR) as conn:
-        return _response(source_fallbacks_store.load(conn))
+        return _masked_response(source_fallbacks_store.load(conn))
 
 
 @router.put("/source-fallbacks", summary="Replace paywall extraction fallback config")
@@ -56,7 +65,53 @@ def write_source_fallbacks(
 ) -> dict[str, Any]:
     try:
         with database.connection(settings.DATA_DIR) as conn:
+            # A rule that sends back the mask sentinel keeps its stored cookies (the UI
+            # never saw the real value); any other value (new cookies, or "" to clear)
+            # is taken as-is.
+            stored = {
+                rule["host"]: rule.get("cookies", "")
+                for rule in source_fallbacks_store.load(conn).get("rules", [])
+            }
+            rules_in = body.get("rules")
+            for rule in rules_in if isinstance(rules_in, list) else []:
+                if isinstance(rule, dict) and rule.get("cookies") == runtime_settings.MASK_SENTINEL:
+                    rule["cookies"] = stored.get(str(rule.get("host", "")).strip().lower(), "")
             saved = source_fallbacks_store.save(conn, body)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return _response(saved)
+    return _masked_response(saved)
+
+
+@router.post("/source-fallbacks/test", summary="Test the bypass config against one URL")
+async def test_source_fallback(
+    body: dict[str, Any],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict[str, Any]:
+    """Run the stored bypass config against ``url`` once and report what came back, so
+    the operator can confirm a rule (and its cookie jar) actually fetches the article.
+    Uses the real stored cookies but never echoes them -- only a char count, the
+    strategy that matched, and a short text sample of the extracted article."""
+
+    url = str(body.get("url", "")).strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="A url is required.")
+    # Reject non-http(s) schemes (file://, gopher://, ...) before handing the URL to
+    # Firecrawl/the solver -- the same AnyHttpUrl guard the /submit endpoint uses.
+    try:
+        AnyHttpUrl(url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="A valid http(s) URL is required.") from exc
+    registry = source_fallbacks_store.load_registry(settings)
+    matched = source_fallbacks.match(url, registry)
+    strategy = matched.proxy if matched is not None else None
+    try:
+        result = await extraction.extract(url, settings, registry)
+    except extraction.ExtractionError as exc:
+        return {"ok": False, "chars": 0, "strategy": strategy, "detail": str(exc), "sample": ""}
+    return {
+        "ok": True,
+        "chars": len(result.markdown),
+        "strategy": strategy,
+        "title": result.metadata.get("title"),
+        "sample": result.markdown[:300],
+    }

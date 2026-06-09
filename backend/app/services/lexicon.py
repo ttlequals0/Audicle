@@ -281,26 +281,6 @@ def insert_entries(
 WORD_TOKEN_RE = re.compile("[A-Za-z][A-Za-z'\u2019-]*")
 
 
-def pronunciations_for(conn: sqlite3.Connection, text: str) -> dict[str, str]:
-    """Build the ``{term: ipa}`` override map for the words present in ``text``.
-
-    Only entries that actually carry an IPA are included. Used to send per-chunk
-    phoneme overrides to the StyleTTS2 wrapper; a no-op for the XTTS path.
-    """
-
-    out: dict[str, str] = {}
-    seen: set[str] = set()
-    for match in WORD_TOKEN_RE.finditer(text):
-        token = match.group(0)
-        if token in seen:
-            continue
-        seen.add(token)
-        entry = lookup(conn, token)
-        if entry and entry.ipa:
-            out[token] = entry.ipa
-    return out
-
-
 def iter_entries(conn: sqlite3.Connection, scope: str = "user"):
     """Yield LexEntry rows for export. scope 'user' = editable rows only;
     'all' = the full table (user + seed + base), streamed in key order."""

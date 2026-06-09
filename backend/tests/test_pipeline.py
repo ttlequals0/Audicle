@@ -33,7 +33,7 @@ def _stub_full_chain(monkeypatch: pytest.MonkeyPatch) -> None:
 
     from app.services import audio, tts
 
-    async def _fake_tts(text, episode_id, chunk_index, settings, pronunciations=None, seed=None, verify=False):
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
         _ = text  # acknowledge
         _ = settings
         return tts.GenerateResult(
@@ -65,7 +65,7 @@ def _stub_tts_and_audio(monkeypatch: pytest.MonkeyPatch) -> None:
 
     from app.services import audio, tts
 
-    async def _fake_tts(text, episode_id, chunk_index, settings, pronunciations=None, seed=None, verify=False):
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
         _ = text
         _ = settings
         return tts.GenerateResult(
@@ -438,11 +438,11 @@ async def test_pipeline_transcript_stage_rejects_length_mismatch(
 
     from app.services import tts as tts_module
 
-    async def _drop_one(text, episode_id, chunk_index, settings, pronunciations=None, seed=None, verify=False):
+    async def _drop_one(text, episode_id, chunk_index, settings, seed=None, verify=False):
         result = await _stub_tts_for_extra(text, episode_id, chunk_index, settings)
         return result
 
-    async def _stub_tts_for_extra(text, episode_id, chunk_index, settings, pronunciations=None, seed=None, verify=False):
+    async def _stub_tts_for_extra(text, episode_id, chunk_index, settings, seed=None, verify=False):
         return tts_module.GenerateResult(
             wav_path=f"/tmp/{episode_id}_chunk_{chunk_index}.wav",
             duration_secs=1.0,
@@ -452,7 +452,7 @@ async def test_pipeline_transcript_stage_rejects_length_mismatch(
     call_count = {"n": 0}
     real_tts = _drop_one
 
-    async def _short_tts(text, episode_id, chunk_index, settings, pronunciations=None, seed=None, verify=False):
+    async def _short_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
         call_count["n"] += 1
         # Return only for first call; subsequent calls still execute but the
         # test patches _stage_transcript's inputs by intercepting the chunker.
@@ -655,8 +655,9 @@ def test_corrections_user_entry_applies_via_lexicon(env: Path) -> None:
 
 
 def test_base_lexicon_confidence_gate(env: Path) -> None:
-    """Aggressive XTTS apply uses high-confidence base rows but skips low-confidence
-    ones, so noisy data (e.g. WikiAbbrev's 'the' -> 'these') can't clobber prose."""
+    """Aggressive base-lexicon apply uses high-confidence base rows but skips
+    low-confidence ones, so noisy data (e.g. WikiAbbrev's 'the' -> 'these') can't
+    clobber prose."""
 
     from app.services import lexicon
 
@@ -956,7 +957,7 @@ def test_normalize_numbers_leaves_ambiguous_and_glued_alone() -> None:
 
 
 def test_normalize_dotted_acronyms() -> None:
-    # XTTS pauses on the periods, so collapse them to spaced letters.
+    # The engine pauses on the periods, so collapse them to spaced letters.
     assert pipeline._normalize_dotted_acronyms("about A.I. today") == "about A I today"
     assert pipeline._normalize_dotted_acronyms("the U.S.A. and U.K.") == "the U S A and U K"
     # Lowercase latin abbreviations and decimals/versions are left untouched.
@@ -1161,7 +1162,7 @@ async def test_chunk_quality_check_regenerates_bad_chunk(
     calls = {"n": 0}
     seeds: list[int | None] = []
 
-    async def _fake_tts(text, episode_id, chunk_index, settings, pronunciations=None, seed=None, verify=False):
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
         calls["n"] += 1
         seeds.append(seed)
         _write_drone_wav(wav) if calls["n"] == 1 else _write_speechlike_wav(wav)
@@ -1170,7 +1171,7 @@ async def test_chunk_quality_check_regenerates_bad_chunk(
     monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
     job = _seed_job(env)
     result = await pipeline._generate_chunk_quality_checked(
-        job, "two words here now", 0, get_settings(), None
+        job, "two words here now", 0, get_settings()
     )
     assert calls["n"] == 2  # one bad read, one regeneration that recovered
     assert result.wav_path == str(wav)
@@ -1189,7 +1190,7 @@ async def test_chunk_quality_check_keeps_last_after_max_regen(
     wav = tmp_path / "ep_chunk_0.wav"
     calls = {"n": 0}
 
-    async def _fake_tts(text, episode_id, chunk_index, settings, pronunciations=None, seed=None, verify=False):
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
         calls["n"] += 1
         _write_drone_wav(wav)  # always bad
         return tts.GenerateResult(wav_path=str(wav), duration_secs=1.0, sample_rate=24000)
@@ -1197,7 +1198,7 @@ async def test_chunk_quality_check_keeps_last_after_max_regen(
     monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
     job = _seed_job(env)
     result = await pipeline._generate_chunk_quality_checked(
-        job, "two words here now", 0, get_settings(), None
+        job, "two words here now", 0, get_settings()
     )
     # 1 baseline + MAX_REGEN extra attempts; job is not failed (a result returns).
     assert calls["n"] == get_settings().AUDIO_ANALYSIS_MAX_REGEN + 1
@@ -1215,7 +1216,7 @@ async def test_chunk_quality_check_disabled_calls_once(
     wav = tmp_path / "ep_chunk_0.wav"
     calls = {"n": 0}
 
-    async def _fake_tts(text, episode_id, chunk_index, settings, pronunciations=None, seed=None, verify=False):
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
         calls["n"] += 1
         _write_drone_wav(wav)  # bad, but analysis is off so no regen
         return tts.GenerateResult(wav_path=str(wav), duration_secs=1.0, sample_rate=24000)
@@ -1223,7 +1224,7 @@ async def test_chunk_quality_check_disabled_calls_once(
     monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
     job = _seed_job(env)
     await pipeline._generate_chunk_quality_checked(
-        job, "two words here now", 0, get_settings(), None
+        job, "two words here now", 0, get_settings()
     )
     assert calls["n"] == 1
 
@@ -1243,7 +1244,7 @@ async def test_chunk_asr_verify_regenerates_on_divergence(
     verifies: list[bool] = []
 
     async def _fake_tts(
-        text, episode_id, chunk_index, settings, pronunciations=None, seed=None, verify=False
+        text, episode_id, chunk_index, settings, seed=None, verify=False
     ):
         calls["n"] += 1
         verifies.append(verify)
@@ -1262,7 +1263,7 @@ async def test_chunk_asr_verify_regenerates_on_divergence(
 
     monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
     job = _seed_job(env)
-    result = await pipeline._generate_chunk_quality_checked(job, text, 0, get_settings(), None)
+    result = await pipeline._generate_chunk_quality_checked(job, text, 0, get_settings())
     assert calls["n"] == 2  # diverged once, matched on regen
     assert all(verifies)  # verify flag sent on every attempt
     assert result.transcript == text
@@ -1281,7 +1282,7 @@ async def test_chunk_asr_verify_skips_short_chunk(
     verifies: list[bool] = []
 
     async def _fake_tts(
-        text, episode_id, chunk_index, settings, pronunciations=None, seed=None, verify=False
+        text, episode_id, chunk_index, settings, seed=None, verify=False
     ):
         calls["n"] += 1
         verifies.append(verify)
@@ -1296,6 +1297,6 @@ async def test_chunk_asr_verify_skips_short_chunk(
     job = _seed_job(env)
     # 3 words is below WHISPER_VERIFY_MIN_WORDS (8): verify is not requested and
     # the divergent transcript is ignored, so there is no regeneration.
-    await pipeline._generate_chunk_quality_checked(job, "three short words", 0, get_settings(), None)
+    await pipeline._generate_chunk_quality_checked(job, "three short words", 0, get_settings())
     assert calls["n"] == 1
     assert verifies == [False]

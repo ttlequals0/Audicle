@@ -66,7 +66,6 @@ async def generate_chunk(
     episode_id: str,
     chunk_index: int,
     settings: Settings,
-    pronunciations: dict[str, str] | None = None,
     seed: int | None = None,
     verify: bool = False,
 ) -> GenerateResult:
@@ -78,10 +77,8 @@ async def generate_chunk(
         "episode_id": episode_id,
         "chunk_index": chunk_index,
     }
-    # Only attach the IPA map / seed / verify flag when set, so an older wrapper
+    # Only attach the seed / verify flag when set, so an older wrapper
     # (extra="forbid") never receives an unexpected field.
-    if pronunciations:
-        payload["pronunciations"] = pronunciations
     if seed is not None:
         payload["seed"] = seed
     if verify:
@@ -128,7 +125,6 @@ async def generate_chunk_with_retry(
     episode_id: str,
     chunk_index: int,
     settings: Settings,
-    pronunciations: dict[str, str] | None = None,
     seed: int | None = None,
     verify: bool = False,
 ) -> GenerateResult:
@@ -150,7 +146,7 @@ async def generate_chunk_with_retry(
         async for attempt in retrying:
             with attempt:
                 return await generate_chunk(
-                    text, episode_id, chunk_index, settings, pronunciations, seed, verify
+                    text, episode_id, chunk_index, settings, seed, verify
                 )
     except RetryError as exc:
         inner = exc.last_attempt.exception()

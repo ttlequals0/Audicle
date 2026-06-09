@@ -6,7 +6,7 @@
 #
 # There is no published ``pytorch/pytorch:*-cpu`` tag, so this builds on a plain
 # Python base (matching the wrapper's 3.11 pin) and installs the CPU-only torch
-# wheel from PyTorch's CPU index before the rest of the deps, so coqui-tts
+# wheel from PyTorch's CPU index before the rest of the deps, so chatterbox-tts
 # reuses it instead of pulling the much larger CUDA build.
 FROM python:3.11-slim AS runtime
 
@@ -22,12 +22,7 @@ ENV PYTHONUNBUFFERED=1 \
     HOME=/tmp \
     XDG_CACHE_HOME=/tmp/.cache \
     NUMBA_CACHE_DIR=/tmp/numba_cache \
-    MPLCONFIGDIR=/tmp/mpl \
-    # Coqui gates the first XTTS-v2 load behind an interactive y/n CPML prompt;
-    # in a container there is no TTY to answer it, so the load hangs/fails.
-    # Self-hosting the wrapper is acceptance of the non-commercial CPML (see the
-    # README license note); agree non-interactively so the model loads headless.
-    COQUI_TOS_AGREED=1
+    MPLCONFIGDIR=/tmp/mpl
 
 # build-essential: several model deps (e.g. numba/llvmlite) build native
 # extensions. libsndfile for soundfile WAV IO; curl for healthchecks; git so the
@@ -40,17 +35,16 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY pyproject.toml ./
-COPY config.py engine.py log_setup.py main.py style_engine.py chatterbox_engine.py whisper_verify.py install_engine.sh ./
+COPY config.py engine.py log_setup.py main.py chatterbox_engine.py whisper_verify.py install_engine.sh ./
 # torch AND torchaudio are installed first from the CPU index with matching
-# versions: every engine imports torchaudio, and if it comes from PyPI while
-# torch is the CPU-index build the native extension fails to load (ABI mismatch).
+# versions: chatterbox imports torchaudio, and if it comes from PyPI while torch
+# is the CPU-index build the native extension fails to load (ABI mismatch).
 # chatterbox-tts pins torch==2.6.0/torchaudio==2.6.0, satisfied by this install.
-# install_engine.sh (shared with the GPU Dockerfile) then installs exactly one
-# engine extra (TTS_BACKEND) plus security patches.
-ARG TTS_BACKEND=chatterbox
+# install_engine.sh (shared with the GPU Dockerfile) then installs the Chatterbox
+# engine plus the optional faster-whisper backend and security patches.
 RUN pip install --no-cache-dir torch==2.6.0 torchaudio==2.6.0 \
         --index-url https://download.pytorch.org/whl/cpu \
-    && sh install_engine.sh "$TTS_BACKEND"
+    && sh install_engine.sh
 
 EXPOSE 8000
 

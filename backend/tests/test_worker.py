@@ -61,7 +61,7 @@ async def test_pickup_runs_pipeline_against_a_queued_job(
     from app.services import audio, llm, tts
 
     async def _fake_tts(
-        text, episode_id, chunk_index, settings, pronunciations=None, seed=None, verify=False
+        text, episode_id, chunk_index, settings, seed=None, verify=False
     ):
         _ = text  # acknowledge
         _ = settings

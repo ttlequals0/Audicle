@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from config import Config
-from engine import Engine, GPUOutOfMemoryError, InferenceBusyError, XTTSEngine
+from engine import Engine, GPUOutOfMemoryError, InferenceBusyError
 from log_setup import setup_logging
 from whisper_verify import WhisperVerifier
 
@@ -56,7 +56,7 @@ __version__ = _wrapper_version()
 
 def _pkg_version(name: str) -> str | None:
     """Installed distribution version, or None if the package isn't present
-    (e.g. the test environment runs without torch / coqui-tts)."""
+    (e.g. the test environment runs without torch)."""
 
     try:
         return _metadata.version(name)
@@ -68,7 +68,6 @@ def _pkg_version(name: str) -> str | None:
 # process, and /health is polled every 30s by the docker healthcheck plus the
 # backend's readiness probe -- no point re-scanning dist metadata per request.
 _TORCH_VERSION = _pkg_version("torch")
-_COQUI_TTS_VERSION = _pkg_version("coqui-tts")
 
 # Per-request inference budget. Without this a wedged
 # torch call holds the lock forever and the wrapper stops serving anything.
@@ -86,10 +85,6 @@ class GenerateRequest(BaseModel):
     # accept a slightly broader alphabet for hand-curated cases.
     episode_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.-]+$")
     chunk_index: int = Field(ge=0, le=100000)
-    # Optional IPA overrides (surface term -> IPA). Honored only by phoneme-capable
-    # engines (StyleTTS2); the XTTS engine ignores it. Backward-compatible: the
-    # backend only sends it when the live engine reports it supports phonemes.
-    pronunciations: dict[str, str] | None = None
     # Optional per-request seed override (Chatterbox only). The backend sends it on
     # a quality regeneration so the re-gen uses a different seed than the bad take;
     # omitted on the first attempt so the wrapper's configured seed applies.
@@ -114,11 +109,9 @@ class HealthResponse(BaseModel):
     reference_loaded: bool
     version: str | None = None
     torch: str | None = None
-    coqui_tts: str | None = None
     device: str | None = None
     sample_rate: int | None = None
     engine: str | None = None
-    supports_phonemes: bool | None = None
     whisper_enabled: bool | None = None
     whisper_model: str | None = None
     whisper_loaded: bool | None = None
@@ -126,15 +119,9 @@ class HealthResponse(BaseModel):
 
 def _default_engine_factory() -> Engine:
     cfg = Config.from_env()
-    if cfg.engine == "styletts2":
-        from style_engine import StyleTTS2Engine  # lazy: heavy deps
+    from chatterbox_engine import ChatterboxEngine  # lazy: heavy deps
 
-        return StyleTTS2Engine(cfg)
-    if cfg.engine == "chatterbox":
-        from chatterbox_engine import ChatterboxEngine  # lazy: heavy deps
-
-        return ChatterboxEngine(cfg)
-    return XTTSEngine(cfg)
+    return ChatterboxEngine(cfg)
 
 
 def create_app(
@@ -146,8 +133,8 @@ def create_app(
     """Build a FastAPI instance backed by ``engine``.
 
     Tests pass a fake :class:`Engine` so they exercise the HTTP contract
-    without importing Coqui TTS. Production calls this with no args and gets
-    the :class:`XTTSEngine` via :func:`_default_engine_factory`.
+    without importing the TTS model library. Production calls this with no args
+    and gets the :class:`ChatterboxEngine` via :func:`_default_engine_factory`.
 
     ``verifier`` is the optional faster-whisper transcriber; when omitted it is
     built from the environment only if ``WHISPER_ENABLED`` is set, so the
@@ -232,12 +219,10 @@ def create_app(
             "reference_loaded": reference_loaded,
             "version": __version__,
             "torch": _TORCH_VERSION,
-            "coqui_tts": _COQUI_TTS_VERSION,
             "device": engine.device,
             "sample_rate": engine.sample_rate,
-            # getattr with defaults so a minimal fake/legacy engine still serves.
+            # getattr with default so a minimal fake/legacy engine still serves.
             "engine": getattr(engine, "name", None),
-            "supports_phonemes": getattr(engine, "supports_phonemes", None),
             "whisper_enabled": cfg.whisper_enabled,
             "whisper_model": chosen_verifier.model_name if chosen_verifier else None,
             "whisper_loaded": bool(chosen_verifier.loaded) if chosen_verifier else False,
@@ -279,7 +264,7 @@ def create_app(
             inference_started = time.perf_counter()
             try:
                 wav_bytes = await asyncio.wait_for(
-                    engine.synthesize(body.text, body.pronunciations, body.seed),
+                    engine.synthesize(body.text, seed=body.seed),
                     timeout=_REQUEST_INFERENCE_TIMEOUT_SECONDS,
                 )
             except TimeoutError as exc:

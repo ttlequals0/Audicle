@@ -1,17 +1,15 @@
 """Chatterbox (Turbo) engine: zero-shot voice cloning via Resemble AI's
 ``chatterbox-tts`` library.
 
-A sibling of :class:`engine.XTTSEngine` behind the same :class:`engine.Engine`
-Protocol, selected with ``TTS_ENGINE=chatterbox``. Replaces the abandoned Coqui
-XTTS-v2 backend. Text-only (no IPA phoneme injection): ``supports_phonemes`` is
-False, so the backend never sends the ``pronunciations`` map -- text-level
-lexicon corrections still apply upstream in the pipeline.
+The wrapper's TTS engine, behind the :class:`engine.Engine` Protocol. Text-only
+(no IPA phoneme injection); text-level lexicon corrections apply upstream in the
+pipeline.
 
 The reference voice is encoded once into the model's conditionals
 (``prepare_conditionals``) at load / ``/reload`` and reused for every chunk, so
 synthesis does not re-read the reference per call. The single-flight
-``_gpu_lock``, OOM mapping, and ``reload_reference`` rollback mirror XTTSEngine
-so the wrapper's 503/500/504 + ``/reload`` behavior is identical.
+``_gpu_lock``, OOM mapping, and ``reload_reference`` rollback give the wrapper a
+consistent 503/500/504 + ``/reload`` behavior.
 
 Imports of ``torch`` and ``chatterbox`` are deferred to :meth:`load` so this
 module is importable in test environments without the GPU runtime.
@@ -44,7 +42,6 @@ class ChatterboxEngine:
     """Chatterbox Turbo backend with cached reference conditionals."""
 
     name = "chatterbox"
-    supports_phonemes = False
 
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -144,12 +141,9 @@ class ChatterboxEngine:
             self.reference_loaded = previous_loaded
             raise
 
-    async def synthesize(
-        self, text: str, pronunciations: dict[str, str] | None = None, seed: int | None = None
-    ) -> bytes:
+    async def synthesize(self, text: str, seed: int | None = None) -> bytes:
         import asyncio  # noqa: PLC0415
 
-        _ = pronunciations  # Chatterbox is text-only; no phoneme-injection path
         assert self._model is not None
         assert self._torch is not None
         try:
@@ -168,7 +162,7 @@ class ChatterboxEngine:
             raise InferenceBusyError("an inference is already running on this wrapper")
         try:
             # Chatterbox truncates long input rather than chunking, so split into
-            # speakable pieces under the cap and concatenate, like XTTS.
+            # speakable pieces under the cap and concatenate.
             pieces = _split_into_pieces(text, self.config.max_chars)
             if not pieces:
                 return np.zeros(int(self.sample_rate * 0.05), dtype=np.float32)

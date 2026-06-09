@@ -37,7 +37,7 @@ const GROUPS: Record<string, string[]> = {
     "FEED_EXPLICIT",
     "FEED_ARTWORK_URL",
   ],
-  Connections: ["FIRECRAWL_URL", "FIRECRAWL_API_KEY", "TTS_URL"],
+  Connections: ["FIRECRAWL_URL", "FIRECRAWL_API_KEY", "TTS_URL", "FLARESOLVERR_URL"],
   TTS: ["TTS_CHUNK_TARGET_WORDS", "TTS_CHUNK_MAX_WORDS", "TTS_CHUNK_SILENCE_MS"],
   Verification: [
     "WHISPER_VERIFY_ENABLED",
@@ -180,19 +180,18 @@ export default function SettingsRoute() {
           <CollapsibleSection key={group} title={group} defaultOpen={group === "LLM"}>
             {group === "Feed" && (
               <p className="mono-xs text-mute mb-3">
-                // saved feed changes apply on the next podcast-app refresh -- no rebuild
+                // applies on the next podcast-app refresh
               </p>
             )}
             {group === "Connections" && (
               <p className="mono-xs text-mute mb-3">
-                // firecrawl api key is optional -- leave blank for an open self-hosted instance
+                // firecrawl api key optional -- blank for self-hosted
               </p>
             )}
             {group === "Verification" && (
               <p className="mono-xs text-mute mb-3">
-                // re-transcribes each chunk and regenerates it when the audio drifts from
-                the text. needs WHISPER_ENABLED on the tts wrapper (loads the model); these
-                toggle the policy live. enabled=true/false, threshold 0-1 (higher = stricter)
+                // regenerates chunks when audio drifts from the text. needs
+                WHISPER_ENABLED on the wrapper. threshold 0-1, higher = stricter
               </p>
             )}
             {visible.map((key) => (
@@ -262,7 +261,7 @@ export default function SettingsRoute() {
         </CollapsibleSection>
       )}
       {fallbacksQ.data !== undefined && (
-        <CollapsibleSection title="article proxy / paywall sites">
+        <CollapsibleSection title="paywall sites">
           <SourceFallbacksTable initial={fallbacksQ.data} />
         </CollapsibleSection>
       )}
@@ -473,8 +472,7 @@ function SecuritySection({
     <section className="space-y-3">
       {!passwordSet && (
         <p className="text-danger text-xs font-mono">
-          no password set - the admin UI and API are open to anyone who can reach
-          this server. set a password below.
+          no password set - the admin UI and API are open to anyone. set one below.
         </p>
       )}
       {passwordSet && (
@@ -677,17 +675,13 @@ function CorrectionsTable({ initial }: { initial: Record<string, CorrectionEntry
       <div className="builtin-note">
         <span className="builtin-note-tag">built-in</span>
         <p className="builtin-note-body">
-          Audicle applies a built-in set of pronunciation fixes on every episode.
-          They are not listed here, and anything you add below overrides them. The
-          full set is available from the API at{" "}
+          Built-in pronunciation fixes apply to every episode; your rules below
+          override them. Full set:{" "}
           <code className="builtin-note-path">GET /api/v1/corrections/seed</code>.
         </p>
       </div>
       <p className="text-mute text-xs">
-        word: the source term. spoken: how the TTS should narrate it. mode: spell
-        (letter by letter), word (read as written), or override (use spoken). ipa is
-        optional and used only by the phoneme engine. Case-sensitive matches the
-        exact casing only.
+        ipa is optional and only feeds the PLS export, not narration.
       </p>
       <LexiconLookup />
       <div className="space-y-2">
@@ -782,6 +776,7 @@ interface FallbackRule {
   host: string;
   proxy: string;
   custom_template: string;
+  cookies: string;
 }
 
 interface SourceFallbacksConfig {
@@ -797,6 +792,7 @@ interface FallbackRow {
   host: string;
   proxy: string; // "" -> use the global default
   customTemplate: string;
+  cookies: string; // sentinel ("********") when a jar is stored; "" clears it
 }
 
 let _fbRowCounter = 0;
@@ -805,6 +801,7 @@ const newFallbackRow = (rule?: FallbackRule): FallbackRow => ({
   host: rule?.host ?? "",
   proxy: rule?.proxy ?? "",
   customTemplate: rule?.custom_template ?? "",
+  cookies: rule?.cookies ?? "",
 });
 
 function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
@@ -834,6 +831,9 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
               host: r.host.trim(),
               proxy: r.proxy,
               custom_template: r.customTemplate.trim(),
+              // Cookies only apply to the flaresolverr strategy; switching away clears the
+              // jar so the session secret isn't silently retained on a rule that won't use it.
+              cookies: r.proxy === "flaresolverr" ? r.cookies.trim() : "",
             })),
         }),
       }),
@@ -849,6 +849,29 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
     },
   });
 
+  // Run the saved rules against one URL so the operator can confirm a rule (and its
+  // cookie jar) actually fetches the article. Never returns the cookie value.
+  const [testUrl, setTestUrl] = useState("");
+  const [testResult, setTestResult] = useState<string | null>(null);
+  const testM = useMutation({
+    mutationFn: () =>
+      api<{ ok: boolean; chars: number; strategy: string | null; title?: string; detail?: string }>(
+        "/api/v1/source-fallbacks/test",
+        { method: "POST", body: JSON.stringify({ url: testUrl.trim() }) }
+      ),
+    onSuccess: (r) =>
+      setTestResult(
+        r.ok
+          ? `ok: ${r.chars.toLocaleString()} chars via ${r.strategy ?? "direct scrape"}` +
+              (r.title ? ` -- ${r.title}` : "")
+          : `no full article: ${r.detail || "came back below the threshold"}`
+      ),
+    onError: (e) =>
+      setTestResult(
+        (e instanceof ApiError ? (e.detail as { detail?: string })?.detail : null) || "test failed"
+      ),
+  });
+
   return (
     <section className="space-y-3">
       <div className="builtin-note">
@@ -856,14 +879,16 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
         <p className="builtin-note-body">
           Built-in:{" "}
           {initial.builtin.map((b) => `${b.host} -> ${b.proxy}`).join(", ")}. Your rules
-          below win on a host collision; a "use default" row uses the strategy above.
+          below override these.
         </p>
       </div>
       <p className="text-mute text-xs">
-        When a listed host scrapes below the threshold, Audicle retries with its strategy
-        before failing the job. domain: the host to bypass. strategy: googlebot (re-fetch
-        as Googlebot), freedium (Medium mirror), custom (your own {"{url}"} template), none
-        (skip the retry and fail rather than narrate the stub).
+        List a paywalled host and how to bypass it. The default applies to any host
+        that scrapes near-empty.
+      </p>
+      <p className="text-mute text-xs">
+        Cookie jar (flaresolverr only): paste a logged-in Cookie header to fetch as a
+        subscriber. Stored masked.
       </p>
 
       <div className="flex flex-wrap items-end gap-4">
@@ -937,6 +962,16 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
                   onChange={(e) => patch({ customTemplate: e.target.value })}
                 />
               )}
+              {row.proxy === "flaresolverr" && (
+                <input
+                  className="field basis-full min-w-[12rem] font-mono"
+                  type="password"
+                  autoComplete="off"
+                  placeholder="cookie jar (optional): name=value; name2=value2"
+                  value={row.cookies}
+                  onChange={(e) => patch({ cookies: e.target.value })}
+                />
+              )}
             </div>
           );
         })}
@@ -953,6 +988,28 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
           {m.isPending ? "saving..." : "save paywall sites"}
         </button>
         {msg && <span className="font-mono text-xs text-accent">{msg}</span>}
+      </div>
+
+      <div className="space-y-1 pt-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            className="field flex-1 min-w-[12rem]"
+            placeholder="test a URL"
+            value={testUrl}
+            onChange={(e) => setTestUrl(e.target.value)}
+          />
+          <button
+            className="btn-ghost"
+            disabled={testM.isPending || !testUrl.trim()}
+            onClick={() => {
+              setTestResult(null);
+              testM.mutate();
+            }}
+          >
+            {testM.isPending ? "testing..." : "test"}
+          </button>
+        </div>
+        {testResult && <p className="text-mute text-xs font-mono">{testResult}</p>}
       </div>
     </section>
   );
@@ -978,7 +1035,7 @@ function LexiconLookup() {
     <div className="flex flex-wrap items-center gap-2">
       <input
         className="field flex-1 min-w-[8rem]"
-        placeholder="look up a word in the built-in lexicon"
+        placeholder="look up a word"
         value={q}
         onChange={(e) => {
           setResult(null);
@@ -1136,7 +1193,6 @@ function ReferenceVoiceWidget() {
           <button className="btn-ghost" onClick={audition} disabled={auditionPending}>
             {auditionPending ? "auditioning..." : "play current voice"}
           </button>
-          <span className="label">synthesize the sample with the saved voice</span>
         </div>
         {auditionUrl && (
           <div className="mt-2">

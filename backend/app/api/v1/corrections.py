@@ -47,8 +47,9 @@ def write_corrections(
                 },
             },
         )
-    # Normalize each entry through the shared converter so user rows are
-    # first-class on both engines (spoken for XTTS, ipa for the phoneme engine).
+    # Normalize each entry through the shared converter so user rows get the
+    # spoken respelling the engine consumes (the ipa column is still stored but
+    # unused now that Chatterbox is the only, text-only, engine).
     entries: dict[str, dict] = {}
     for key, value in body.items():
         if isinstance(value, str):

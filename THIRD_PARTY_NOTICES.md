@@ -43,5 +43,5 @@ Each entry records the source's license and the attribution it requires.
 ## Google WikipediaAbbreviationData
 - Project: https://github.com/google-research-datasets/WikipediaAbbreviationData
 - License: Apache-2.0
-- Use: abbreviation -> expansion pairs (ingested but applied below the XTTS
-  confidence gate, as the crowd data is noisy).
+- Use: abbreviation -> expansion pairs (ingested but applied below the
+  base-lexicon confidence gate, as the crowd data is noisy).

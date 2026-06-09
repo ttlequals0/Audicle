@@ -6,6 +6,164 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.28.1] - 2026-06-08
+
+### Changed
+
+- Trimmed the settings UI copy. The paywall, verification, and corrections sections had
+  grown into paragraph-long explanations that belong in docs, not a settings panel; each
+  is now a line or less, with the per-strategy detail left to the dropdown labels. Two
+  paywall failure messages also dropped their hedging ("likely", "or invalid").
+
+## [0.28.0] - 2026-06-08
+
+### Fixed
+
+- A paywall teaser padded with related-article chrome no longer slips through as a real
+  article. Some sites (e.g. Crain's Chicago Business) serve a one-paragraph lede plus a
+  "Recommended For You" / "Latest News" rail, and the scraped markdown clears the teaser
+  threshold on chrome alone -- so the bypass never fired and the episode was the lede read
+  aloud followed by unrelated headlines. For a host with a bypass rule, the floor decision
+  now uses the page's own JSON-LD `articleBody` length when it declares one, so the lede is
+  seen for what it is and routes to the bypass. Hosts with no rule are untouched.
+
+### Added
+
+- `archive` is a new bypass strategy and an automatic last resort. It pulls a saved copy of
+  the article from the Wayback Machine (a clean API, no bot wall, no cookies), and -- as an
+  opt-in per-host fallback -- from archive.today through FlareSolverr. When a scrape is a
+  hard block and nothing else recovered the article, a Wayback capture is tried before the
+  job fails (`ARCHIVE_FALLBACK_ENABLED`, on by default). This helps metered, soft, and older
+  articles that were archived while free; it is not a fix for a hard subscriber wall, which
+  still needs your own cookies.
+- A "test a URL" control in the paywall settings runs the saved rules against one link and
+  reports what came back -- the character count and the strategy that matched -- so you can
+  confirm a rule (and its cookie jar) actually fetches the full article. It never echoes the
+  cookie value.
+
+### Changed
+
+- A failed bypass now distinguishes an expired cookie jar from a missing one: when the
+  browser solver ran with saved cookies and still got a teaser, the job says the cookies
+  look expired or invalid and to re-paste them, rather than the generic "needs a login".
+
+## [0.27.0] - 2026-06-08
+
+### Added
+
+- Per-host cookie jar for subscriber paywalls. A `flaresolverr` rule can now carry
+  your own logged-in session cookies (`name=value; name2=value2`), and the solver
+  sends them to the target so it fetches the full article as you. This is the only
+  way past a hard subscriber wall that never serves the body to a logged-out request
+  (e.g. Crain's / Chicago Business), where a fresh solver session still just gets the
+  teaser. Set it per host in Settings under the `flaresolverr` strategy. The value is
+  a session secret: it is held with the other secrets, never logged, and reads back
+  masked once saved.
+
+### Fixed
+
+- A `flaresolverr` host rule no longer gets swallowed by its own teaser. The rule's
+  teaser floor (`min_chars`, default 3000) now gates the decision to escalate, so a
+  ~1 KB stub drops below it and the solver fires -- previously the stub cleared the
+  hard 500-char floor and was accepted before the browser fetch ever ran.
+- Reprocess and config changes now take effect on the next run. Firecrawl caches a
+  scrape by URL, so reprocessing an article (or flipping its bypass rule) could return
+  the same stale teaser; the scrape now asks for a fresh fetch (`maxAge=0`) every time.
+
+### Changed
+
+- Internal: the bypass strategies (Googlebot, Freedium, custom, FlareSolverr) now run
+  through one `Attempt` abstraction and a single dispatch loop instead of FlareSolverr
+  being a hand-coded special case. The FlareSolverr engine moved to its own
+  `flaresolverr.py` module. No behavior change -- the existing test suite passes
+  untouched -- but the cookie jar above is built cleanly on top rather than bolted on.
+
+## [0.26.0] - 2026-06-08
+
+### Changed
+
+- FlareSolverr now escalates automatically on a hard block, not just on a detected
+  Cloudflare challenge. When a scrape comes back near-empty (below
+  `MIN_EXTRACTION_CHARS`) -- the signature of a 403/IP block like the NYT, where the
+  site served almost nothing -- Audicle retries through the solver for any host with
+  `FLARESOLVERR_URL` set, no per-host rule needed. It stays bounded: a real article
+  or a partial teaser (which returns actual text) never pays for a browser solve. The
+  per-host `flaresolverr` strategy (0.25.0) remains as an explicit override.
+- Extraction failures now explain themselves. Instead of "Extracted markdown is 0
+  chars, below MIN_EXTRACTION_CHARS=500", a failed job says what kind of block it hit
+  and the fix: a hard block with no solver configured points at `FLARESOLVERR_URL`; a
+  hard block the solver couldn't clear says the site likely needs a login; a short
+  teaser suggests adding a per-host bypass. The message shows in the Home job list.
+
+## [0.25.0] - 2026-06-08
+
+### Added
+
+- `flaresolverr` is now a selectable per-host bypass strategy. Some publishers
+  hard-block the scraper's datacenter IP outright (e.g. the NYT returns a 403 to
+  datacenter IPs, so Firecrawl gets nothing and the Googlebot header trick can't
+  help). Pointing such a host at the `flaresolverr` strategy routes it through the
+  operator's FlareSolverr, which fetches the page with a real browser from a
+  residential IP -- where the publisher serves the article normally. This is in
+  addition to the automatic challenge-gated FlareSolverr escalation (0.22.0); the
+  per-host strategy fires regardless of challenge detection, so it covers plain
+  403/IP blocks that aren't a Cloudflare interstitial. Needs `FLARESOLVERR_URL` set.
+
+## [0.24.0] - 2026-06-08
+
+### Changed
+
+- The global default bypass proxy now applies to every article, not only to hosts
+  with an explicit rule. When a direct scrape comes back near-empty (below
+  `MIN_EXTRACTION_CHARS`) and no per-host rule matches, Audicle retries through the
+  configured default proxy (e.g. the built-in Googlebot fetch) for any host -- so a
+  hard-blocked paywall no longer fails silently just because it had no rule. Per-host
+  rules are overrides: they win on host match, keep their higher teaser floor (to
+  catch partial teasers), and a rule with `proxy=none` opts a host out. A
+  legitimately short article (at or above the floor) is returned as-is, so the global
+  proxy never fires on normal content. The FlareSolverr challenge escalation (0.22.0)
+  is unchanged and still runs first when a scrape looks like a bot-challenge page.
+
+## [0.23.0] - 2026-06-08
+
+### Changed
+
+- **BREAKING:** the TTS wrapper is now Chatterbox-only. The XTTS-v2 and StyleTTS2
+  engines and all of their wiring are removed: the `XTTSEngine` class, the
+  `style_engine.py` module, the `xtts`/`styletts2` install extras, and the
+  `TTS_ENGINE`, `XTTS_*`, and `STYLETTS2_*` environment variables no longer exist.
+  Operators must run the Chatterbox image (the published default); a stack pinned
+  to an XTTS or StyleTTS2 image and setting `TTS_ENGINE`/`XTTS_*`/`STYLETTS2_*` must
+  drop those vars and switch to the Chatterbox image. The wrapper no longer accepts
+  the `pronunciations` field on `/generate`, and `coqui_tts` is gone from its
+  `/health` response. Text-level lexicon corrections (the respelling path) are
+  unchanged and still applied upstream in the backend pipeline.
+
+## [0.22.0] - 2026-06-07
+
+### Added
+
+- Automatic Cloudflare/bot-challenge bypass via FlareSolverr. When a scrape comes
+  back as a challenge page (Firecrawl couldn't clear it -- "Just a moment...",
+  "Checking your browser", a Cloudflare Ray ID, etc.), Audicle re-fetches the URL
+  through an operator-run FlareSolverr and extracts the article from the solved HTML
+  with trafilatura -- for any host, no per-site rule needed. It is gated on challenge
+  detection, so a plain paywall teaser never triggers an expensive browser solve. Set
+  `FLARESOLVERR_URL` via env or live from Settings (`PUT /api/v1/settings`); unset
+  disables it. Audicle does not bundle a solver. Paywalls remain the job of the
+  per-host strategies (googlebot/freedium/custom); FlareSolverr is the separate
+  challenge escape hatch.
+
+### Changed
+
+- The extraction fallback path is now fully traceable in logs. It records which
+  bypass strategy ran for a matched host (`extraction_fallback_start`), when a
+  fallback ran but still came back below the floor (`extraction_fallback_short`,
+  previously silent -- a hard subscription paywall that ignores the Googlebot
+  fetch looked like nothing happened), and when a short scrape had no matching
+  rule (`extraction_no_fallback_rule`). "Why did the proxy not help" is now
+  answerable from logs alone.
+
 ## [0.21.2] - 2026-06-07
 
 ### Changed
