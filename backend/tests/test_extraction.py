@@ -665,7 +665,7 @@ async def test_too_short_message_hard_block_solver_failed(
         _flaresolverr_ok(""),  # solver returns empty HTML -> nothing extracted
     )
     _patch_async_client(monkeypatch, transport)
-    with pytest.raises(extraction.ExtractionTooShortError, match="browser bypass couldn't get"):
+    with pytest.raises(extraction.ExtractionTooShortError, match="browser bypass got only a teaser"):
         await extraction.extract("https://hardblock.test/a", get_settings())
 
 
@@ -850,5 +850,5 @@ async def test_too_short_message_solver_with_cookies_suggests_expired(
     transport = _stub_transport(_ok_response("Access Denied"), _flaresolverr_ok(""))
     _patch_async_client(monkeypatch, transport)
     registry = (SourceFallback("op", ("gated.test",), "flaresolverr", "", 3000, cookies="sid=abc"),)
-    with pytest.raises(extraction.ExtractionTooShortError, match="expired or invalid"):
+    with pytest.raises(extraction.ExtractionTooShortError, match="probably expired"):
         await extraction.extract("https://gated.test/a", get_settings(), registry=registry)

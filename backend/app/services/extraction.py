@@ -238,12 +238,12 @@ def _too_short_message(
     if solver_tried:
         if cookies_present:
             return (
-                "Blocked: the browser bypass ran with your saved cookies but still got a "
-                "teaser. They're likely expired or invalid -- re-paste them in Settings."
+                "Still paywalled: the browser bypass used your saved cookies but got only a "
+                "teaser. They're probably expired -- re-paste them in Settings."
             )
         return (
-            "Blocked: the browser bypass couldn't get the article. The site likely needs "
-            "a login -- add your subscriber cookies for it in Settings."
+            "Still paywalled: the browser bypass got only a teaser. This site needs a login "
+            "-- add its subscriber cookies in Settings."
         )
     if best_chars < settings.MIN_EXTRACTION_CHARS:
         return (

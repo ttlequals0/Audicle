@@ -6,6 +6,15 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.28.1] - 2026-06-08
+
+### Changed
+
+- Trimmed the settings UI copy. The paywall, verification, and corrections sections had
+  grown into paragraph-long explanations that belong in docs, not a settings panel; each
+  is now a line or less, with the per-strategy detail left to the dropdown labels. Two
+  paywall failure messages also dropped their hedging ("likely", "or invalid").
+
 ## [0.28.0] - 2026-06-08
 
 ### Fixed
