@@ -68,8 +68,8 @@ async def extract(
     # SSRF chokepoint for every extraction path (pipeline worker + the
     # /source-fallbacks/test endpoint): refuse a URL whose host resolves to a
     # non-public address before any fetch. The submit endpoint blocks this at
-    # enqueue too; this is the defense-in-depth backstop. The resolved IP is not
-    # surfaced in the message (the test endpoint echoes str(exc)). Only a
+    # enqueue too; this is the defense-in-depth backstop. The resolved IP is
+    # deliberately not surfaced in the raised message. Only a
     # confirmed non-public address is a permanent block -- a resolution failure
     # (transient DNS, NXDOMAIN) falls through to the normal Firecrawl path, which
     # has its own retry/timeout handling, so a DNS blip isn't a permanent failure.

@@ -13,7 +13,7 @@ RUN npm run build
 
 # ---- Stage 2: uv builder ----
 # Pin uv to a single tag for reproducibility; bump deliberately.
-FROM ghcr.io/astral-sh/uv:0.11.17 AS uv
+FROM ghcr.io/astral-sh/uv:0.11.19 AS uv
 
 # ---- Stage 3: Python runtime ----
 FROM python:3.14-slim AS runtime
@@ -25,6 +25,7 @@ ENV PYTHONUNBUFFERED=1 \
     PATH=/opt/venv/bin:$PATH
 
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
          curl \
          ca-certificates \

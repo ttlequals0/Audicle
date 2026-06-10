@@ -185,6 +185,26 @@ def test_test_endpoint_reports_chars_without_leaking_cookies(
     assert "secret123" not in resp.text  # the cookie value is never echoed
 
 
+def test_test_endpoint_does_not_leak_exception_text_on_failure(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # On an extraction failure the response carries a fixed message, not the
+    # exception text, so internal detail can't leak to the client.
+    from app.api.v1 import source_fallbacks as routes
+
+    async def _boom(*_a, **_k):
+        raise routes.extraction.ExtractionPermanentError("internal-secret-detail-xyz")
+
+    monkeypatch.setattr(routes.extraction, "extract", _boom)
+    with client:
+        resp = client.post("/api/v1/source-fallbacks/test", json={"url": "https://example.test/a"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["detail"] == "Extraction failed for this URL; see server logs for the reason."
+    assert "internal-secret-detail-xyz" not in resp.text
+
+
 def test_test_endpoint_requires_a_url(client: TestClient) -> None:
     with client:
         resp = client.post("/api/v1/source-fallbacks/test", json={})

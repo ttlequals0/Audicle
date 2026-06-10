@@ -8,6 +8,7 @@ extraction time. Admin-gated by the ``/api/v1`` router group.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from typing import Annotated, Any
 
@@ -17,6 +18,8 @@ from pydantic import AnyHttpUrl
 from app.api.deps import get_conn
 from app.config import Settings, get_settings
 from app.services import extraction, runtime_settings, source_fallbacks, source_fallbacks_store
+
+logger = logging.getLogger("app.api.v1.source_fallbacks")
 
 router = APIRouter(tags=["source-fallbacks"])
 
@@ -106,7 +109,24 @@ async def test_source_fallback(
     try:
         result = await extraction.extract(url, settings, registry)
     except extraction.ExtractionError as exc:
-        return {"ok": False, "chars": 0, "strategy": strategy, "detail": str(exc), "sample": ""}
+        # Log the specific reason server-side; the response carries a fixed message
+        # rather than the exception text so internal detail can't leak to the client
+        # (CodeQL py/stack-trace-exposure). The operator reads the reason from logs.
+        logger.warning(
+            "Source-fallback test extraction failed",
+            extra={
+                "event": "source_fallback_test_failed",
+                "error_class": type(exc).__name__,
+                "error": str(exc),
+            },
+        )
+        return {
+            "ok": False,
+            "chars": 0,
+            "strategy": strategy,
+            "detail": "Extraction failed for this URL; see server logs for the reason.",
+            "sample": "",
+        }
     return {
         "ok": True,
         "chars": len(result.markdown),
