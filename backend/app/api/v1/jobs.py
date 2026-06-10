@@ -6,13 +6,13 @@ filters by ``queued``/``processing``/``done``/``failed``; omit to list all.
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, ConfigDict
 
-from app.config import Settings, get_settings
-from app.core import database
+from app.api.deps import get_conn
 
 router = APIRouter(tags=["jobs"])
 
@@ -41,27 +41,26 @@ class JobListItem(BaseModel):
 )
 async def list_jobs(
     response: Response,
-    settings: Annotated[Settings, Depends(get_settings)],
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
     status: Annotated[_StatusFilter | None, Query()] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     per_page: Annotated[int, Query(ge=1, le=500)] = 50,
 ) -> list[JobListItem]:
     offset = (page - 1) * per_page
-    with database.connection(settings.DATA_DIR) as conn:
-        if status is None:
-            total = conn.execute("SELECT COUNT(*) AS n FROM jobs").fetchone()["n"]
-            page_rows = conn.execute(
-                "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (per_page, offset),
-            ).fetchall()
-        else:
-            total = conn.execute(
-                "SELECT COUNT(*) AS n FROM jobs WHERE status = ?", (status,)
-            ).fetchone()["n"]
-            page_rows = conn.execute(
-                "SELECT * FROM jobs WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (status, per_page, offset),
-            ).fetchall()
+    if status is None:
+        total = conn.execute("SELECT COUNT(*) AS n FROM jobs").fetchone()["n"]
+        page_rows = conn.execute(
+            "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (per_page, offset),
+        ).fetchall()
+    else:
+        total = conn.execute(
+            "SELECT COUNT(*) AS n FROM jobs WHERE status = ?", (status,)
+        ).fetchone()["n"]
+        page_rows = conn.execute(
+            "SELECT * FROM jobs WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (status, per_page, offset),
+        ).fetchall()
     response.headers["X-Total-Count"] = str(total)
     return [
         JobListItem(

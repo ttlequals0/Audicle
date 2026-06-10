@@ -57,6 +57,19 @@ def test_extract_clean_output_slices_between_markers() -> None:
     )
 
 
+def test_extract_clean_output_stops_at_first_end_marker() -> None:
+    # Model emits the end marker, then trailing slop that repeats the end token.
+    # The slice must stop at the FIRST end marker, not the last (rfind would keep
+    # the intervening slop).
+    raw = (
+        "<<<AUDICLE_BEGIN>>>\nThe mayor announced the budget today.\n<<<AUDICLE_END>>>\n"
+        "Want me to do another? <<<AUDICLE_END>>>"
+    )
+    assert (
+        cleanup_output.extract_clean_output(raw) == "The mayor announced the budget today."
+    )
+
+
 def test_extract_clean_output_open_marker_only() -> None:
     # A truncated response missing the closing marker keeps everything after the
     # opening marker rather than losing the window.

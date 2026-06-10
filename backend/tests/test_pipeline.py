@@ -305,12 +305,12 @@ def _stub_artwork_download(monkeypatch: pytest.MonkeyPatch, png_bytes: bytes) ->
 
     monkeypatch.setattr(httpx, "AsyncClient", factory)
 
-    from app.services import artwork as _artwork
+    from app.services import ssrf as _ssrf
 
     async def _stub_resolve(_host: str) -> str:
         return "203.0.113.1"
 
-    monkeypatch.setattr(_artwork, "_resolve_public_host", _stub_resolve)
+    monkeypatch.setattr(_ssrf, "resolve_public_host", _stub_resolve)
 
 
 def _png_bytes(size: int = 800) -> bytes:

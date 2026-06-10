@@ -8,13 +8,14 @@ extraction time. Admin-gated by the ``/api/v1`` router group.
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import AnyHttpUrl
 
+from app.api.deps import get_conn
 from app.config import Settings, get_settings
-from app.core import database
 from app.services import extraction, runtime_settings, source_fallbacks, source_fallbacks_store
 
 router = APIRouter(tags=["source-fallbacks"])
@@ -52,31 +53,29 @@ def _masked_response(config: dict[str, Any]) -> dict[str, Any]:
 
 @router.get("/source-fallbacks", summary="Read paywall extraction fallback config")
 def read_source_fallbacks(
-    settings: Annotated[Settings, Depends(get_settings)],
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
 ) -> dict[str, Any]:
-    with database.connection(settings.DATA_DIR) as conn:
-        return _masked_response(source_fallbacks_store.load(conn))
+    return _masked_response(source_fallbacks_store.load(conn))
 
 
 @router.put("/source-fallbacks", summary="Replace paywall extraction fallback config")
 def write_source_fallbacks(
     body: dict[str, Any],
-    settings: Annotated[Settings, Depends(get_settings)],
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
 ) -> dict[str, Any]:
     try:
-        with database.connection(settings.DATA_DIR) as conn:
-            # A rule that sends back the mask sentinel keeps its stored cookies (the UI
-            # never saw the real value); any other value (new cookies, or "" to clear)
-            # is taken as-is.
-            stored = {
-                rule["host"]: rule.get("cookies", "")
-                for rule in source_fallbacks_store.load(conn).get("rules", [])
-            }
-            rules_in = body.get("rules")
-            for rule in rules_in if isinstance(rules_in, list) else []:
-                if isinstance(rule, dict) and rule.get("cookies") == runtime_settings.MASK_SENTINEL:
-                    rule["cookies"] = stored.get(str(rule.get("host", "")).strip().lower(), "")
-            saved = source_fallbacks_store.save(conn, body)
+        # A rule that sends back the mask sentinel keeps its stored cookies (the UI
+        # never saw the real value); any other value (new cookies, or "" to clear)
+        # is taken as-is.
+        stored = {
+            rule["host"]: rule.get("cookies", "")
+            for rule in source_fallbacks_store.load(conn).get("rules", [])
+        }
+        rules_in = body.get("rules")
+        for rule in rules_in if isinstance(rules_in, list) else []:
+            if isinstance(rule, dict) and rule.get("cookies") == runtime_settings.MASK_SENTINEL:
+                rule["cookies"] = stored.get(str(rule.get("host", "")).strip().lower(), "")
+        saved = source_fallbacks_store.save(conn, body)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _masked_response(saved)

@@ -61,7 +61,7 @@ async def check_firecrawl(settings: Settings, *, timeout: float = 5.0) -> CheckR
                     ok=True,
                     detail=f"HTTP {response.status_code} from {endpoint.split(base)[1] or '/'}",
                 )
-            last_detail = f"HTTP {response.status_code}: {response.text[:120]}"
+            last_detail = f"HTTP {response.status_code}: {response.content[:120].decode(errors='replace')}"
 
     return CheckResult(name="firecrawl", ok=False, detail=last_detail)
 
@@ -110,7 +110,7 @@ async def check_llm(settings: Settings, *, timeout: float = 5.0) -> CheckResult:
     return CheckResult(
         name="llm",
         ok=False,
-        detail=f"HTTP {response.status_code}: {response.text[:120]}",
+        detail=f"HTTP {response.status_code}: {response.content[:120].decode(errors='replace')}",
     )
 
 

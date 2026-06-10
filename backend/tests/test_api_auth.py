@@ -45,6 +45,25 @@ def _client() -> TestClient:
     return TestClient(create_app())
 
 
+def test_login_rate_limit_uses_config_value(
+    monkeypatch: pytest.MonkeyPatch, env: Path
+) -> None:
+    """LOGIN_RATE_LIMIT now drives the limiter: a 2/minute limit blocks the third
+    attempt with 429 (the limiter fronts the route before the password check)."""
+
+    monkeypatch.setenv("LOGIN_RATE_LIMIT", "2/minute")
+    get_settings.cache_clear()
+    database.run_migrations(env)
+    _set_password(env, PASSWORD)
+    with _client() as client:
+        first = client.post("/api/v1/auth/login", json={"password": "wrong"})
+        second = client.post("/api/v1/auth/login", json={"password": "wrong"})
+        third = client.post("/api/v1/auth/login", json={"password": "wrong"})
+    assert first.status_code == 401
+    assert second.status_code == 401
+    assert third.status_code == 429
+
+
 def test_login_returns_200_and_csrf_token_on_success(auth_env) -> None:
     with _client() as client:
         response = client.post("/api/v1/auth/login", json=auth_env)

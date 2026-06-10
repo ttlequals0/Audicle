@@ -9,26 +9,34 @@ issued on login/status for the UI to echo on mutating requests.
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from slowapi import Limiter
-from slowapi.util import get_remote_address
 
-from app.api.deps import SESSION_KEY_USER
+from app.api.deps import SESSION_KEY_USER, client_ip, get_conn
 from app.config import Settings, get_settings
-from app.core import database
 from app.services import auth, csrf
-
-# Per-IP rate limit fronting the bcrypt + lockout machinery (LOGIN_RATE_LIMIT).
-_LOGIN_LIMITER = Limiter(key_func=get_remote_address)
-
-router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 def _client_id(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
+    # Proxy-aware client identity, shared by the rate-limit bucket key and the
+    # lockout identifier (see config.TRUST_PROXY_HEADERS), so the two can't drift.
+    return client_ip(request, get_settings())
+
+
+def _login_rate_limit() -> str:
+    # Resolved per request (slowapi dynamic limit) so the LOGIN_RATE_LIMIT setting
+    # (env / .env) actually drives the limiter instead of a hardcoded decorator value.
+    return get_settings().LOGIN_RATE_LIMIT
+
+
+# Per-IP rate limit fronting the bcrypt + lockout machinery.
+_LOGIN_LIMITER = Limiter(key_func=_client_id)
+
+router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 def _verify_or_raise(conn, *, password, request, settings, invalid_detail) -> None:
@@ -78,10 +86,9 @@ class AuthActionResponse(BaseModel):
 @router.get("/status", response_model=StatusResponse)
 async def get_status(
     request: Request,
-    settings: Annotated[Settings, Depends(get_settings)],
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
 ) -> StatusResponse:
-    with database.connection(settings.DATA_DIR) as conn:
-        password_set = auth.is_password_set(conn)
+    password_set = auth.is_password_set(conn)
     # Convenience mode (no password) reports authenticated=true.
     authenticated = (not password_set) or bool(request.session.get(SESSION_KEY_USER))
     csrf_token = request.cookies.get(csrf.CSRF_COOKIE_NAME) if authenticated else None
@@ -91,23 +98,23 @@ async def get_status(
 
 
 @router.post("/login", response_model=AuthActionResponse)
-@_LOGIN_LIMITER.limit("10/minute")
+@_LOGIN_LIMITER.limit(_login_rate_limit)
 async def post_login(
     request: Request,
     response: Response,
     payload: LoginRequest,
     settings: Annotated[Settings, Depends(get_settings)],
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
 ) -> AuthActionResponse:
-    with database.connection(settings.DATA_DIR) as conn:
-        if not auth.is_password_set(conn):
-            raise HTTPException(status_code=400, detail="no password is set; auth is open")
-        _verify_or_raise(
-            conn,
-            password=payload.password,
-            request=request,
-            settings=settings,
-            invalid_detail="invalid password",
-        )
+    if not auth.is_password_set(conn):
+        raise HTTPException(status_code=400, detail="no password is set; auth is open")
+    _verify_or_raise(
+        conn,
+        password=payload.password,
+        request=request,
+        settings=settings,
+        invalid_detail="invalid password",
+    )
 
     request.session[SESSION_KEY_USER] = "admin"
     token = _set_csrf_cookie(response, settings)
@@ -127,35 +134,35 @@ async def put_password(
     response: Response,
     payload: PasswordRequest,
     settings: Annotated[Settings, Depends(get_settings)],
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
 ) -> AuthActionResponse:
-    with database.connection(settings.DATA_DIR) as conn:
-        already_set = auth.is_password_set(conn)
-        # Changing an existing password requires the current one; first-time set
-        # in convenience mode does not.
-        if already_set:
-            if not payload.current_password:
-                raise HTTPException(status_code=400, detail="current_password is required")
-            _verify_or_raise(
-                conn,
-                password=payload.current_password,
-                request=request,
-                settings=settings,
-                invalid_detail="current password is incorrect",
-            )
+    already_set = auth.is_password_set(conn)
+    # Changing an existing password requires the current one; first-time set
+    # in convenience mode does not.
+    if already_set:
+        if not payload.current_password:
+            raise HTTPException(status_code=400, detail="current_password is required")
+        _verify_or_raise(
+            conn,
+            password=payload.current_password,
+            request=request,
+            settings=settings,
+            invalid_detail="current password is incorrect",
+        )
 
-        new_password = payload.new_password
-        if new_password == "":
-            auth.clear_password(conn)
-            request.session.clear()
-            response.delete_cookie(csrf.CSRF_COOKIE_NAME)
-            return AuthActionResponse(authenticated=True, password_set=False)
+    new_password = payload.new_password
+    if new_password == "":
+        auth.clear_password(conn)
+        request.session.clear()
+        response.delete_cookie(csrf.CSRF_COOKIE_NAME)
+        return AuthActionResponse(authenticated=True, password_set=False)
 
-        if len(new_password) < auth.MIN_PASSWORD_LENGTH:
-            raise HTTPException(
-                status_code=400,
-                detail=f"password must be at least {auth.MIN_PASSWORD_LENGTH} characters",
-            )
-        auth.set_password(conn, new_password)
+    if len(new_password) < auth.MIN_PASSWORD_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"password must be at least {auth.MIN_PASSWORD_LENGTH} characters",
+        )
+    auth.set_password(conn, new_password)
 
     # Setting a password logs this session in.
     request.session[SESSION_KEY_USER] = "admin"
@@ -170,7 +177,9 @@ def _set_csrf_cookie(response: Response, settings: Settings) -> str:
         value=token,
         max_age=settings.SESSION_COOKIE_MAX_AGE_SECONDS,
         secure=settings.SESSION_COOKIE_SECURE,
-        httponly=False,  # the UI reads this to echo into X-CSRF-Token
+        # Deliberately readable by JS: the double-submit CSRF pattern requires the
+        # SPA to read this token and echo it into the X-CSRF-Token header. Not a leak.
+        httponly=False,
         samesite="lax",
     )
     return token

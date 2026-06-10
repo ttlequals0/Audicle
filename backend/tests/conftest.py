@@ -29,6 +29,31 @@ _REQUIRED = {
 }
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers",
+        "real_ssrf: run with the real SSRF resolver instead of the public-IP stub",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _stub_ssrf_resolver(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Most tests submit placeholder URLs (``example.test``) that don't resolve;
+    the SSRF guard on /submit and in extraction would reject them on DNS failure.
+    Stub the resolver to a public IP so the guard passes through. Tests that
+    exercise the guard itself opt out with the ``real_ssrf`` marker."""
+
+    if request.node.get_closest_marker("real_ssrf"):
+        return
+
+    from app.services import ssrf
+
+    async def _resolve_public(_host: str) -> str:
+        return "203.0.113.1"
+
+    monkeypatch.setattr(ssrf, "resolve_public_host", _resolve_public)
+
+
 @pytest.fixture(autouse=True)
 def _reset_login_rate_limiter():
     """The slowapi limiter on the login route is a module-level singleton;

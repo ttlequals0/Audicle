@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.20.1
+  version: 0.29.0
 paths:
   /health/live:
     get:
@@ -401,6 +401,45 @@ paths:
                 additionalProperties: true
                 type: object
                 title: Response Write Source Fallbacks Api V1 Source Fallbacks Put
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/source-fallbacks/test:
+    post:
+      tags:
+      - source-fallbacks
+      summary: Test the bypass config against one URL
+      description: 'Run the stored bypass config against ``url`` once and report what
+        came back, so
+
+        the operator can confirm a rule (and its cookie jar) actually fetches the
+        article.
+
+        Uses the real stored cookies but never echoes them -- only a char count, the
+
+        strategy that matched, and a short text sample of the extracted article.'
+      operationId: test_source_fallback_api_v1_source_fallbacks_test_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: true
+              type: object
+              title: Body
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Test Source Fallback Api V1 Source Fallbacks Test
+                  Post
         '422':
           description: Validation Error
           content:
@@ -809,11 +848,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /rss/{slug}.xml:
-    head:
+    get:
       tags:
       - rss
       summary: Get Rss
-      operationId: get_rss_rss__slug__xml_head
+      operationId: get_rss_rss__slug__xml_get
       parameters:
       - name: slug
         in: path
@@ -849,11 +888,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    get:
+    head:
       tags:
       - rss
       summary: Get Rss
-      operationId: get_rss_rss__slug__xml_head
+      operationId: get_rss_rss__slug__xml_get
       parameters:
       - name: slug
         in: path
@@ -890,11 +929,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.mp3:
-    head:
+    get:
       tags:
       - media
       summary: Get Mp3
-      operationId: get_mp3_media__episode_id__mp3_head
+      operationId: get_mp3_media__episode_id__mp3_get
       parameters:
       - name: episode_id
         in: path
@@ -914,11 +953,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    get:
+    head:
       tags:
       - media
       summary: Get Mp3
-      operationId: get_mp3_media__episode_id__mp3_head
+      operationId: get_mp3_media__episode_id__mp3_get
       parameters:
       - name: episode_id
         in: path
@@ -939,11 +978,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.jpg:
-    head:
+    get:
       tags:
       - media
       summary: Get Jpg
-      operationId: get_jpg_media__episode_id__jpg_head
+      operationId: get_jpg_media__episode_id__jpg_get
       parameters:
       - name: episode_id
         in: path
@@ -963,11 +1002,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    get:
+    head:
       tags:
       - media
       summary: Get Jpg
-      operationId: get_jpg_media__episode_id__jpg_head
+      operationId: get_jpg_media__episode_id__jpg_get
       parameters:
       - name: episode_id
         in: path
@@ -988,11 +1027,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.vtt:
-    head:
+    get:
       tags:
       - media
       summary: Get Vtt
-      operationId: get_vtt_media__episode_id__vtt_head
+      operationId: get_vtt_media__episode_id__vtt_get
       parameters:
       - name: episode_id
         in: path
@@ -1012,11 +1051,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    get:
+    head:
       tags:
       - media
       summary: Get Vtt
-      operationId: get_vtt_media__episode_id__vtt_head
+      operationId: get_vtt_media__episode_id__vtt_get
       parameters:
       - name: episode_id
         in: path
@@ -1037,7 +1076,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.txt:
-    head:
+    get:
       tags:
       - media
       summary: Get Cleaned Text
@@ -1045,7 +1084,7 @@ paths:
         the
 
         ``cleaned_text`` column. 404 for episodes processed before 0.6.0 (NULL).'
-      operationId: get_cleaned_text_media__episode_id__txt_head
+      operationId: get_cleaned_text_media__episode_id__txt_get
       parameters:
       - name: episode_id
         in: path
@@ -1065,7 +1104,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    get:
+    head:
       tags:
       - media
       summary: Get Cleaned Text
@@ -1073,7 +1112,7 @@ paths:
         the
 
         ``cleaned_text`` column. 404 for episodes processed before 0.6.0 (NULL).'
-      operationId: get_cleaned_text_media__episode_id__txt_head
+      operationId: get_cleaned_text_media__episode_id__txt_get
       parameters:
       - name: episode_id
         in: path

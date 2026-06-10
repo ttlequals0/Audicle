@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.config import Settings, get_settings
-from app.core import database
+from app.api.deps import get_conn
 from app.services import jobs
 
 router = APIRouter(tags=["jobs"])
@@ -32,13 +32,9 @@ class StatusResponse(BaseModel):
 )
 def status(
     job_id: str,
-    settings: Annotated[Settings, Depends(get_settings)],
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
 ) -> StatusResponse:
-    conn = database.connect(database.db_path(settings.DATA_DIR))
-    try:
-        job = jobs.get_job(conn, job_id)
-    finally:
-        conn.close()
+    job = jobs.get_job(conn, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return StatusResponse(**jobs.job_as_dict(job))

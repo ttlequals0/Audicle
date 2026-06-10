@@ -10,13 +10,14 @@ existing subscribers, hence the confirm gate.
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.api.deps import get_conn
 from app.config import Settings, get_settings
-from app.core import database
 from app.services import settings_store
 
 router = APIRouter(tags=["maintenance"])
@@ -34,6 +35,7 @@ class FeedRecreateResponse(BaseModel):
     response_model=FeedRecreateResponse,
 )
 async def post_feed_recreate(
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
     settings: Annotated[Settings, Depends(get_settings)],
     confirm: Annotated[
         bool,
@@ -45,6 +47,5 @@ async def post_feed_recreate(
             status_code=400,
             detail="confirm=true is required to acknowledge the disruptive action",
         )
-    with database.connection(settings.DATA_DIR) as conn:
-        guid, epoch = settings_store.rotate_feed_guids(conn, settings.BASE_URL)
+    guid, epoch = settings_store.rotate_feed_guids(conn, settings.BASE_URL)
     return FeedRecreateResponse(podcast_guid=guid, guid_epoch=epoch)

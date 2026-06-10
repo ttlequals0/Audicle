@@ -23,7 +23,7 @@ from tenacity import (
 )
 
 from app.config import Settings
-from app.services import archive, flaresolverr
+from app.services import archive, flaresolverr, ssrf
 
 # Re-exported so existing ``extraction.ExtractionResult`` / ``extraction.ExtractionTooShortError``
 # references (pipeline, tests) keep working now that the types live in extraction_types, which
@@ -64,6 +64,22 @@ async def extract(
         ExtractionPermanentError: 4xx, malformed JSON, or other non-retryable.
         ExtractionTooShortError: no candidate cleared the minimum length.
     """
+
+    # SSRF chokepoint for every extraction path (pipeline worker + the
+    # /source-fallbacks/test endpoint): refuse a URL whose host resolves to a
+    # non-public address before any fetch. The submit endpoint blocks this at
+    # enqueue too; this is the defense-in-depth backstop. The resolved IP is not
+    # surfaced in the message (the test endpoint echoes str(exc)). Only a
+    # confirmed non-public address is a permanent block -- a resolution failure
+    # (transient DNS, NXDOMAIN) falls through to the normal Firecrawl path, which
+    # has its own retry/timeout handling, so a DNS blip isn't a permanent failure.
+    try:
+        await ssrf.assert_url_public(url)
+    except ssrf.BlockedHostError as exc:
+        if exc.blocked:
+            raise ExtractionPermanentError(
+                "The article URL resolves to a non-public address and was blocked."
+            ) from exc
 
     # A matched rule (per-host override or the global-default catch-all) raises the
     # bar (teasers clear the global floor) and supplies the bypass attempts.

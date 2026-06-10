@@ -14,11 +14,8 @@ episodes whose row has ``artwork_path = NULL``.
 
 from __future__ import annotations
 
-import asyncio
 import io
-import ipaddress
 import logging
-import socket
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -28,6 +25,7 @@ import httpx
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from app.config import Settings
+from app.services import ssrf
 from app.services.atomic_write import write_bytes_atomic
 
 logger = logging.getLogger("app.services.artwork")
@@ -69,7 +67,7 @@ async def process_artwork(
 
     try:
         data = await _download(source_url, settings)
-    except _BlockedHostError as exc:
+    except ssrf.BlockedHostError as exc:
         _log_fallback(
             "blocked_host",
             episode_id,
@@ -237,75 +235,6 @@ def _validate_scheme(url: str) -> str | None:
     return scheme or "<empty>"
 
 
-class _BlockedHostError(RuntimeError):
-    def __init__(self, host: str, reason: str) -> None:
-        super().__init__(f"host {host!r} blocked: {reason}")
-        self.host = host
-        self.reason = reason
-
-
-def _pin_url_to_ip(url: str, ip: str) -> str:
-    """Return ``url`` rewritten so the host component is ``ip`` (literal),
-    preserving scheme, port, path, query, and fragment. IPv6 literals are
-    bracketed."""
-
-    parts = urlsplit(url)
-    netloc_host = f"[{ip}]" if ":" in ip else ip
-    netloc = f"{netloc_host}:{parts.port}" if parts.port else netloc_host
-    if parts.username or parts.password:
-        # Preserve credentials in case (operator-set basic auth).
-        userinfo = parts.username or ""
-        if parts.password:
-            userinfo += f":{parts.password}"
-        netloc = f"{userinfo}@{netloc}"
-    return parts._replace(netloc=netloc).geturl()
-
-
-async def _resolve_public_host(host: str) -> str:
-    """SSRF guard: resolve ``host`` and refuse private/loopback/link-local/
-    multicast/reserved addresses. Returns the resolved IP literal so the
-    caller can pin the connection to that IP -- closing the DNS-rebinding
-    TOCTOU where the validation lookup gets a public IP and httpx's
-    subsequent lookup gets a private one.
-
-    The returned IP literal is substituted into the URL via ``_pin_to_ip``;
-    httpx still sends the original ``Host:`` header (preserved via
-    ``Request.headers``) so the upstream sees the operator-controlled name
-    and TLS SNI works correctly.
-    """
-
-    if not host:
-        raise _BlockedHostError("", "empty hostname")
-    loop = asyncio.get_running_loop()
-    try:
-        infos = await loop.getaddrinfo(host, None, type=socket.SOCK_STREAM)
-    except socket.gaierror as exc:
-        raise _BlockedHostError(host, f"dns_resolution_failed: {exc}") from exc
-    if not infos:
-        raise _BlockedHostError(host, "dns_no_records")
-    public_ip: str | None = None
-    for info in infos:
-        sockaddr = info[4]
-        addr = sockaddr[0]
-        try:
-            ip = ipaddress.ip_address(addr)
-        except ValueError:
-            raise _BlockedHostError(host, f"invalid_ip_{addr}") from None
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_multicast
-            or ip.is_reserved
-            or ip.is_unspecified
-        ):
-            raise _BlockedHostError(host, f"non_public_address_{ip}")
-        if public_ip is None:
-            public_ip = str(ip)
-    assert public_ip is not None  # we'd have raised above
-    return public_ip
-
-
 async def _download(url: str, settings: Settings) -> bytes:
     """Download ``url`` with a hard byte cap.
 
@@ -318,7 +247,7 @@ async def _download(url: str, settings: Settings) -> bytes:
 
     parts = urlsplit(url)
     host = parts.hostname or ""
-    pinned_ip = await _resolve_public_host(host)
+    pinned_ip = await ssrf.resolve_public_host(host)
 
     # Closes the DNS-rebinding TOCTOU: a hostile DNS server could otherwise
     # answer the resolver check with a public IP and httpx's subsequent
@@ -328,7 +257,7 @@ async def _download(url: str, settings: Settings) -> bytes:
     # the TLS SNI from the URL host, which is now an IP, so without the extension
     # the handshake carries no/wrong SNI and SNI-based hosts (every CDN) reject
     # it with SSLV3_ALERT_HANDSHAKE_FAILURE.
-    pinned_url = _pin_url_to_ip(url, pinned_ip)
+    pinned_url = ssrf.pin_url_to_ip(url, pinned_ip)
 
     async def _check_redirect(request: httpx.Request) -> None:
         # Fires for every outgoing request including redirects, so we re-run
@@ -342,7 +271,7 @@ async def _download(url: str, settings: Settings) -> bytes:
         if request.url.host == pinned_ip:
             return  # initial GET, already pinned above
         original_host = request.url.host or ""
-        redirect_ip = await _resolve_public_host(original_host)
+        redirect_ip = await ssrf.resolve_public_host(original_host)
         request.url = request.url.copy_with(host=redirect_ip)
         request.headers["Host"] = original_host
         request.extensions["sni_hostname"] = original_host

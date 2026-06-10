@@ -147,6 +147,13 @@ class Settings(BaseSettings):
     LOCKOUT_MAX_FAILED_ATTEMPTS: int = Field(default=5, ge=1, le=100)
     LOCKOUT_WINDOW_SECONDS: int = Field(default=15 * 60, ge=10)
     LOGIN_RATE_LIMIT: str = "10/minute"
+    # When true, derive the client IP for the login rate-limit and lockout from
+    # X-Forwarded-For -- the entry TRUSTED_PROXY_HOPS from the right (the hop your
+    # own proxy appended), not the client-controlled leftmost value. Leave false
+    # unless Audicle sits behind a trusted proxy: trusting the header when nothing
+    # strips it lets a client spoof its IP and evade the limit/lockout.
+    TRUST_PROXY_HEADERS: bool = False
+    TRUSTED_PROXY_HOPS: int = Field(default=1, ge=1, le=10)
 
     # Cleanup prompt + pronunciation corrections.
     MAX_PROMPT_LENGTH_BYTES: int = 10240
