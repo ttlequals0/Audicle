@@ -6,6 +6,28 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.29.1] - 2026-06-10
+
+### Security
+
+- The `/source-fallbacks/test` admin endpoint no longer returns the extraction exception
+  text in its response. The failure reason is logged server-side and the response carries
+  a fixed message, so internal detail can't reach the client (CodeQL py/stack-trace-exposure).
+- The runtime image now runs `apt-get upgrade` at build so the base image picks up Debian
+  security patches, clearing the patchable openssl/libssl advisory (CVE-2026-45447) and any
+  other base package with an available fix.
+
+### Changed
+
+- Bumped the pinned `uv` builder image in the Dockerfile from 0.11.17 to 0.11.19.
+
+### Notes
+
+- Reviewed the open dependency advisories. The tts-wrapper ones (diffusers, torch, starlette)
+  are transitively pinned by `chatterbox-tts` or constrained to the GPU stack and are not
+  reachable as deployed (the wrapper runs on the internal network with no exposed ports); the
+  backend torch advisory has no patched release. These remain documented rather than force-bumped.
+
 ## [0.29.0] - 2026-06-09
 
 Security and code-audit fixes.
