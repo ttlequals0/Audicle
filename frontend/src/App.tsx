@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from "./lib/auth";
 import { api } from "./lib/api";
 import { useHealthLive } from "./lib/useHealthLive";
 import PullToRefresh from "./components/PullToRefresh";
+import OpenModeBanner from "./components/OpenModeBanner";
 import Home from "./routes/Home";
 import Feed from "./routes/Feed";
 import SettingsRoute from "./routes/Settings";
@@ -121,6 +122,8 @@ function Shell() {
         </div>
         <div className="accent-line" />
       </header>
+
+      <OpenModeBanner />
 
       <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-6 relative z-10 safe-bottom">
         <Routes>

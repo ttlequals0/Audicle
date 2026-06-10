@@ -35,6 +35,51 @@ def test_submit_rejects_invalid_url_with_400(client: TestClient) -> None:
     assert "details" in body
 
 
+def test_admin_request_opens_single_connection(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """require_admin and the handler share one request-scoped connection (get_conn),
+    so an admin POST opens exactly one connection instead of the previous two."""
+
+    calls = {"n": 0}
+    real = database.connection
+
+    def counting(*args, **kwargs):
+        calls["n"] += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(database, "connection", counting)
+    with client:
+        calls["n"] = 0  # ignore connections opened during app startup/bootstrap
+        resp = client.post("/api/v1/submit", json={"url": "https://example.test/once"})
+    assert resp.status_code == 201, resp.text
+    assert calls["n"] == 1
+
+
+@pytest.mark.real_ssrf
+def test_submit_rejects_private_host_with_400(client: TestClient) -> None:
+    """SSRF guard: a URL whose host resolves to a private address is rejected
+    before enqueue, and the resolved IP is not echoed back."""
+
+    with client:
+        response = client.post("/api/v1/submit", json={"url": "http://192.168.0.1/x"})
+    assert response.status_code == 400, response.text
+    body = response.json()
+    assert "non-public" in body["error"]
+    assert "192.168" not in response.text
+
+
+@pytest.mark.real_ssrf
+def test_submit_allows_unresolvable_host(client: TestClient) -> None:
+    """A host that can't be resolved (DNS failure) is not a confirmed-internal
+    target, so submit enqueues it rather than rejecting -- matching pre-guard
+    behavior where reachability was the worker's problem, not submit's."""
+
+    with client:
+        response = client.post("/api/v1/submit", json={"url": "http://nonexistent.invalid/x"})
+    assert response.status_code == 201, response.text
+
+
 def test_submit_rejects_inflight_duplicate_with_409(client: TestClient) -> None:
     with client:
         first = client.post("/api/v1/submit", json={"url": "https://example.test/dup"})

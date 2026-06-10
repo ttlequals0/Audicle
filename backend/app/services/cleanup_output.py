@@ -95,7 +95,10 @@ def extract_clean_output(raw: str) -> str:
     begin = text.find(BEGIN_MARKER)
     if begin != -1:
         body = text[begin + len(BEGIN_MARKER) :]
-        end = body.rfind(END_MARKER)
+        # First end marker after the begin -- the contract is "first begin, first
+        # subsequent end". rfind would keep trailing slop if the model repeated
+        # the end token inside the body.
+        end = body.find(END_MARKER)
         if end != -1:
             body = body[:end]
         result = body

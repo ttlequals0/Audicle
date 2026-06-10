@@ -11,14 +11,15 @@ no caller can use ``..`` or absolute paths to escape the media directory.
 from __future__ import annotations
 
 import re
+import sqlite3
 from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import FileResponse
 
+from app.api.deps import get_conn
 from app.config import Settings, get_settings
-from app.core import database
 from app.core.paths import media_dir
 from app.services import episodes
 
@@ -84,14 +85,10 @@ async def get_jpg(
 @router.api_route("/{episode_id}.vtt", methods=["GET", "HEAD"])
 async def get_vtt(
     episode_id: str,
-    settings: Annotated[Settings, Depends(get_settings)],
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
 ) -> Response:
     _validate_episode_id(episode_id)
-    conn = database.connect(database.db_path(settings.DATA_DIR))
-    try:
-        episode = episodes.get_by_id(conn, episode_id)
-    finally:
-        conn.close()
+    episode = episodes.get_by_id(conn, episode_id)
     if episode is None or not episode.transcript_vtt:
         raise HTTPException(status_code=404, detail="not found")
     return Response(
@@ -104,17 +101,13 @@ async def get_vtt(
 @router.api_route("/{episode_id}.txt", methods=["GET", "HEAD"])
 async def get_cleaned_text(
     episode_id: str,
-    settings: Annotated[Settings, Depends(get_settings)],
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
 ) -> Response:
     """The cleaned article text (the exact input to TTS), served from the
     ``cleaned_text`` column. 404 for episodes processed before 0.6.0 (NULL)."""
 
     _validate_episode_id(episode_id)
-    conn = database.connect(database.db_path(settings.DATA_DIR))
-    try:
-        cleaned_text = episodes.get_cleaned_text(conn, episode_id)
-    finally:
-        conn.close()
+    cleaned_text = episodes.get_cleaned_text(conn, episode_id)
     if not cleaned_text:
         raise HTTPException(status_code=404, detail="not found")
     return Response(

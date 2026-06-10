@@ -16,14 +16,15 @@ clients don't refetch the full body on every poll.
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime
 from email.utils import format_datetime, parsedate_to_datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 
+from app.api.deps import get_conn
 from app.config import Settings, get_settings
-from app.core import database
 from app.services import episodes, feed, runtime_settings, settings_store
 from app.services import slug as slug_module
 
@@ -38,6 +39,7 @@ async def get_rss(
     slug: str,
     request: Request,
     base_settings: Annotated[Settings, Depends(get_settings)],
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
     if_modified_since: Annotated[str | None, Header()] = None,
     if_none_match: Annotated[str | None, Header()] = None,
 ) -> Response:
@@ -50,11 +52,10 @@ async def get_rss(
     # 404s, per the "rename = new feed" contract.
     if slug != slug_module.feed_slug(settings.FEED_TITLE):
         raise HTTPException(status_code=404, detail="not found")
-    with database.connection(settings.DATA_DIR) as conn:
-        rows = episodes.list_published(conn)
-        latest = episodes.latest_updated_at(conn)
-        guid = settings_store.get_or_init_podcast_guid(conn, settings.BASE_URL)
-        guid_epoch = settings_store.get_feed_guid_epoch(conn)
+    rows = episodes.list_published(conn)
+    latest = episodes.latest_updated_at(conn)
+    guid = settings_store.get_or_init_podcast_guid(conn, settings.BASE_URL)
+    guid_epoch = settings_store.get_feed_guid_epoch(conn)
 
     last_build = _last_build_datetime(latest)
     etag = _feed_etag(last_build, guid_epoch, len(rows))

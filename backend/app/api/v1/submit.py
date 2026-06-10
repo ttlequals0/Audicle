@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator
 
-from app.config import Settings, get_settings
-from app.core import database
-from app.services import jobs
+from app.api.deps import get_conn
+from app.services import jobs, ssrf
 
 router = APIRouter(tags=["jobs"])
 
@@ -62,28 +62,37 @@ class SubmitResponse(BaseModel):
     response_model=SubmitResponse,
     summary="Submit an article URL for processing",
 )
-def submit(
+async def submit(
     body: SubmitRequest,
-    settings: Annotated[Settings, Depends(get_settings)],
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
 ) -> SubmitResponse:
-    conn = database.connect(database.db_path(settings.DATA_DIR))
+    # SSRF guard before enqueue: reject a URL whose host resolves to a private/
+    # loopback/reserved address so the fetcher can't be pointed at internal
+    # services. The resolved IP is deliberately not echoed back. A resolution
+    # failure (transient DNS, NXDOMAIN) is NOT a confirmed-internal target, so it
+    # is enqueued and left for the worker's fetch to handle, as before.
     try:
-        try:
-            result = jobs.create_job(conn, body.url, reprocess=body.reprocess)
-        except jobs.DuplicateSubmissionError as exc:
+        await ssrf.assert_url_public(body.url)
+    except ssrf.BlockedHostError as exc:
+        if exc.blocked:
             raise HTTPException(
-                status_code=409,
-                detail={
-                    "error": "Episode already exists",
-                    "details": {
-                        "episode_id": exc.episode_id,
-                        "reason": exc.reason,
-                        "url": body.url,
-                    },
-                },
+                status_code=400,
+                detail="The submitted URL resolves to a non-public address and was blocked.",
             ) from exc
-    finally:
-        conn.close()
+    try:
+        result = jobs.create_job(conn, body.url, reprocess=body.reprocess)
+    except jobs.DuplicateSubmissionError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "Episode already exists",
+                "details": {
+                    "episode_id": exc.episode_id,
+                    "reason": exc.reason,
+                    "url": body.url,
+                },
+            },
+        ) from exc
     return SubmitResponse(
         job_id=result.job.id,
         episode_id=result.job.episode_id,

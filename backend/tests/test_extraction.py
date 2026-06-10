@@ -852,3 +852,14 @@ async def test_too_short_message_solver_with_cookies_suggests_expired(
     registry = (SourceFallback("op", ("gated.test",), "flaresolverr", "", 3000, cookies="sid=abc"),)
     with pytest.raises(extraction.ExtractionTooShortError, match="probably expired"):
         await extraction.extract("https://gated.test/a", get_settings(), registry=registry)
+
+
+@pytest.mark.real_ssrf
+async def test_extract_blocks_private_host_url() -> None:
+    """SSRF chokepoint: a URL resolving to a private address is refused before any
+    fetch, with a message that does not leak the resolved IP."""
+
+    with pytest.raises(extraction.ExtractionPermanentError) as excinfo:
+        await extraction.extract("http://192.168.0.1/x", get_settings())
+    assert "non-public" in str(excinfo.value)
+    assert "192.168" not in str(excinfo.value)

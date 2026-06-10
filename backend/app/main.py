@@ -50,7 +50,7 @@ def create_app() -> FastAPI:
         openapi_url="/api/v1/openapi.json",
     )
     _attach_session_middleware(app, settings)
-    _attach_rate_limiter(app, settings)
+    _attach_rate_limiter(app)
     # Always on, added last so it wraps the others: request_id is set + the timer
     # starts before any inner middleware/handler runs.
     app.add_middleware(AccessLogMiddleware)
@@ -171,17 +171,16 @@ def _attach_session_middleware(app: FastAPI, settings: Settings) -> None:
     )
 
 
-def _attach_rate_limiter(app: FastAPI, settings: Settings) -> None:
-    # The auth router instantiates its own module-level limiter so the
-    # decorator can resolve at import time; hook the same instance into
-    # ``app.state.limiter`` so slowapi's request middleware finds it.
+def _attach_rate_limiter(app: FastAPI) -> None:
+    # The auth router instantiates its own module-level limiter; hook the same
+    # instance into ``app.state.limiter`` so slowapi's request middleware finds
+    # it. The limit string and client key both resolve per request (see auth.py),
+    # so LOGIN_RATE_LIMIT and TRUST_PROXY_HEADERS take effect live.
     app.state.limiter = _LOGIN_LIMITER
 
     @app.exception_handler(RateLimitExceeded)
     async def _rate_limit_handler(_request, exc):
         return envelope(status=429, error="rate limit exceeded")
-
-    _ = settings  # LOGIN_RATE_LIMIT is currently advisory; see auth.py
 
 
 app = create_app()

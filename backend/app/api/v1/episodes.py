@@ -7,13 +7,14 @@ the DB row + on-disk media via the existing retention helpers.
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.api.deps import get_conn
 from app.config import Settings, get_settings
-from app.core import database
 from app.core.paths import media_dir
 from app.services import episodes as episodes_service
 from app.services.retention import _remove_path
@@ -45,18 +46,17 @@ class EpisodeListItem(BaseModel):
 )
 async def list_episodes(
     response: Response,
-    settings: Annotated[Settings, Depends(get_settings)],
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
     page: Annotated[int, Query(ge=1)] = 1,
     per_page: Annotated[int, Query(ge=1, le=500)] = 50,
 ) -> list[EpisodeListItem]:
-    with database.connection(settings.DATA_DIR) as conn:
-        total = episodes_service.count_published(conn)
-        page_rows = episodes_service.list_published_page(
-            conn, limit=per_page, offset=(page - 1) * per_page
-        )
-        with_text = episodes_service.ids_with_cleaned_text(
-            conn, [ep.id for ep in page_rows]
-        )
+    total = episodes_service.count_published(conn)
+    page_rows = episodes_service.list_published_page(
+        conn, limit=per_page, offset=(page - 1) * per_page
+    )
+    with_text = episodes_service.ids_with_cleaned_text(
+        conn, [ep.id for ep in page_rows]
+    )
     response.headers["X-Total-Count"] = str(total)
     return [
         EpisodeListItem(
@@ -89,17 +89,14 @@ class DeleteEpisodeResponse(BaseModel):
 )
 async def delete_episode(
     episode_id: str,
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> DeleteEpisodeResponse:
-    conn = database.connect(database.db_path(settings.DATA_DIR))
-    try:
-        episode = episodes_service.get_by_id(conn, episode_id)
-        if episode is None:
-            raise HTTPException(status_code=404, detail="episode not found")
-        conn.execute("DELETE FROM episodes WHERE id = ?", (episode_id,))
-        conn.commit()
-    finally:
-        conn.close()
+    episode = episodes_service.get_by_id(conn, episode_id)
+    if episode is None:
+        raise HTTPException(status_code=404, detail="episode not found")
+    conn.execute("DELETE FROM episodes WHERE id = ?", (episode_id,))
+    conn.commit()
     out_root = media_dir(settings)
     from pathlib import Path
 

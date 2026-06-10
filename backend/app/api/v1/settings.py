@@ -9,13 +9,14 @@ type-coerced against the ``Settings`` field annotations so a stored string
 from __future__ import annotations
 
 import json
+import sqlite3
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
 
+from app.api.deps import get_conn
 from app.config import Settings, get_settings
-from app.core import database
 from app.services import runtime_settings, settings_store, slug
 
 router = APIRouter(tags=["settings"])
@@ -41,12 +42,9 @@ class SettingsResponse(BaseModel):
 )
 async def get_settings_overrides(
     settings: Annotated[Settings, Depends(get_settings)],
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
 ) -> SettingsResponse:
-    conn = database.connect(database.db_path(settings.DATA_DIR))
-    try:
-        stored = runtime_settings.get_all(conn)
-    finally:
-        conn.close()
+    stored = runtime_settings.get_all(conn)
     return _masked_response(stored, settings)
 
 
@@ -57,6 +55,7 @@ async def get_settings_overrides(
 async def put_settings_overrides(
     payload: Annotated[dict[str, Any], Body()],
     settings: Annotated[Settings, Depends(get_settings)],
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
 ) -> SettingsResponse:
     unknown = [k for k in payload if k not in runtime_settings.ALLOWED_KEYS]
     if unknown:
@@ -66,35 +65,31 @@ async def put_settings_overrides(
                 f"unknown setting keys: {unknown}; allowed: {sorted(runtime_settings.ALLOWED_KEYS)}"
             ),
         )
-    conn = database.connect(database.db_path(settings.DATA_DIR))
-    try:
-        # The current feed slug, before applying, so a FEED_TITLE rename can be
-        # detected below. Derived live from the effective title (no stored copy
-        # to drift from the live FEED_TITLE the feed is actually served at).
-        old_slug = slug.feed_slug(_effective_title(runtime_settings.get_all(conn), settings))
+    # The current feed slug, before applying, so a FEED_TITLE rename can be
+    # detected below. Derived live from the effective title (no stored copy
+    # to drift from the live FEED_TITLE the feed is actually served at).
+    old_slug = slug.feed_slug(_effective_title(runtime_settings.get_all(conn), settings))
 
-        for key, value in payload.items():
-            if key in runtime_settings.MASKED_KEYS:
-                # Re-saving the form sends back the mask sentinel for an
-                # unchanged secret -- skip it so the stored value survives.
-                # An explicit empty string clears the override (revert to env).
-                if value == runtime_settings.MASK_SENTINEL:
-                    continue
-                if value == "":
-                    runtime_settings.delete(conn, key)
-                    continue
-            runtime_settings.set_value(conn, key, value)
+    for key, value in payload.items():
+        if key in runtime_settings.MASKED_KEYS:
+            # Re-saving the form sends back the mask sentinel for an
+            # unchanged secret -- skip it so the stored value survives.
+            # An explicit empty string clears the override (revert to env).
+            if value == runtime_settings.MASK_SENTINEL:
+                continue
+            if value == "":
+                runtime_settings.delete(conn, key)
+                continue
+        runtime_settings.set_value(conn, key, value)
 
-        stored = runtime_settings.get_all(conn)
-        # Rename = new feed: if FEED_TITLE's slug changed, rotate the channel
-        # podcast:guid and bump the epoch (which re-salts every episode <guid>),
-        # so podcast apps treat it as a fresh feed and re-download. new_slug comes
-        # from the stored value (always a coerced string), so a non-string
-        # FEED_TITLE in the payload can't reach slugify.
-        if "FEED_TITLE" in payload and slug.feed_slug(_effective_title(stored, settings)) != old_slug:
-            settings_store.rotate_feed_guids(conn, settings.BASE_URL)
-    finally:
-        conn.close()
+    stored = runtime_settings.get_all(conn)
+    # Rename = new feed: if FEED_TITLE's slug changed, rotate the channel
+    # podcast:guid and bump the epoch (which re-salts every episode <guid>),
+    # so podcast apps treat it as a fresh feed and re-download. new_slug comes
+    # from the stored value (always a coerced string), so a non-string
+    # FEED_TITLE in the payload can't reach slugify.
+    if "FEED_TITLE" in payload and slug.feed_slug(_effective_title(stored, settings)) != old_slug:
+        settings_store.rotate_feed_guids(conn, settings.BASE_URL)
     return _masked_response(stored, settings)
 
 

@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 from app.config import get_settings
-from app.services import artwork
+from app.services import artwork, ssrf
 from PIL import Image
 
 
@@ -23,11 +23,11 @@ def _patch_async_client(monkeypatch: pytest.MonkeyPatch, transport: httpx.MockTr
     # SSRF guard would NXDOMAIN on example.test; tests exercise the rest
     # of the pipeline via MockTransport, so stub the resolver to return
     # TEST-NET-3 (RFC 5737). The initial GET and the redirect hook both go
-    # through _resolve_public_host now.
+    # through ssrf.resolve_public_host now.
     async def _stub_resolve(_host: str) -> str:
         return "203.0.113.1"
 
-    monkeypatch.setattr(artwork, "_resolve_public_host", _stub_resolve)
+    monkeypatch.setattr(ssrf, "resolve_public_host", _stub_resolve)
 
 
 def _png_bytes(
@@ -388,12 +388,12 @@ async def test_process_artwork_blocks_private_ip_host(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """SSRF guard: hostname resolving to a private IP is rejected. Patches
-    artwork._resolve_public_host so the test doesn't depend on the host's DNS."""
+    ssrf.resolve_public_host so the test doesn't depend on the host's DNS."""
 
     async def _block(host: str) -> str:
-        raise artwork._BlockedHostError(host, "non_public_address_127.0.0.1")
+        raise ssrf.BlockedHostError(host, "non_public_address_127.0.0.1")
 
-    monkeypatch.setattr(artwork, "_resolve_public_host", _block)
+    monkeypatch.setattr(ssrf, "resolve_public_host", _block)
     with caplog.at_level(logging.WARNING, logger="app.services.artwork"):
         result = await artwork.process_artwork(
             metadata={"ogImage": "https://internal-host.example/secret.png"},

@@ -6,6 +6,41 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-06-09
+
+Security and code-audit fixes.
+
+### Added
+
+- SSRF guard on the submitted article URL. A URL whose host resolves to a private,
+  loopback, link-local, multicast, or reserved address is now rejected before enqueue
+  (HTTP 400) and again at the extraction chokepoint, so the fetcher can't be pointed at
+  internal services or cloud metadata endpoints. The host-resolution logic is shared with
+  the artwork download path via a new `services/ssrf.py`; the resolved internal IP is never
+  echoed back. The artwork path keeps its stricter IP-pinning since it fetches in-process.
+- Proxy-aware client IP for the login rate-limit and IP lockout. New `TRUST_PROXY_HEADERS`
+  and `TRUSTED_PROXY_HOPS` settings: when enabled, the client IP is taken from the
+  `X-Forwarded-For` entry your own proxy appended (counted from the right), not the
+  spoofable leftmost value. Off by default, so the socket peer is used unless you opt in.
+- Convenience-mode (no admin password) warnings. A loud startup WARN fires when no password
+  is set, escalating when the deployment looks non-local (secure cookies or a non-localhost
+  `BASE_URL`), plus a recurring in-app banner until a password is set.
+
+### Changed
+
+- `LOGIN_RATE_LIMIT` now actually drives the login limiter. It was a dead config field while
+  the limit was hardcoded in the decorator; the limit is now resolved per request from the
+  setting (env / .env), so a change takes effect without a restart.
+- Admin requests open a single request-scoped SQLite connection. The auth gate and the
+  handler now share one connection via a FastAPI dependency, instead of opening one each.
+
+### Fixed
+
+- LLM cleanup output now slices to the first end marker after the begin marker (was the last),
+  matching the documented "first begin, first subsequent end" contract.
+- Startup/readiness reachability probes decode at most 120 bytes of a failed-probe body with
+  replacement, so an invalid-UTF-8 error body can't raise during a probe.
+
 ## [0.28.1] - 2026-06-08
 
 ### Changed

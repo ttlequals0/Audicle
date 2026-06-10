@@ -153,6 +153,24 @@ async def test_check_firecrawl_reports_last_failure_when_all_endpoints_5xx(
     assert "502" in result.detail
 
 
+async def test_check_firecrawl_handles_non_utf8_failure_body(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A failed probe with an invalid-UTF-8 body must not raise UnicodeDecodeError;
+    # the detail decodes with replacement characters.
+    _patch_async_client(
+        monkeypatch,
+        _transport(
+            httpx.Response(500, content=b"\xff\xfe broken"),
+            httpx.Response(500, content=b"\xff\xfe broken"),
+            httpx.Response(500, content=b"\xff\xfe broken"),
+        ),
+    )
+    result = await reachability.check_firecrawl(get_settings())
+    assert result.ok is False
+    assert "500" in result.detail
+
+
 async def test_check_tts_ok_when_model_loaded_even_on_503(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

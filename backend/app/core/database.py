@@ -41,16 +41,26 @@ def db_path(data_dir: Path) -> Path:
     return Path(data_dir) / DB_FILENAME
 
 
-def connect(path: Path, *, timeout: float = 30.0) -> sqlite3.Connection:
+def connect(
+    path: Path, *, timeout: float = 30.0, check_same_thread: bool = True
+) -> sqlite3.Connection:
     """Open a SQLite connection with WAL mode and a sane synchronous setting.
 
     Falls back to DELETE journal if the WAL pragma fails (typically a filesystem
     that doesn't support shared-memory mapping), then retries WAL once the journal
     has been reset. Mirrors MinusPod's WAL-fallback logic.
+
+    ``check_same_thread=False`` is for request-scoped connections (see
+    ``deps.get_conn``): FastAPI may create the connection on one thread and use it
+    on another within a single request. It is never shared concurrently, so the
+    same-thread assertion is safe to relax there. Background/worker callers keep
+    the default ``True``.
     """
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path), timeout=timeout, isolation_level=None)
+    conn = sqlite3.connect(
+        str(path), timeout=timeout, isolation_level=None, check_same_thread=check_same_thread
+    )
     conn.row_factory = sqlite3.Row
     try:
         conn.execute("PRAGMA journal_mode=WAL")
@@ -65,7 +75,9 @@ def connect(path: Path, *, timeout: float = 30.0) -> sqlite3.Connection:
 
 
 @contextmanager
-def connection(data_dir: Path, *, timeout: float = 30.0) -> Iterator[sqlite3.Connection]:
+def connection(
+    data_dir: Path, *, timeout: float = 30.0, check_same_thread: bool = True
+) -> Iterator[sqlite3.Connection]:
     """``with connection(settings.DATA_DIR) as conn:`` — replaces every
     open + try/finally close pair across services and routes.
 
@@ -74,7 +86,7 @@ def connection(data_dir: Path, *, timeout: float = 30.0) -> Iterator[sqlite3.Con
     sites collapse to one line.
     """
 
-    conn = connect(db_path(data_dir), timeout=timeout)
+    conn = connect(db_path(data_dir), timeout=timeout, check_same_thread=check_same_thread)
     try:
         yield conn
     finally:

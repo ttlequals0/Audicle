@@ -120,6 +120,8 @@ restarts load from disk instantly.
 | `OLLAMA_BASE_URL` | for ollama | `http://host.docker.internal:11434/v1` |
 | `SESSION_SECRET_KEY` | Optional session-signing key; auto-generated and persisted to the DB when blank | `openssl rand -hex 32` |
 | `SESSION_COOKIE_SECURE` | Require HTTPS for the session cookie; true by default | `false` for localhost dev |
+| `TRUST_PROXY_HEADERS` | Key the login rate-limit and IP lockout off `X-Forwarded-For` instead of the socket peer; enable only behind a trusted proxy | `true` behind Cloudflare/nginx |
+| `TRUSTED_PROXY_HOPS` | How many proxy hops to trust (entries counted from the right of `X-Forwarded-For`) | `1` |
 
 Nothing above is required: the app boots unconfigured and you set operational config (LLM provider/model, feed metadata, connection URLs) and the admin password at runtime in the Settings UI. The admin password is set under Settings > Security (bcrypt hash stored in the DB); until then the app runs in open convenience mode. Full list with defaults lives in `.env.example`. The runtime allowlist (what's editable from the UI without a restart) is enforced in `backend/app/services/runtime_settings.py`.
 

@@ -12,6 +12,7 @@ import platform
 import shutil
 import socket
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from app.config import Settings
 from app.core import database
@@ -46,8 +47,41 @@ def bootstrap(settings: Settings, *, process_label: str) -> None:
         "Migrations complete",
         extra={"event": "migrations_complete", "count": len(applied)},
     )
+    _warn_if_open_mode(settings, logger)
     _sync_base_lexicon(settings, logger)
     _seed_defaults(settings, logger)
+
+
+def _is_local_base_url(base_url: str) -> bool:
+    host = (urlsplit(base_url).hostname or "").lower()
+    return host in {"localhost", "127.0.0.1", "::1", ""} or host.endswith(".localhost")
+
+
+def _warn_if_open_mode(settings: Settings, logger: logging.Logger) -> None:
+    """Convenience mode (no admin password) leaves every admin endpoint open.
+
+    Warn loudly so an operator who exposes the app notices, and escalate when the
+    deployment looks non-local (secure cookies or a non-localhost BASE_URL), where
+    open mode is far more likely to be a mistake than a localhost convenience.
+    """
+
+    from app.services import auth
+
+    with database.connection(settings.DATA_DIR) as conn:
+        if auth.is_password_set(conn):
+            return
+    if settings.SESSION_COOKIE_SECURE or not _is_local_base_url(settings.BASE_URL):
+        logger.warning(
+            "Convenience mode is active on a non-local deployment: every admin "
+            "endpoint is unauthenticated. Set an admin password in Settings now.",
+            extra={"event": "convenience_mode_exposed", "base_url": settings.BASE_URL},
+        )
+    else:
+        logger.warning(
+            "Convenience mode is active: no admin password set, so admin endpoints "
+            "are open. Fine for localhost; set a password before exposing the app.",
+            extra={"event": "convenience_mode_active"},
+        )
 
 
 def _sync_base_lexicon(settings: Settings, logger: logging.Logger) -> None:
