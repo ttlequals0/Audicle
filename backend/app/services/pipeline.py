@@ -39,6 +39,7 @@ from app.services import (
     corrections,
     episodes,
     extraction,
+    file_extraction,
     jobs,
     lexicon,
     llm,
@@ -274,6 +275,10 @@ async def _run_stage(
 
 
 async def _stage_extract(job: jobs.Job, settings: Settings) -> extraction.ExtractionResult:
+    # Uploaded documents carry a synthetic ``upload://`` source: read and parse the
+    # stored file instead of fetching a URL. Everything downstream is identical.
+    if file_extraction.is_upload_source(job.url):
+        return await file_extraction.extract_file(job, settings)
     # Build the effective paywall-fallback registry (operator rules over built-ins, plus
     # a global-default catch-all) so extraction routes known paywall hosts through the
     # configured bypass. Shared with the /source-fallbacks/test endpoint.
@@ -1058,6 +1063,16 @@ async def _stage_finalize(
     duration_secs = round(audio_result.duration_secs)
     audio_size_bytes = file_size_or_zero(str(audio_result.mp3_path))
 
+    # Provenance: an uploaded document's ``original_url`` is the synthetic
+    # ``upload://`` identifier; record source_type/source_filename so the feed and
+    # UI render the filename instead of treating it as a hyperlink.
+    if file_extraction.is_upload_source(job.url):
+        source_type = "upload"
+        source_filename = file_extraction.parse_source_uri(job.url)[1]
+    else:
+        source_type = "url"
+        source_filename = None
+
     conn = database.connect(database.db_path(settings.DATA_DIR))
     try:
         episodes.upsert(
@@ -1074,6 +1089,8 @@ async def _stage_finalize(
             summary=summary,
             cleaned_text=cleaned_text,
             audio_size_bytes=audio_size_bytes,
+            source_type=source_type,
+            source_filename=source_filename,
         )
     finally:
         conn.close()

@@ -236,6 +236,11 @@ class Settings(BaseSettings):
     # OOM the worker by streaming a multi-GB body within the fetch timeout.
     ARTWORK_MAX_DOWNLOAD_BYTES: int = 25 * 1024 * 1024
 
+    # Direct file upload (0.30.0). Per-file ceiling for the /upload endpoint; the
+    # stream is aborted mid-read once it crosses this so a hostile payload can't
+    # fully buffer first. Operator-tunable (runtime_settings) for image-heavy PDFs.
+    UPLOAD_MAX_BYTES: int = Field(default=50 * 1024 * 1024, ge=0)
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, Episode, SettingsPayload } from "../lib/api";
+import { fileExt, formatBytes } from "../lib/format";
 import AudioPlayer from "../components/AudioPlayer";
 
 export default function Feed() {
@@ -39,11 +40,15 @@ export default function Feed() {
   });
 
   const reprocessM = useMutation({
-    mutationFn: (url: string) =>
-      api("/api/v1/submit", {
-        method: "POST",
-        body: JSON.stringify({ url, reprocess: true }),
-      }),
+    mutationFn: (ep: Episode) =>
+      ep.source_type === "upload"
+        ? // Uploaded episodes re-run from the stored original on disk -- their
+          // original_url is a synthetic upload:// id, not a submittable URL.
+          api(`/api/v1/upload/${ep.id}/reprocess`, { method: "POST" })
+        : api("/api/v1/submit", {
+            method: "POST",
+            body: JSON.stringify({ url: ep.original_url, reprocess: true }),
+          }),
     onSuccess: () => {
       setActionMsg("reprocess queued");
       setTimeout(() => setActionMsg(null), 4000);
@@ -95,19 +100,35 @@ export default function Feed() {
               <EpisodeArtwork ep={ep} />
               <div className="flex-1 min-w-0">
                 <div className="flex items-start gap-2 mb-1">
-                  <a
-                    href={ep.original_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-sm font-bold leading-snug hover:text-accent line-clamp-2 flex-1"
-                  >
-                    {ep.title ?? ep.original_url}
-                  </a>
+                  {ep.source_type === "upload" ? (
+                    // No real link for an uploaded document; render the title as text.
+                    <span className="text-sm font-bold leading-snug line-clamp-2 flex-1">
+                      {ep.title ?? ep.source_filename ?? "Uploaded document"}
+                    </span>
+                  ) : (
+                    <a
+                      href={ep.original_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sm font-bold leading-snug hover:text-accent line-clamp-2 flex-1"
+                    >
+                      {ep.title ?? ep.original_url}
+                    </a>
+                  )}
                   <span className="tag tag-done">done</span>
                 </div>
-                <div className="mono-xs text-mute">
-                  {ep.author ? `${ep.author} · ` : ""}
-                  {sourceDomain(ep.original_url)}
+                <div className="mono-xs text-mute flex items-center gap-1.5 min-w-0">
+                  {ep.author ? <span className="shrink-0">{ep.author} ·</span> : null}
+                  {ep.source_type === "upload" ? (
+                    <>
+                      <span className="format-badge">
+                        {(fileExt(ep.source_filename ?? "") || "file").toUpperCase()}
+                      </span>
+                      <span className="truncate">{ep.source_filename ?? "uploaded document"}</span>
+                    </>
+                  ) : (
+                    <span className="truncate">{sourceDomain(ep.original_url)}</span>
+                  )}
                 </div>
                 <div className="mono-xs text-mute mt-0.5">
                   {ep.pub_date} &middot; {formatDuration(ep.duration_secs)}
@@ -131,8 +152,8 @@ export default function Feed() {
                 className="btn-ghost"
                 disabled={reprocessM.isPending}
                 onClick={() => {
-                  if (confirm(`Reprocess "${ep.title ?? ep.original_url}"?`))
-                    reprocessM.mutate(ep.original_url);
+                  if (confirm(`Reprocess "${ep.title ?? ep.source_filename ?? ep.original_url}"?`))
+                    reprocessM.mutate(ep);
                 }}
               >
                 &#8635; Reprocess
@@ -179,13 +200,6 @@ function sourceDomain(url: string): string {
   } catch {
     return url;
   }
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const mb = bytes / (1024 * 1024);
-  if (mb < 1) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${mb.toFixed(1)} MB`;
 }
 
 function formatDuration(secs: number | null): string {

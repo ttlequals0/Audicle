@@ -152,6 +152,57 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/upload:
+    post:
+      tags:
+      - jobs
+      summary: Upload a document (PDF/DOCX/Markdown/text/HTML) for processing
+      operationId: upload_api_v1_upload_post
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_upload_api_v1_upload_post'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmitResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/upload/{episode_id}/reprocess:
+    post:
+      tags:
+      - jobs
+      summary: Reprocess an uploaded episode from its stored original
+      operationId: reprocess_upload_api_v1_upload__episode_id__reprocess_post
+      parameters:
+      - name: episode_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Episode Id
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmitResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/status/{job_id}:
     get:
       tags:
@@ -1199,6 +1250,21 @@ components:
       required:
       - voice
       title: Body_test_candidate_api_v1_reference_test_post
+    Body_upload_api_v1_upload_post:
+      properties:
+        file:
+          type: string
+          contentMediaType: application/octet-stream
+          title: File
+          description: The document to ingest.
+        reprocess:
+          type: boolean
+          title: Reprocess
+          default: false
+      type: object
+      required:
+      - file
+      title: Body_upload_api_v1_upload_post
     DeleteEpisodeResponse:
       properties:
         id:
@@ -1261,6 +1327,14 @@ components:
         has_cleaned_text:
           type: boolean
           title: Has Cleaned Text
+        source_type:
+          type: string
+          title: Source Type
+        source_filename:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Filename
       additionalProperties: false
       type: object
       required:
@@ -1275,6 +1349,8 @@ components:
       - pub_date
       - updated_at
       - has_cleaned_text
+      - source_type
+      - source_filename
       title: EpisodeListItem
     FeedRecreateResponse:
       properties:

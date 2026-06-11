@@ -27,6 +27,7 @@ from app.api.v1 import settings as settings_routes
 from app.api.v1 import source_fallbacks as source_fallbacks_routes
 from app.api.v1 import status as status_routes
 from app.api.v1 import submit as submit_routes
+from app.api.v1 import uploads as uploads_routes
 
 router = APIRouter(prefix="/api/v1")
 
@@ -37,6 +38,7 @@ router.include_router(auth_routes.router)
 # admin API can't accidentally ship an unauthenticated endpoint.
 admin = APIRouter(dependencies=[Depends(require_admin)])
 admin.include_router(submit_routes.router)
+admin.include_router(uploads_routes.router)
 admin.include_router(status_routes.router)
 admin.include_router(prompt_routes.router)
 admin.include_router(corrections_routes.router)

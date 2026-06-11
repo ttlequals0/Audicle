@@ -478,6 +478,21 @@ def _m012_lexicon_table(conn: sqlite3.Connection) -> None:
             lexicon.insert_entries(conn, "user", user_rows, read_only=False)
 
 
+def _m013_episode_source_type(conn: sqlite3.Connection) -> None:
+    """Add source provenance columns for the direct file-upload feature (0.30.0).
+
+    ``source_type`` distinguishes a URL-sourced episode ('url', the default for
+    every existing row) from an uploaded document ('upload'); the RSS feed and
+    Feed UI branch on it so an upload's synthetic ``upload://`` original_url is
+    never rendered as a broken hyperlink. ``source_filename`` is the original
+    uploaded filename, shown in place of a source domain. Both additive: existing
+    rows default to 'url' / NULL and keep rendering unchanged.
+    """
+
+    conn.execute("ALTER TABLE episodes ADD COLUMN source_type TEXT NOT NULL DEFAULT 'url'")
+    conn.execute("ALTER TABLE episodes ADD COLUMN source_filename TEXT")
+
+
 MIGRATIONS: list[tuple[str, Migration]] = [
     ("001_initial_schema", _m001_initial_schema),
     ("002_settings_kv", _m002_settings_kv),
@@ -491,6 +506,7 @@ MIGRATIONS: list[tuple[str, Migration]] = [
     ("010_episode_revision", _m010_episode_revision),
     ("011_import_corrections_to_db", _m011_import_corrections_to_db),
     ("012_lexicon_table", _m012_lexicon_table),
+    ("013_episode_source_type", _m013_episode_source_type),
 ]
 
 

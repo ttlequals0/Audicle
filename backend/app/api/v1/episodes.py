@@ -38,6 +38,10 @@ class EpisodeListItem(BaseModel):
     # True once the cleaned article text exists (0.6.0+); the UI gates the
     # /media/{id}.txt download link on it so older episodes show no dead link.
     has_cleaned_text: bool
+    # Source provenance (0.30.0): 'url' or 'upload'. The UI renders an upload's
+    # filename instead of a hyperlink and routes its reprocess to /upload/{id}/reprocess.
+    source_type: str
+    source_filename: str | None
 
 
 @router.get(
@@ -71,6 +75,8 @@ async def list_episodes(
             pub_date=ep.pub_date,
             updated_at=ep.updated_at,
             has_cleaned_text=ep.id in with_text,
+            source_type=ep.source_type,
+            source_filename=ep.source_filename,
         )
         for ep in page_rows
     ]
@@ -106,4 +112,8 @@ async def delete_episode(
             files_removed += 1
     if _remove_path(out_root / f"{episode_id}.vtt", root_guard=out_root):
         files_removed += 1
+    # An uploaded episode also has its stored original ({id}.source.{ext}).
+    for src in out_root.glob(f"{episode_id}.source.*"):
+        if _remove_path(src, root_guard=out_root):
+            files_removed += 1
     return DeleteEpisodeResponse(id=episode_id, files_removed=files_removed)

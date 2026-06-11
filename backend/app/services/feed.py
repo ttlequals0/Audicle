@@ -157,7 +157,10 @@ def render(
             item.title(ep.title)
         if ep.author:
             item.author({"name": ep.author})
-        item.link(href=ep.original_url)
+        # An uploaded episode's original_url is a synthetic ``upload://`` id, not a
+        # real link; only emit <link> for genuine URL sources.
+        if ep.source_type != "upload":
+            item.link(href=ep.original_url)
         item.description(_episode_description_html(ep))
         item.podcast.itunes_summary(_episode_summary(ep))
         item.pubDate(_parse_iso(ep.pub_date) or last_build)
@@ -202,32 +205,47 @@ def _clean_email(value: str) -> str:
     return value.strip().strip(",;").strip()
 
 
+def _source_label(ep: Episode) -> str:
+    """Human label for the episode source: the uploaded filename for an upload
+    episode (whose ``original_url`` is a synthetic ``upload://`` id), else the URL."""
+
+    if ep.source_type == "upload":
+        return ep.source_filename or "uploaded document"
+    return ep.original_url
+
+
 def _episode_description_html(ep: Episode) -> str:
     """HTML body for the per-episode ``<description>``: title, author (when
     known), the show-notes summary (when present), and a link back to the
-    source article. feedgen escapes the string, so podcast clients receive
-    renderable HTML."""
+    source article (the filename, not a link, for uploads). feedgen escapes the
+    string, so podcast clients receive renderable HTML."""
 
-    title = html.escape(ep.title or ep.original_url)
-    url = html.escape(ep.original_url, quote=True)
-    parts = [f"<p>{title}</p>"]
+    label = _source_label(ep)
+    parts = [f"<p>{html.escape(ep.title or label)}</p>"]
     if ep.author:
         parts.append(f"<p>By {html.escape(ep.author)}</p>")
     if ep.summary:
         parts.append(f"<p>{html.escape(ep.summary)}</p>")
-    parts.append(f'<p>Source: <a href="{url}">{html.escape(ep.original_url)}</a></p>')
+    if ep.source_type == "upload":
+        parts.append(f"<p>Source: {html.escape(label)} (uploaded)</p>")
+    else:
+        url = html.escape(ep.original_url, quote=True)
+        parts.append(f'<p>Source: <a href="{url}">{html.escape(ep.original_url)}</a></p>')
     return "".join(parts)
 
 
 def _episode_summary(ep: Episode) -> str:
     """Plain-text counterpart to the HTML description for ``itunes:summary``."""
 
-    lines = [ep.title or ep.original_url]
+    label = _source_label(ep)
+    lines = [ep.title or label]
     if ep.author:
         lines.append(f"By {ep.author}")
     if ep.summary:
         lines.append(ep.summary)
-    lines.append(f"Source: {ep.original_url}")
+    lines.append(
+        f"Source: {label} (uploaded)" if ep.source_type == "upload" else f"Source: {ep.original_url}"
+    )
     return "\n".join(lines)
 
 

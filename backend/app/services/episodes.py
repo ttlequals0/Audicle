@@ -37,6 +37,12 @@ class Episode:
     # Render counter: 1 on first finalize, +1 per reprocess. The feed folds it
     # into the GUID (only when > 1) so reprocessed episodes re-download.
     revision: int = 1
+    # Source provenance (0.30.0). 'url' for the original URL-submit path (and every
+    # pre-0.30.0 row); 'upload' for a directly-uploaded document, whose
+    # ``original_url`` is a synthetic ``upload://`` identifier. ``source_filename``
+    # is the original uploaded filename, shown in place of a source domain.
+    source_type: str = "url"
+    source_filename: str | None = None
 
 
 # cleaned_text is intentionally NOT in the default select: it's a large text
@@ -46,7 +52,7 @@ class Episode:
 _SELECT_COLUMNS = (
     "id, job_id, title, author, original_url, audio_path, artwork_path, "
     "transcript_vtt, duration_secs, pub_date, created_at, updated_at, summary, "
-    "audio_size_bytes, revision"
+    "audio_size_bytes, revision, source_type, source_filename"
 )
 
 
@@ -67,6 +73,8 @@ def _row_to_episode(row: sqlite3.Row) -> Episode:
         summary=row["summary"],
         audio_size_bytes=row["audio_size_bytes"],
         revision=row["revision"],
+        source_type=row["source_type"],
+        source_filename=row["source_filename"],
     )
 
 
@@ -124,6 +132,8 @@ def upsert(
     summary: str | None = None,
     cleaned_text: str | None = None,
     audio_size_bytes: int | None = None,
+    source_type: str = "url",
+    source_filename: str | None = None,
 ) -> Episode:
     """Insert a new episode row, or update the existing one keyed by id.
 
@@ -142,9 +152,9 @@ def upsert(
         INSERT INTO episodes (
             id, job_id, title, author, original_url, audio_path,
             artwork_path, transcript_vtt, duration_secs, summary,
-            cleaned_text, audio_size_bytes
+            cleaned_text, audio_size_bytes, source_type, source_filename
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             job_id           = excluded.job_id,
             title            = excluded.title,
@@ -157,6 +167,8 @@ def upsert(
             summary          = excluded.summary,
             cleaned_text     = excluded.cleaned_text,
             audio_size_bytes = excluded.audio_size_bytes,
+            source_type      = excluded.source_type,
+            source_filename  = excluded.source_filename,
             revision         = episodes.revision + 1,
             pub_date         = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
             updated_at       = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
@@ -174,6 +186,8 @@ def upsert(
             summary,
             cleaned_text,
             audio_size_bytes,
+            source_type,
+            source_filename,
         ),
     )
     conn.commit()
