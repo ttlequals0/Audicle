@@ -1,6 +1,6 @@
 import { useRef, useState, DragEvent, FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError, JobRow, JobStatus, postForm } from "../lib/api";
+import { api, ApiError, JobRow, JobStatus, postForm, SettingsPayload } from "../lib/api";
 import { fileExt, formatBytes } from "../lib/format";
 import { usePersistentOpen } from "../components/CollapsibleSection";
 
@@ -14,7 +14,8 @@ type Mode = "url" | "file";
 // Kept in sync with file_extraction.ALLOWED_EXTENSIONS on the backend.
 const ACCEPT = ".pdf,.docx,.md,.txt,.html,.htm";
 const ALLOWED_EXTS = ["pdf", "docx", "md", "txt", "html", "htm"];
-const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+// Fallback only until the live UPLOAD_MAX_BYTES setting loads.
+const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
 export default function Home() {
   const [mode, setMode] = useState<Mode>("url");
@@ -32,6 +33,20 @@ export default function Home() {
     queryFn: () => api<JobRow[]>("/api/v1/jobs?per_page=50"),
     refetchInterval: 5000,
   });
+
+  // Effective upload cap from the operator-tunable UPLOAD_MAX_BYTES setting, so
+  // the client-side guard and the dropzone copy track what the server enforces.
+  const settingsQ = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => api<SettingsPayload>("/api/v1/settings"),
+    staleTime: 60_000,
+  });
+  const configuredMax = Number(
+    settingsQ.data?.values.UPLOAD_MAX_BYTES ?? settingsQ.data?.defaults.UPLOAD_MAX_BYTES
+  );
+  // isFinite (not ||) so a legitimate 0 (uploads disabled) isn't masked by the fallback.
+  const maxUploadBytes = Number.isFinite(configuredMax) ? configuredMax : DEFAULT_MAX_UPLOAD_BYTES;
+  const maxUploadMb = Math.round(maxUploadBytes / (1024 * 1024));
 
   const onError = (e: unknown) => {
     if (e instanceof ApiError) {
@@ -84,8 +99,8 @@ export default function Home() {
       setError(`unsupported file type .${ext || "(none)"}; allowed: ${ALLOWED_EXTS.join(", ")}`);
       return;
     }
-    if (f.size > MAX_UPLOAD_BYTES) {
-      setError(`file is too large (max ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB)`);
+    if (f.size > maxUploadBytes) {
+      setError(`file is too large (max ${maxUploadMb} MB)`);
       return;
     }
     setFile(f);
@@ -212,7 +227,7 @@ export default function Home() {
                   <div className="mono-xs text-accent mb-2">// DROP_FILE</div>
                   <div className="text-sm text-dim">Drag a document here, or browse</div>
                   <div className="mono-xs text-mute mt-2">
-                    PDF · DOCX · MD · TXT · HTML &nbsp;&mdash;&nbsp; up to 50 MB
+                    PDF · DOCX · MD · TXT · HTML &nbsp;&mdash;&nbsp; up to {maxUploadMb} MB
                   </div>
                 </>
               )}

@@ -6,6 +6,18 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.30.1] - 2026-06-11
+
+### Changed
+
+- The direct-upload size limit (`UPLOAD_MAX_BYTES`) is now editable in the Settings
+  UI under an Uploads section, with the megabyte equivalent shown next to the raw
+  byte field. The limit was already operator-tunable through the settings API; it
+  was just missing from the UI, which only renders grouped keys.
+- The Home uploader honors the configured limit: the client-side size guard and the
+  dropzone copy track `UPLOAD_MAX_BYTES` instead of a hardcoded 50 MB, so raising or
+  lowering it in Settings changes what the uploader accepts and shows.
+
 ## [0.30.0] - 2026-06-11
 
 ### Added

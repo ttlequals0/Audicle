@@ -45,6 +45,7 @@ const GROUPS: Record<string, string[]> = {
     "WHISPER_VERIFY_MIN_WORDS",
   ],
   Cleanup: ["MIN_CLEANUP_CHARS", "MAX_PROMPT_LENGTH_BYTES"],
+  Uploads: ["UPLOAD_MAX_BYTES"],
   Retention: ["RETENTION_DAYS"],
   RSS: ["RSS_CACHE_MAX_AGE_SECONDS"],
 };
@@ -192,6 +193,13 @@ export default function SettingsRoute() {
               <p className="mono-xs text-mute mb-3">
                 // regenerates chunks when audio drifts from the text. needs
                 WHISPER_ENABLED on the wrapper. threshold 0-1, higher = stricter
+              </p>
+            )}
+            {group === "Uploads" && (
+              <p className="mono-xs text-mute mb-3">
+                // max direct-upload size in bytes (
+                {Math.round((Number(draft.UPLOAD_MAX_BYTES) || 0) / (1024 * 1024))} MB) -- applies
+                immediately, no restart
               </p>
             )}
             {visible.map((key) => (

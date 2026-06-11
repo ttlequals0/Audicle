@@ -8,7 +8,7 @@ from app.config import get_settings
 from app.core import database
 from app.core.paths import media_dir
 from app.main import create_app
-from app.services import episodes, feed, file_extraction, jobs
+from app.services import episodes, feed, file_extraction, jobs, runtime_settings
 from app.services.episodes import Episode
 from fastapi.testclient import TestClient
 
@@ -90,6 +90,19 @@ def test_upload_rejects_empty_file(env: Path) -> None:
 def test_upload_rejects_oversize(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("UPLOAD_MAX_BYTES", "16")
     get_settings.cache_clear()
+    with _client(env) as client:
+        r = client.post("/api/v1/upload", files={"file": ("big.md", b"x" * 200, "text/markdown")})
+    assert r.status_code == 400
+
+
+def test_upload_respects_runtime_tuned_max_bytes(env: Path) -> None:
+    # A DB override (the operator-tunable path, not just env) drives the cap.
+    database.run_migrations(env)
+    conn = database.connect(database.db_path(env))
+    try:
+        runtime_settings.set_value(conn, "UPLOAD_MAX_BYTES", 16)
+    finally:
+        conn.close()
     with _client(env) as client:
         r = client.post("/api/v1/upload", files={"file": ("big.md", b"x" * 200, "text/markdown")})
     assert r.status_code == 400
