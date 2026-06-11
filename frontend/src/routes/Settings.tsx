@@ -79,6 +79,28 @@ interface PromptBody {
   is_default?: boolean;
 }
 
+function Toggle({
+  id,
+  checked,
+  onChange,
+}: {
+  id: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      id={id}
+      role="switch"
+      aria-checked={checked}
+      aria-label={id}
+      className="toggle"
+      onClick={() => onChange(!checked)}
+    />
+  );
+}
+
 export default function SettingsRoute() {
   const qc = useQueryClient();
   // Shared app-wide auth status so a password change here also updates the
@@ -166,6 +188,14 @@ export default function SettingsRoute() {
 
   if (settingsQ.isLoading) return <p className="text-mute text-sm">loading...</p>;
 
+  // Keys whose effective default is a real boolean render as a switch, not a
+  // text field. The defaults map carries the typed value from the backend.
+  const boolKeys = new Set(
+    Object.entries(settingsQ.data?.defaults ?? {})
+      .filter(([, v]) => typeof v === "boolean")
+      .map(([k]) => k)
+  );
+
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-black tracking-tight mb-1">Settings</h1>
@@ -202,49 +232,61 @@ export default function SettingsRoute() {
                 immediately, no restart
               </p>
             )}
-            {visible.map((key) => (
-              <div key={key}>
-                <label className="label" htmlFor={key}>
-                  {key}
-                </label>
-                {key === "LLM_PROVIDER" ? (
-                  <select
-                    id={key}
-                    className="field"
-                    value={draft[key] ?? ""}
-                    onChange={(e) =>
-                      setDraft((p) => ({ ...p, [key]: e.target.value }))
-                    }
-                  >
-                    {PROVIDER_OPTIONS.map((opt) => (
-                      <option key={opt} value={opt}>
-                        {opt}
-                      </option>
-                    ))}
-                  </select>
-                ) : key === "LLM_MODEL" ? (
-                  <ModelField
-                    value={draft[key] ?? ""}
-                    provider={draft["LLM_PROVIDER"] ?? ""}
-                    onChange={(v) => setDraft((p) => ({ ...p, [key]: v }))}
-                  />
-                ) : (
-                  <input
-                    id={key}
-                    className="field"
-                    type={MASKED_KEYS.has(key) ? "password" : "text"}
-                    autoComplete={MASKED_KEYS.has(key) ? "off" : undefined}
-                    value={draft[key] ?? ""}
-                    onChange={(e) =>
-                      setDraft((p) => ({ ...p, [key]: e.target.value }))
-                    }
-                  />
-                )}
-                {key === "FEED_ARTWORK_URL" && (
-                  <ArtworkPreview value={draft[key] ?? ""} />
-                )}
-              </div>
-            ))}
+            {visible.map((key) => {
+              const isBool = boolKeys.has(key);
+              return (
+                <div
+                  key={key}
+                  className={isBool ? "flex items-center justify-between gap-3 py-1" : undefined}
+                >
+                  <label className={`label ${isBool ? "mb-0" : ""}`} htmlFor={key}>
+                    {key}
+                  </label>
+                  {key === "LLM_PROVIDER" ? (
+                    <select
+                      id={key}
+                      className="field"
+                      value={draft[key] ?? ""}
+                      onChange={(e) =>
+                        setDraft((p) => ({ ...p, [key]: e.target.value }))
+                      }
+                    >
+                      {PROVIDER_OPTIONS.map((opt) => (
+                        <option key={opt} value={opt}>
+                          {opt}
+                        </option>
+                      ))}
+                    </select>
+                  ) : key === "LLM_MODEL" ? (
+                    <ModelField
+                      value={draft[key] ?? ""}
+                      provider={draft["LLM_PROVIDER"] ?? ""}
+                      onChange={(v) => setDraft((p) => ({ ...p, [key]: v }))}
+                    />
+                  ) : isBool ? (
+                    <Toggle
+                      id={key}
+                      checked={draft[key] === "true"}
+                      onChange={(v) => setDraft((p) => ({ ...p, [key]: v ? "true" : "false" }))}
+                    />
+                  ) : (
+                    <input
+                      id={key}
+                      className="field"
+                      type={MASKED_KEYS.has(key) ? "password" : "text"}
+                      autoComplete={MASKED_KEYS.has(key) ? "off" : undefined}
+                      value={draft[key] ?? ""}
+                      onChange={(e) =>
+                        setDraft((p) => ({ ...p, [key]: e.target.value }))
+                      }
+                    />
+                  )}
+                  {key === "FEED_ARTWORK_URL" && (
+                    <ArtworkPreview value={draft[key] ?? ""} />
+                  )}
+                </div>
+              );
+            })}
           </CollapsibleSection>
         );
       })}

@@ -17,6 +17,8 @@ work lives under `[Unreleased]`.
 - The Home uploader honors the configured limit: the client-side size guard and the
   dropzone copy track `UPLOAD_MAX_BYTES` instead of a hardcoded 50 MB, so raising or
   lowering it in Settings changes what the uploader accepts and shows.
+- Boolean settings (e.g. `FEED_EXPLICIT`, `WHISPER_VERIFY_ENABLED`) render as switches
+  in the Settings UI instead of a text field holding the literal `true`/`false`.
 
 ## [0.30.0] - 2026-06-11
 
