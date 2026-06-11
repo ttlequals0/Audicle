@@ -6,13 +6,13 @@
 
 Self-hosted Podcasting 2.0 service that turns saved articles into a personal podcast feed.
 
-Paste a URL, wait a few minutes, get an episode with cloned-voice narration, artwork, and a WebVTT transcript. Subscribe in Pocket Casts, Overcast, or Apple Podcasts the same way you'd subscribe to anyone else's show.
+Paste a URL or upload a document (PDF, DOCX, Markdown, text, or HTML), wait a few minutes, get an episode with cloned-voice narration, artwork, and a WebVTT transcript. Subscribe in Pocket Casts, Overcast, or Apple Podcasts the same way you'd subscribe to anyone else's show.
 
 Tagline: *your reading list, as a podcast you own.*
 
 ## Screenshots
 
-Home -- paste a URL and it joins the feed.
+Home -- paste a URL or upload a file, and it joins the feed.
 
 <p align="center">
   <img src="docs/screenshot-home-desktop.png" alt="Home, desktop" width="600">

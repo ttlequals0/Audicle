@@ -6,6 +6,46 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.30.1] - 2026-06-11
+
+### Changed
+
+- The direct-upload size limit (`UPLOAD_MAX_BYTES`) is now editable in the Settings
+  UI under an Uploads section, with the megabyte equivalent shown next to the raw
+  byte field. The limit was already operator-tunable through the settings API; it
+  was just missing from the UI, which only renders grouped keys.
+- The Home uploader honors the configured limit: the client-side size guard and the
+  dropzone copy track `UPLOAD_MAX_BYTES` instead of a hardcoded 50 MB, so raising or
+  lowering it in Settings changes what the uploader accepts and shows.
+- Boolean settings (e.g. `FEED_EXPLICIT`, `WHISPER_VERIFY_ENABLED`) render as switches
+  in the Settings UI instead of a text field holding the literal `true`/`false`.
+
+## [0.30.0] - 2026-06-11
+
+### Added
+
+- Direct file upload. Alongside pasting a URL, you can now upload a document
+  (PDF, DOCX, Markdown, plain text, or HTML) and it runs through the same pipeline
+  as a URL: extract text, LLM cleanup, narration, artwork, transcript, episode. The
+  Home screen gains a Link/File toggle with a drag-and-drop dropzone; the new
+  `POST /api/v1/upload` endpoint accepts the file (50 MB cap, operator-tunable via
+  `UPLOAD_MAX_BYTES`).
+- The original uploaded document is stored on disk at `{episode_id}.source.{ext}`
+  so an episode can be reprocessed from it later with no re-upload. The Feed
+  reprocess button works for uploads via `POST /api/v1/upload/{id}/reprocess`,
+  re-running the pipeline from the stored file. Stored originals follow the same
+  retention sweep, orphan sweep, and per-episode delete as audio and artwork.
+
+### Changed
+
+- An episode now records its source: a `source_type` of `url` or `upload` plus the
+  original `source_filename` for uploads (migration 013, additive -- existing
+  episodes default to `url`). The RSS feed and Feed UI render an uploaded episode's
+  filename instead of treating its synthetic `upload://` identifier as a hyperlink.
+- Episode identity for an upload is derived from the file's content and name, so
+  re-uploading the same document maps to the same episode (HTTP 409 unless
+  `reprocess` is set) -- the same dedupe behavior URL submits already had.
+
 ## [0.29.1] - 2026-06-10
 
 ### Security

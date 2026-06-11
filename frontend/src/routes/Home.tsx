@@ -1,6 +1,7 @@
-import { useState, FormEvent } from "react";
+import { useRef, useState, DragEvent, FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError, JobRow, JobStatus } from "../lib/api";
+import { api, ApiError, JobRow, JobStatus, postForm, SettingsPayload } from "../lib/api";
+import { fileExt, formatBytes } from "../lib/format";
 import { usePersistentOpen } from "../components/CollapsibleSection";
 
 interface SubmitResponse {
@@ -8,9 +9,21 @@ interface SubmitResponse {
   episode_id: string;
 }
 
+type Mode = "url" | "file";
+
+// Kept in sync with file_extraction.ALLOWED_EXTENSIONS on the backend.
+const ACCEPT = ".pdf,.docx,.md,.txt,.html,.htm";
+const ALLOWED_EXTS = ["pdf", "docx", "md", "txt", "html", "htm"];
+// Fallback only until the live UPLOAD_MAX_BYTES setting loads.
+const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+
 export default function Home() {
+  const [mode, setMode] = useState<Mode>("url");
   const [url, setUrl] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   // Recents are collapsed by default and the toggle is remembered across reloads.
   const [recentOpen, setRecentOpen] = usePersistentOpen("home.recents.open", false);
   const qc = useQueryClient();
@@ -20,6 +33,30 @@ export default function Home() {
     queryFn: () => api<JobRow[]>("/api/v1/jobs?per_page=50"),
     refetchInterval: 5000,
   });
+
+  // Effective upload cap from the operator-tunable UPLOAD_MAX_BYTES setting, so
+  // the client-side guard and the dropzone copy track what the server enforces.
+  const settingsQ = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => api<SettingsPayload>("/api/v1/settings"),
+    staleTime: 60_000,
+  });
+  const configuredMax = Number(
+    settingsQ.data?.values.UPLOAD_MAX_BYTES ?? settingsQ.data?.defaults.UPLOAD_MAX_BYTES
+  );
+  // isFinite (not ||) so a legitimate 0 (uploads disabled) isn't masked by the fallback.
+  const maxUploadBytes = Number.isFinite(configuredMax) ? configuredMax : DEFAULT_MAX_UPLOAD_BYTES;
+  const maxUploadMb = Math.round(maxUploadBytes / (1024 * 1024));
+
+  const onError = (e: unknown) => {
+    if (e instanceof ApiError) {
+      setError(
+        typeof e.detail === "object" && e.detail ? JSON.stringify(e.detail) : String(e.detail)
+      );
+    } else {
+      setError((e as Error).message);
+    }
+  };
 
   const submitM = useMutation({
     mutationFn: (input: string) =>
@@ -32,21 +69,59 @@ export default function Home() {
       setError(null);
       qc.invalidateQueries({ queryKey: ["jobs"] });
     },
-    onError: (e) => {
-      if (e instanceof ApiError) {
-        setError(
-          typeof e.detail === "object" && e.detail ? JSON.stringify(e.detail) : String(e.detail)
-        );
-      } else {
-        setError((e as Error).message);
-      }
-    },
+    onError,
   });
+
+  const uploadM = useMutation({
+    mutationFn: (f: File) => {
+      const fd = new FormData();
+      fd.append("file", f);
+      return postForm<SubmitResponse>("/api/v1/upload", fd);
+    },
+    onSuccess: () => {
+      clearFile();
+      setError(null);
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+    },
+    onError,
+  });
+
+  const clearFile = () => {
+    setFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const pickFile = (f: File | null) => {
+    setError(null);
+    if (!f) return;
+    const ext = fileExt(f.name);
+    if (!ALLOWED_EXTS.includes(ext)) {
+      setError(`unsupported file type .${ext || "(none)"}; allowed: ${ALLOWED_EXTS.join(", ")}`);
+      return;
+    }
+    if (f.size > maxUploadBytes) {
+      setError(`file is too large (max ${maxUploadMb} MB)`);
+      return;
+    }
+    setFile(f);
+  };
+
+  const onDrop = (e: DragEvent<HTMLLabelElement>) => {
+    e.preventDefault();
+    setDragging(false);
+    pickFile(e.dataTransfer.files?.[0] ?? null);
+  };
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (url) submitM.mutate(url);
+    if (mode === "url") {
+      if (url) submitM.mutate(url);
+    } else if (file) {
+      uploadM.mutate(file);
+    }
   };
+
+  const pending = submitM.isPending || uploadM.isPending;
 
   const jobs = jobsQ.data ?? [];
   // FIFO queue order: oldest first, so the job actually processing leads.
@@ -60,30 +135,116 @@ export default function Home() {
       <div className="pt-10 pb-2">
         <div className="mono-xs text-accent mb-3">// SUBMIT_ARTICLE</div>
         <h1 className="text-4xl font-black tracking-tight mb-2 leading-tight">
-          Drop a link.
+          {mode === "url" ? "Drop a link." : "Drop a file."}
           <br />
           <span className="text-accent">Get a podcast.</span>
         </h1>
-        <p className="text-dim text-sm mb-8 leading-relaxed">
-          Audicle reads articles aloud. Paste a URL and it joins your feed.
+        <p className="text-dim text-sm mb-6 leading-relaxed">
+          {mode === "url"
+            ? "Audicle reads articles aloud. Paste a URL and it joins your feed."
+            : "Audicle reads documents aloud. Upload a file and it joins your feed."}
         </p>
+
+        <div className="flex border-b border-line mb-5">
+          <button
+            type="button"
+            className={`tab-btn${mode === "url" ? " active" : ""}`}
+            onClick={() => {
+              setMode("url");
+              setError(null);
+            }}
+          >
+            Link
+          </button>
+          <button
+            type="button"
+            className={`tab-btn${mode === "file" ? " active" : ""}`}
+            onClick={() => {
+              setMode("file");
+              setError(null);
+            }}
+          >
+            File
+          </button>
+        </div>
+
         <form onSubmit={submit} className="space-y-3">
-          <input
-            type="url"
-            className="hero-input"
-            placeholder="https://"
-            autoComplete="off"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-          />
-          <button type="submit" className="btn-primary w-full" disabled={!url || submitM.isPending}>
-            {submitM.isPending ? "Submitting..." : "Submit"}
+          {mode === "url" ? (
+            <input
+              type="url"
+              className="hero-input"
+              placeholder="https://"
+              autoComplete="off"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+            />
+          ) : (
+            <label
+              className={`dropzone block cursor-pointer${dragging ? " dropzone-drag" : ""}`}
+              onDragEnter={(e) => {
+                e.preventDefault();
+                setDragging(true);
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragging(true);
+              }}
+              onDragLeave={(e) => {
+                e.preventDefault();
+                setDragging(false);
+              }}
+              onDrop={onDrop}
+              aria-label="Upload a document (PDF, DOCX, Markdown, text, or HTML), up to 50 MB"
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ACCEPT}
+                className="sr-only"
+                onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
+              />
+              {file ? (
+                <div className="file-chip">
+                  <span className="format-badge">{fileExt(file.name).toUpperCase()}</span>
+                  <span className="flex-1 min-w-0 truncate text-sm text-left">{file.name}</span>
+                  <span className="mono-xs text-mute">{formatBytes(file.size)}</span>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      clearFile();
+                      setError(null);
+                    }}
+                    aria-label="Remove selected file"
+                  >
+                    &times;
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="mono-xs text-accent mb-2">// DROP_FILE</div>
+                  <div className="text-sm text-dim">Drag a document here, or browse</div>
+                  <div className="mono-xs text-mute mt-2">
+                    PDF · DOCX · MD · TXT · HTML &nbsp;&mdash;&nbsp; up to {maxUploadMb} MB
+                  </div>
+                </>
+              )}
+            </label>
+          )}
+          <button
+            type="submit"
+            className="btn-primary w-full"
+            disabled={pending || (mode === "url" ? !url : !file)}
+          >
+            {pending ? "Submitting..." : "Submit"}
           </button>
         </form>
         {error && <p className="text-danger text-xs font-mono mt-2 break-words">{error}</p>}
 
         {!jobs.length && jobsQ.data && (
-          <p className="mono-xs text-mute mt-8">// no submissions yet -- paste a URL above</p>
+          <p className="mono-xs text-mute mt-8">// no submissions yet</p>
         )}
       </div>
 

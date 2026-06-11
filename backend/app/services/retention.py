@@ -92,6 +92,11 @@ def purge_older_than(
         # .vtt under media_dir though; check for one.
         if _remove_path(out_root / f"{row['id']}.vtt", root_guard=out_root):
             files_removed += 1
+        # Uploaded episodes keep their original document at {id}.source.{ext};
+        # remove it alongside the audio/artwork (episode ids are hex, no glob meta).
+        for src in out_root.glob(f"{row['id']}.source.*"):
+            if _remove_path(src, root_guard=out_root):
+                files_removed += 1
 
     logger.info(
         "Retention sweep complete",
@@ -133,11 +138,12 @@ def sweep_orphan_media(settings: Settings) -> int:
     for child in out_root.iterdir():
         if not child.is_file():
             continue
-        # ``{id}.{ext}`` and ``{id}_combined.wav`` both belong to an episode
-        # id; strip the suffix and the optional ``_combined`` tail.
-        stem = child.stem
-        if stem.endswith("_combined"):
-            stem = stem[: -len("_combined")]
+        # ``{id}.{ext}``, ``{id}_combined.wav`` and ``{id}.source.{ext}`` all
+        # belong to an episode id; strip the optional ``_combined`` tail and the
+        # ``.source`` tail (Path.stem only removes the final extension, so an
+        # uploaded ``{id}.source.pdf`` leaves a ``{id}.source`` stem that would
+        # otherwise never match a live id and get a live episode's original wiped).
+        stem = child.stem.removesuffix("_combined").removesuffix(".source")
         if stem in live_ids:
             continue
         # Skip the operator's reference voice clip, the bundled default podcast

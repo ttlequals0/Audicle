@@ -35,6 +35,8 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "FEED_EXPLICIT",
         "FEED_ARTWORK_URL",
         "RETENTION_DAYS",
+        # Per-file upload size ceiling; tunable live for image-heavy PDFs.
+        "UPLOAD_MAX_BYTES",
         # Connections: the bundled service URLs are operator-tunable so they can
         # be pointed at an external Firecrawl/TTS without an env edit + restart.
         "FIRECRAWL_URL",

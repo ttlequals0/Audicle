@@ -49,6 +49,11 @@ export async function api<T = unknown>(
     headers,
     credentials: "include",
   });
+  return parseResponse<T>(response);
+}
+
+/** Shared response handling: throw ApiError on non-2xx, else parse JSON/text. */
+async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let detail: unknown = await response.text();
     try {
@@ -66,6 +71,25 @@ export async function api<T = unknown>(
     return (await response.json()) as T;
   }
   return (await response.text()) as T;
+}
+
+/**
+ * POST a multipart FormData body with the CSRF header attached. The browser sets
+ * the multipart Content-Type (with boundary) itself, so we must NOT set it here.
+ */
+export async function postForm<T = unknown>(path: string, fd: FormData): Promise<T> {
+  const headers: Record<string, string> = { Accept: "application/json" };
+  const csrf = readCsrf();
+  if (csrf) {
+    headers["X-CSRF-Token"] = csrf;
+  }
+  const response = await fetch(path, {
+    method: "POST",
+    body: fd,
+    headers,
+    credentials: "include",
+  });
+  return parseResponse<T>(response);
 }
 
 export class ApiError extends Error {
@@ -106,6 +130,10 @@ export interface Episode {
   pub_date: string;
   updated_at: string;
   has_cleaned_text: boolean;
+  // Source provenance (0.30.0). 'upload' episodes have a synthetic upload:// URL
+  // and render the filename instead of a hyperlink; reprocess routes differently.
+  source_type: "url" | "upload";
+  source_filename: string | null;
 }
 
 export type JobStatus = "queued" | "processing" | "done" | "failed";

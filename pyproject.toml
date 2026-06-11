@@ -1,6 +1,6 @@
 [project]
 name = "audicle"
-version = "0.29.1"
+version = "0.30.1"
 description = "Self-hosted service that turns article URLs into a Podcasting 2.0 feed."
 requires-python = ">=3.13"
 license = { text = "MIT" }
@@ -44,6 +44,10 @@ dependencies = [
     "pyyaml>=6.0.3",
     "python-multipart>=0.0.29",
     "gruut>=2.4.0",
+    # Direct file upload (0.30.0): parse uploaded PDF/DOCX into article text. HTML
+    # reuses the existing trafilatura path (html_markdown); md/txt are read directly.
+    "pypdf>=5.1",
+    "python-docx>=1.1",
 ]
 
 # Offline base-lexicon build only (scripts/build_base_lexicon.py). Heavy/optional;
