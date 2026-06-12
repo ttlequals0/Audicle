@@ -46,6 +46,7 @@ const GROUPS: Record<string, string[]> = {
   ],
   Cleanup: ["MIN_CLEANUP_CHARS", "MAX_PROMPT_LENGTH_BYTES"],
   Uploads: ["UPLOAD_MAX_BYTES"],
+  Pipeline: ["JOB_TIMEOUT_SECONDS", "JOB_TIMEOUT_PER_CHUNK_SECONDS"],
   Retention: ["RETENTION_DAYS"],
   RSS: ["RSS_CACHE_MAX_AGE_SECONDS"],
 };
@@ -230,6 +231,12 @@ export default function SettingsRoute() {
                 // max direct-upload size in bytes (
                 {Math.round((Number(draft.UPLOAD_MAX_BYTES) || 0) / (1024 * 1024))} MB) -- applies
                 immediately, no restart
+              </p>
+            )}
+            {group === "Pipeline" && (
+              <p className="mono-xs text-mute mb-3">
+                // per-job time = max(JOB_TIMEOUT_SECONDS, chunks x per-chunk). raise per-chunk on
+                slower hardware. applies to the next job
               </p>
             )}
             {visible.map((key) => {
