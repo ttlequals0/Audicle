@@ -117,7 +117,16 @@ class Settings(BaseSettings):
 
     # Queue / HTTP / worker.
     QUEUE_POLL_INTERVAL_SECONDS: float = 2.0
-    JOB_TIMEOUT_SECONDS: float = 1800
+    # Base per-job ceiling. The effective timeout scales with the chunk count
+    # (see pipeline.effective_job_timeout): a long document gets proportionally
+    # more time. Both this and the per-chunk budget are operator-tunable so a
+    # slower GPU/CPU can be accommodated without a redeploy.
+    JOB_TIMEOUT_SECONDS: float = Field(default=3600, gt=0)
+    # Per-TTS-chunk time budget used to scale the per-job timeout once the chunk
+    # count is known: effective = max(JOB_TIMEOUT_SECONDS, chunks * this).
+    # ~15.8 s/chunk was observed on a GPU; 30 s leaves headroom for slow or
+    # regenerated chunks and slower hardware.
+    JOB_TIMEOUT_PER_CHUNK_SECONDS: float = Field(default=30.0, gt=0)
     WEB_WORKERS: int = 2
 
     # Logging.

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -165,6 +166,86 @@ async def test_pipeline_marks_failed_with_timeout_error_on_job_timeout(
     after = _job_after(env, job.id)
     assert after.status == "failed"
     assert after.stage == "extract"
+    assert "JOB_TIMEOUT_SECONDS" in (after.error or "")
+
+
+def test_effective_job_timeout_scales_with_chunk_count() -> None:
+    s = SimpleNamespace(JOB_TIMEOUT_SECONDS=3600.0, JOB_TIMEOUT_PER_CHUNK_SECONDS=30.0)
+    assert pipeline.effective_job_timeout(s, 0) == 3600.0
+    assert pipeline.effective_job_timeout(s, 100) == 3600.0  # base floor wins
+    assert pipeline.effective_job_timeout(s, 200) == 6000.0  # chunk-scaled wins
+
+
+async def test_pipeline_reschedules_timeout_for_long_document(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A document with enough chunks gets a rescaled (longer) timeout, so a job
+    that would blow the base ceiling during TTS still completes."""
+
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+
+    from app.services import chunker, tts
+
+    monkeypatch.setattr(chunker, "chunk", lambda *a, **k: ["a sentence."] * 10)
+
+    async def _slow_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
+        await asyncio.sleep(0.08)
+        return tts.GenerateResult(
+            wav_path=f"/tmp/{episode_id}_chunk_{chunk_index}.wav",
+            duration_secs=1.0,
+            sample_rate=24000,
+        )
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _slow_tts)
+    # base 0.5s would time out mid-TTS (10 x 0.08 = 0.8s); rescaled to
+    # max(0.5, 10 x 0.5 = 5.0) it finishes.
+    monkeypatch.setenv("JOB_TIMEOUT_SECONDS", "0.5")
+    monkeypatch.setenv("JOB_TIMEOUT_PER_CHUNK_SECONDS", "0.5")
+    get_settings.cache_clear()
+
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+
+    after = _job_after(env, job.id)
+    assert after.status == "done"
+    assert after.error is None
+
+
+async def test_pipeline_still_times_out_when_scaled_budget_exceeded(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The scaled timeout is still a ceiling: a job slower than max(base,
+    chunks x per-chunk) fails, and the error reports the chunk count."""
+
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+
+    from app.services import chunker, tts
+
+    monkeypatch.setattr(chunker, "chunk", lambda *a, **k: ["a sentence."] * 5)
+
+    async def _very_slow_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
+        await asyncio.sleep(0.3)
+        return tts.GenerateResult(
+            wav_path=f"/tmp/{episode_id}_chunk_{chunk_index}.wav",
+            duration_secs=1.0,
+            sample_rate=24000,
+        )
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _very_slow_tts)
+    # effective = max(0.3, 5 x 0.1 = 0.5) = 0.5s; TTS needs ~1.5s, so it times out.
+    monkeypatch.setenv("JOB_TIMEOUT_SECONDS", "0.3")
+    monkeypatch.setenv("JOB_TIMEOUT_PER_CHUNK_SECONDS", "0.1")
+    get_settings.cache_clear()
+
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+
+    after = _job_after(env, job.id)
+    assert after.status == "failed"
+    assert after.stage == "tts"
+    assert "5 chunks" in (after.error or "")
     assert "JOB_TIMEOUT_SECONDS" in (after.error or "")
 
 

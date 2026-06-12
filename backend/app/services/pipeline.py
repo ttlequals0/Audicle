@@ -10,8 +10,11 @@ Conventions enforced here:
   job-timeout path can report exactly which stage was running.
 - Stage start/end/failure emit structured log records with ``job_id`` +
   ``episode_id`` stamped via contextvars.
-- The whole job runs under ``asyncio.wait_for(JOB_TIMEOUT_SECONDS)``; the
-  timeout handler reads the last persisted stage and writes a clear error.
+- The whole job runs under an ``asyncio.timeout`` whose deadline starts at
+  ``JOB_TIMEOUT_SECONDS`` and is rescheduled once the chunk count is known to
+  ``max(JOB_TIMEOUT_SECONDS, chunks * JOB_TIMEOUT_PER_CHUNK_SECONDS)`` -- a long
+  document gets proportionally more time. The timeout handler reads the last
+  persisted stage and writes a clear error.
 """
 
 from __future__ import annotations
@@ -81,32 +84,75 @@ def _stage_context(stage_name: str):
         stage_ctx.reset(token)
 
 
+def effective_job_timeout(settings: Settings, chunk_count: int) -> float:
+    """Per-job timeout in seconds: the base ceiling, or the chunk-scaled budget
+    when the document is large enough to need it."""
+
+    return max(
+        settings.JOB_TIMEOUT_SECONDS,
+        chunk_count * settings.JOB_TIMEOUT_PER_CHUNK_SECONDS,
+    )
+
+
 async def process_job(job: jobs.Job, settings: Settings) -> None:
     """Run the configured pipeline stages against ``job``.
 
     On any failure write ``stage`` + ``error`` and set status=failed. On
     timeout report the last persisted stage in the error message.
+
+    The job runs under an ``asyncio.timeout`` that starts at
+    ``JOB_TIMEOUT_SECONDS`` and is rescheduled once the chunk count is known so a
+    long document gets ``max(base, chunks * JOB_TIMEOUT_PER_CHUNK_SECONDS)``.
     """
+
+    base = settings.JOB_TIMEOUT_SECONDS
+    # Mutable cell the reschedule hook updates so the timeout error message can
+    # report the effective deadline + chunk count, not just the base.
+    timeout_state = {"effective": base, "chunks": 0}
 
     with _job_context(job):
         logger.info("Pipeline starting", extra={"event": "pipeline_start"})
         try:
-            await asyncio.wait_for(
-                _run_stages(job, settings),
-                timeout=settings.JOB_TIMEOUT_SECONDS,
-            )
+            loop = asyncio.get_running_loop()
+            t0 = loop.time()
+
+            def _rescale(chunk_count: int) -> None:
+                eff = effective_job_timeout(settings, chunk_count)
+                timeout_state["effective"] = eff
+                timeout_state["chunks"] = chunk_count
+                if eff > base:
+                    # Deadline is absolute (loop clock) from job start.
+                    cm.reschedule(t0 + eff)
+                    logger.info(
+                        "Job timeout rescaled for chunk count",
+                        extra={
+                            "event": "job_timeout_rescaled",
+                            "chunk_count": chunk_count,
+                            "timeout_seconds": eff,
+                            "base_timeout": base,
+                        },
+                    )
+
+            async with asyncio.timeout(base) as cm:
+                await _run_stages(job, settings, on_chunk_count=_rescale)
         except TimeoutError:
+            eff = timeout_state["effective"]
+            chunks = timeout_state["chunks"]
             _finalize_failure(
                 job.id,
                 settings,
                 error_template=(
-                    f"job exceeded JOB_TIMEOUT_SECONDS={settings.JOB_TIMEOUT_SECONDS} "
-                    f"during stage {{stage}}"
+                    f"job exceeded its timeout of {eff:.0f}s "
+                    f"(JOB_TIMEOUT_SECONDS={base}, {chunks} chunks) during stage {{stage}}"
                 ),
                 log_message="Pipeline timed out",
                 log_event="pipeline_timeout",
                 log_level=logging.WARNING,
-                extra_log_fields={"timeout_seconds": settings.JOB_TIMEOUT_SECONDS},
+                extra_log_fields={
+                    "timeout_seconds": eff,
+                    "base_timeout": base,
+                    "chunk_count": chunks,
+                },
             )
         except Exception as exc:
             _finalize_failure(
@@ -168,10 +214,18 @@ def _finalize_failure(
     logger.log(log_level, log_message, extra=fields, exc_info=with_exc_info)
 
 
-async def _run_stages(job: jobs.Job, settings: Settings) -> None:
+async def _run_stages(
+    job: jobs.Job,
+    settings: Settings,
+    *,
+    on_chunk_count: Callable[[int], None] | None = None,
+) -> None:
     """Run the stages in order: extract -> cleanup -> normalize -> summary ->
     chunk -> tts -> audio -> artwork -> transcript -> finalize (finalize
-    inserts/updates the episodes row)."""
+    inserts/updates the episodes row).
+
+    ``on_chunk_count`` is invoked with the chunk count right after chunking so
+    the caller can rescale the job timeout before the (longest) TTS stage runs."""
 
     extraction_result = await _run_stage(
         "extract", lambda: _stage_extract(job, settings), job.id, settings
@@ -200,6 +254,10 @@ async def _run_stages(job: jobs.Job, settings: Settings) -> None:
         job.id,
         settings,
     )
+    # Rescale the job timeout now that the workload (chunk count) is known, before
+    # the TTS stage -- the longest stage -- begins.
+    if on_chunk_count is not None:
+        on_chunk_count(len(chunks))
     chunk_results = await _run_stage(
         "tts",
         lambda: _stage_tts(job, chunks, settings),

@@ -37,6 +37,10 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "RETENTION_DAYS",
         # Per-file upload size ceiling; tunable live for image-heavy PDFs.
         "UPLOAD_MAX_BYTES",
+        # Per-job timeout base + per-chunk budget; tunable live so long-form
+        # documents and slower hardware get proportional synthesis time.
+        "JOB_TIMEOUT_SECONDS",
+        "JOB_TIMEOUT_PER_CHUNK_SECONDS",
         # Connections: the bundled service URLs are operator-tunable so they can
         # be pointed at an external Firecrawl/TTS without an env edit + restart.
         "FIRECRAWL_URL",

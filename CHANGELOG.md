@@ -6,6 +6,26 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.30.2] - 2026-06-11
+
+### Fixed
+
+- Long documents no longer fail at the TTS stage with a fixed 30-minute job timeout.
+  A 136-chunk PDF upload was cancelled mid-synthesis at 84% because the whole-job
+  ceiling (`JOB_TIMEOUT_SECONDS=1800`) was sized for short web articles, not long-form
+  uploads.
+
+### Changed
+
+- The base `JOB_TIMEOUT_SECONDS` default is raised from 1800 to 3600 s, and the per-job
+  timeout now scales with the document: `max(JOB_TIMEOUT_SECONDS, chunks x
+  JOB_TIMEOUT_PER_CHUNK_SECONDS)`, applied once the chunk count is known (via an
+  `asyncio.timeout` reschedule). A long document gets proportionally more time.
+- Both `JOB_TIMEOUT_SECONDS` and the new `JOB_TIMEOUT_PER_CHUNK_SECONDS` (default 30 s)
+  are operator-tunable from the Settings UI (Pipeline section), so a slower GPU or CPU can
+  be accommodated without a redeploy. The timeout error now reports the effective timeout
+  and chunk count.
+
 ## [0.30.1] - 2026-06-11
 
 ### Changed
