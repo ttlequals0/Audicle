@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import shutil
+import subprocess
 import wave
 from pathlib import Path
 
@@ -19,6 +21,16 @@ def _wav(duration_secs: float = 10.0, rate: int = 24000) -> bytes:
         w.setframerate(rate)
         w.writeframes(b"\x00\x00" * int(rate * duration_secs))
     return buf.getvalue()
+
+
+def _mp3(duration_secs: float = 10.0) -> bytes:
+    return subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "wav", "-i", "pipe:0",
+         "-c:a", "libmp3lame", "-f", "mp3", "pipe:1"],
+        input=_wav(duration_secs),
+        capture_output=True,
+        check=True,
+    ).stdout
 
 
 @pytest.fixture
@@ -62,6 +74,20 @@ def test_upload_label_list_clear(client: TestClient) -> None:
     after = {s["slot"]: s for s in client.get("/api/v1/reference/slots").json()}[2]
     assert after["filled"] is False
     assert after["label"] is None
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required for mp3 transcode")
+def test_upload_mp3_slot_converted(client: TestClient) -> None:
+    r = client.post(
+        "/api/v1/reference/slots/1",
+        files={"voice": ("v.mp3", _mp3(), "audio/mpeg")},
+    )
+    assert r.status_code == 200
+    assert r.json()["filled"] is True
+    # The slot is stored as a converted WAV, previewable as audio/wav.
+    prev = client.get("/api/v1/reference/slots/1/preview")
+    assert prev.status_code == 200
+    assert prev.content.startswith(b"RIFF")
 
 
 def test_upload_rejects_bad_wav(client: TestClient) -> None:

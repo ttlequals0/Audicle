@@ -110,6 +110,41 @@ def _validate_wav(data: bytes) -> tuple[int, float]:
     return sample_rate, duration
 
 
+def _coerce_to_wav(data: bytes) -> bytes:
+    """Accept any common audio upload: a valid WAV passes through untouched,
+    anything else (mp3, m4a/aac, flac, ogg/opus, ...) is transcoded to a mono
+    WAV via ffmpeg. Raises HTTPException(400) when the bytes aren't decodable."""
+
+    try:
+        with wave.open(io.BytesIO(data), "rb"):
+            return data
+    except Exception:
+        # Any wave parse failure (wave.Error/EOFError/RuntimeError) means "not a
+        # clean WAV" -- fall through and let ffmpeg try to decode it.
+        pass
+    # Lazy import: audio pulls in torch, which we don't want loaded into the API
+    # process at boot just for this operator-only transcode path.
+    from app.services import audio
+
+    try:
+        return audio.transcode_to_wav(data)
+    except audio.FfmpegError as exc:
+        raise HTTPException(
+            status_code=400, detail="unsupported or unreadable audio file"
+        ) from exc
+
+
+def _prepare_reference_wav(data: bytes) -> tuple[bytes, int, float]:
+    """Single upload gate: coerce any supported format to WAV (mp3/m4a/flac/ogg
+    via ffmpeg; a real WAV passes through) then validate duration and size.
+    Returns ``(wav_bytes, sample_rate, duration_secs)``. Runs ffmpeg, so callers
+    invoke it off the event loop via ``asyncio.to_thread``."""
+
+    wav = _coerce_to_wav(data)
+    sample_rate, duration_secs = _validate_wav(wav)
+    return wav, sample_rate, duration_secs
+
+
 async def _read_upload_capped(voice: UploadFile) -> bytes:
     """Stream the upload into a bytes object, aborting with 400 as soon
     as it crosses the cap so a hostile payload can't fully buffer first."""
@@ -140,10 +175,20 @@ async def preview() -> FileResponse:
     return FileResponse(path, media_type="audio/wav")
 
 
+@router.get("/status")
+async def default_voice_status() -> dict[str, Any]:
+    """Whether the fallback voice.wav is installed, plus its duration. The merged
+    voices UI renders this as the 'Default' row alongside the slots."""
+
+    path = _reference_path()
+    filled = path.is_file()
+    return {"filled": filled, "duration_secs": _wav_seconds(path) if filled else None}
+
+
 @router.post("/test")
 async def test_candidate(
     settings: Annotated[Settings, Depends(get_settings)],
-    voice: Annotated[UploadFile, File(description="candidate voice WAV")],
+    voice: Annotated[UploadFile, File(description="candidate voice clip (WAV/MP3/M4A/FLAC/OGG)")],
     sample_text: Annotated[
         str,
         Form(
@@ -162,7 +207,7 @@ async def test_candidate(
     """
 
     candidate = await _read_upload_capped(voice)
-    _validate_wav(candidate)
+    candidate, _, _ = await asyncio.to_thread(_prepare_reference_wav, candidate)
 
     reference = _reference_path()
     reference.parent.mkdir(parents=True, exist_ok=True)
@@ -251,13 +296,15 @@ async def audition_committed(
 @router.post("/commit")
 async def commit_candidate(
     settings: Annotated[Settings, Depends(get_settings)],
-    voice: Annotated[UploadFile, File(description="new voice WAV to install")],
+    voice: Annotated[UploadFile, File(description="new voice clip to install (WAV/MP3/M4A/FLAC/OGG)")],
 ) -> dict[str, str | int | bool]:
     """Atomically replace ``backend/app/reference/voice.wav`` and ask the
     TTS wrapper to ``/reload`` so the next ``/generate`` picks it up."""
 
     candidate = await _read_upload_capped(voice)
-    sample_rate, duration_secs = _validate_wav(candidate)
+    candidate, sample_rate, duration_secs = await asyncio.to_thread(
+        _prepare_reference_wav, candidate
+    )
 
     reference = _reference_path()
     reference.parent.mkdir(parents=True, exist_ok=True)
@@ -381,14 +428,16 @@ async def list_slots(conn: Annotated[sqlite3.Connection, Depends(get_conn)]) -> 
 async def upload_slot(
     conn: Annotated[sqlite3.Connection, Depends(get_conn)],
     slot: Annotated[int, PathParam(ge=1, le=voices.NUM_SLOTS)],
-    voice: Annotated[UploadFile, File(description="voice WAV for this slot")],
+    voice: Annotated[UploadFile, File(description="voice clip for this slot (WAV/MP3/M4A/FLAC/OGG)")],
     label: Annotated[str | None, Form()] = None,
 ) -> dict[str, Any]:
     """Install or replace the clip in slot ``slot``. No /reload -- slots are
     selected per job via /select-voice."""
 
     candidate = await _read_upload_capped(voice)
-    sample_rate, duration_secs = _validate_wav(candidate)
+    candidate, sample_rate, duration_secs = await asyncio.to_thread(
+        _prepare_reference_wav, candidate
+    )
     write_bytes_atomic(voices.slot_path(slot), candidate, prefix=".slot-")
     if label is not None:
         voices.set_label(conn, slot, label)

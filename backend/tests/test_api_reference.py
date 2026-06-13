@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import shutil
+import subprocess
 import wave
 from pathlib import Path
 
@@ -21,6 +23,29 @@ def _wav_bytes(*, duration_secs: float = 10.0, sample_rate: int = 24000) -> byte
         w.setframerate(sample_rate)
         w.writeframes(b"\x00\x00" * int(sample_rate * duration_secs))
     return buf.getvalue()
+
+
+def _mp3_bytes(*, duration_secs: float = 8.0) -> bytes:
+    return subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "wav", "-i", "pipe:0",
+         "-c:a", "libmp3lame", "-f", "mp3", "pipe:1"],
+        input=_wav_bytes(duration_secs=duration_secs),
+        capture_output=True,
+        check=True,
+    ).stdout
+
+
+def _mock_reload(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point httpx.AsyncClient at a transport that 200s every wrapper call."""
+
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"ok": True}))
+    original = httpx.AsyncClient
+
+    def factory(*args, **kwargs):
+        kwargs.setdefault("transport", transport)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
 
 
 def _client(env: Path) -> TestClient:
@@ -202,6 +227,40 @@ def test_commit_rejects_non_wav_payload(
             files={"voice": ("nope.txt", b"not a wav file at all", "audio/wav")},
         )
     assert response.status_code == 400
+
+
+def test_status_reports_default_voice(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.api.v1 import reference
+
+    path = env / "voice.wav"
+    monkeypatch.setattr(reference, "_reference_path", lambda: path)
+    with _client(env) as client:
+        empty = client.get("/api/v1/reference/status").json()
+        assert empty["filled"] is False
+        assert empty["duration_secs"] is None
+        path.write_bytes(_wav_bytes(duration_secs=10.0))
+        filled = client.get("/api/v1/reference/status").json()
+    assert filled["filled"] is True
+    assert filled["duration_secs"] == 10
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required for mp3 transcode")
+def test_commit_accepts_mp3(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.api.v1 import reference
+
+    path = env / "voice.wav"
+    monkeypatch.setattr(reference, "_reference_path", lambda: path)
+    _mock_reload(monkeypatch)
+
+    with _client(env) as client:
+        response = client.post(
+            "/api/v1/reference/commit",
+            files={"voice": ("clip.mp3", _mp3_bytes(duration_secs=8.0), "audio/mpeg")},
+        )
+    assert response.status_code == 200
+    assert response.json()["committed"]
+    # Stored as a converted WAV, not the raw mp3 bytes.
+    assert path.read_bytes().startswith(b"RIFF")
 
 
 def test_default_sample_text_is_cicero_passage():

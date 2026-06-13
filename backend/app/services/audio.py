@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,6 +56,52 @@ class FfmpegError(AudioError):
 class EncodeResult:
     mp3_path: Path
     duration_secs: float
+
+
+# Reference-voice transcode target: mono, 24 kHz, 16-bit PCM. The wrapper
+# resamples internally, so this is just a canonical, broadly-compatible WAV.
+_REFERENCE_WAV_SAMPLE_RATE = 24000
+
+
+def transcode_to_wav(data: bytes, *, max_seconds: int = 70) -> bytes:
+    """Decode an ffmpeg-readable audio upload (mp3, m4a, flac, ogg, opus, ...)
+    and return mono 16-bit PCM WAV bytes. ``max_seconds`` caps the output so a
+    long upload can't expand without bound. Raises :class:`FfmpegError`."""
+
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "in"
+        dst = Path(tmp) / "out.wav"
+        src.write_bytes(data)
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            str(src),
+            "-t",
+            str(max_seconds),
+            "-ac",
+            "1",
+            "-ar",
+            str(_REFERENCE_WAV_SAMPLE_RATE),
+            "-c:a",
+            "pcm_s16le",
+            "-f",
+            "wav",
+            str(dst),
+        ]
+        # Bound wall-clock decode time: this path runs on untrusted uploads, and a
+        # crafted file could otherwise hang ffmpeg and pin the calling thread.
+        try:
+            completed = subprocess.run(
+                cmd, capture_output=True, text=True, check=False, timeout=60
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise FfmpegError(-1, f"ffmpeg transcode timed out after {exc.timeout}s") from exc
+        if completed.returncode != 0 or not dst.is_file():
+            raise FfmpegError(completed.returncode, completed.stderr)
+        return dst.read_bytes()
 
 
 # --- Stage 1: silence trim --------------------------------------------------

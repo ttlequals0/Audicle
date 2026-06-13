@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.31.0
+  version: 0.31.1
 paths:
   /health/live:
     get:
@@ -762,6 +762,25 @@ paths:
           content:
             application/json:
               schema: {}
+  /api/v1/reference/status:
+    get:
+      tags:
+      - reference
+      summary: Default Voice Status
+      description: 'Whether the fallback voice.wav is installed, plus its duration.
+        The merged
+
+        voices UI renders this as the ''Default'' row alongside the slots.'
+      operationId: default_voice_status_api_v1_reference_status_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Default Voice Status Api V1 Reference Status Get
   /api/v1/reference/test:
     post:
       tags:
@@ -1110,11 +1129,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /rss/{slug}.xml:
-    head:
+    get:
       tags:
       - rss
       summary: Get Rss
-      operationId: get_rss_rss__slug__xml_head
+      operationId: get_rss_rss__slug__xml_get
       parameters:
       - name: slug
         in: path
@@ -1150,11 +1169,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    get:
+    head:
       tags:
       - rss
       summary: Get Rss
-      operationId: get_rss_rss__slug__xml_head
+      operationId: get_rss_rss__slug__xml_get
       parameters:
       - name: slug
         in: path
@@ -1191,11 +1210,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.mp3:
-    head:
+    get:
       tags:
       - media
       summary: Get Mp3
-      operationId: get_mp3_media__episode_id__mp3_head
+      operationId: get_mp3_media__episode_id__mp3_get
       parameters:
       - name: episode_id
         in: path
@@ -1215,11 +1234,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    get:
+    head:
       tags:
       - media
       summary: Get Mp3
-      operationId: get_mp3_media__episode_id__mp3_head
+      operationId: get_mp3_media__episode_id__mp3_get
       parameters:
       - name: episode_id
         in: path
@@ -1240,11 +1259,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.jpg:
-    head:
+    get:
       tags:
       - media
       summary: Get Jpg
-      operationId: get_jpg_media__episode_id__jpg_head
+      operationId: get_jpg_media__episode_id__jpg_get
       parameters:
       - name: episode_id
         in: path
@@ -1264,11 +1283,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    get:
+    head:
       tags:
       - media
       summary: Get Jpg
-      operationId: get_jpg_media__episode_id__jpg_head
+      operationId: get_jpg_media__episode_id__jpg_get
       parameters:
       - name: episode_id
         in: path
@@ -1289,11 +1308,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.vtt:
-    head:
+    get:
       tags:
       - media
       summary: Get Vtt
-      operationId: get_vtt_media__episode_id__vtt_head
+      operationId: get_vtt_media__episode_id__vtt_get
       parameters:
       - name: episode_id
         in: path
@@ -1313,11 +1332,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    get:
+    head:
       tags:
       - media
       summary: Get Vtt
-      operationId: get_vtt_media__episode_id__vtt_head
+      operationId: get_vtt_media__episode_id__vtt_get
       parameters:
       - name: episode_id
         in: path
@@ -1338,7 +1357,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.txt:
-    head:
+    get:
       tags:
       - media
       summary: Get Cleaned Text
@@ -1346,7 +1365,7 @@ paths:
         the
 
         ``cleaned_text`` column. 404 for episodes processed before 0.6.0 (NULL).'
-      operationId: get_cleaned_text_media__episode_id__txt_head
+      operationId: get_cleaned_text_media__episode_id__txt_get
       parameters:
       - name: episode_id
         in: path
@@ -1366,7 +1385,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    get:
+    head:
       tags:
       - media
       summary: Get Cleaned Text
@@ -1374,7 +1393,7 @@ paths:
         the
 
         ``cleaned_text`` column. 404 for episodes processed before 0.6.0 (NULL).'
-      operationId: get_cleaned_text_media__episode_id__txt_head
+      operationId: get_cleaned_text_media__episode_id__txt_get
       parameters:
       - name: episode_id
         in: path
@@ -1448,7 +1467,7 @@ components:
           type: string
           contentMediaType: application/octet-stream
           title: Voice
-          description: new voice WAV to install
+          description: new voice clip to install (WAV/MP3/M4A/FLAC/OGG)
       type: object
       required:
       - voice
@@ -1469,7 +1488,7 @@ components:
           type: string
           contentMediaType: application/octet-stream
           title: Voice
-          description: candidate voice WAV
+          description: candidate voice clip (WAV/MP3/M4A/FLAC/OGG)
         sample_text:
           type: string
           maxLength: 400
@@ -1510,7 +1529,7 @@ components:
           type: string
           contentMediaType: application/octet-stream
           title: Voice
-          description: voice WAV for this slot
+          description: voice clip for this slot (WAV/MP3/M4A/FLAC/OGG)
         label:
           anyOf:
           - type: string

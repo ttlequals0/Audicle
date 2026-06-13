@@ -6,6 +6,23 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.31.1] - 2026-06-13
+
+### Changed
+
+- The reference voice and voice slots are now one "voices" section in Settings. The
+  fallback voice sits as a "Default" row alongside the five slots, and every row shares
+  the same controls: an inline player for the stored clip, an Audition button that
+  synthesizes a TTS sample, and Replace (slots also have Clear). Replacing the Default
+  asks for confirmation, since it is the global fallback and cannot be emptied.
+
+### Added
+
+- Voice uploads accept more formats. Alongside WAV you can upload MP3, M4A/AAC, FLAC,
+  or OGG/Opus for the default voice or any slot; anything that isn't already a WAV is
+  transcoded to a mono WAV with ffmpeg before validation. A new `GET /reference/status`
+  reports the fallback voice (installed, duration) for the merged UI.
+
 ## [0.31.0] - 2026-06-13
 
 ### Added
