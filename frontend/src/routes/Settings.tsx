@@ -1289,9 +1289,9 @@ function VoicesWidget() {
         <label className="label" htmlFor="voice-sample">
           audition sample text
         </label>
-        <input
+        <textarea
           id="voice-sample"
-          className="field"
+          className="field min-h-[120px] resize-y"
           value={sample}
           onChange={(e) => setSample(e.target.value)}
         />

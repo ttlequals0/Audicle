@@ -6,6 +6,18 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.31.2] - 2026-06-13
+
+### Changed
+
+- The per-submission voice picker on the Home screen moved below the Submit button
+  into a collapsed `> // voice:` disclosure that remembers its open state, so it
+  stays out of the way until you want it. It appears once at least one voice slot is
+  filled; with no slots filled every job uses the default voice and the picker stays
+  hidden. If the slot you picked is later cleared, the choice falls back to random.
+- The audition sample text in Settings is a multi-line field again, so the whole
+  sample is visible and editable instead of scrolling in a single line.
+
 ## [0.31.1] - 2026-06-13
 
 ### Changed

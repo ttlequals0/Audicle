@@ -1,4 +1,4 @@
-import { useRef, useState, DragEvent, FormEvent } from "react";
+import { useEffect, useRef, useState, DragEvent, FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, JobRow, JobStatus, postForm, SettingsPayload, VoiceSlot } from "../lib/api";
 import { fileExt, formatBytes } from "../lib/format";
@@ -26,8 +26,10 @@ export default function Home() {
   // Reference-voice choice for this submission: "random" (default), "last", or a slot id.
   const [voice, setVoice] = useState("random");
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // Recents are collapsed by default and the toggle is remembered across reloads.
+  // Recents and the per-submission voice picker are collapsed by default; the
+  // toggles are remembered across reloads.
   const [recentOpen, setRecentOpen] = usePersistentOpen("home.recents.open", false);
+  const [voiceOpen, setVoiceOpen] = usePersistentOpen("home.voice.open", false);
   const qc = useQueryClient();
 
   const jobsQ = useQuery({
@@ -50,6 +52,20 @@ export default function Home() {
     staleTime: 60_000,
   });
   const filledSlots = (slotsQ.data ?? []).filter((s) => s.filled);
+  const voiceChoiceLabel =
+    voice === "random"
+      ? "random"
+      : voice === "last"
+        ? "last used"
+        : (filledSlots.find((s) => String(s.slot) === voice)?.label ?? `slot ${voice}`);
+  // If the picked slot is later cleared, fall back to random so the label, the
+  // select, and the submitted value can't disagree. Depend on the stable query
+  // data (not the per-render filledSlots array) to avoid re-running every render.
+  useEffect(() => {
+    if (voice === "random" || voice === "last") return;
+    const stillFilled = (slotsQ.data ?? []).some((s) => s.filled && String(s.slot) === voice);
+    if (!stillFilled) setVoice("random");
+  }, [slotsQ.data, voice]);
 
   const configuredMb = Number(
     settingsQ.data?.values.UPLOAD_MAX_MB ?? settingsQ.data?.defaults.UPLOAD_MAX_MB
@@ -264,22 +280,6 @@ export default function Home() {
               )}
             </label>
           )}
-          {filledSlots.length > 0 && (
-            <select
-              className="field"
-              value={voice}
-              onChange={(e) => setVoice(e.target.value)}
-              aria-label="Reference voice"
-            >
-              <option value="random">Voice: Random</option>
-              <option value="last">Voice: Last used</option>
-              {filledSlots.map((s) => (
-                <option key={s.slot} value={String(s.slot)}>
-                  Voice: {s.label ?? `Slot ${s.slot}`}
-                </option>
-              ))}
-            </select>
-          )}
           <button
             type="submit"
             className="btn-primary w-full"
@@ -287,6 +287,37 @@ export default function Home() {
           >
             {pending ? "Submitting..." : "Submit"}
           </button>
+          {filledSlots.length > 0 && (
+            <div>
+              <button
+                type="button"
+                className="mono-xs text-mute flex items-center gap-1.5 hover:text-fg"
+                onClick={() => setVoiceOpen(!voiceOpen)}
+                aria-expanded={voiceOpen}
+              >
+                <span className={`transition-transform ${voiceOpen ? "rotate-90" : ""}`}>
+                  &rsaquo;
+                </span>
+                // voice: {voiceChoiceLabel}
+              </button>
+              {voiceOpen && (
+                <select
+                  className="field mt-2"
+                  value={voice}
+                  onChange={(e) => setVoice(e.target.value)}
+                  aria-label="Reference voice"
+                >
+                  <option value="random">Voice: Random</option>
+                  <option value="last">Voice: Last used</option>
+                  {filledSlots.map((s) => (
+                    <option key={s.slot} value={String(s.slot)}>
+                      Voice: {s.label ?? `Slot ${s.slot}`}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
         </form>
         {error && <p className="text-danger text-xs font-mono mt-2 break-words">{error}</p>}
 
