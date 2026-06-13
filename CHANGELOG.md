@@ -6,7 +6,37 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
-## [0.30.2] - 2026-06-11
+## [0.31.0] - 2026-06-13
+
+### Added
+
+- Multiple reference voices. Five fixed voice slots can be filled, labelled, and
+  auditioned from Settings. Each job picks a voice at submit time: Random (default,
+  a random filled slot), Last used, or a specific slot from the Home screen. The
+  legacy `reference/voice.wav` stays the fallback when no slot is filled. The chosen
+  slot is recorded on the job and the wrapper switches to it once, before the first
+  chunk, via a new `POST /select-voice` endpoint.
+- Episode webhooks. Set `WEBHOOK_URL` (Settings, runtime-tunable) and Audicle POSTs
+  a JSON payload when an episode finishes (`episode.processed`) or fails
+  (`episode.failed`): title, source link, time-to-process, the `reprocess` flag, and
+  on failure the stage and error. Delivery is fire-and-forget with bounded retries
+  and never fails the job; an empty `WEBHOOK_URL` disables it.
+- Reprocess failed jobs from Recents. A failed row on the Home screen gets a reprocess
+  control that calls the new `POST /api/v1/jobs/{job_id}/requeue`, which re-enqueues the
+  job. URL jobs re-fetch (behind the same SSRF guard as submit); upload jobs re-run from
+  the stored original. A swept upload original returns a clear 409.
+- Arc XP / Fusion static body extractor. Some publishers ship a short teaser in the
+  visible DOM while the full article sits in the page's `content_elements` JSON.
+  When `EXTRACTION_ARC_ENABLED` is on (default), Audicle reads the body straight out
+  of the static HTML ahead of the browser fallbacks, gated on the Arc signature so
+  non-Arc pages are untouched.
+
+### Changed
+
+- The upload size limit is now configured in megabytes. `UPLOAD_MAX_BYTES` is renamed
+  to `UPLOAD_MAX_MB` (default 50) across config, the Settings UI, and the uploader.
+  Migration `015` converts a stored byte override to MB, and the old `UPLOAD_MAX_BYTES`
+  env var is still read as a fallback so existing installs keep working.
 
 ### Fixed
 

@@ -14,6 +14,7 @@ import io
 import logging
 import re
 import wave
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 logger = logging.getLogger("tts.engine")
@@ -137,4 +138,10 @@ class Engine(Protocol):
         """Re-read the reference WAV from disk and recompute embeddings.
 
         Used by the API's ``/reload`` endpoint after a reference-voice commit.
+        """
+
+    async def select_voice(self, ref_path: Path) -> None:
+        """Encode a specific reference clip (a voice slot) as the active voice.
+
+        Used by the API's ``/select-voice`` endpoint to switch the per-job voice.
         """

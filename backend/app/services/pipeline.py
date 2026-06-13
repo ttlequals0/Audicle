@@ -50,6 +50,7 @@ from app.services import (
     source_fallbacks_store,
     transcript,
     tts,
+    webhooks,
 )
 from app.services import prompt as prompt_service
 from app.utils.logging import episode_id_ctx, job_id_ctx, stage_ctx
@@ -112,6 +113,7 @@ async def process_job(job: jobs.Job, settings: Settings) -> None:
 
     with _job_context(job):
         logger.info("Pipeline starting", extra={"event": "pipeline_start"})
+        terminal_event = "episode.processed"
         try:
             loop = asyncio.get_running_loop()
             t0 = loop.time()
@@ -136,6 +138,7 @@ async def process_job(job: jobs.Job, settings: Settings) -> None:
             async with asyncio.timeout(base) as cm:
                 await _run_stages(job, settings, on_chunk_count=_rescale)
         except TimeoutError:
+            terminal_event = "episode.failed"
             eff = timeout_state["effective"]
             chunks = timeout_state["chunks"]
             _finalize_failure(
@@ -155,6 +158,7 @@ async def process_job(job: jobs.Job, settings: Settings) -> None:
                 },
             )
         except Exception as exc:
+            terminal_event = "episode.failed"
             _finalize_failure(
                 job.id,
                 settings,
@@ -166,6 +170,8 @@ async def process_job(job: jobs.Job, settings: Settings) -> None:
             )
         else:
             logger.info("Pipeline finished", extra={"event": "pipeline_done"})
+        # Fire-and-forget terminal webhook (no-op when WEBHOOK_URL is unset).
+        _fire_webhook(terminal_event, job.id, settings)
 
 
 def _finalize_failure(
@@ -212,6 +218,29 @@ def _finalize_failure(
     if extra_log_fields:
         fields.update(extra_log_fields)
     logger.log(log_level, log_message, extra=fields, exc_info=with_exc_info)
+
+
+def _fire_webhook(event: str, job_id: str, settings: Settings) -> None:
+    """Build + schedule the terminal episode webhook. Best-effort: a webhook problem
+    never propagates into job processing. No-op when ``WEBHOOK_URL`` is unset."""
+
+    if not settings.WEBHOOK_URL.strip():
+        return
+    try:
+        conn = database.connect(database.db_path(settings.DATA_DIR))
+        try:
+            job = jobs.get_job(conn, job_id)
+            episode = episodes.get_by_id(conn, job.episode_id) if job else None
+        finally:
+            conn.close()
+        if job is not None:
+            webhooks.fire(settings, webhooks.build_payload(event, job, episode))
+    except Exception:
+        logger.warning(
+            "Failed to build episode webhook",
+            extra={"event": "webhook_build_failed"},
+            exc_info=True,
+        )
 
 
 async def _run_stages(
@@ -981,6 +1010,29 @@ async def _stage_tts(
     """For each chunk, POST to the wrapper with client-side retry on
     transient failures. Returns the list of GenerateResult so the audio
     stage can read the per-chunk WAVs."""
+
+    # Select this job's reference voice once, before the first chunk, so every
+    # chunk conditions on the same voice. Best-effort: a missing slot (deleted
+    # after submit) keeps the wrapper's current voice rather than failing the job.
+    if job.voice_id:
+        try:
+            await tts.select_voice(settings, int(job.voice_id))
+        except (ValueError, tts.TTSError):
+            logger.warning(
+                "Voice select failed; using the wrapper's current voice",
+                extra={"event": "tts_select_voice_failed", "voice_id": job.voice_id},
+            )
+    else:
+        # No slot assigned (all slots empty): reset the wrapper to the legacy
+        # voice.wav so this job doesn't inherit a slot left selected by an
+        # earlier job or an audition.
+        try:
+            await tts.reload(settings)
+        except tts.TTSError:
+            logger.warning(
+                "Voice reset to default failed; using the wrapper's current voice",
+                extra={"event": "tts_reset_voice_failed"},
+            )
 
     results: list[tts.GenerateResult] = []
     total = len(chunks)

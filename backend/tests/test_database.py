@@ -24,6 +24,8 @@ def test_run_migrations_creates_tables(tmp_path: Path) -> None:
         "011_import_corrections_to_db",
         "012_lexicon_table",
         "013_episode_source_type",
+        "014_job_columns",
+        "015_upload_max_mb",
     ]
 
     conn = database.connect(database.db_path(tmp_path))
@@ -53,6 +55,8 @@ def test_second_run_is_a_noop(tmp_path: Path) -> None:
         "011_import_corrections_to_db",
         "012_lexicon_table",
         "013_episode_source_type",
+        "014_job_columns",
+        "015_upload_max_mb",
     ]
     assert second == []
 
@@ -383,3 +387,23 @@ def test_migration_lock_serializes_concurrent_callers(tmp_path: Path) -> None:
     assert second_acquired.wait(timeout=5)
     t1.join(timeout=5)
     t2.join(timeout=5)
+
+
+def test_m015_converts_upload_bytes_override_to_mb(tmp_path: Path) -> None:
+    import json
+
+    database.run_migrations(tmp_path)
+    conn = database.connect(database.db_path(tmp_path))
+    try:
+        conn.execute(
+            "INSERT INTO runtime_settings (key, value) VALUES ('UPLOAD_MAX_BYTES', ?)",
+            (json.dumps(100 * 1024 * 1024),),
+        )
+        conn.commit()
+        database._m015_upload_max_mb(conn)
+        conn.commit()
+        rows = {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM runtime_settings")}
+        assert "UPLOAD_MAX_BYTES" not in rows
+        assert json.loads(rows["UPLOAD_MAX_MB"]) == 100
+    finally:
+        conn.close()

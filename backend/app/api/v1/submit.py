@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator
 
 from app.api.deps import get_conn
-from app.services import jobs, ssrf
+from app.services import jobs, ssrf, voices
 
 router = APIRouter(tags=["jobs"])
 
@@ -33,6 +33,11 @@ class SubmitRequest(BaseModel):
             "and update that episode in place (same episode_id, new pub_date). "
             "Default is to return 409."
         ),
+    )
+    voice: str | None = Field(
+        default=None,
+        max_length=16,
+        description="Reference voice: a slot number 1-5, 'last', or 'random' (default).",
     )
 
     @field_validator("url")
@@ -79,8 +84,11 @@ async def submit(
                 status_code=400,
                 detail="The submitted URL resolves to a non-public address and was blocked.",
             ) from exc
+    voice_id = voices.resolve(conn, body.voice)
     try:
-        result = jobs.create_job(conn, body.url, reprocess=body.reprocess)
+        result = jobs.create_job(
+            conn, body.url, reprocess=body.reprocess, voice_id=voice_id
+        )
     except jobs.DuplicateSubmissionError as exc:
         raise HTTPException(
             status_code=409,

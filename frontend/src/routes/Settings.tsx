@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError, readCsrf, LlmModelsResponse, SettingsPayload } from "../lib/api";
+import { api, ApiError, readCsrf, LlmModelsResponse, SettingsPayload, VoiceSlot } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useHealthLive } from "../lib/useHealthLive";
 import CollapsibleSection from "../components/CollapsibleSection";
@@ -45,7 +45,7 @@ const GROUPS: Record<string, string[]> = {
     "WHISPER_VERIFY_MIN_WORDS",
   ],
   Cleanup: ["MIN_CLEANUP_CHARS", "MAX_PROMPT_LENGTH_BYTES"],
-  Uploads: ["UPLOAD_MAX_BYTES"],
+  Uploads: ["UPLOAD_MAX_MB"],
   Pipeline: ["JOB_TIMEOUT_SECONDS", "JOB_TIMEOUT_PER_CHUNK_SECONDS"],
   Retention: ["RETENTION_DAYS"],
   RSS: ["RSS_CACHE_MAX_AGE_SECONDS"],
@@ -228,9 +228,7 @@ export default function SettingsRoute() {
             )}
             {group === "Uploads" && (
               <p className="mono-xs text-mute mb-3">
-                // max direct-upload size in bytes (
-                {Math.round((Number(draft.UPLOAD_MAX_BYTES) || 0) / (1024 * 1024))} MB) -- applies
-                immediately, no restart
+                // max direct-upload size in MB -- applies immediately, no restart
               </p>
             )}
             {group === "Pipeline" && (
@@ -324,6 +322,10 @@ export default function SettingsRoute() {
       )}
       <CollapsibleSection title="reference voice">
         <ReferenceVoiceWidget />
+      </CollapsibleSection>
+
+      <CollapsibleSection title="voice slots">
+        <VoiceSlotsWidget />
       </CollapsibleSection>
 
       {authStatus && (
@@ -1104,6 +1106,129 @@ function LexiconLookup() {
         look up
       </button>
       {result && <span className="mono-xs text-mute">{result}</span>}
+    </div>
+  );
+}
+
+function VoiceSlotsWidget() {
+  const qc = useQueryClient();
+  const slotsQ = useQuery({
+    queryKey: ["voice-slots"],
+    queryFn: () => api<VoiceSlot[]>("/api/v1/reference/slots"),
+    staleTime: 60_000,
+  });
+  const [msg, setMsg] = useState<string | null>(null);
+  const [auditionUrl, setAuditionUrl] = useState<string | null>(null);
+
+  useEffect(
+    () => () => {
+      if (auditionUrl) URL.revokeObjectURL(auditionUrl);
+    },
+    [auditionUrl]
+  );
+
+  const refresh = () => qc.invalidateQueries({ queryKey: ["voice-slots"] });
+
+  const sendForm = async (path: string, method: string, fd?: FormData): Promise<Response> => {
+    const headers: Record<string, string> = {};
+    const csrf = readCsrf();
+    if (csrf) headers["X-CSRF-Token"] = csrf;
+    return fetch(path, { method, body: fd, credentials: "include", headers });
+  };
+
+  const upload = async (slot: number, f: File) => {
+    setMsg(null);
+    const fd = new FormData();
+    fd.append("voice", f);
+    const r = await sendForm(`/api/v1/reference/slots/${slot}`, "POST", fd);
+    setMsg(r.ok ? `slot ${slot} saved` : `slot ${slot} upload failed (${r.status})`);
+    if (r.ok) refresh();
+  };
+
+  const clear = async (slot: number) => {
+    if (!confirm(`Clear voice slot ${slot}?`)) return;
+    try {
+      await api(`/api/v1/reference/slots/${slot}`, { method: "DELETE" });
+      refresh();
+    } catch {
+      setMsg(`slot ${slot} clear failed`);
+    }
+  };
+
+  const rename = async (slot: number, label: string) => {
+    const fd = new FormData();
+    fd.append("label", label);
+    const r = await sendForm(`/api/v1/reference/slots/${slot}/label`, "PUT", fd);
+    setMsg(r.ok ? `slot ${slot} renamed` : `rename failed (${r.status})`);
+    if (r.ok) refresh();
+  };
+
+  const audition = async (slot: number) => {
+    setMsg(`auditioning slot ${slot}...`);
+    const fd = new FormData();
+    fd.append("sample_text", "This is a short sample of the selected reference voice.");
+    const r = await sendForm(`/api/v1/reference/slots/${slot}/audition`, "POST", fd);
+    if (!r.ok) {
+      setMsg(`slot ${slot} audition failed (${r.status})`);
+      return;
+    }
+    setAuditionUrl(URL.createObjectURL(await r.blob()));
+    setMsg(null);
+  };
+
+  const slots = slotsQ.data ?? [];
+
+  return (
+    <div className="space-y-3">
+      <p className="mono-xs text-mute">
+        // 5 slots -- a random filled one is used per episode unless you pick one at submit; the
+        legacy reference voice is the fallback when all are empty
+      </p>
+      {msg && <p className="mono-xs text-accent">{msg}</p>}
+      {auditionUrl && <audio src={auditionUrl} controls autoPlay className="w-full" />}
+      {slots.map((s) => (
+        <div key={s.slot} className="card p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="format-badge">{s.slot}</span>
+            <input
+              className="field flex-1"
+              defaultValue={s.label ?? ""}
+              placeholder={`Slot ${s.slot} label`}
+              onBlur={(e) => {
+                if ((e.target.value ?? "") !== (s.label ?? "")) rename(s.slot, e.target.value);
+              }}
+            />
+            <span className="mono-xs text-mute shrink-0">
+              {s.filled ? `${s.duration_secs ?? "?"}s` : "empty"}
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <label className="btn-ghost cursor-pointer">
+              {s.filled ? "Replace" : "Upload"} WAV
+              <input
+                type="file"
+                accept=".wav,audio/wav,audio/x-wav"
+                className="sr-only"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) upload(s.slot, f);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            {s.filled && (
+              <>
+                <button className="btn-ghost" onClick={() => audition(s.slot)}>
+                  Audition
+                </button>
+                <button className="btn-ghost btn-danger" onClick={() => clear(s.slot)}>
+                  Clear
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

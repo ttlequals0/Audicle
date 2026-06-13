@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.30.2
+  version: 0.31.0
 paths:
   /health/live:
     get:
@@ -724,6 +724,32 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/jobs/{job_id}/requeue:
+    post:
+      tags:
+      - jobs
+      summary: Re-enqueue a job (reprocess a failed/finished run)
+      operationId: requeue_job_api_v1_jobs__job_id__requeue_post
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmitResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/reference/preview:
     get:
       tags:
@@ -842,6 +868,191 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/reference/slots:
+    get:
+      tags:
+      - reference
+      summary: List Slots
+      operationId: list_slots_api_v1_reference_slots_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/SlotInfo'
+                type: array
+                title: Response List Slots Api V1 Reference Slots Get
+  /api/v1/reference/slots/{slot}:
+    post:
+      tags:
+      - reference
+      summary: Upload Slot
+      description: 'Install or replace the clip in slot ``slot``. No /reload -- slots
+        are
+
+        selected per job via /select-voice.'
+      operationId: upload_slot_api_v1_reference_slots__slot__post
+      parameters:
+      - name: slot
+        in: path
+        required: true
+        schema:
+          type: integer
+          maximum: 5
+          minimum: 1
+          title: Slot
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_upload_slot_api_v1_reference_slots__slot__post'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Upload Slot Api V1 Reference Slots  Slot  Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - reference
+      summary: Clear Slot
+      operationId: clear_slot_api_v1_reference_slots__slot__delete
+      parameters:
+      - name: slot
+        in: path
+        required: true
+        schema:
+          type: integer
+          maximum: 5
+          minimum: 1
+          title: Slot
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Clear Slot Api V1 Reference Slots  Slot  Delete
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/reference/slots/{slot}/label:
+    put:
+      tags:
+      - reference
+      summary: Rename Slot
+      operationId: rename_slot_api_v1_reference_slots__slot__label_put
+      parameters:
+      - name: slot
+        in: path
+        required: true
+        schema:
+          type: integer
+          maximum: 5
+          minimum: 1
+          title: Slot
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Body_rename_slot_api_v1_reference_slots__slot__label_put'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Rename Slot Api V1 Reference Slots  Slot  Label Put
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/reference/slots/{slot}/preview:
+    get:
+      tags:
+      - reference
+      summary: Preview Slot
+      operationId: preview_slot_api_v1_reference_slots__slot__preview_get
+      parameters:
+      - name: slot
+        in: path
+        required: true
+        schema:
+          type: integer
+          maximum: 5
+          minimum: 1
+          title: Slot
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/reference/slots/{slot}/audition:
+    post:
+      tags:
+      - reference
+      summary: Audition Slot
+      description: 'Synthesize a sample with slot ``slot`` (selects it on the wrapper,
+
+        generates, then restores the committed voice.wav). Mirrors /test''s restore
+
+        contract so an audition never leaves the wrapper switched to a slot.'
+      operationId: audition_slot_api_v1_reference_slots__slot__audition_post
+      parameters:
+      - name: slot
+        in: path
+        required: true
+        schema:
+          type: integer
+          maximum: 5
+          minimum: 1
+          title: Slot
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Body_audition_slot_api_v1_reference_slots__slot__audition_post'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/llm/models:
     get:
       tags:
@@ -899,11 +1110,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /rss/{slug}.xml:
-    get:
+    head:
       tags:
       - rss
       summary: Get Rss
-      operationId: get_rss_rss__slug__xml_get
+      operationId: get_rss_rss__slug__xml_head
       parameters:
       - name: slug
         in: path
@@ -939,11 +1150,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    head:
+    get:
       tags:
       - rss
       summary: Get Rss
-      operationId: get_rss_rss__slug__xml_get
+      operationId: get_rss_rss__slug__xml_head
       parameters:
       - name: slug
         in: path
@@ -980,11 +1191,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.mp3:
-    get:
+    head:
       tags:
       - media
       summary: Get Mp3
-      operationId: get_mp3_media__episode_id__mp3_get
+      operationId: get_mp3_media__episode_id__mp3_head
       parameters:
       - name: episode_id
         in: path
@@ -1004,11 +1215,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    head:
+    get:
       tags:
       - media
       summary: Get Mp3
-      operationId: get_mp3_media__episode_id__mp3_get
+      operationId: get_mp3_media__episode_id__mp3_head
       parameters:
       - name: episode_id
         in: path
@@ -1029,11 +1240,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.jpg:
-    get:
+    head:
       tags:
       - media
       summary: Get Jpg
-      operationId: get_jpg_media__episode_id__jpg_get
+      operationId: get_jpg_media__episode_id__jpg_head
       parameters:
       - name: episode_id
         in: path
@@ -1053,11 +1264,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    head:
+    get:
       tags:
       - media
       summary: Get Jpg
-      operationId: get_jpg_media__episode_id__jpg_get
+      operationId: get_jpg_media__episode_id__jpg_head
       parameters:
       - name: episode_id
         in: path
@@ -1078,11 +1289,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.vtt:
-    get:
+    head:
       tags:
       - media
       summary: Get Vtt
-      operationId: get_vtt_media__episode_id__vtt_get
+      operationId: get_vtt_media__episode_id__vtt_head
       parameters:
       - name: episode_id
         in: path
@@ -1102,11 +1313,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    head:
+    get:
       tags:
       - media
       summary: Get Vtt
-      operationId: get_vtt_media__episode_id__vtt_get
+      operationId: get_vtt_media__episode_id__vtt_head
       parameters:
       - name: episode_id
         in: path
@@ -1127,7 +1338,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.txt:
-    get:
+    head:
       tags:
       - media
       summary: Get Cleaned Text
@@ -1135,7 +1346,7 @@ paths:
         the
 
         ``cleaned_text`` column. 404 for episodes processed before 0.6.0 (NULL).'
-      operationId: get_cleaned_text_media__episode_id__txt_get
+      operationId: get_cleaned_text_media__episode_id__txt_head
       parameters:
       - name: episode_id
         in: path
@@ -1155,7 +1366,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    head:
+    get:
       tags:
       - media
       summary: Get Cleaned Text
@@ -1163,7 +1374,7 @@ paths:
         the
 
         ``cleaned_text`` column. 404 for episodes processed before 0.6.0 (NULL).'
-      operationId: get_cleaned_text_media__episode_id__txt_get
+      operationId: get_cleaned_text_media__episode_id__txt_head
       parameters:
       - name: episode_id
         in: path
@@ -1218,6 +1429,19 @@ components:
             of the truth, the master-builder of human happiness.
       type: object
       title: Body_audition_committed_api_v1_reference_audition_post
+    Body_audition_slot_api_v1_reference_slots__slot__audition_post:
+      properties:
+        sample_text:
+          type: string
+          maxLength: 400
+          minLength: 4
+          title: Sample Text
+          default: But I must explain to you how all this mistaken idea of denouncing
+            of a pleasure and praising pain was born and I will give you a complete
+            account of the system, and expound the actual teachings of the great explorer
+            of the truth, the master-builder of human happiness.
+      type: object
+      title: Body_audition_slot_api_v1_reference_slots__slot__audition_post
     Body_commit_candidate_api_v1_reference_commit_post:
       properties:
         voice:
@@ -1229,6 +1453,16 @@ components:
       required:
       - voice
       title: Body_commit_candidate_api_v1_reference_commit_post
+    Body_rename_slot_api_v1_reference_slots__slot__label_put:
+      properties:
+        label:
+          type: string
+          maxLength: 60
+          title: Label
+      type: object
+      required:
+      - label
+      title: Body_rename_slot_api_v1_reference_slots__slot__label_put
     Body_test_candidate_api_v1_reference_test_post:
       properties:
         voice:
@@ -1261,10 +1495,31 @@ components:
           type: boolean
           title: Reprocess
           default: false
+        voice:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Voice
       type: object
       required:
       - file
       title: Body_upload_api_v1_upload_post
+    Body_upload_slot_api_v1_reference_slots__slot__post:
+      properties:
+        voice:
+          type: string
+          contentMediaType: application/octet-stream
+          title: Voice
+          description: voice WAV for this slot
+        label:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Label
+      type: object
+      required:
+      - voice
+      title: Body_upload_slot_api_v1_reference_slots__slot__post
     DeleteEpisodeResponse:
       properties:
         id:
@@ -1422,6 +1677,14 @@ components:
           - type: string
           - type: 'null'
           title: Started At
+        source_filename:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Filename
+        reprocess:
+          type: boolean
+          title: Reprocess
       additionalProperties: false
       type: object
       required:
@@ -1436,6 +1699,8 @@ components:
       - created_at
       - updated_at
       - started_at
+      - source_filename
+      - reprocess
       title: JobListItem
     LoginRequest:
       properties:
@@ -1576,6 +1841,29 @@ components:
       - defaults
       - feed_url
       title: SettingsResponse
+    SlotInfo:
+      properties:
+        slot:
+          type: integer
+          title: Slot
+        filled:
+          type: boolean
+          title: Filled
+        label:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Label
+        duration_secs:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Duration Secs
+      type: object
+      required:
+      - slot
+      - filled
+      title: SlotInfo
     SubmitRequest:
       properties:
         url:
@@ -1591,6 +1879,14 @@ components:
             and update that episode in place (same episode_id, new pub_date). Default
             is to return 409.
           default: false
+        voice:
+          anyOf:
+          - type: string
+            maxLength: 16
+          - type: 'null'
+          title: Voice
+          description: 'Reference voice: a slot number 1-5, ''last'', or ''random''
+            (default).'
       additionalProperties: false
       type: object
       required:

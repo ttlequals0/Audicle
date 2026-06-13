@@ -39,13 +39,18 @@ class Job:
     # Set when the worker claims the job (queued -> processing); NULL while
     # queued and for jobs created before 0.11.0.
     started_at: str | None = None
+    # 0.31.0: the reference-voice slot this job used (NULL = legacy voice.wav or a
+    # pre-0.31.0 row), and whether this run was a reprocess (was a transient
+    # create_job param before; persisted now so webhooks + Recents can show it).
+    voice_id: str | None = None
+    reprocess: bool = False
 
 
 # Shared column list so every Job SELECT returns the progress fields _row_to_job
 # reads. ``SELECT *`` is used by the list API, which maps columns explicitly.
 _JOB_COLUMNS = (
     "id, url, episode_id, status, stage, error, created_at, updated_at, "
-    "progress_current, progress_total, started_at"
+    "progress_current, progress_total, started_at, voice_id, reprocess"
 )
 
 
@@ -74,6 +79,8 @@ def _row_to_job(row: sqlite3.Row) -> Job:
         progress_current=row["progress_current"],
         progress_total=row["progress_total"],
         started_at=row["started_at"],
+        voice_id=row["voice_id"],
+        reprocess=bool(row["reprocess"]),
     )
 
 
@@ -129,7 +136,13 @@ class DuplicateSubmissionError(Exception):
         self.reason = reason
 
 
-def create_job(conn: sqlite3.Connection, url: str, *, reprocess: bool = False) -> CreateJobResult:
+def create_job(
+    conn: sqlite3.Connection,
+    url: str,
+    *,
+    reprocess: bool = False,
+    voice_id: str | None = None,
+) -> CreateJobResult:
     """Insert a new ``queued`` job for ``url``.
 
     Duplicate detection + the INSERT run inside a single BEGIN IMMEDIATE
@@ -169,8 +182,9 @@ def create_job(conn: sqlite3.Connection, url: str, *, reprocess: bool = False) -
         replaced = has_episode and reprocess
 
         conn.execute(
-            "INSERT INTO jobs (id, url, episode_id, status) VALUES (?, ?, ?, 'queued')",
-            (job_id, url, episode_id),
+            "INSERT INTO jobs (id, url, episode_id, status, reprocess, voice_id) "
+            "VALUES (?, ?, ?, 'queued', ?, ?)",
+            (job_id, url, episode_id, int(reprocess), voice_id),
         )
         conn.execute("COMMIT")
     except DuplicateSubmissionError:

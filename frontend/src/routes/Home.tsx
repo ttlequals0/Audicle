@@ -1,6 +1,6 @@
 import { useRef, useState, DragEvent, FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError, JobRow, JobStatus, postForm, SettingsPayload } from "../lib/api";
+import { api, ApiError, JobRow, JobStatus, postForm, SettingsPayload, VoiceSlot } from "../lib/api";
 import { fileExt, formatBytes } from "../lib/format";
 import { usePersistentOpen } from "../components/CollapsibleSection";
 
@@ -14,8 +14,8 @@ type Mode = "url" | "file";
 // Kept in sync with file_extraction.ALLOWED_EXTENSIONS on the backend.
 const ACCEPT = ".pdf,.docx,.md,.txt,.html,.htm";
 const ALLOWED_EXTS = ["pdf", "docx", "md", "txt", "html", "htm"];
-// Fallback only until the live UPLOAD_MAX_BYTES setting loads.
-const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+// Fallback only until the live UPLOAD_MAX_MB setting loads.
+const DEFAULT_MAX_UPLOAD_MB = 50;
 
 export default function Home() {
   const [mode, setMode] = useState<Mode>("url");
@@ -23,6 +23,8 @@ export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Reference-voice choice for this submission: "random" (default), "last", or a slot id.
+  const [voice, setVoice] = useState("random");
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Recents are collapsed by default and the toggle is remembered across reloads.
   const [recentOpen, setRecentOpen] = usePersistentOpen("home.recents.open", false);
@@ -34,19 +36,27 @@ export default function Home() {
     refetchInterval: 5000,
   });
 
-  // Effective upload cap from the operator-tunable UPLOAD_MAX_BYTES setting, so
+  // Effective upload cap (MB) from the operator-tunable UPLOAD_MAX_MB setting, so
   // the client-side guard and the dropzone copy track what the server enforces.
   const settingsQ = useQuery({
     queryKey: ["settings"],
     queryFn: () => api<SettingsPayload>("/api/v1/settings"),
     staleTime: 60_000,
   });
-  const configuredMax = Number(
-    settingsQ.data?.values.UPLOAD_MAX_BYTES ?? settingsQ.data?.defaults.UPLOAD_MAX_BYTES
+  // Filled reference-voice slots drive the optional per-submission voice picker.
+  const slotsQ = useQuery({
+    queryKey: ["voice-slots"],
+    queryFn: () => api<VoiceSlot[]>("/api/v1/reference/slots"),
+    staleTime: 60_000,
+  });
+  const filledSlots = (slotsQ.data ?? []).filter((s) => s.filled);
+
+  const configuredMb = Number(
+    settingsQ.data?.values.UPLOAD_MAX_MB ?? settingsQ.data?.defaults.UPLOAD_MAX_MB
   );
-  // isFinite (not ||) so a legitimate 0 (uploads disabled) isn't masked by the fallback.
-  const maxUploadBytes = Number.isFinite(configuredMax) ? configuredMax : DEFAULT_MAX_UPLOAD_BYTES;
-  const maxUploadMb = Math.round(maxUploadBytes / (1024 * 1024));
+  // isFinite (not ||) so a legitimate value isn't masked by the fallback.
+  const maxUploadMb = Number.isFinite(configuredMb) ? configuredMb : DEFAULT_MAX_UPLOAD_MB;
+  const maxUploadBytes = maxUploadMb * 1024 * 1024;
 
   const onError = (e: unknown) => {
     if (e instanceof ApiError) {
@@ -62,7 +72,7 @@ export default function Home() {
     mutationFn: (input: string) =>
       api<SubmitResponse>("/api/v1/submit", {
         method: "POST",
-        body: JSON.stringify({ url: input }),
+        body: JSON.stringify({ url: input, voice }),
       }),
     onSuccess: () => {
       setUrl("");
@@ -76,6 +86,7 @@ export default function Home() {
     mutationFn: (f: File) => {
       const fd = new FormData();
       fd.append("file", f);
+      fd.append("voice", voice);
       return postForm<SubmitResponse>("/api/v1/upload", fd);
     },
     onSuccess: () => {
@@ -84,6 +95,26 @@ export default function Home() {
       qc.invalidateQueries({ queryKey: ["jobs"] });
     },
     onError,
+  });
+
+  // Reprocess a terminal job from Recents (uniform for url + upload; the backend
+  // branches on the job url and reads the stored upload file when needed).
+  const [recentMsg, setRecentMsg] = useState<string | null>(null);
+  const requeueM = useMutation({
+    mutationFn: (jobId: string) => api(`/api/v1/jobs/${jobId}/requeue`, { method: "POST" }),
+    onSuccess: () => {
+      setRecentMsg(null);
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+    },
+    onError: (e) => {
+      const status = e instanceof ApiError ? e.status : undefined;
+      setRecentMsg(
+        status === 409
+          ? "can't reprocess: already queued, or the uploaded file is gone -- re-upload it"
+          : `reprocess failed${status ? ` (HTTP ${status})` : ""}`
+      );
+      setTimeout(() => setRecentMsg(null), 5000);
+    },
   });
 
   const clearFile = () => {
@@ -233,6 +264,22 @@ export default function Home() {
               )}
             </label>
           )}
+          {filledSlots.length > 0 && (
+            <select
+              className="field"
+              value={voice}
+              onChange={(e) => setVoice(e.target.value)}
+              aria-label="Reference voice"
+            >
+              <option value="random">Voice: Random</option>
+              <option value="last">Voice: Last used</option>
+              {filledSlots.map((s) => (
+                <option key={s.slot} value={String(s.slot)}>
+                  Voice: {s.label ?? `Slot ${s.slot}`}
+                </option>
+              ))}
+            </select>
+          )}
           <button
             type="submit"
             className="btn-primary w-full"
@@ -284,6 +331,7 @@ export default function Home() {
             </span>
             // RECENT ({history.length})
           </button>
+          {recentMsg && <p className="mono-xs text-danger mb-2">{recentMsg}</p>}
           {recentOpen && (
             <ul className="space-y-2">
               {history.map((j) => {
@@ -291,7 +339,7 @@ export default function Home() {
                 return (
                 <li key={j.id} className="card p-4 flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="mono-xs text-mute truncate">{j.url}</p>
+                    <p className="mono-xs text-mute truncate">{j.source_filename ?? j.url}</p>
                     <p className="text-sm mt-1 truncate text-dim">
                       {j.episode_id} &middot; {j.stage ?? "-"}
                       {progressSuffix(j)}
@@ -299,6 +347,15 @@ export default function Home() {
                     {/* Own line, wrapping (not truncated), so the failure reason and
                         its fix stay readable. */}
                     {j.error && <p className="text-sm mt-1 text-danger break-words">{j.error}</p>}
+                    {j.status === "failed" && (
+                      <button
+                        className="btn-ghost mt-2"
+                        disabled={requeueM.isPending}
+                        onClick={() => requeueM.mutate(j.id)}
+                      >
+                        &#8635; Reprocess
+                      </button>
+                    )}
                   </div>
                   <div className="flex flex-col items-end gap-1 flex-shrink-0">
                     <span className={`tag ${statusTag(j.status)}`}>{j.status}</span>

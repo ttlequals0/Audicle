@@ -22,7 +22,7 @@ from app.api.deps import get_conn
 from app.api.v1.submit import SubmitResponse
 from app.config import Settings, get_settings
 from app.services import episodes as episodes_service
-from app.services import file_extraction, jobs, runtime_settings
+from app.services import file_extraction, jobs, runtime_settings, voices
 from app.services.atomic_write import write_bytes_atomic
 
 router = APIRouter(tags=["jobs"])
@@ -56,6 +56,7 @@ async def upload(
     settings: Annotated[Settings, Depends(get_settings)],
     file: Annotated[UploadFile, File(description="The document to ingest.")],
     reprocess: Annotated[bool, Form()] = False,
+    voice: Annotated[str | None, Form()] = None,
 ) -> SubmitResponse:
     filename = file_extraction.sanitize_filename(file.filename or "")
     ext = file_extraction.extension_of(filename)
@@ -66,8 +67,8 @@ async def upload(
             detail=f"unsupported file type {ext or '(none)'}; allowed: {allowed}",
         )
 
-    # UPLOAD_MAX_BYTES is operator-tunable, so resolve the runtime overlay.
-    cap = runtime_settings.overlay(settings).UPLOAD_MAX_BYTES
+    # UPLOAD_MAX_MB is operator-tunable (megabytes); resolve the runtime overlay.
+    cap = runtime_settings.overlay(settings).UPLOAD_MAX_MB * 1024 * 1024
     data = await _read_upload_capped(file, cap)
     if not data:
         raise HTTPException(status_code=400, detail="uploaded file is empty")
@@ -83,8 +84,9 @@ async def upload(
     # place -- it is byte-identical to the existing episode's stored original.
     write_bytes_atomic(file_extraction.source_path(settings, episode_id, filename), data)
 
+    voice_id = voices.resolve(conn, voice)
     try:
-        result = jobs.create_job(conn, source_uri, reprocess=reprocess)
+        result = jobs.create_job(conn, source_uri, reprocess=reprocess, voice_id=voice_id)
     except jobs.DuplicateSubmissionError as exc:
         raise HTTPException(
             status_code=409,

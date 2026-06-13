@@ -124,6 +124,12 @@ def _default_engine_factory() -> Engine:
     return ChatterboxEngine(cfg)
 
 
+class SelectVoiceRequest(BaseModel):
+    """Pick one of the 5 reference-voice slots for the next job."""
+
+    slot: int = Field(ge=1, le=5)
+
+
 def create_app(
     *,
     engine: Engine | None = None,
@@ -399,6 +405,32 @@ def create_app(
                 raise HTTPException(status_code=500, detail=f"reload failed: {exc}") from exc
         # { ok: true }.
         return {"ok": True}
+
+    @app.post("/select-voice")
+    async def select_voice(
+        body: SelectVoiceRequest,
+        engine: Engine = Depends(get_engine),
+        lock: asyncio.Lock = Depends(get_lock),
+    ) -> dict[str, Any]:
+        # Slots live next to the committed voice.wav, mounted read-only.
+        ref_path = Path(cfg.reference_path).parent / "voices" / f"slot{body.slot}.wav"
+        async with lock:
+            try:
+                await engine.select_voice(ref_path)
+            except FileNotFoundError as exc:
+                raise HTTPException(
+                    status_code=404, detail=f"voice slot {body.slot} is empty"
+                ) from exc
+            except InferenceBusyError as exc:
+                raise HTTPException(status_code=503, detail={"error": "inference busy"}) from exc
+            except Exception as exc:
+                logger.exception(
+                    "select-voice failed", extra={"event": "tts_select_voice_failed"}
+                )
+                raise HTTPException(
+                    status_code=500, detail=f"select-voice failed: {exc}"
+                ) from exc
+        return {"ok": True, "slot": body.slot}
 
     return app
 

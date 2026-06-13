@@ -102,6 +102,13 @@ export class ApiError extends Error {
   }
 }
 
+export interface VoiceSlot {
+  slot: number;
+  filled: boolean;
+  label: string | null;
+  duration_secs: number | null;
+}
+
 export interface AuthStatus {
   password_set: boolean;
   authenticated: boolean;
@@ -150,6 +157,9 @@ export interface JobRow {
   created_at: string;
   updated_at: string;
   started_at: string | null;
+  // 0.31.0: uploaded filename (upload jobs only) + whether this run was a reprocess.
+  source_filename: string | null;
+  reprocess: boolean;
 }
 
 export interface SettingsPayload {
