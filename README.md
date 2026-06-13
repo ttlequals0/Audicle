@@ -26,7 +26,7 @@ Feed -- your episodes with inline players, transcripts, and per-episode actions.
   <img src="docs/screenshot-feed-mobile.png" alt="Feed, mobile" width="190">
 </p>
 
-Settings -- provider, voice, prompts, and pronunciation corrections.
+Settings -- provider, voices, prompts, and pronunciation corrections.
 
 <p align="center">
   <img src="docs/screenshot-settings-desktop.png" alt="Settings, desktop" width="600">
@@ -137,14 +137,21 @@ Science, Society & Culture, Sports, Technology, True Crime, TV & Film
 
 Subcategories aren't currently surfaced in the UI -- set the top-level category and call it done. If Apple Podcasts shows your feed as "Unknown" after submission, it's almost always a category typo.
 
-## Reference voice
+## Voices
 
-The wrapper conditions on a single short clip you supply. Recommended spec is mono, 24 kHz, 8-12 seconds, around 250 kB to 1 MB. Hard limits enforced by `POST /api/v1/reference/commit` are 3-60 s and <= 5 MB. See `backend/app/reference/README.md` for the sourcing playbook (record yourself, reuse a creative-commons clip, or synthesize one).
+The wrapper narrates each episode by conditioning on a short reference clip you supply. You manage clips in Settings under "voices": a Default fallback plus five labelled slots. Every row plays back its stored clip and can audition a TTS sample, so you hear a voice before you use it.
 
-Two notes the docs page doesn't repeat:
+Each episode picks a voice when you submit it -- Random (a random filled slot), Last used, or a specific slot -- from a collapsed picker under the Submit button on the Home screen. With no slots filled, every episode uses the Default voice.
 
-- The audio quality of the output is mostly determined by the quality of this clip. Cleaning up the source clip (noise reduction, leveling) buys you more than tweaking the TTS knobs.
-- The Settings page in the UI lets you upload a candidate, audition it via `POST /api/v1/reference/test`, and commit only if you like it. Skip the audition at your peril.
+Recommended clip: mono, 24 kHz, 8-12 seconds, around 250 kB to 1 MB. The hard limits enforced on upload are 3-60 seconds and 5 MB. You can upload WAV, MP3, M4A/AAC, FLAC, or OGG/Opus; anything that isn't already a WAV is converted to one with ffmpeg before it's stored. See `backend/app/reference/README.md` for the sourcing playbook (record yourself, reuse a creative-commons clip, or synthesize one).
+
+The output quality is mostly set by the clip quality. Cleaning up the source -- noise reduction, leveling -- helps more than any TTS knob.
+
+## Webhooks
+
+Set `WEBHOOK_URL` in Settings and Audicle POSTs a JSON payload when an episode finishes (`episode.processed`) or fails (`episode.failed`). The payload carries the title, the source link, how long it took, whether it was a reprocess, and on failure the stage and error. Delivery is fire-and-forget with a few retries and never holds up or fails the pipeline; leave `WEBHOOK_URL` blank to turn it off.
+
+A failed job can also be requeued straight from the Recents list on the Home screen -- URL jobs re-fetch, uploads re-run from the stored original.
 
 ## Paywalled articles
 
@@ -240,7 +247,7 @@ Backend:
 
 ```bash
 uv sync
-uv run pytest                              # 386 tests, ~35s
+uv run pytest                              # 729 tests, ~60s
 uv run uvicorn app.main:create_app --factory --reload --app-dir backend
 ```
 
