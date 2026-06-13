@@ -6,6 +6,19 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.31.3] - 2026-06-13
+
+### Changed
+
+- The Home voice picker always shows (collapsed below Submit) even before any voice
+  slots are filled, with a note that random and last both use the default voice until
+  you add slots in Settings.
+
+### Fixed
+
+- Restored the default audition sample text in Settings, which the voices-section
+  merge had shortened by accident.
+
 ## [0.31.2] - 2026-06-13
 
 ### Changed

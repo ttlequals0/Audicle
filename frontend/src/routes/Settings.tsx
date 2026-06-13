@@ -1205,7 +1205,7 @@ function VoicesWidget() {
   const [auditionUrl, setAuditionUrl] = useState<string | null>(null);
   const [auditioning, setAuditioning] = useState<string | null>(null);
   const [sample, setSample] = useState(
-    "This is a short sample of the selected reference voice."
+    "But I must explain to you how all this mistaken idea of denouncing of a pleasure and praising pain was born and I will give you a complete account of the system, and expound the actual teachings of the great explorer of the truth, the master-builder of human happiness.",
   );
   // Bumped after any upload/clear so the inline preview <audio> refetches the
   // changed clip instead of replaying the browser-cached one.

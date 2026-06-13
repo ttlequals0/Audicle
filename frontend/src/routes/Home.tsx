@@ -287,20 +287,20 @@ export default function Home() {
           >
             {pending ? "Submitting..." : "Submit"}
           </button>
-          {filledSlots.length > 0 && (
-            <div>
-              <button
-                type="button"
-                className="mono-xs text-mute flex items-center gap-1.5 hover:text-fg"
-                onClick={() => setVoiceOpen(!voiceOpen)}
-                aria-expanded={voiceOpen}
-              >
-                <span className={`transition-transform ${voiceOpen ? "rotate-90" : ""}`}>
-                  &rsaquo;
-                </span>
-                // voice: {voiceChoiceLabel}
-              </button>
-              {voiceOpen && (
+          <div>
+            <button
+              type="button"
+              className="mono-xs text-mute flex items-center gap-1.5 hover:text-fg"
+              onClick={() => setVoiceOpen(!voiceOpen)}
+              aria-expanded={voiceOpen}
+            >
+              <span className={`transition-transform ${voiceOpen ? "rotate-90" : ""}`}>
+                &rsaquo;
+              </span>
+              // voice: {voiceChoiceLabel}
+            </button>
+            {voiceOpen && (
+              <>
                 <select
                   className="field mt-2"
                   value={voice}
@@ -315,9 +315,14 @@ export default function Home() {
                     </option>
                   ))}
                 </select>
-              )}
-            </div>
-          )}
+                {filledSlots.length === 0 && (
+                  <p className="mono-xs text-mute mt-1">
+                    // random and last both use the default voice -- add slots in settings
+                  </p>
+                )}
+              </>
+            )}
+          </div>
         </form>
         {error && <p className="text-danger text-xs font-mono mt-2 break-words">{error}</p>}
 
