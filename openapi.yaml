@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.31.3
+  version: 0.31.4
 paths:
   /health/live:
     get:
@@ -1129,11 +1129,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /rss/{slug}.xml:
-    get:
+    head:
       tags:
       - rss
       summary: Get Rss
-      operationId: get_rss_rss__slug__xml_get
+      operationId: get_rss_rss__slug__xml_head
       parameters:
       - name: slug
         in: path
@@ -1169,11 +1169,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    head:
+    get:
       tags:
       - rss
       summary: Get Rss
-      operationId: get_rss_rss__slug__xml_get
+      operationId: get_rss_rss__slug__xml_head
       parameters:
       - name: slug
         in: path
@@ -1210,11 +1210,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.mp3:
-    get:
+    head:
       tags:
       - media
       summary: Get Mp3
-      operationId: get_mp3_media__episode_id__mp3_get
+      operationId: get_mp3_media__episode_id__mp3_head
       parameters:
       - name: episode_id
         in: path
@@ -1234,11 +1234,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    head:
+    get:
       tags:
       - media
       summary: Get Mp3
-      operationId: get_mp3_media__episode_id__mp3_get
+      operationId: get_mp3_media__episode_id__mp3_head
       parameters:
       - name: episode_id
         in: path
@@ -1259,11 +1259,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.jpg:
-    get:
+    head:
       tags:
       - media
       summary: Get Jpg
-      operationId: get_jpg_media__episode_id__jpg_get
+      operationId: get_jpg_media__episode_id__jpg_head
       parameters:
       - name: episode_id
         in: path
@@ -1283,11 +1283,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    head:
+    get:
       tags:
       - media
       summary: Get Jpg
-      operationId: get_jpg_media__episode_id__jpg_get
+      operationId: get_jpg_media__episode_id__jpg_head
       parameters:
       - name: episode_id
         in: path
@@ -1308,11 +1308,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.vtt:
-    get:
+    head:
       tags:
       - media
       summary: Get Vtt
-      operationId: get_vtt_media__episode_id__vtt_get
+      operationId: get_vtt_media__episode_id__vtt_head
       parameters:
       - name: episode_id
         in: path
@@ -1332,11 +1332,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    head:
+    get:
       tags:
       - media
       summary: Get Vtt
-      operationId: get_vtt_media__episode_id__vtt_get
+      operationId: get_vtt_media__episode_id__vtt_head
       parameters:
       - name: episode_id
         in: path
@@ -1357,7 +1357,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.txt:
-    get:
+    head:
       tags:
       - media
       summary: Get Cleaned Text
@@ -1365,7 +1365,7 @@ paths:
         the
 
         ``cleaned_text`` column. 404 for episodes processed before 0.6.0 (NULL).'
-      operationId: get_cleaned_text_media__episode_id__txt_get
+      operationId: get_cleaned_text_media__episode_id__txt_head
       parameters:
       - name: episode_id
         in: path
@@ -1385,7 +1385,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    head:
+    get:
       tags:
       - media
       summary: Get Cleaned Text
@@ -1393,7 +1393,7 @@ paths:
         the
 
         ``cleaned_text`` column. 404 for episodes processed before 0.6.0 (NULL).'
-      operationId: get_cleaned_text_media__episode_id__txt_get
+      operationId: get_cleaned_text_media__episode_id__txt_head
       parameters:
       - name: episode_id
         in: path
@@ -1609,6 +1609,11 @@ components:
           - type: string
           - type: 'null'
           title: Source Filename
+        voice_label:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Voice Label
       additionalProperties: false
       type: object
       required:
@@ -1625,6 +1630,7 @@ components:
       - has_cleaned_text
       - source_type
       - source_filename
+      - voice_label
       title: EpisodeListItem
     FeedRecreateResponse:
       properties:

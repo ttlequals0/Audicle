@@ -133,6 +133,12 @@ export default function Feed() {
                 <div className="mono-xs text-mute mt-0.5">
                   {ep.pub_date} &middot; {formatDuration(ep.duration_secs)}
                   {ep.audio_size_bytes ? ` · ${formatBytes(ep.audio_size_bytes)}` : ""}
+                  {ep.voice_label ? (
+                    <>
+                      {" · voice: "}
+                      <span className="text-accent">{ep.voice_label}</span>
+                    </>
+                  ) : null}
                 </div>
               </div>
             </div>

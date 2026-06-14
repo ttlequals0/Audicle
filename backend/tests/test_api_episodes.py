@@ -140,6 +140,30 @@ def test_list_episodes_has_cleaned_text_flag(env: Path) -> None:
     assert flags == {"withtext": True, "notext": False}
 
 
+def test_list_episodes_returns_voice_label(env: Path) -> None:
+    database.run_migrations(env)
+    conn = database.connect(database.db_path(env))
+    try:
+        episodes.upsert(
+            conn,
+            id="voiced",
+            job_id=None,
+            original_url="https://example.test/voiced",
+            title="t",
+            author="a",
+            audio_path="/data/media/voiced.mp3",
+            artwork_path=None,
+            transcript_vtt=None,
+            duration_secs=10,
+            voice_label="Morgan",
+        )
+    finally:
+        conn.close()
+    with _client(env) as client:
+        rows = client.get("/api/v1/episodes").json()
+    assert rows[0]["voice_label"] == "Morgan"
+
+
 def test_delete_episode_removes_row_and_files(env: Path) -> None:
     _seed(env, id_="del", with_files=True)
     media = media_dir(get_settings())

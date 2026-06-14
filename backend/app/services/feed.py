@@ -231,6 +231,8 @@ def _episode_description_html(ep: Episode) -> str:
     else:
         url = html.escape(ep.original_url, quote=True)
         parts.append(f'<p>Source: <a href="{url}">{html.escape(ep.original_url)}</a></p>')
+    if ep.voice_label:
+        parts.append(f"<p>Voice: {html.escape(ep.voice_label)}</p>")
     return "".join(parts)
 
 
@@ -246,6 +248,8 @@ def _episode_summary(ep: Episode) -> str:
     lines.append(
         f"Source: {label} (uploaded)" if ep.source_type == "upload" else f"Source: {ep.original_url}"
     )
+    if ep.voice_label:
+        lines.append(f"Voice: {ep.voice_label}")
     return "\n".join(lines)
 
 

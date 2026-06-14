@@ -141,6 +141,8 @@ export interface Episode {
   // and render the filename instead of a hyperlink; reprocess routes differently.
   source_type: "url" | "upload";
   source_filename: string | null;
+  // Which reference voice narrated the episode (0.31.x); null for older episodes.
+  voice_label: string | null;
 }
 
 export type JobStatus = "queued" | "processing" | "done" | "failed";

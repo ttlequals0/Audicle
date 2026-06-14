@@ -72,3 +72,12 @@ def test_labels_round_trip(env: Path, _slots: Path) -> None:
         assert voices.get_labels(conn) == {"1": "Morgan", "2": "Alex"}
         voices.set_label(conn, 1, "")  # clearing removes it
         assert voices.get_labels(conn) == {"2": "Alex"}
+
+
+def test_label_for(env: Path) -> None:
+    database.run_migrations(env)
+    with database.connection(env) as conn:
+        assert voices.label_for(conn, None) == "Default"  # legacy voice.wav
+        assert voices.label_for(conn, "3") == "Slot 3"  # unlabelled slot
+        voices.set_label(conn, 3, "Morgan")
+        assert voices.label_for(conn, "3") == "Morgan"

@@ -6,6 +6,17 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.31.4] - 2026-06-13
+
+### Added
+
+- Episodes now record and expose which reference voice narrated them. The voice
+  is snapshotted at finalize (the slot's label, "Slot N", or "Default" for the
+  fallback voice) and surfaces in three places: the `voice_label` field on
+  `GET /api/v1/episodes`, a "voice:" label on each Feed card, and a "Voice:" line
+  under the source link in the RSS episode description. Migration 016 backfills
+  existing episodes from their job's recorded voice (the pre-slots default).
+
 ## [0.31.3] - 2026-06-13
 
 ### Changed

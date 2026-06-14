@@ -539,6 +539,31 @@ def _m015_upload_max_mb(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM runtime_settings WHERE key = 'UPLOAD_MAX_BYTES'")
 
 
+def _m016_episode_voice_label(conn: sqlite3.Connection) -> None:
+    """Add a human-readable ``voice_label`` to episodes and backfill it (0.31.x).
+
+    New episodes get the label at finalize. For existing rows, derive it from the
+    job's ``voice_id``: a NULL/blank id (or a job since purged) means the legacy
+    ``voice.wav`` -- which is all any pre-slots episode could have used -- so it
+    backfills to 'Default'; a recorded slot backfills to 'Slot N' (the slot's
+    display label, if any, is restored on the next reprocess).
+    """
+
+    conn.execute("ALTER TABLE episodes ADD COLUMN voice_label TEXT")
+    conn.execute(
+        """
+        UPDATE episodes SET voice_label = COALESCE((
+            SELECT CASE
+                WHEN j.voice_id IS NULL OR j.voice_id = '' THEN 'Default'
+                ELSE 'Slot ' || j.voice_id
+            END
+            FROM jobs j WHERE j.id = episodes.job_id
+        ), 'Default')
+        WHERE voice_label IS NULL
+        """
+    )
+
+
 MIGRATIONS: list[tuple[str, Migration]] = [
     ("001_initial_schema", _m001_initial_schema),
     ("002_settings_kv", _m002_settings_kv),
@@ -555,6 +580,7 @@ MIGRATIONS: list[tuple[str, Migration]] = [
     ("013_episode_source_type", _m013_episode_source_type),
     ("014_job_columns", _m014_job_columns),
     ("015_upload_max_mb", _m015_upload_max_mb),
+    ("016_episode_voice_label", _m016_episode_voice_label),
 ]
 
 

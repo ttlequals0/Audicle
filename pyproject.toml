@@ -1,6 +1,6 @@
 [project]
 name = "audicle"
-version = "0.31.3"
+version = "0.31.4"
 description = "Self-hosted service that turns article URLs into a Podcasting 2.0 feed."
 requires-python = ">=3.13"
 license = { text = "MIT" }

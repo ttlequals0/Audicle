@@ -42,6 +42,9 @@ class EpisodeListItem(BaseModel):
     # filename instead of a hyperlink and routes its reprocess to /upload/{id}/reprocess.
     source_type: str
     source_filename: str | None
+    # Which reference voice narrated the episode (0.31.x): a slot label, "Slot N",
+    # or "Default". NULL only for old rows finalized before the column existed.
+    voice_label: str | None
 
 
 @router.get(
@@ -77,6 +80,7 @@ async def list_episodes(
             has_cleaned_text=ep.id in with_text,
             source_type=ep.source_type,
             source_filename=ep.source_filename,
+            voice_label=ep.voice_label,
         )
         for ep in page_rows
     ]

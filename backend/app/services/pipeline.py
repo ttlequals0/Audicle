@@ -50,6 +50,7 @@ from app.services import (
     source_fallbacks_store,
     transcript,
     tts,
+    voices,
     webhooks,
 )
 from app.services import prompt as prompt_service
@@ -1185,6 +1186,9 @@ async def _stage_finalize(
 
     conn = database.connect(database.db_path(settings.DATA_DIR))
     try:
+        # Snapshot the voice this job used (slot label, "Slot N", or "Default")
+        # so the API, feed UI, and RSS description can show which voice narrated it.
+        voice_label = voices.label_for(conn, job.voice_id)
         episodes.upsert(
             conn,
             id=job.episode_id,
@@ -1201,6 +1205,7 @@ async def _stage_finalize(
             audio_size_bytes=audio_size_bytes,
             source_type=source_type,
             source_filename=source_filename,
+            voice_label=voice_label,
         )
     finally:
         conn.close()

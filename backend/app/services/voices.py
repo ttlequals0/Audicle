@@ -78,6 +78,16 @@ def resolve(conn: sqlite3.Connection, choice: str | None) -> str | None:
     return str(random.choice(filled))
 
 
+def label_for(conn: sqlite3.Connection, voice_id: str | None) -> str:
+    """Human-readable name for the voice a job used, snapshotted onto the episode
+    at finalize. ``None`` means the legacy fallback (voice.wav); otherwise the
+    slot's label, or ``Slot N`` when the slot has no label set."""
+
+    if not voice_id:
+        return "Default"
+    return get_labels(conn).get(str(voice_id)) or f"Slot {voice_id}"
+
+
 def _last_voice_id(conn: sqlite3.Connection) -> str | None:
     row = conn.execute(
         "SELECT voice_id FROM jobs WHERE voice_id IS NOT NULL ORDER BY created_at DESC LIMIT 1"
