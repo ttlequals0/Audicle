@@ -24,6 +24,9 @@ def test_run_migrations_creates_tables(tmp_path: Path) -> None:
         "011_import_corrections_to_db",
         "012_lexicon_table",
         "013_episode_source_type",
+        "014_job_columns",
+        "015_upload_max_mb",
+        "016_episode_voice_label",
     ]
 
     conn = database.connect(database.db_path(tmp_path))
@@ -53,6 +56,9 @@ def test_second_run_is_a_noop(tmp_path: Path) -> None:
         "011_import_corrections_to_db",
         "012_lexicon_table",
         "013_episode_source_type",
+        "014_job_columns",
+        "015_upload_max_mb",
+        "016_episode_voice_label",
     ]
     assert second == []
 
@@ -61,6 +67,38 @@ def test_no_backup_on_fresh_init_or_noop(tmp_path: Path) -> None:
     database.run_migrations(tmp_path)
     database.run_migrations(tmp_path)
     assert sorted(tmp_path.glob(f"{database.BACKUP_PREFIX}*")) == []
+
+
+def test_m016_backfills_voice_label(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Apply through 015, seed episodes + jobs, then let 016 backfill: a recorded
+    # slot -> "Slot N", a NULL voice_id or a missing job -> "Default".
+    full = database.MIGRATIONS
+    monkeypatch.setattr(database, "MIGRATIONS", full[:-1])
+    database.run_migrations(tmp_path)
+    conn = database.connect(database.db_path(tmp_path))
+    try:
+        conn.executescript(
+            """
+            INSERT INTO jobs (id, url, episode_id, status, voice_id)
+              VALUES ('j1','https://x/1','e1','done','3'),
+                     ('j2','https://x/2','e2','done',NULL);
+            INSERT INTO episodes (id, job_id, original_url)
+              VALUES ('e1','j1','https://x/1'),
+                     ('e2','j2','https://x/2'),
+                     ('e3',NULL,'https://x/3');
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    monkeypatch.setattr(database, "MIGRATIONS", full)
+    database.run_migrations(tmp_path)
+    conn = database.connect(database.db_path(tmp_path))
+    try:
+        got = {r["id"]: r["voice_label"] for r in conn.execute("SELECT id, voice_label FROM episodes")}
+    finally:
+        conn.close()
+    assert got == {"e1": "Slot 3", "e2": "Default", "e3": "Default"}
 
 
 def test_m011_imports_legacy_corrections_into_db(
@@ -383,3 +421,23 @@ def test_migration_lock_serializes_concurrent_callers(tmp_path: Path) -> None:
     assert second_acquired.wait(timeout=5)
     t1.join(timeout=5)
     t2.join(timeout=5)
+
+
+def test_m015_converts_upload_bytes_override_to_mb(tmp_path: Path) -> None:
+    import json
+
+    database.run_migrations(tmp_path)
+    conn = database.connect(database.db_path(tmp_path))
+    try:
+        conn.execute(
+            "INSERT INTO runtime_settings (key, value) VALUES ('UPLOAD_MAX_BYTES', ?)",
+            (json.dumps(100 * 1024 * 1024),),
+        )
+        conn.commit()
+        database._m015_upload_max_mb(conn)
+        conn.commit()
+        rows = {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM runtime_settings")}
+        assert "UPLOAD_MAX_BYTES" not in rows
+        assert json.loads(rows["UPLOAD_MAX_MB"]) == 100
+    finally:
+        conn.close()

@@ -125,10 +125,9 @@ class ChatterboxEngine:
         finally:
             self._gpu_lock.release()
 
-    async def reload_reference(self) -> None:
+    async def _swap_reference(self, ref_path: Path) -> None:
         import asyncio  # noqa: PLC0415
 
-        ref_path = Path(self.config.reference_path)
         if not ref_path.exists():
             raise FileNotFoundError(f"reference voice not found at {ref_path}")
         # prepare_conditionals only swaps model.conds on success, so a failed
@@ -140,6 +139,17 @@ class ChatterboxEngine:
         except Exception:
             self.reference_loaded = previous_loaded
             raise
+
+    async def reload_reference(self) -> None:
+        """Re-encode the committed ``voice.wav`` (after a /commit)."""
+
+        await self._swap_reference(Path(self.config.reference_path))
+
+    async def select_voice(self, ref_path: Path) -> None:
+        """Encode a specific reference clip (a voice slot) for the next job. Same
+        rollback semantics as /reload -- a failed encode keeps the prior voice."""
+
+        await self._swap_reference(ref_path)
 
     async def synthesize(self, text: str, seed: int | None = None) -> bytes:
         import asyncio  # noqa: PLC0415

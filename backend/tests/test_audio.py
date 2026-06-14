@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import shutil
+import subprocess
 import wave
 from pathlib import Path
 
@@ -175,3 +177,28 @@ def test_concat_with_padding_rejects_channel_mismatch(env: Path, tmp_path: Path)
 
     with pytest.raises(audio.AudioError, match="channels"):
         audio.concat_with_padding([mono, stereo], tmp_path / "out.wav", get_settings())
+
+
+def test_transcode_to_wav_decodes_mp3(tmp_path: Path) -> None:
+    src = tmp_path / "in.wav"
+    _write_silent_wav(src, duration_secs=10.0)
+    mp3 = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(src),
+         "-c:a", "libmp3lame", "-f", "mp3", "pipe:1"],
+        capture_output=True,
+        check=True,
+    ).stdout
+    assert not mp3.startswith(b"RIFF")  # it really is mp3, not wav
+
+    wav = audio.transcode_to_wav(mp3)
+    assert wav.startswith(b"RIFF")
+    with wave.open(io.BytesIO(wav), "rb") as w:
+        assert w.getnchannels() == 1
+        assert w.getframerate() == 24000
+        secs = w.getnframes() / w.getframerate()
+    assert 9.0 <= secs <= 11.0
+
+
+def test_transcode_to_wav_rejects_garbage() -> None:
+    with pytest.raises(audio.FfmpegError):
+        audio.transcode_to_wav(b"this is not audio")

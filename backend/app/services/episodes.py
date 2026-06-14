@@ -43,6 +43,10 @@ class Episode:
     # is the original uploaded filename, shown in place of a source domain.
     source_type: str = "url"
     source_filename: str | None = None
+    # Which reference voice narrated this episode (0.31.x), snapshotted at finalize:
+    # a slot label, "Slot N", or "Default" for the legacy voice.wav. NULL only for
+    # rows finalized before the column existed and not yet backfilled.
+    voice_label: str | None = None
 
 
 # cleaned_text is intentionally NOT in the default select: it's a large text
@@ -52,7 +56,7 @@ class Episode:
 _SELECT_COLUMNS = (
     "id, job_id, title, author, original_url, audio_path, artwork_path, "
     "transcript_vtt, duration_secs, pub_date, created_at, updated_at, summary, "
-    "audio_size_bytes, revision, source_type, source_filename"
+    "audio_size_bytes, revision, source_type, source_filename, voice_label"
 )
 
 
@@ -75,6 +79,7 @@ def _row_to_episode(row: sqlite3.Row) -> Episode:
         revision=row["revision"],
         source_type=row["source_type"],
         source_filename=row["source_filename"],
+        voice_label=row["voice_label"],
     )
 
 
@@ -134,6 +139,7 @@ def upsert(
     audio_size_bytes: int | None = None,
     source_type: str = "url",
     source_filename: str | None = None,
+    voice_label: str | None = None,
 ) -> Episode:
     """Insert a new episode row, or update the existing one keyed by id.
 
@@ -152,9 +158,10 @@ def upsert(
         INSERT INTO episodes (
             id, job_id, title, author, original_url, audio_path,
             artwork_path, transcript_vtt, duration_secs, summary,
-            cleaned_text, audio_size_bytes, source_type, source_filename
+            cleaned_text, audio_size_bytes, source_type, source_filename,
+            voice_label
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             job_id           = excluded.job_id,
             title            = excluded.title,
@@ -169,6 +176,7 @@ def upsert(
             audio_size_bytes = excluded.audio_size_bytes,
             source_type      = excluded.source_type,
             source_filename  = excluded.source_filename,
+            voice_label      = excluded.voice_label,
             revision         = episodes.revision + 1,
             pub_date         = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
             updated_at       = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
@@ -188,6 +196,7 @@ def upsert(
             audio_size_bytes,
             source_type,
             source_filename,
+            voice_label,
         ),
     )
     conn.commit()

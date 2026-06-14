@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError, readCsrf, LlmModelsResponse, SettingsPayload } from "../lib/api";
+import { api, ApiError, readCsrf, LlmModelsResponse, SettingsPayload, VoiceSlot } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useHealthLive } from "../lib/useHealthLive";
 import CollapsibleSection from "../components/CollapsibleSection";
@@ -45,7 +45,7 @@ const GROUPS: Record<string, string[]> = {
     "WHISPER_VERIFY_MIN_WORDS",
   ],
   Cleanup: ["MIN_CLEANUP_CHARS", "MAX_PROMPT_LENGTH_BYTES"],
-  Uploads: ["UPLOAD_MAX_BYTES"],
+  Uploads: ["UPLOAD_MAX_MB"],
   Pipeline: ["JOB_TIMEOUT_SECONDS", "JOB_TIMEOUT_PER_CHUNK_SECONDS"],
   Retention: ["RETENTION_DAYS"],
   RSS: ["RSS_CACHE_MAX_AGE_SECONDS"],
@@ -228,9 +228,7 @@ export default function SettingsRoute() {
             )}
             {group === "Uploads" && (
               <p className="mono-xs text-mute mb-3">
-                // max direct-upload size in bytes (
-                {Math.round((Number(draft.UPLOAD_MAX_BYTES) || 0) / (1024 * 1024))} MB) -- applies
-                immediately, no restart
+                // max direct-upload size in MB -- applies immediately, no restart
               </p>
             )}
             {group === "Pipeline" && (
@@ -322,8 +320,8 @@ export default function SettingsRoute() {
           <SourceFallbacksTable initial={fallbacksQ.data} />
         </CollapsibleSection>
       )}
-      <CollapsibleSection title="reference voice">
-        <ReferenceVoiceWidget />
+      <CollapsibleSection title="voices">
+        <VoicesWidget />
       </CollapsibleSection>
 
       {authStatus && (
@@ -1108,176 +1106,241 @@ function LexiconLookup() {
   );
 }
 
-function ReferenceVoiceWidget() {
-  const [candidate, setCandidate] = useState<File | null>(null);
+const VOICE_ACCEPT = ".wav,.mp3,.m4a,.aac,.flac,.ogg,.oga,.opus,audio/*";
+
+function VoiceUploadButton({
+  replace,
+  onPick,
+}: {
+  replace: boolean;
+  onPick: (file: File) => void;
+}) {
+  return (
+    <label className="btn-ghost cursor-pointer">
+      {replace ? "Replace" : "Upload"}
+      <input
+        type="file"
+        accept={VOICE_ACCEPT}
+        className="sr-only"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) onPick(f);
+          e.target.value = "";
+        }}
+      />
+    </label>
+  );
+}
+
+// One card shared by the Default fallback and every slot: badge, name (a static
+// label or a rename input), duration, an inline player for the stored clip, then
+// Replace / Audition / Clear. Clear is omitted (onClear undefined) for the
+// fallback, which can be replaced but not emptied.
+function VoiceRow({
+  badge,
+  name,
+  filled,
+  durationSecs,
+  previewUrl,
+  onUpload,
+  onAudition,
+  auditioning,
+  onClear,
+}: {
+  badge: string;
+  name: ReactNode;
+  filled: boolean;
+  durationSecs: number | null;
+  previewUrl: string;
+  onUpload: (file: File) => void;
+  onAudition: () => void;
+  auditioning: boolean;
+  onClear?: () => void;
+}) {
+  return (
+    <div className="card p-3 space-y-2">
+      <div className="flex items-center gap-2">
+        <span className="format-badge">{badge}</span>
+        {name}
+        <span className="mono-xs text-mute shrink-0">
+          {filled ? `${durationSecs ?? "?"}s` : "empty"}
+        </span>
+      </div>
+      {filled && <audio controls src={previewUrl} className="w-full" />}
+      <div className="flex flex-wrap gap-2">
+        <VoiceUploadButton replace={filled} onPick={onUpload} />
+        {filled && (
+          <button className="btn-ghost" disabled={auditioning} onClick={onAudition}>
+            {auditioning ? "auditioning..." : "Audition"}
+          </button>
+        )}
+        {filled && onClear && (
+          <button className="btn-ghost btn-danger" onClick={onClear}>
+            Clear
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Merged voices section: the fallback voice.wav ("Default") sits as row 0
+// alongside the 5 slots, each with the same controls -- inline preview of the
+// stored clip, audition (a TTS sample), and replace. Uploads accept any common
+// audio format; the backend transcodes non-WAV to WAV with ffmpeg.
+function VoicesWidget() {
+  const qc = useQueryClient();
+  const slotsQ = useQuery({
+    queryKey: ["voice-slots"],
+    queryFn: () => api<VoiceSlot[]>("/api/v1/reference/slots"),
+    staleTime: 60_000,
+  });
+  const defaultQ = useQuery({
+    queryKey: ["voice-default"],
+    queryFn: () =>
+      api<{ filled: boolean; duration_secs: number | null }>("/api/v1/reference/status"),
+    staleTime: 60_000,
+  });
+  const [msg, setMsg] = useState<string | null>(null);
+  const [auditionUrl, setAuditionUrl] = useState<string | null>(null);
+  const [auditioning, setAuditioning] = useState<string | null>(null);
   const [sample, setSample] = useState(
     "But I must explain to you how all this mistaken idea of denouncing of a pleasure and praising pain was born and I will give you a complete account of the system, and expound the actual teachings of the great explorer of the truth, the master-builder of human happiness.",
   );
-  const [testAudioUrl, setTestAudioUrl] = useState<string | null>(null);
-  const [auditionUrl, setAuditionUrl] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
-  const [testPending, setTestPending] = useState(false);
-  const [auditionPending, setAuditionPending] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
+  // Bumped after any upload/clear so the inline preview <audio> refetches the
+  // changed clip instead of replaying the browser-cached one.
+  const [bust, setBust] = useState(0);
 
-  const previewUrl = "/api/v1/reference/preview";
-
-  useEffect(() => {
-    return () => {
-      if (testAudioUrl) URL.revokeObjectURL(testAudioUrl);
-    };
-  }, [testAudioUrl]);
-
-  useEffect(() => {
-    return () => {
+  useEffect(
+    () => () => {
       if (auditionUrl) URL.revokeObjectURL(auditionUrl);
-    };
-  }, [auditionUrl]);
+    },
+    [auditionUrl]
+  );
 
-  const postForm = async (path: string, fd: FormData): Promise<Response | null> => {
+  const sendForm = async (path: string, method: string, fd?: FormData): Promise<Response> => {
     const headers: Record<string, string> = {};
     const csrf = readCsrf();
     if (csrf) headers["X-CSRF-Token"] = csrf;
-    try {
-      return await fetch(path, {
-        method: "POST",
-        body: fd,
-        credentials: "include",
-        headers,
-      });
-    } catch {
-      return null;
-    }
+    return fetch(path, { method, body: fd, credentials: "include", headers });
   };
 
-  const test = async () => {
-    if (!candidate) return;
-    setMsg(null);
-    setTestPending(true);
-    try {
-      const fd = new FormData();
-      fd.append("voice", candidate);
-      fd.append("sample_text", sample);
-      const r = await postForm("/api/v1/reference/test", fd);
-      if (!r) {
-        setMsg("preview failed (network error)");
-        return;
-      }
-      if (!r.ok) {
-        setMsg(`preview failed (${r.status})`);
-        return;
-      }
-      const blob = await r.blob();
-      setTestAudioUrl(URL.createObjectURL(blob));
-      setMsg("preview ready");
-    } finally {
-      setTestPending(false);
-    }
+  const invalidate = () => {
+    setBust((b) => b + 1);
+    qc.invalidateQueries({ queryKey: ["voice-slots"] });
+    qc.invalidateQueries({ queryKey: ["voice-default"] });
   };
 
-  const audition = async () => {
-    setMsg(null);
-    setAuditionPending(true);
-    try {
-      const fd = new FormData();
-      fd.append("sample_text", sample);
-      const r = await postForm("/api/v1/reference/audition", fd);
-      if (!r) {
-        setMsg("audition failed (network error)");
-        return;
-      }
-      if (!r.ok) {
-        setMsg(r.status === 503 ? "no voice committed yet" : `audition failed (${r.status})`);
-        return;
-      }
-      const blob = await r.blob();
-      setAuditionUrl(URL.createObjectURL(blob));
-      setMsg("audition ready");
-    } finally {
-      setAuditionPending(false);
-    }
-  };
-
-  const commit = async () => {
-    if (!candidate) return;
-    if (!confirm("Replace the current reference voice?")) return;
-    setMsg(null);
+  const upload = async (path: string, f: File, ok: string) => {
+    setMsg("uploading...");
     const fd = new FormData();
-    fd.append("voice", candidate);
-    const r = await postForm("/api/v1/reference/commit", fd);
-    if (!r) {
-      setMsg("commit failed (network error)");
+    fd.append("voice", f);
+    const r = await sendForm(path, "POST", fd);
+    setMsg(r.ok ? ok : `upload failed (${r.status})`);
+    if (r.ok) invalidate();
+  };
+
+  const audition = async (key: string, path: string) => {
+    if (sample.trim().length < 4) {
+      setMsg("audition sample text must be at least 4 characters");
       return;
     }
-    setMsg(r.ok ? "committed; TTS reloaded" : `commit failed (${r.status})`);
-    if (r.ok) {
-      setCandidate(null);
-      if (fileRef.current) fileRef.current.value = "";
+    setAuditioning(key);
+    setMsg(null);
+    const fd = new FormData();
+    fd.append("sample_text", sample);
+    const r = await sendForm(path, "POST", fd);
+    setAuditioning(null);
+    if (!r.ok) {
+      setMsg(r.status === 503 ? "no voice committed yet" : `audition failed (${r.status})`);
+      return;
+    }
+    setAuditionUrl(URL.createObjectURL(await r.blob()));
+  };
+
+  const clearSlot = async (slot: number) => {
+    if (!confirm(`Clear voice slot ${slot}?`)) return;
+    try {
+      await api(`/api/v1/reference/slots/${slot}`, { method: "DELETE" });
+      invalidate();
+    } catch {
+      setMsg(`slot ${slot} clear failed`);
     }
   };
 
+  const renameSlot = async (slot: number, label: string) => {
+    const fd = new FormData();
+    fd.append("label", label);
+    const r = await sendForm(`/api/v1/reference/slots/${slot}/label`, "PUT", fd);
+    setMsg(r.ok ? `slot ${slot} renamed` : `rename failed (${r.status})`);
+    if (r.ok) qc.invalidateQueries({ queryKey: ["voice-slots"] });
+  };
+
+  const slots = slotsQ.data ?? [];
+  const defaultVoice = defaultQ.data;
+
   return (
-    <section className="space-y-3">
-      <audio controls src={previewUrl} className="w-full" />
-      <div className="dropzone">
-        <label className="label" htmlFor="ref-file">
-          upload candidate WAV (3-60s, &lt;= 5 MB)
-        </label>
-        <input
-          id="ref-file"
-          ref={fileRef}
-          type="file"
-          accept=".wav,audio/wav,audio/x-wav,audio/wave,audio/vnd.wave"
-          className="field"
-          onChange={(e) => {
-            setCandidate(e.target.files?.[0] ?? null);
-            setTestAudioUrl(null);
-            setMsg(null);
-          }}
-        />
-      </div>
+    <div className="space-y-3">
+      <p className="mono-xs text-mute">
+        // default is the fallback; a random filled slot is used per episode unless you pick one
+        at submit. uploads take wav/mp3/m4a/flac/ogg -- converted to wav on the server
+      </p>
       <div>
-        <label className="label" htmlFor="ref-sample">
-          sample text (for preview / audition)
+        <label className="label" htmlFor="voice-sample">
+          audition sample text
         </label>
         <textarea
-          id="ref-sample"
+          id="voice-sample"
           className="field min-h-[120px] resize-y"
           value={sample}
           onChange={(e) => setSample(e.target.value)}
         />
-        <div className="flex gap-2 items-center flex-wrap mt-2">
-          <button className="btn-ghost" onClick={audition} disabled={auditionPending}>
-            {auditionPending ? "auditioning..." : "play current voice"}
-          </button>
-        </div>
-        {auditionUrl && (
-          <div className="mt-2">
-            <p className="label">current voice saying the sample</p>
-            <audio controls src={auditionUrl} className="w-full" />
-          </div>
-        )}
       </div>
-      <div className="flex gap-2 items-center flex-wrap">
-        <button
-          className="btn-ghost"
-          disabled={!candidate || testPending}
-          onClick={test}
-          title={candidate ? undefined : "upload a candidate WAV first"}
-        >
-          {testPending ? "previewing..." : "preview this upload"}
-        </button>
-        <button className="btn-primary" disabled={!candidate} onClick={commit}>
-          commit
-        </button>
-        {msg && <span className="font-mono text-xs text-accent">{msg}</span>}
-      </div>
-      {testAudioUrl && (
-        <div>
-          <p className="label">candidate upload saying the sample</p>
-          <audio controls src={testAudioUrl} className="w-full" />
-        </div>
-      )}
-    </section>
+      {msg && <p className="mono-xs text-accent">{msg}</p>}
+      {auditionUrl && <audio src={auditionUrl} controls autoPlay className="w-full" />}
+
+      <VoiceRow
+        badge="D"
+        name={<span className="flex-1 font-mono text-sm">Default voice</span>}
+        filled={!!defaultVoice?.filled}
+        durationSecs={defaultVoice?.duration_secs ?? null}
+        previewUrl={`/api/v1/reference/preview?v=${bust}`}
+        onUpload={(f) => {
+          // The default is the global fallback and can't be cleared, so guard the
+          // destructive replace (slots are one of five and stay confirm-less).
+          if (confirm("Replace the default fallback voice?")) {
+            upload("/api/v1/reference/commit", f, "default voice replaced");
+          }
+        }}
+        onAudition={() => audition("default", "/api/v1/reference/audition")}
+        auditioning={auditioning === "default"}
+      />
+
+      {slots.map((s) => (
+        <VoiceRow
+          key={s.slot}
+          badge={String(s.slot)}
+          name={
+            <input
+              className="field flex-1"
+              defaultValue={s.label ?? ""}
+              placeholder={`Slot ${s.slot} label`}
+              onBlur={(e) => {
+                if ((e.target.value ?? "") !== (s.label ?? "")) renameSlot(s.slot, e.target.value);
+              }}
+            />
+          }
+          filled={s.filled}
+          durationSecs={s.duration_secs}
+          previewUrl={`/api/v1/reference/slots/${s.slot}/preview?v=${bust}`}
+          onUpload={(f) => upload(`/api/v1/reference/slots/${s.slot}`, f, `slot ${s.slot} saved`)}
+          onAudition={() =>
+            audition(`slot-${s.slot}`, `/api/v1/reference/slots/${s.slot}/audition`)
+          }
+          auditioning={auditioning === `slot-${s.slot}`}
+          onClear={() => clearSlot(s.slot)}
+        />
+      ))}
+    </div>
   );
 }

@@ -73,3 +73,17 @@ def test_default_artwork_url_points_at_branding_jpg():
         "https://raw.githubusercontent.com/ttlequals0/Audicle/main/"
         "branding/podcast-artwork-3000.jpg"
     )
+
+
+def test_legacy_upload_max_bytes_env_fallback(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A pre-0.31.0 UPLOAD_MAX_BYTES env value is converted to the new MB field.
+    monkeypatch.setenv("UPLOAD_MAX_BYTES", str(200 * 1024 * 1024))
+    get_settings.cache_clear()
+    assert get_settings().UPLOAD_MAX_MB == 200
+
+
+def test_explicit_upload_max_mb_wins_over_legacy(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("UPLOAD_MAX_BYTES", str(200 * 1024 * 1024))
+    monkeypatch.setenv("UPLOAD_MAX_MB", "30")
+    get_settings.cache_clear()
+    assert get_settings().UPLOAD_MAX_MB == 30

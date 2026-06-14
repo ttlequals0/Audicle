@@ -5,11 +5,13 @@ Resolution chain: code default -> env var -> runtime_settings DB row.
 
 from __future__ import annotations
 
+import contextlib
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -84,8 +86,18 @@ class Settings(BaseSettings):
     LLM_TIMEOUT_SECONDS: int = 300
     LLM_RETRY_COUNT: int = 3
 
+    # Episode webhooks (0.31.0). Fire-and-forget POST to this URL on every terminal
+    # job transition (episode.processed / episode.failed). Empty disables. A dead or
+    # slow receiver never fails a job. Operator-tunable.
+    WEBHOOK_URL: str = ""
+    WEBHOOK_TIMEOUT_SECONDS: float = 10.0
+
     # Extraction tunables.
     FIRECRAWL_RETRY_COUNT: int = 3
+    # Arc XP / Fusion static body extractor (0.31.0). When on, the direct scrape also
+    # requests rawHtml so the Arc parser can pull the article body out of the page's
+    # content_elements JSON before the browser/archive fallbacks run.
+    EXTRACTION_ARC_ENABLED: bool = True
     FIRECRAWL_BACKOFF_BASE_SECONDS: int = 1
     FIRECRAWL_TIMEOUT_SECONDS: int = 30
     MIN_EXTRACTION_CHARS: int = 500
@@ -245,10 +257,29 @@ class Settings(BaseSettings):
     # OOM the worker by streaming a multi-GB body within the fetch timeout.
     ARTWORK_MAX_DOWNLOAD_BYTES: int = 25 * 1024 * 1024
 
-    # Direct file upload (0.30.0). Per-file ceiling for the /upload endpoint; the
-    # stream is aborted mid-read once it crosses this so a hostile payload can't
-    # fully buffer first. Operator-tunable (runtime_settings) for image-heavy PDFs.
-    UPLOAD_MAX_BYTES: int = Field(default=50 * 1024 * 1024, ge=0)
+    # Direct file upload. Per-file ceiling for the /upload endpoint, in MEGABYTES
+    # (0.31.0; was UPLOAD_MAX_BYTES). The stream is aborted mid-read once it crosses
+    # the cap so a hostile payload can't fully buffer first. Operator-tunable
+    # (runtime_settings) for image-heavy PDFs; UI + API both speak MB.
+    UPLOAD_MAX_MB: int = Field(default=50, ge=1)
+
+    @model_validator(mode="after")
+    def _legacy_upload_max_bytes(self) -> Settings:
+        """Back-compat for the 0.31.0 UPLOAD_MAX_BYTES -> UPLOAD_MAX_MB rename.
+
+        A pre-0.31.0 deployment may set ``UPLOAD_MAX_BYTES`` (bytes) in its env. That
+        var is no longer a field, so read it directly: when the operator did not set
+        the new ``UPLOAD_MAX_MB`` explicitly, derive MB from the legacy bytes value so
+        their cap survives the upgrade. (DB-stored overrides are handled by migration
+        015.)
+        """
+
+        if "UPLOAD_MAX_MB" not in self.model_fields_set:
+            legacy = os.environ.get("UPLOAD_MAX_BYTES")
+            if legacy:
+                with contextlib.suppress(ValueError):
+                    self.UPLOAD_MAX_MB = max(1, int(legacy) // (1024 * 1024))
+        return self
 
     @property
     def cors_origin_list(self) -> list[str]:

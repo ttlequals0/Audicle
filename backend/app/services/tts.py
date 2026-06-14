@@ -181,3 +181,23 @@ async def reload(settings: Settings) -> dict[str, Any]:
     if not isinstance(body, dict):
         raise TTSRequestError(f"TTS reload returned non-object JSON: {type(body).__name__}")
     return body
+
+
+async def select_voice(settings: Settings, slot: int) -> None:
+    """POST ``/select-voice`` on the wrapper to switch the per-job reference voice
+    to a slot. Raises on failure; the pipeline treats it as best-effort and keeps
+    the wrapper's current voice when a slot has gone missing."""
+
+    endpoint = f"{settings.TTS_URL.rstrip('/')}/select-voice"
+    timeout = httpx.Timeout(settings.TTS_HTTP_TIMEOUT_SECONDS)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        try:
+            response = await client.post(endpoint, json={"slot": slot})
+        except httpx.TimeoutException as exc:
+            raise TTSTimeoutError(f"TTS select-voice timed out: {exc}") from exc
+        except httpx.NetworkError as exc:
+            raise TTSProviderError(f"TTS unreachable: {exc}") from exc
+    if response.is_error:
+        raise TTSProviderError(
+            f"TTS select-voice returned {response.status_code}: {response.text[:200]}"
+        )

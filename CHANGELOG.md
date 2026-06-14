@@ -6,7 +6,90 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
-## [0.30.2] - 2026-06-11
+## [0.31.4] - 2026-06-13
+
+### Added
+
+- Episodes now record and expose which reference voice narrated them. The voice
+  is snapshotted at finalize (the slot's label, "Slot N", or "Default" for the
+  fallback voice) and surfaces in three places: the `voice_label` field on
+  `GET /api/v1/episodes`, a "voice:" label on each Feed card, and a "Voice:" line
+  under the source link in the RSS episode description. Migration 016 backfills
+  existing episodes from their job's recorded voice (the pre-slots default).
+
+## [0.31.3] - 2026-06-13
+
+### Changed
+
+- The Home voice picker always shows (collapsed below Submit) even before any voice
+  slots are filled, with a note that random and last both use the default voice until
+  you add slots in Settings.
+
+### Fixed
+
+- Restored the default audition sample text in Settings, which the voices-section
+  merge had shortened by accident.
+
+## [0.31.2] - 2026-06-13
+
+### Changed
+
+- The per-submission voice picker on the Home screen moved below the Submit button
+  into a collapsed `> // voice:` disclosure that remembers its open state, so it
+  stays out of the way until you want it. It appears once at least one voice slot is
+  filled; with no slots filled every job uses the default voice and the picker stays
+  hidden. If the slot you picked is later cleared, the choice falls back to random.
+- The audition sample text in Settings is a multi-line field again, so the whole
+  sample is visible and editable instead of scrolling in a single line.
+
+## [0.31.1] - 2026-06-13
+
+### Changed
+
+- The reference voice and voice slots are now one "voices" section in Settings. The
+  fallback voice sits as a "Default" row alongside the five slots, and every row shares
+  the same controls: an inline player for the stored clip, an Audition button that
+  synthesizes a TTS sample, and Replace (slots also have Clear). Replacing the Default
+  asks for confirmation, since it is the global fallback and cannot be emptied.
+
+### Added
+
+- Voice uploads accept more formats. Alongside WAV you can upload MP3, M4A/AAC, FLAC,
+  or OGG/Opus for the default voice or any slot; anything that isn't already a WAV is
+  transcoded to a mono WAV with ffmpeg before validation. A new `GET /reference/status`
+  reports the fallback voice (installed, duration) for the merged UI.
+
+## [0.31.0] - 2026-06-13
+
+### Added
+
+- Multiple reference voices. Five fixed voice slots can be filled, labelled, and
+  auditioned from Settings. Each job picks a voice at submit time: Random (default,
+  a random filled slot), Last used, or a specific slot from the Home screen. The
+  legacy `reference/voice.wav` stays the fallback when no slot is filled. The chosen
+  slot is recorded on the job and the wrapper switches to it once, before the first
+  chunk, via a new `POST /select-voice` endpoint.
+- Episode webhooks. Set `WEBHOOK_URL` (Settings, runtime-tunable) and Audicle POSTs
+  a JSON payload when an episode finishes (`episode.processed`) or fails
+  (`episode.failed`): title, source link, time-to-process, the `reprocess` flag, and
+  on failure the stage and error. Delivery is fire-and-forget with bounded retries
+  and never fails the job; an empty `WEBHOOK_URL` disables it.
+- Reprocess failed jobs from Recents. A failed row on the Home screen gets a reprocess
+  control that calls the new `POST /api/v1/jobs/{job_id}/requeue`, which re-enqueues the
+  job. URL jobs re-fetch (behind the same SSRF guard as submit); upload jobs re-run from
+  the stored original. A swept upload original returns a clear 409.
+- Arc XP / Fusion static body extractor. Some publishers ship a short teaser in the
+  visible DOM while the full article sits in the page's `content_elements` JSON.
+  When `EXTRACTION_ARC_ENABLED` is on (default), Audicle reads the body straight out
+  of the static HTML ahead of the browser fallbacks, gated on the Arc signature so
+  non-Arc pages are untouched.
+
+### Changed
+
+- The upload size limit is now configured in megabytes. `UPLOAD_MAX_BYTES` is renamed
+  to `UPLOAD_MAX_MB` (default 50) across config, the Settings UI, and the uploader.
+  Migration `015` converts a stored byte override to MB, and the old `UPLOAD_MAX_BYTES`
+  env var is still read as a fallback so existing installs keep working.
 
 ### Fixed
 

@@ -18,18 +18,23 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import sqlite3
 import wave
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import Path as PathParam
 from fastapi.responses import FileResponse, Response
+from pydantic import BaseModel
 
+from app.api.deps import get_conn
 from app.config import Settings, get_settings
 from app.core import database
+from app.services import voices
 from app.services.atomic_write import write_bytes_atomic
 
 logger = logging.getLogger("app.api.reference")
@@ -105,6 +110,41 @@ def _validate_wav(data: bytes) -> tuple[int, float]:
     return sample_rate, duration
 
 
+def _coerce_to_wav(data: bytes) -> bytes:
+    """Accept any common audio upload: a valid WAV passes through untouched,
+    anything else (mp3, m4a/aac, flac, ogg/opus, ...) is transcoded to a mono
+    WAV via ffmpeg. Raises HTTPException(400) when the bytes aren't decodable."""
+
+    try:
+        with wave.open(io.BytesIO(data), "rb"):
+            return data
+    except Exception:
+        # Any wave parse failure (wave.Error/EOFError/RuntimeError) means "not a
+        # clean WAV" -- fall through and let ffmpeg try to decode it.
+        pass
+    # Lazy import: audio pulls in torch, which we don't want loaded into the API
+    # process at boot just for this operator-only transcode path.
+    from app.services import audio
+
+    try:
+        return audio.transcode_to_wav(data)
+    except audio.FfmpegError as exc:
+        raise HTTPException(
+            status_code=400, detail="unsupported or unreadable audio file"
+        ) from exc
+
+
+def _prepare_reference_wav(data: bytes) -> tuple[bytes, int, float]:
+    """Single upload gate: coerce any supported format to WAV (mp3/m4a/flac/ogg
+    via ffmpeg; a real WAV passes through) then validate duration and size.
+    Returns ``(wav_bytes, sample_rate, duration_secs)``. Runs ffmpeg, so callers
+    invoke it off the event loop via ``asyncio.to_thread``."""
+
+    wav = _coerce_to_wav(data)
+    sample_rate, duration_secs = _validate_wav(wav)
+    return wav, sample_rate, duration_secs
+
+
 async def _read_upload_capped(voice: UploadFile) -> bytes:
     """Stream the upload into a bytes object, aborting with 400 as soon
     as it crosses the cap so a hostile payload can't fully buffer first."""
@@ -135,10 +175,20 @@ async def preview() -> FileResponse:
     return FileResponse(path, media_type="audio/wav")
 
 
+@router.get("/status")
+async def default_voice_status() -> dict[str, Any]:
+    """Whether the fallback voice.wav is installed, plus its duration. The merged
+    voices UI renders this as the 'Default' row alongside the slots."""
+
+    path = _reference_path()
+    filled = path.is_file()
+    return {"filled": filled, "duration_secs": _wav_seconds(path) if filled else None}
+
+
 @router.post("/test")
 async def test_candidate(
     settings: Annotated[Settings, Depends(get_settings)],
-    voice: Annotated[UploadFile, File(description="candidate voice WAV")],
+    voice: Annotated[UploadFile, File(description="candidate voice clip (WAV/MP3/M4A/FLAC/OGG)")],
     sample_text: Annotated[
         str,
         Form(
@@ -157,7 +207,7 @@ async def test_candidate(
     """
 
     candidate = await _read_upload_capped(voice)
-    _validate_wav(candidate)
+    candidate, _, _ = await asyncio.to_thread(_prepare_reference_wav, candidate)
 
     reference = _reference_path()
     reference.parent.mkdir(parents=True, exist_ok=True)
@@ -246,13 +296,15 @@ async def audition_committed(
 @router.post("/commit")
 async def commit_candidate(
     settings: Annotated[Settings, Depends(get_settings)],
-    voice: Annotated[UploadFile, File(description="new voice WAV to install")],
+    voice: Annotated[UploadFile, File(description="new voice clip to install (WAV/MP3/M4A/FLAC/OGG)")],
 ) -> dict[str, str | int | bool]:
     """Atomically replace ``backend/app/reference/voice.wav`` and ask the
     TTS wrapper to ``/reload`` so the next ``/generate`` picks it up."""
 
     candidate = await _read_upload_capped(voice)
-    sample_rate, duration_secs = _validate_wav(candidate)
+    candidate, sample_rate, duration_secs = await asyncio.to_thread(
+        _prepare_reference_wav, candidate
+    )
 
     reference = _reference_path()
     reference.parent.mkdir(parents=True, exist_ok=True)
@@ -332,3 +384,129 @@ async def _reload_silently(client: httpx.AsyncClient, settings: Settings) -> Non
             "TTS /reload after restore failed",
             extra={"event": "tts_reload_failed", "error": str(exc)},
         )
+
+
+# --- Voice slots (0.31.0) -- 5 fixed slots picked at random per episode ---------
+
+
+class SlotInfo(BaseModel):
+    slot: int
+    filled: bool
+    label: str | None = None
+    duration_secs: int | None = None
+
+
+def _wav_seconds(path: Path) -> int | None:
+    try:
+        with wave.open(str(path), "rb") as w:
+            rate = w.getframerate()
+            frames = w.getnframes()
+    except (wave.Error, EOFError, OSError):
+        return None
+    return round(frames / rate) if rate else None
+
+
+@router.get("/slots", response_model=list[SlotInfo])
+async def list_slots(conn: Annotated[sqlite3.Connection, Depends(get_conn)]) -> list[SlotInfo]:
+    labels = voices.get_labels(conn)
+    out: list[SlotInfo] = []
+    for n in range(1, voices.NUM_SLOTS + 1):
+        path = voices.slot_path(n)
+        filled = path.is_file()
+        out.append(
+            SlotInfo(
+                slot=n,
+                filled=filled,
+                label=labels.get(str(n)),
+                duration_secs=_wav_seconds(path) if filled else None,
+            )
+        )
+    return out
+
+
+@router.post("/slots/{slot}")
+async def upload_slot(
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+    slot: Annotated[int, PathParam(ge=1, le=voices.NUM_SLOTS)],
+    voice: Annotated[UploadFile, File(description="voice clip for this slot (WAV/MP3/M4A/FLAC/OGG)")],
+    label: Annotated[str | None, Form()] = None,
+) -> dict[str, Any]:
+    """Install or replace the clip in slot ``slot``. No /reload -- slots are
+    selected per job via /select-voice."""
+
+    candidate = await _read_upload_capped(voice)
+    candidate, sample_rate, duration_secs = await asyncio.to_thread(
+        _prepare_reference_wav, candidate
+    )
+    write_bytes_atomic(voices.slot_path(slot), candidate, prefix=".slot-")
+    if label is not None:
+        voices.set_label(conn, slot, label)
+    return {
+        "slot": slot,
+        "filled": True,
+        "sample_rate": sample_rate,
+        "duration_secs": round(duration_secs),
+    }
+
+
+@router.delete("/slots/{slot}")
+async def clear_slot(
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+    slot: Annotated[int, PathParam(ge=1, le=voices.NUM_SLOTS)],
+) -> dict[str, Any]:
+    with suppress(FileNotFoundError):
+        voices.slot_path(slot).unlink()
+    voices.set_label(conn, slot, "")
+    return {"slot": slot, "filled": False}
+
+
+@router.put("/slots/{slot}/label")
+async def rename_slot(
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+    slot: Annotated[int, PathParam(ge=1, le=voices.NUM_SLOTS)],
+    label: Annotated[str, Form(max_length=60)],
+) -> dict[str, Any]:
+    voices.set_label(conn, slot, label)
+    return {"slot": slot, "label": label.strip() or None}
+
+
+@router.get("/slots/{slot}/preview")
+async def preview_slot(
+    slot: Annotated[int, PathParam(ge=1, le=voices.NUM_SLOTS)],
+) -> FileResponse:
+    path = voices.slot_path(slot)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"voice slot {slot} is empty")
+    return FileResponse(path, media_type="audio/wav")
+
+
+@router.post("/slots/{slot}/audition")
+async def audition_slot(
+    settings: Annotated[Settings, Depends(get_settings)],
+    slot: Annotated[int, PathParam(ge=1, le=voices.NUM_SLOTS)],
+    sample_text: Annotated[str, Form(min_length=4, max_length=400)] = DEFAULT_SAMPLE_TEXT,
+) -> Response:
+    """Synthesize a sample with slot ``slot`` (selects it on the wrapper,
+    generates, then restores the committed voice.wav). Mirrors /test's restore
+    contract so an audition never leaves the wrapper switched to a slot."""
+
+    if not voices.slot_path(slot).is_file():
+        raise HTTPException(status_code=404, detail=f"voice slot {slot} is empty")
+    base = settings.TTS_URL.rstrip("/")
+    async with _serialized_reference_access(settings.DATA_DIR), httpx.AsyncClient(
+        timeout=settings.TTS_HTTP_TIMEOUT_SECONDS
+    ) as client:
+        try:
+            await client.post(f"{base}/select-voice", json={"slot": slot})
+            response = await client.post(
+                f"{base}/generate",
+                json={"text": sample_text, "episode_id": "slotaudition", "chunk_index": 0},
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail=f"tts wrapper call failed: {exc}") from exc
+        finally:
+            # Restore the committed voice.wav so the wrapper's resting voice
+            # never leaks into a later job that resolves to the legacy default.
+            await _reload_silently(client, settings)
+        body = _read_generated_wav(response, settings)
+    return Response(content=body, media_type="audio/wav")

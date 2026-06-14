@@ -88,23 +88,28 @@ def test_upload_rejects_empty_file(env: Path) -> None:
 
 
 def test_upload_rejects_oversize(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("UPLOAD_MAX_BYTES", "16")
+    # 1 MB cap; a >1 MB payload is rejected (the cap is megabytes now).
+    monkeypatch.setenv("UPLOAD_MAX_MB", "1")
     get_settings.cache_clear()
     with _client(env) as client:
-        r = client.post("/api/v1/upload", files={"file": ("big.md", b"x" * 200, "text/markdown")})
+        r = client.post(
+            "/api/v1/upload", files={"file": ("big.md", b"x" * 1_100_000, "text/markdown")}
+        )
     assert r.status_code == 400
 
 
-def test_upload_respects_runtime_tuned_max_bytes(env: Path) -> None:
+def test_upload_respects_runtime_tuned_max_mb(env: Path) -> None:
     # A DB override (the operator-tunable path, not just env) drives the cap.
     database.run_migrations(env)
     conn = database.connect(database.db_path(env))
     try:
-        runtime_settings.set_value(conn, "UPLOAD_MAX_BYTES", 16)
+        runtime_settings.set_value(conn, "UPLOAD_MAX_MB", 1)
     finally:
         conn.close()
     with _client(env) as client:
-        r = client.post("/api/v1/upload", files={"file": ("big.md", b"x" * 200, "text/markdown")})
+        r = client.post(
+            "/api/v1/upload", files={"file": ("big.md", b"x" * 1_100_000, "text/markdown")}
+        )
     assert r.status_code == 400
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -257,6 +258,20 @@ def test_item_description_and_summary_include_show_notes(env: Path) -> None:
     root = DET.fromstring(body)
     assert note in (root.find("channel/item/description").text or "")
     assert note in (root.find(f"channel/item/{{{_ITUNES_NS}}}summary").text or "")
+
+
+def test_item_description_and_summary_include_voice(env: Path) -> None:
+    ep = dataclasses.replace(_episode(), voice_label="Morgan")
+    body = _render([ep], env=env)
+    root = DET.fromstring(body)
+    assert "Voice: Morgan" in (root.find("channel/item/description").text or "")
+    assert "Voice: Morgan" in (root.find(f"channel/item/{{{_ITUNES_NS}}}summary").text or "")
+
+
+def test_item_description_omits_voice_when_absent(env: Path) -> None:
+    body = _render([_episode()], env=env)  # default helper leaves voice_label None
+    root = DET.fromstring(body)
+    assert "Voice:" not in (root.find("channel/item/description").text or "")
 
 
 def test_item_description_omits_summary_when_absent(env: Path) -> None:

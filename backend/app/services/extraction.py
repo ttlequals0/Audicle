@@ -23,7 +23,7 @@ from tenacity import (
 )
 
 from app.config import Settings
-from app.services import archive, flaresolverr, ssrf
+from app.services import arc_extractor, archive, flaresolverr, ssrf
 
 # Re-exported so existing ``extraction.ExtractionResult`` / ``extraction.ExtractionTooShortError``
 # references (pipeline, tests) keep working now that the types live in extraction_types, which
@@ -102,9 +102,30 @@ async def extract(
     )
 
     async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
-        # Only a flagged host pays for rawHtml + the JSON-LD teaser check; a free article
-        # with no rule keeps the plain scrape, so the common path stays cheap.
-        result = await _scrape(client, url, settings, detect_teaser=rule is not None)
+        # A flagged host pays for rawHtml + the JSON-LD teaser check; Arc detection also
+        # needs the page HTML, so request it when the Arc extractor is enabled.
+        detect_teaser = rule is not None or settings.EXTRACTION_ARC_ENABLED
+        result = await _scrape(client, url, settings, detect_teaser=detect_teaser)
+        # Arc XP / Fusion: the visible scrape may be a teaser while the full body sits in
+        # the page's content_elements JSON. When Arc finds a longer body, prefer it -- then
+        # the floor check + fallbacks below run against the real article.
+        if settings.EXTRACTION_ARC_ENABLED and result.raw_html:
+            arc_md = arc_extractor.extract_body(result.raw_html)
+            if (
+                arc_md
+                and len(arc_md) >= settings.MIN_EXTRACTION_CHARS
+                and len(arc_md) > len(result.markdown)
+            ):
+                logger.info(
+                    "Arc XP static body extracted",
+                    extra={
+                        "event": "extraction_arc_hit",
+                        "host": host,
+                        "arc_chars": len(arc_md),
+                        "scrape_chars": len(result.markdown),
+                    },
+                )
+                result = ExtractionResult(markdown=arc_md, metadata=result.metadata)
         if _effective_chars(result, rule, floor) >= floor:
             return result
         # Best result seen across direct + every bypass, and whether the browser
@@ -419,9 +440,11 @@ async def _scrape(
     metadata = data.get("metadata") or {}
     if not isinstance(metadata, dict):
         metadata = {}
-    raw_html = data.get("rawHtml")
-    article_chars = _article_body_chars(raw_html) if isinstance(raw_html, str) else None
-    return ExtractionResult(markdown=markdown, metadata=metadata, article_chars=article_chars)
+    raw_html = data.get("rawHtml") if isinstance(data.get("rawHtml"), str) else None
+    article_chars = _article_body_chars(raw_html) if raw_html else None
+    return ExtractionResult(
+        markdown=markdown, metadata=metadata, article_chars=article_chars, raw_html=raw_html
+    )
 
 
 async def _post_with_retry(

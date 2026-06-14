@@ -26,6 +26,9 @@ class ExtractionResult:
     markdown: str
     metadata: dict[str, Any] = field(default_factory=dict)
     article_chars: int | None = None
+    # Raw page HTML, kept only when requested (the teaser/Arc paths) so the Arc XP
+    # static body extractor can read content_elements; None otherwise.
+    raw_html: str | None = None
 
 
 class ExtractionError(Exception):
