@@ -406,22 +406,22 @@ def _wav_seconds(path: Path) -> int | None:
     return round(frames / rate) if rate else None
 
 
-def _safe_slot_path(slot: int) -> Path:
-    """Resolve the slot's WAV path and confirm it stays under the voices dir
-    before any filesystem op. ``slot`` is already PathParam-bounded (1..NUM_SLOTS),
-    so this is defense-in-depth -- and the explicit ``resolve()`` + ``relative_to``
-    containment barrier CodeQL recognizes for py/path-injection. Mirrors
-    ``media._safe_path`` exactly (construct under root, then ``relative_to`` in a
-    try/except) so the analyzer treats the returned path as sanitized across the
-    return -- the slot filename matches ``voices.slot_path``'s ``slot{n}.wav``."""
+# A fixed allowlist of slot filenames. Selecting from it (rather than building
+# the name from the request value) is the barrier CodeQL recognizes for
+# py/path-injection: a bounded slot index can only ever pick a constant
+# ``slot{n}.wav`` literal, so the path has no user-controlled component. Must
+# stay in sync with ``voices.NUM_SLOTS`` and ``voices.slot_path``'s naming.
+_SLOT_FILENAMES = ("slot1.wav", "slot2.wav", "slot3.wav", "slot4.wav", "slot5.wav")
 
-    root = voices.voices_dir()
-    candidate = (root / f"slot{slot}.wav").resolve()
-    try:
-        candidate.relative_to(root.resolve())
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=f"voice slot {slot} not found") from exc
-    return candidate
+
+def _safe_slot_path(slot: int) -> Path:
+    """Path to slot ``slot``'s WAV, built from the constant allowlist above so no
+    user-provided value reaches the filesystem. ``slot`` is already PathParam-bounded
+    (1..NUM_SLOTS); the explicit re-check keeps this safe for any internal caller."""
+
+    if not 1 <= slot <= len(_SLOT_FILENAMES):
+        raise HTTPException(status_code=404, detail=f"voice slot {slot} not found")
+    return voices.voices_dir() / _SLOT_FILENAMES[slot - 1]
 
 
 @router.get("/slots", response_model=list[SlotInfo])
