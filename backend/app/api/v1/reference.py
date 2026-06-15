@@ -409,15 +409,19 @@ def _wav_seconds(path: Path) -> int | None:
 def _safe_slot_path(slot: int) -> Path:
     """Resolve the slot's WAV path and confirm it stays under the voices dir
     before any filesystem op. ``slot`` is already PathParam-bounded (1..NUM_SLOTS),
-    so this is defense-in-depth -- and the explicit ``resolve()`` + ``is_relative_to``
-    containment barrier CodeQL recognizes for py/path-injection (mirrors
-    ``media._safe_path`` and the guard in ``_read_generated_wav``)."""
+    so this is defense-in-depth -- and the explicit ``resolve()`` + ``relative_to``
+    containment barrier CodeQL recognizes for py/path-injection. Mirrors
+    ``media._safe_path`` exactly (construct under root, then ``relative_to`` in a
+    try/except) so the analyzer treats the returned path as sanitized across the
+    return -- the slot filename matches ``voices.slot_path``'s ``slot{n}.wav``."""
 
-    root = voices.voices_dir().resolve()
-    path = voices.slot_path(slot).resolve()
-    if not path.is_relative_to(root):
-        raise HTTPException(status_code=404, detail=f"voice slot {slot} not found")
-    return path
+    root = voices.voices_dir()
+    candidate = (root / f"slot{slot}.wav").resolve()
+    try:
+        candidate.relative_to(root.resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=f"voice slot {slot} not found") from exc
+    return candidate
 
 
 @router.get("/slots", response_model=list[SlotInfo])
