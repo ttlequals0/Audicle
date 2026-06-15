@@ -105,3 +105,54 @@ async def test_deliver_swallows_dead_receiver(monkeypatch: pytest.MonkeyPatch) -
 def test_fire_is_noop_without_url(env) -> None:
     # No WEBHOOK_URL configured -> fire does nothing and doesn't need a loop.
     webhooks.fire(get_settings(), {"event": "episode.processed"})
+
+
+def _mock_transport(monkeypatch: pytest.MonkeyPatch, handler) -> None:
+    transport = httpx.MockTransport(handler)
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda *a, **k: original(*a, **{**k, "transport": transport})
+    )
+
+
+def _with_webhook(monkeypatch: pytest.MonkeyPatch, url: str = "https://hook.test/x") -> None:
+    monkeypatch.setenv("WEBHOOK_URL", url)
+    get_settings.cache_clear()
+
+
+async def test_send_test_reports_delivered(env, monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_transport(monkeypatch, lambda req: httpx.Response(200, json={"ok": True}))
+    _with_webhook(monkeypatch)
+    assert await webhooks.send_test(get_settings()) == {
+        "delivered": True,
+        "status_code": 200,
+        "error": None,
+    }
+
+
+async def test_send_test_reports_http_failure(env, monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_transport(monkeypatch, lambda req: httpx.Response(500, text="kaboom"))
+    _with_webhook(monkeypatch)
+    result = await webhooks.send_test(get_settings())
+    assert result["delivered"] is False
+    assert result["status_code"] == 500
+    assert "kaboom" in result["error"]
+
+
+async def test_send_test_swallows_connection_error(env, monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(_req: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    _mock_transport(monkeypatch, handler)
+    _with_webhook(monkeypatch)
+    result = await webhooks.send_test(get_settings())
+    assert result["delivered"] is False
+    assert result["status_code"] is None
+    assert "ConnectError" in result["error"]
+
+
+def test_sample_payload_shape() -> None:
+    p = webhooks.sample_payload()
+    assert p["event"] == "episode.processed"
+    assert p["test"] is True
+    assert {"episode_id", "title", "source_type", "url", "reprocess"} <= p.keys()

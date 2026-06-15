@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.31.5
+  version: 0.32.0
 paths:
   /health/live:
     get:
@@ -1128,6 +1128,23 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/webhooks/test:
+    post:
+      tags:
+      - webhooks
+      summary: Test Webhook
+      description: 'Deliver the sample payload once and report the outcome. 409 when
+        no
+
+        ``WEBHOOK_URL`` is configured.'
+      operationId: test_webhook_api_v1_webhooks_test_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookTestResult'
   /rss/{slug}.xml:
     head:
       tags:
@@ -1965,6 +1982,28 @@ components:
       - msg
       - type
       title: ValidationError
+    WebhookTestResult:
+      properties:
+        delivered:
+          type: boolean
+          title: Delivered
+        status_code:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Status Code
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+      additionalProperties: false
+      type: object
+      required:
+      - delivered
+      - status_code
+      - error
+      title: WebhookTestResult
     app__api__v1__auth__StatusResponse:
       properties:
         password_set:

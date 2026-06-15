@@ -28,6 +28,7 @@ from app.api.v1 import source_fallbacks as source_fallbacks_routes
 from app.api.v1 import status as status_routes
 from app.api.v1 import submit as submit_routes
 from app.api.v1 import uploads as uploads_routes
+from app.api.v1 import webhooks as webhooks_routes
 
 router = APIRouter(prefix="/api/v1")
 
@@ -50,4 +51,5 @@ admin.include_router(episodes_routes.router)
 admin.include_router(jobs_routes.router)
 admin.include_router(reference_routes.router)
 admin.include_router(llm_routes.router)
+admin.include_router(webhooks_routes.router)
 router.include_router(admin)

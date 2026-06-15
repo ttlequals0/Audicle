@@ -6,6 +6,22 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-06-15
+
+### Added
+
+- Webhooks are now configurable and testable from the UI. Settings has a Webhooks
+  section (the `WEBHOOK_URL` field was tunable but previously unlisted, so you could not
+  find it) with a "send test webhook" button that POSTs a sample payload to the saved URL
+  and shows the response. A new `POST /api/v1/webhooks/test` does the same from the API.
+  The README now documents every payload field with example bodies.
+- US state abbreviations are expanded to full names for narration when they sit in clear
+  state context -- after a city and comma (`Chicago, IL` -> `Chicago, Illinois`) or in a
+  `City, ST ZIP` address. Codes that double as common words or abbreviations (OK, OR, PA,
+  MA, ...) only expand inside a ZIP address, to avoid mangling ordinary prose. Connecticut
+  joins the curated state pronunciations alongside Illinois, Arkansas, Missouri, Oregon,
+  and Nevada.
+
 ## [0.31.5] - 2026-06-14
 
 ### Security

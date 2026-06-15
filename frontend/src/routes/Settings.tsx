@@ -38,6 +38,7 @@ const GROUPS: Record<string, string[]> = {
     "FEED_ARTWORK_URL",
   ],
   Connections: ["FIRECRAWL_URL", "FIRECRAWL_API_KEY", "TTS_URL", "FLARESOLVERR_URL"],
+  Webhooks: ["WEBHOOK_URL"],
   TTS: ["TTS_CHUNK_TARGET_WORDS", "TTS_CHUNK_MAX_WORDS", "TTS_CHUNK_SILENCE_MS"],
   Verification: [
     "WHISPER_VERIFY_ENABLED",
@@ -78,6 +79,47 @@ const PROVIDER_SPECIFIC_KEYS = new Set(
 interface PromptBody {
   prompt: string;
   is_default?: boolean;
+}
+
+// Sends a sample payload to the saved WEBHOOK_URL and reports the outcome inline,
+// reusing the same btn-ghost + mono-xs message language as the voice audition.
+function WebhookTest() {
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [pending, setPending] = useState(false);
+
+  const run = async () => {
+    setPending(true);
+    setMsg(null);
+    try {
+      const r = await api<{ delivered: boolean; status_code: number | null; error: string | null }>(
+        "/api/v1/webhooks/test",
+        { method: "POST" }
+      );
+      const code = r.status_code ? ` (${r.status_code})` : "";
+      setMsg(
+        r.delivered
+          ? { ok: true, text: `// delivered${code}` }
+          : { ok: false, text: `// failed${code}: ${r.error ?? "no response"}` }
+      );
+    } catch (e) {
+      const status = e instanceof ApiError ? e.status : 0;
+      setMsg({
+        ok: false,
+        text: status === 409 ? "// save a webhook URL above first" : `// request failed (${status})`,
+      });
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 flex items-center gap-3 flex-wrap">
+      <button type="button" className="btn-ghost" disabled={pending} onClick={run}>
+        {pending ? "testing..." : "send test webhook"}
+      </button>
+      {msg && <span className={`mono-xs ${msg.ok ? "text-accent" : "text-danger"}`}>{msg.text}</span>}
+    </div>
+  );
 }
 
 function Toggle({
@@ -220,6 +262,12 @@ export default function SettingsRoute() {
                 // firecrawl api key optional -- blank for self-hosted
               </p>
             )}
+            {group === "Webhooks" && (
+              <p className="mono-xs text-mute mb-3">
+                // POSTs episode.processed / episode.failed to this URL on every finished or
+                failed job. blank disables. the test sends a sample to the saved URL -- save first
+              </p>
+            )}
             {group === "Verification" && (
               <p className="mono-xs text-mute mb-3">
                 // regenerates chunks when audio drifts from the text. needs
@@ -292,6 +340,7 @@ export default function SettingsRoute() {
                 </div>
               );
             })}
+            {group === "Webhooks" && <WebhookTest />}
           </CollapsibleSection>
         );
       })}

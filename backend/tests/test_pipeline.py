@@ -990,10 +990,47 @@ def test_normalize_date_months_only_in_date_context() -> None:
     assert pipeline._normalize_date_months("Janet 5 ate") == "Janet 5 ate"
 
 
+def test_normalize_us_states_city_comma() -> None:
+    assert pipeline._normalize_us_states("Chicago, IL") == "Chicago, Illinois"
+    # Trailing sentence punctuation is preserved, not consumed.
+    assert pipeline._normalize_us_states("Springfield, IL.") == "Springfield, Illinois."
+    assert (
+        pipeline._normalize_us_states("a stop in Austin, TX, then home")
+        == "a stop in Austin, Texas, then home"
+    )
+    assert pipeline._normalize_us_states("Denver, CO is high") == "Denver, Colorado is high"
+
+
+def test_normalize_us_states_zip_context() -> None:
+    # A safe code before a ZIP is already handled by the city-comma form.
+    assert pipeline._normalize_us_states("Chicago, IL 60601") == "Chicago, Illinois 60601"
+    # Ambiguous codes (OK/OR/PA/MA/...) expand only inside a comma-anchored ZIP address.
+    assert pipeline._normalize_us_states("Tulsa, OK 74103") == "Tulsa, Oklahoma 74103"
+    assert pipeline._normalize_us_states("Portland, OR 97201") == "Portland, Oregon 97201"
+    assert pipeline._normalize_us_states("Pittsburgh, PA 15201") == "Pittsburgh, Pennsylvania 15201"
+
+
+def test_normalize_us_states_leaves_words_alone() -> None:
+    assert pipeline._normalize_us_states("that's OK with me") == "that's OK with me"
+    assert pipeline._normalize_us_states("Well, OK.") == "Well, OK."  # ambiguous, no ZIP
+    assert pipeline._normalize_us_states("you can fly, OR drive") == "you can fly, OR drive"
+    assert pipeline._normalize_us_states("the group, PA system") == "the group, PA system"
+    assert pipeline._normalize_us_states("filed, MA in economics") == "filed, MA in economics"
+    assert pipeline._normalize_us_states("cats or dogs") == "cats or dogs"  # lowercase
+    assert pipeline._normalize_us_states("Acme Co. shipped") == "Acme Co. shipped"
+    assert pipeline._normalize_us_states("your photo, ID required") == "your photo, ID required"
+    # A bare code before a 5-digit quantity (no comma anchor) is left alone.
+    assert pipeline._normalize_us_states("grew IN 50000 homes") == "grew IN 50000 homes"
+
+
 def test_normalize_for_tts_strips_headings_and_expands_dates() -> None:
     # "Jan" expands to the full month, then the month normalizer respells it.
     out = pipeline._normalize_for_tts("### News\nShipped Jan 15 2026.")
     assert out == "News\nShipped jan-yoo-air-ee 15 2026."
+
+
+def test_normalize_for_tts_expands_state_in_context() -> None:
+    assert pipeline._normalize_for_tts("Based in Chicago, IL.") == "Based in Chicago, Illinois."
 
 
 def test_normalize_numbers_spells_grouped_and_decimal() -> None:

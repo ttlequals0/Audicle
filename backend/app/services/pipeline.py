@@ -745,6 +745,63 @@ def _normalize_months(text: str) -> str:
     return _MONTH_RE.sub(lambda m: _MONTH_RESPELL[m.group(1)], text)
 
 
+# Two-letter US state codes -> full names, expanded only in clear state context
+# so the engine says "Illinois" instead of spelling "I L".
+_US_STATES = {
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
+    "CA": "California", "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware",
+    "FL": "Florida", "GA": "Georgia", "HI": "Hawaii", "ID": "Idaho",
+    "IL": "Illinois", "IN": "Indiana", "IA": "Iowa", "KS": "Kansas",
+    "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
+    "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi",
+    "MO": "Missouri", "MT": "Montana", "NE": "Nebraska", "NV": "Nevada",
+    "NH": "New Hampshire", "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York",
+    "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma",
+    "OR": "Oregon", "PA": "Pennsylvania", "RI": "Rhode Island", "SC": "South Carolina",
+    "SD": "South Dakota", "TN": "Tennessee", "TX": "Texas", "UT": "Utah",
+    "VT": "Vermont", "VA": "Virginia", "WA": "Washington", "WV": "West Virginia",
+    "WI": "Wisconsin", "WY": "Wyoming",
+}
+# Codes whose UPPERCASE form is a common non-state word/abbreviation in prose
+# (OK=okay, OR=or, ID=identification, AR=augmented reality, VA=Veterans Affairs,
+# PA=public address, MA=Master of Arts, MS=Master of Science/Ms., LA=Los Angeles).
+# These never take the city-comma form; they expand only inside a "City, ST ZIP"
+# address, where the ZIP removes the ambiguity. (Codes that collide only in their
+# rarely-uppercased forms -- "in", "oh", "de facto" -- are left in the city form,
+# since real prose writes those lowercase.)
+_STATE_AMBIGUOUS = {"OK", "OR", "ID", "AR", "VA", "PA", "MA", "MS", "LA"}
+# City context: a Title-case city word ends in a lowercase letter, so requiring a
+# lowercase letter immediately before the comma excludes all-caps tokens (SQL,
+# acronyms, "JOIN, NY"). The comma+space is captured and re-emitted; trailing
+# sentence punctuation is left in place (lookahead, not consumed). Ambiguous codes
+# are excluded here.
+_US_STATE_CITY_RE = re.compile(
+    r"(?<=[a-z])(,\s+)("
+    + "|".join(c for c in _US_STATES if c not in _STATE_AMBIGUOUS)
+    + r")(?=[\s.,;:!?)\]]|$)"
+)
+# Address context: "..., ST 60601" -- a comma-anchored state code on the same line
+# directly before a 5-digit ZIP (+4 optional). The comma anchor keeps a bare
+# "<CODE> 12345" quantity from expanding; same-line ([ \t], not \s) avoids merging
+# across a line break. Every code (including the ambiguous ones) expands here.
+_US_STATE_ZIP_RE = re.compile(
+    r"(,\s+)(" + "|".join(_US_STATES) + r")[ \t]+(?=\d{5}(?:-\d{4})?\b)"
+)
+
+
+def _normalize_us_states(text: str) -> str:
+    """Expand a two-letter US state code to its full name in state context only:
+    after a city + comma ("Chicago, IL" -> "Chicago, Illinois") or inside a
+    "City, ST ZIP" address ("Tulsa, OK 74103" -> "Tulsa, Oklahoma 74103"). The
+    lowercase-before-comma guard, case-sensitive uppercase codes, and the
+    ambiguous-code set leave ordinary words/abbreviations (OK, OR, Co., Mt., a PA
+    system, an MA degree) untouched outside a ZIP address. Sentence punctuation
+    after the code is preserved ("Chicago, IL." -> "Chicago, Illinois.")."""
+
+    text = _US_STATE_CITY_RE.sub(lambda m: m.group(1) + _US_STATES[m.group(2)], text)
+    return _US_STATE_ZIP_RE.sub(lambda m: m.group(1) + _US_STATES[m.group(2)] + " ", text)
+
+
 def _normalize_for_tts(text: str) -> str:
     """Deterministic fixups for things the cleanup prompt doesn't reliably catch.
 
@@ -764,7 +821,9 @@ def _normalize_for_tts(text: str) -> str:
             _normalize_ranges(
                 _normalize_months(
                     _normalize_date_months(
-                        _strip_code_artifacts(_strip_heading_markers(text))
+                        _normalize_us_states(
+                            _strip_code_artifacts(_strip_heading_markers(text))
+                        )
                     )
                 )
             )
