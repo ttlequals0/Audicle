@@ -105,3 +105,15 @@ def test_slot_out_of_range_rejected(client: TestClient) -> None:
 
 def test_preview_404_when_empty(client: TestClient) -> None:
     assert client.get("/api/v1/reference/slots/3/preview").status_code == 404
+
+
+def test_safe_slot_path_uses_allowlist(client: TestClient) -> None:
+    # The slot path comes from a fixed allowlist (the CodeQL path-injection
+    # barrier) and must stay in sync with NUM_SLOTS and voices.slot_path naming.
+    from app.api.v1 import reference
+
+    assert len(reference._SLOT_FILENAMES) == voices.NUM_SLOTS
+    for n in range(1, voices.NUM_SLOTS + 1):
+        p = reference._safe_slot_path(n)
+        assert p.is_relative_to(voices.voices_dir().resolve())
+        assert p.name == voices.slot_path(n).name == f"slot{n}.wav"

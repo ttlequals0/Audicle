@@ -406,6 +406,24 @@ def _wav_seconds(path: Path) -> int | None:
     return round(frames / rate) if rate else None
 
 
+# A fixed allowlist of slot filenames. Selecting from it (rather than building
+# the name from the request value) is the barrier CodeQL recognizes for
+# py/path-injection: a bounded slot index can only ever pick a constant
+# ``slot{n}.wav`` literal, so the path has no user-controlled component. Must
+# stay in sync with ``voices.NUM_SLOTS`` and ``voices.slot_path``'s naming.
+_SLOT_FILENAMES = ("slot1.wav", "slot2.wav", "slot3.wav", "slot4.wav", "slot5.wav")
+
+
+def _safe_slot_path(slot: int) -> Path:
+    """Path to slot ``slot``'s WAV, built from the constant allowlist above so no
+    user-provided value reaches the filesystem. ``slot`` is already PathParam-bounded
+    (1..NUM_SLOTS); the explicit re-check keeps this safe for any internal caller."""
+
+    if not 1 <= slot <= len(_SLOT_FILENAMES):
+        raise HTTPException(status_code=404, detail=f"voice slot {slot} not found")
+    return voices.voices_dir() / _SLOT_FILENAMES[slot - 1]
+
+
 @router.get("/slots", response_model=list[SlotInfo])
 async def list_slots(conn: Annotated[sqlite3.Connection, Depends(get_conn)]) -> list[SlotInfo]:
     labels = voices.get_labels(conn)
@@ -438,7 +456,7 @@ async def upload_slot(
     candidate, sample_rate, duration_secs = await asyncio.to_thread(
         _prepare_reference_wav, candidate
     )
-    write_bytes_atomic(voices.slot_path(slot), candidate, prefix=".slot-")
+    write_bytes_atomic(_safe_slot_path(slot), candidate, prefix=".slot-")
     if label is not None:
         voices.set_label(conn, slot, label)
     return {
@@ -455,7 +473,7 @@ async def clear_slot(
     slot: Annotated[int, PathParam(ge=1, le=voices.NUM_SLOTS)],
 ) -> dict[str, Any]:
     with suppress(FileNotFoundError):
-        voices.slot_path(slot).unlink()
+        _safe_slot_path(slot).unlink()
     voices.set_label(conn, slot, "")
     return {"slot": slot, "filled": False}
 
@@ -474,7 +492,7 @@ async def rename_slot(
 async def preview_slot(
     slot: Annotated[int, PathParam(ge=1, le=voices.NUM_SLOTS)],
 ) -> FileResponse:
-    path = voices.slot_path(slot)
+    path = _safe_slot_path(slot)
     if not path.is_file():
         raise HTTPException(status_code=404, detail=f"voice slot {slot} is empty")
     return FileResponse(path, media_type="audio/wav")
@@ -490,7 +508,7 @@ async def audition_slot(
     generates, then restores the committed voice.wav). Mirrors /test's restore
     contract so an audition never leaves the wrapper switched to a slot."""
 
-    if not voices.slot_path(slot).is_file():
+    if not _safe_slot_path(slot).is_file():
         raise HTTPException(status_code=404, detail=f"voice slot {slot} is empty")
     base = settings.TTS_URL.rstrip("/")
     async with _serialized_reference_access(settings.DATA_DIR), httpx.AsyncClient(
