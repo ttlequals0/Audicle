@@ -1033,6 +1033,35 @@ def test_normalize_for_tts_expands_state_in_context() -> None:
     assert pipeline._normalize_for_tts("Based in Chicago, IL.") == "Based in Chicago, Illinois."
 
 
+def test_fire_webhook_includes_resolved_voice(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services import episodes, webhooks
+
+    database.run_migrations(env)
+    monkeypatch.setenv("WEBHOOK_URL", "https://hook.test/x")
+    get_settings.cache_clear()
+    captured: dict = {}
+    monkeypatch.setattr(webhooks, "fire", lambda _s, payload: captured.update(payload))
+    with database.connection(env) as conn:
+        res = jobs.create_job(conn, "https://example.test/a", voice_id="3")
+        episodes.upsert(
+            conn,
+            id=res.job.episode_id,
+            job_id=res.job.id,
+            original_url="https://example.test/a",
+            title="A",
+            author="x",
+            audio_path=None,
+            artwork_path=None,
+            transcript_vtt=None,
+            duration_secs=10,
+            voice_label="Morgan",
+        )
+        conn.commit()
+    pipeline._fire_webhook("episode.processed", res.job.id, get_settings())
+    assert captured["voice"] == "Morgan"
+    assert captured["title"] == "A"
+
+
 def test_normalize_numbers_spells_grouped_and_decimal() -> None:
     assert pipeline._normalize_numbers("price 1,000 today") == "price one thousand today"
     assert "one million" in pipeline._normalize_numbers("1,234,567 rows")

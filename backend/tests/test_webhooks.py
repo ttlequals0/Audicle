@@ -45,9 +45,12 @@ def _episode(**kw) -> Episode:
 
 
 def test_processed_payload_url() -> None:
-    p = webhooks.build_payload("episode.processed", _job(reprocess=True), _episode())
+    p = webhooks.build_payload(
+        "episode.processed", _job(reprocess=True), _episode(), voice_label="Slot 2"
+    )
     assert p["event"] == "episode.processed"
     assert p["title"] == "An Article"
+    assert p["voice"] == "Slot 2"
     assert p["source_type"] == "url"
     assert p["url"] == "https://example.test/article"
     assert p["reprocess"] is True
@@ -66,10 +69,11 @@ def test_processed_payload_upload_uses_filename() -> None:
 
 def test_failed_payload_has_error_and_stage() -> None:
     job = _job(status="failed", stage="tts", error="boom")
-    p = webhooks.build_payload("episode.failed", job, None)
+    p = webhooks.build_payload("episode.failed", job, None, voice_label="Default")
     assert p["event"] == "episode.failed"
     assert p["error"] == "boom"
     assert p["stage"] == "tts"
+    assert p["voice"] == "Default"  # resolved from the job even with no episode
     assert p["title"] == "https://example.test/article"  # no episode -> url fallback
 
 
@@ -155,4 +159,4 @@ def test_sample_payload_shape() -> None:
     p = webhooks.sample_payload()
     assert p["event"] == "episode.processed"
     assert p["test"] is True
-    assert {"episode_id", "title", "source_type", "url", "reprocess"} <= p.keys()
+    assert {"episode_id", "title", "voice", "source_type", "url", "reprocess"} <= p.keys()

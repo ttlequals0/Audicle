@@ -6,6 +6,15 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.32.1] - 2026-06-15
+
+### Added
+
+- The episode webhook payload now carries the narrating voice as a `voice` field (a slot
+  label, `Slot N`, or `Default`) on both `episode.processed` and `episode.failed`. On a
+  failure, where no finalized episode exists yet, it is resolved from the job's chosen
+  slot. The "send test webhook" sample and the README field table include it.
+
 ## [0.32.0] - 2026-06-15
 
 ### Added

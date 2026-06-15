@@ -55,8 +55,14 @@ def _time_to_process(job: Job) -> float | None:
     return secs if secs >= 0 else None
 
 
-def build_payload(event: str, job: Job, episode: Episode | None) -> dict[str, Any]:
-    """Assemble the webhook body for ``episode.processed`` / ``episode.failed``."""
+def build_payload(
+    event: str, job: Job, episode: Episode | None, *, voice_label: str | None = None
+) -> dict[str, Any]:
+    """Assemble the webhook body for ``episode.processed`` / ``episode.failed``.
+
+    ``voice_label`` is the reference voice that narrated (or, on failure, would
+    have narrated) -- the caller resolves it from the episode snapshot or the
+    job's slot."""
 
     source = _source(job, episode)
     title = (
@@ -68,6 +74,7 @@ def build_payload(event: str, job: Job, episode: Episode | None) -> dict[str, An
         "event": event,
         "episode_id": job.episode_id,
         "title": title,
+        "voice": voice_label,
         "reprocess": job.reprocess,
         **source,
     }
@@ -129,6 +136,7 @@ def sample_payload() -> dict[str, Any]:
         "event": "episode.processed",
         "episode_id": "test00000000",
         "title": "Test webhook from Audicle",
+        "voice": "Default",
         "reprocess": False,
         "source_type": "url",
         "url": "https://example.com/article",

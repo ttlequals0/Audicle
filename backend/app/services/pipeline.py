@@ -232,10 +232,19 @@ def _fire_webhook(event: str, job_id: str, settings: Settings) -> None:
         try:
             job = jobs.get_job(conn, job_id)
             episode = episodes.get_by_id(conn, job.episode_id) if job else None
+            voice_label = None
+            if job is not None:
+                # Prefer the episode's voice snapshot; on failure (no episode)
+                # resolve the voice the job would have used from its slot.
+                voice_label = (
+                    episode.voice_label if episode and episode.voice_label else None
+                ) or voices.label_for(conn, job.voice_id)
         finally:
             conn.close()
         if job is not None:
-            webhooks.fire(settings, webhooks.build_payload(event, job, episode))
+            webhooks.fire(
+                settings, webhooks.build_payload(event, job, episode, voice_label=voice_label)
+            )
     except Exception:
         logger.warning(
             "Failed to build episode webhook",

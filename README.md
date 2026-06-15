@@ -163,6 +163,7 @@ Payload fields:
 | `event` | string | always | `episode.processed` or `episode.failed` |
 | `episode_id` | string | always | the episode's stable id |
 | `title` | string | always | episode title (falls back to the filename or URL) |
+| `voice` | string | always | the reference voice that narrated it -- a slot label, `Slot N`, or `Default` |
 | `source_type` | string | always | `url` or `upload` |
 | `url` | string | url jobs | the source article URL |
 | `source_filename` | string | upload jobs | the uploaded document's name |
@@ -178,6 +179,7 @@ A finished URL episode:
   "event": "episode.processed",
   "episode_id": "a1b2c3d4e5f6",
   "title": "An Interesting Article",
+  "voice": "Morgan",
   "source_type": "url",
   "url": "https://example.com/article",
   "reprocess": false,
@@ -192,6 +194,7 @@ A failed job:
   "event": "episode.failed",
   "episode_id": "a1b2c3d4e5f6",
   "title": "https://example.com/article",
+  "voice": "Default",
   "source_type": "url",
   "url": "https://example.com/article",
   "reprocess": false,
