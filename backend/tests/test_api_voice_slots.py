@@ -105,3 +105,13 @@ def test_slot_out_of_range_rejected(client: TestClient) -> None:
 
 def test_preview_404_when_empty(client: TestClient) -> None:
     assert client.get("/api/v1/reference/slots/3/preview").status_code == 404
+
+
+def test_safe_slot_path_stays_under_voices_dir(client: TestClient) -> None:
+    # The CodeQL-recognized containment barrier: a slot path always resolves to
+    # slotN.wav under the voices dir, never escapes it.
+    from app.api.v1 import reference
+
+    p = reference._safe_slot_path(2)
+    assert p.is_relative_to(voices.voices_dir().resolve())
+    assert p.name == "slot2.wav"

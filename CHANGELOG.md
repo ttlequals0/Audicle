@@ -6,6 +6,22 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.31.5] - 2026-06-14
+
+### Security
+
+- Hardened the voice-slot file operations against path traversal: slot paths now pass a
+  resolve + containment check (the path must stay under the voices directory) before any
+  filesystem access, clearing 10 CodeQL `py/path-injection` alerts across `reference.py`
+  and `atomic_write.py`. The slot number was already bounded to 1-5, so this is
+  defense-in-depth and the explicit barrier the analyzer recognizes.
+- Upgraded the frontend build toolchain from Vite 6 to Vite 8, which drops the vulnerable
+  `esbuild` dependency (RCE via `NPM_CONFIG_REGISTRY`, Dependabot #18) in favor of Rolldown.
+  esbuild was build-time only and never shipped in the runtime image.
+- Reviewed the six PyTorch advisories on the GPU wrapper: four have no patched release, and
+  the rest are blocked by `chatterbox-tts` hard-pinning `torch==2.6.0` on Python 3.11. They
+  are dismissed as accepted risk with that reason, pending an upstream chatterbox-tts bump.
+
 ## [0.31.4] - 2026-06-13
 
 ### Added
