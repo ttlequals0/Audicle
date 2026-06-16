@@ -122,6 +122,35 @@ def load_seed(path: Path) -> list[SeedEntry]:
     return entries
 
 
+def lexicon_row(input_text: str, spoken: str, notes: str | None, source: str) -> dict:
+    """Build one lexicon import row from a correction. Mode, case-sensitivity, and
+    confidence are derived the same way for every importer (the seed migration, the
+    seed re-import, and the legacy user-dict migration)."""
+
+    from app.services import pronounce_convert  # local import avoids an import cycle
+
+    mode = pronounce_convert.classify_mode(input_text, spoken, notes)
+    return {
+        "mode": mode,
+        "spoken": spoken,
+        "ipa": None,
+        "case_sensitive": pronounce_convert.default_case_sensitive(input_text, mode),
+        "confidence": pronounce_convert.CONF_CURATED,
+        "source": source,
+        "notes": notes,
+    }
+
+
+def build_lexicon_rows(entries: list[SeedEntry]) -> dict[str, dict]:
+    """``{input_text: lexicon_row}`` for a seed-entry list (origin ``seed``)."""
+
+    return {
+        e.input_text: lexicon_row(e.input_text, e.replacement_text, e.notes, "seed")
+        for e in entries
+        if e.input_text and e.replacement_text
+    }
+
+
 def applicable_dict(entries: list[SeedEntry]) -> dict[str, str]:
     """``{input_text: replacement_text}`` for applicable rows; first row wins on dup."""
 

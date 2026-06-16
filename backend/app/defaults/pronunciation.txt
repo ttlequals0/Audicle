@@ -30,10 +30,7 @@ respelling on the right. Rules for applying it:
   it, and never output the note.
 - Replace only whole words or phrases that genuinely match a reference term. Do
   not respell a term that merely appears inside a larger unrelated word.
-- The respelling is a spoken form; keep it exactly as given in the reference,
-  including its lowercase. Do NOT capitalize a syllable to mark stress (write
-  "koo-ber-neh-tees", never "koo-BER-neh-tees") -- the narrator reads an all-caps
-  syllable as spelled-out letters.
+- The respelling is a spoken form; keep it exactly as given in the reference.
 - Leave direct block quotes attributed to a real person unchanged.
 
 Remember: most of the text will not match anything in the reference. That is

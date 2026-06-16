@@ -722,38 +722,6 @@ def _normalize_acronyms(text: str, keep: frozenset[str] | set[str] = _ACRONYM_KE
     return _ACRONYM_RE.sub(repl, text)
 
 
-# Phonetic respellings for all twelve months so the engine says them correctly
-# (February is the notorious one). Keyed on the CAPITALIZED name and matched
-# case-sensitively: month names are always capitalized in real text, so this
-# dodges the homographs entirely -- lowercase "august" (the adjective, stressed
-# aw-GUST not AW-gust), "may", and "march" are left untouched. February matches
-# the seed's existing respelling.
-# Lowercased respellings: Chatterbox reads ALL-CAPS stress syllables as letters
-# to spell out ("F-E-B"), so stress is encoded by syllable split, not capitals.
-_MONTH_RESPELL = {
-    "January": "jan-yoo-air-ee",
-    "February": "feb-roo-air-ee",
-    "March": "march",
-    "April": "ay-pril",
-    "May": "may",
-    "June": "joon",
-    "July": "joo-lye",
-    "August": "aw-gust",
-    "September": "sep-tem-ber",
-    "October": "ock-toh-ber",
-    "November": "no-vem-ber",
-    "December": "dee-sem-ber",
-}
-_MONTH_RE = re.compile(r"\b(" + "|".join(_MONTH_RESPELL) + r")\b")
-
-
-def _normalize_months(text: str) -> str:
-    """Respell capitalized month names phonetically. Runs after
-    ``_normalize_date_months`` so abbreviations ("Feb") are already full names."""
-
-    return _MONTH_RE.sub(lambda m: _MONTH_RESPELL[m.group(1)], text)
-
-
 # Two-letter US state codes -> full names, expanded only in clear state context
 # so the engine says "Illinois" instead of spelling "I L".
 _US_STATES = {
@@ -828,11 +796,9 @@ def _normalize_for_tts(text: str) -> str:
     return _normalize_numbers(
         _normalize_currency(
             _normalize_ranges(
-                _normalize_months(
-                    _normalize_date_months(
-                        _normalize_us_states(
-                            _strip_code_artifacts(_strip_heading_markers(text))
-                        )
+                _normalize_date_months(
+                    _normalize_us_states(
+                        _strip_code_artifacts(_strip_heading_markers(text))
                     )
                 )
             )
@@ -1345,18 +1311,6 @@ async def _apply_corrections(text: str, settings: Settings) -> str:
     normalized = _normalize_for_tts(text)
     with database.connection(settings.DATA_DIR) as conn:
         cs_pairs, ci_pairs = lexicon.apply_pairs_by_case(conn)
-        # Fold any emphasis-capitalization the LLM pronunciation pass introduced into
-        # an injected respelling back to canonical lowercase ("koo-BER-neh-tees" ->
-        # "koo-ber-neh-tees"). The respelling convention is lowercase -- Chatterbox
-        # reads an ALL-CAPS syllable as spelled-out letters, which is the "spelled
-        # out" sound. Only whole hyphenated respelling VALUES match (case-folded), so
-        # genuine hyphenated text ("anti-AI-funded") is never touched.
-        respell_canon = {
-            spoken: spoken
-            for spoken in (*cs_pairs.values(), *ci_pairs.values())
-            if "-" in spoken and spoken == spoken.lower()
-        }
-        normalized = corrections.apply(normalized, respell_canon, case_sensitive=False)
         # Spell unknown all-caps acronyms BEFORE the dictionary so it runs on
         # source text only -- never on the injected respellings, whose uppercase
         # stress syllables ("vwee-TOHN", "FEB-roo-air-ee") would otherwise be

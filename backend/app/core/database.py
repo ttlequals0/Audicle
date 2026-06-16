@@ -433,33 +433,16 @@ def _m012_lexicon_table(conn: sqlite3.Connection) -> None:
 
     import json
 
-    from app.services import lexicon, pronounce_convert, seed_corrections, settings_store
+    from app.services import lexicon, seed_corrections, settings_store
 
     lexicon.create_schema(conn)
-
-    def _row(input_text: str, spoken: str, notes: str | None, source: str) -> dict:
-        mode = pronounce_convert.classify_mode(input_text, spoken, notes)
-        return {
-            "mode": mode,
-            "spoken": spoken,
-            "ipa": None,
-            "case_sensitive": pronounce_convert.default_case_sensitive(input_text, mode),
-            "confidence": pronounce_convert.CONF_CURATED,
-            "source": source,
-            "notes": notes,
-        }
 
     try:
         seed_entries = seed_corrections.load_seed(seed_corrections.seed_path())
     except Exception:
         logger.warning("Seed CSV unreadable during lexicon import", exc_info=True)
         seed_entries = []
-    seed_rows = {
-        e.input_text: _row(e.input_text, e.replacement_text, e.notes, "seed")
-        for e in seed_entries
-        if e.input_text and e.replacement_text
-    }
-    lexicon.import_readonly(conn, "seed", seed_rows)
+    lexicon.import_readonly(conn, "seed", seed_corrections.build_lexicon_rows(seed_entries))
 
     existing = conn.execute(
         "SELECT value FROM settings WHERE key = ?", (settings_store.PRONUNCIATION_KEY,)
@@ -470,7 +453,7 @@ def _m012_lexicon_table(conn: sqlite3.Connection) -> None:
         except (ValueError, TypeError):
             flat = {}
         user_rows = {
-            k: _row(k, v, None, "user-migrated")
+            k: seed_corrections.lexicon_row(k, v, None, "user-migrated")
             for k, v in (flat.items() if isinstance(flat, dict) else [])
             if isinstance(k, str) and isinstance(v, str) and k and v
         }
@@ -564,6 +547,27 @@ def _m016_episode_voice_label(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m017_reimport_seed_lexicon(conn: sqlite3.Connection) -> None:
+    """Re-import the seed corrections from the shipped CSV, replacing the read-only
+    seed rows (0.34.0).
+
+    Existing databases imported the seed via ``_m012`` before the pseudo-phonetic
+    respellings were removed from the CSV; this re-sync drops them. ``import_readonly``
+    replaces only ``origin='seed'`` rows, so user corrections and base rows are
+    untouched. A fresh DB already loaded the trimmed CSV in ``_m012``, so it gets an
+    identical no-op re-import.
+    """
+
+    from app.services import lexicon, seed_corrections
+
+    try:
+        seed_entries = seed_corrections.load_seed(seed_corrections.seed_path())
+    except Exception:
+        logger.warning("Seed CSV unreadable during re-import", exc_info=True)
+        return
+    lexicon.import_readonly(conn, "seed", seed_corrections.build_lexicon_rows(seed_entries))
+
+
 MIGRATIONS: list[tuple[str, Migration]] = [
     ("001_initial_schema", _m001_initial_schema),
     ("002_settings_kv", _m002_settings_kv),
@@ -581,6 +585,7 @@ MIGRATIONS: list[tuple[str, Migration]] = [
     ("014_job_columns", _m014_job_columns),
     ("015_upload_max_mb", _m015_upload_max_mb),
     ("016_episode_voice_label", _m016_episode_voice_label),
+    ("017_reimport_seed_lexicon", _m017_reimport_seed_lexicon),
 ]
 
 
