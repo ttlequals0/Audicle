@@ -6,6 +6,20 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-06-16
+
+### Changed
+
+- Removed all pseudo-phonetic respellings from the pronunciation system. The seed list
+  spelled ~396 words and names as hyphenated syllables (`Kubernetes -> koo-ber-neh-tees`,
+  `pseudonym -> soo-doh-nim`, `Nike -> ny-kee`), and the month names were respelled the
+  same way (`February -> feb-roo-air-ee`). Chatterbox reads the hyphenated syllables
+  choppily, so those terms now use its native pronunciation instead. Acronym
+  letter-spellings (`LLM -> L L M`), real-word swaps (`SQL -> sequel`), homographs
+  (`read -> reed`), the city-name base lexicon, and the user dictionary are unchanged.
+  Migration 017 re-imports the trimmed seed into existing databases. The 0.33.0
+  respelling case-fold and its prompt instruction were removed as no longer needed.
+
 ## [0.33.1] - 2026-06-16
 
 ### Added
