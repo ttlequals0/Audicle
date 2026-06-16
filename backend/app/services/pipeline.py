@@ -1344,17 +1344,33 @@ async def _apply_corrections(text: str, settings: Settings) -> str:
 
     normalized = _normalize_for_tts(text)
     with database.connection(settings.DATA_DIR) as conn:
-        pairs = lexicon.apply_pairs(conn)
+        cs_pairs, ci_pairs = lexicon.apply_pairs_by_case(conn)
+        # Fold any emphasis-capitalization the LLM pronunciation pass introduced into
+        # an injected respelling back to canonical lowercase ("koo-BER-neh-tees" ->
+        # "koo-ber-neh-tees"). The respelling convention is lowercase -- Chatterbox
+        # reads an ALL-CAPS syllable as spelled-out letters, which is the "spelled
+        # out" sound. Only whole hyphenated respelling VALUES match (case-folded), so
+        # genuine hyphenated text ("anti-AI-funded") is never touched.
+        respell_canon = {
+            spoken: spoken
+            for spoken in (*cs_pairs.values(), *ci_pairs.values())
+            if "-" in spoken and spoken == spoken.lower()
+        }
+        normalized = corrections.apply(normalized, respell_canon, case_sensitive=False)
         # Spell unknown all-caps acronyms BEFORE the dictionary so it runs on
         # source text only -- never on the injected respellings, whose uppercase
         # stress syllables ("vwee-TOHN", "FEB-roo-air-ee") would otherwise be
-        # letter-spelled. Word-mode rows (NASA) and correction keys join the
-        # keep-set so they are left for the dictionary rather than spelled here.
-        keep = _ACRONYM_KEEP | lexicon.word_keep_set(conn) | set(pairs)
+        # letter-spelled. Word-mode (NASA) and override (fixed-respelling) keys are
+        # kept so the dictionary handles them; spell-mode all-caps keys (LLM) are NOT
+        # kept, so this speller spells them and their plurals ("LLMs" -> "L L ems")
+        # -- corrections.apply cannot match a plural past the trailing "s".
+        keep = _ACRONYM_KEEP | lexicon.non_spell_keep_set(conn)
         spelled = _normalize_acronyms(normalized, keep=keep)
-        # Explicit pronunciations next (so "ttyS0" -> "T T Y S 0" wins), then the
-        # aggressive base-lexicon pass, then the snake_case identifier sweep.
-        applied = corrections.apply(spelled, pairs)
+        # Explicit pronunciations next (so "ttyS0" -> "T T Y S 0" wins): exact-case
+        # keys first, then the case-insensitive group folds so "404 media" hits
+        # "404 Media". Then the aggressive base-lexicon pass and snake_case sweep.
+        applied = corrections.apply(spelled, cs_pairs)
+        applied = corrections.apply(applied, ci_pairs, case_sensitive=False)
         applied = _apply_base_lexicon(applied, conn, settings)
     # Strip periods from dotted acronyms LAST -- catches both article text ("U.S.")
     # and any dotted respelling a correction injected ("A.I.") -- so the engine
@@ -1364,7 +1380,7 @@ async def _apply_corrections(text: str, settings: Settings) -> str:
         "Corrections applied",
         extra={
             "event": "corrections_complete",
-            "entries_pairs": len(pairs),
+            "entries_pairs": len(cs_pairs) + len(ci_pairs),
             "delta_chars": len(result) - len(text),
         },
     )

@@ -16,7 +16,10 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
+from collections.abc import Awaitable, Callable
 from urllib.parse import urlsplit
+
+import httpx
 
 
 class BlockedHostError(RuntimeError):
@@ -91,6 +94,28 @@ async def resolve_public_host(host: str) -> str:
             public_ip = str(ip)
     assert public_ip is not None  # we'd have raised above
     return public_ip
+
+
+def build_redirect_pin_hook(initial_ip: str) -> Callable[[httpx.Request], Awaitable[None]]:
+    """An httpx request event-hook that re-pins every redirect hop to a freshly
+    validated public IP, closing the DNS-rebinding TOCTOU on redirects.
+
+    The initial request is already pinned by the caller (its host is ``initial_ip``),
+    so the hook no-ops on it and only rewrites synthesized redirect URLs: it re-resolves
+    the ``Location`` hostname through the SSRF guard, points the connection at that IP,
+    and restores the original ``Host`` header + TLS SNI. A non-public redirect target
+    raises ``BlockedHostError``."""
+
+    async def _hook(request: httpx.Request) -> None:
+        if request.url.host == initial_ip:
+            return  # the initial GET, already pinned by the caller
+        original_host = request.url.host or ""
+        redirect_ip = await resolve_public_host(original_host)
+        request.url = request.url.copy_with(host=redirect_ip)
+        request.headers["Host"] = original_host
+        request.extensions["sni_hostname"] = original_host
+
+    return _hook
 
 
 async def assert_url_public(url: str) -> None:

@@ -113,3 +113,42 @@ def test_word_keep_set_includes_word_mode_rows(env: Path) -> None:
         lexicon.import_readonly(conn, "base", {"NASA": {"mode": "word", "spoken": "NASA"}})
         conn.commit()
         assert "NASA" in lexicon.word_keep_set(conn)
+
+
+def test_non_spell_keep_set_excludes_spell_mode(env: Path) -> None:
+    # The acronym speller must keep word/override rows but NOT spell-mode rows, so
+    # it can spell "LLM"/"LLMs" itself instead of passing the plural through.
+    database.run_migrations(env)
+    with database.connection(env) as conn:
+        lexicon.import_readonly(
+            conn,
+            "base",
+            {
+                "LLM": {"mode": "spell", "spoken": "L L M"},
+                "NASA": {"mode": "word", "spoken": "NASA"},
+                "Kubernetes": {"mode": "override", "spoken": "koo-ber-neh-tees"},
+            },
+        )
+        conn.commit()
+        keep = lexicon.non_spell_keep_set(conn)
+        assert "NASA" in keep
+        assert "Kubernetes" in keep
+        assert "LLM" not in keep
+
+
+def test_apply_pairs_by_case_splits_on_flag(env: Path) -> None:
+    database.run_migrations(env)
+    with database.connection(env) as conn:
+        lexicon.replace_user_entries(
+            conn,
+            {
+                "404 media": {"mode": "override", "spoken": "four oh four media",
+                              "case_sensitive": False},
+                "US": {"mode": "spell", "spoken": "U S", "case_sensitive": True},
+            },
+        )
+        cs, ci = lexicon.apply_pairs_by_case(conn)
+        assert cs["US"] == "U S"
+        assert "404 media" not in cs
+        assert ci["404 media"] == "four oh four media"
+        assert "US" not in ci

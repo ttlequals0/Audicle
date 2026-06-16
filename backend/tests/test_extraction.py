@@ -10,6 +10,18 @@ from app.config import get_settings
 from app.services import extraction, flaresolverr
 
 
+@pytest.fixture(autouse=True)
+def _firecrawl_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """This module exercises the Firecrawl engine and its bypass cascade, so pin the
+    engine to firecrawl (the default is now the in-process direct engine, covered by
+    test_direct_fetch.py). FIRECRAWL_URL is set non-default so the firecrawl re-scrape
+    fallbacks are not skipped as 'unconfigured'."""
+
+    monkeypatch.setenv("EXTRACTION_ENGINE", "firecrawl")
+    monkeypatch.setenv("FIRECRAWL_URL", "http://firecrawl.test:3002")
+    get_settings.cache_clear()
+
+
 @pytest.fixture
 def fast_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
     """Force FIRECRAWL_BACKOFF_BASE_SECONDS=0 so tenacity's exponential wait
@@ -863,3 +875,76 @@ async def test_extract_blocks_private_host_url() -> None:
         await extraction.extract("http://192.168.0.1/x", get_settings())
     assert "non-public" in str(excinfo.value)
     assert "192.168" not in str(excinfo.value)
+
+
+# --- direct engine (default): orchestrator wiring ---------------------------
+
+
+def _use_direct_engine(monkeypatch: pytest.MonkeyPatch, *, firecrawl_url: str) -> None:
+    """Override the module's firecrawl-engine default for a direct-engine test and pin
+    SSRF resolution to a fixed public IP."""
+
+    monkeypatch.setenv("EXTRACTION_ENGINE", "direct")
+    monkeypatch.setenv("FIRECRAWL_URL", firecrawl_url)
+    get_settings.cache_clear()
+
+    async def _resolve(_host: str) -> str:
+        return "203.0.113.7"
+
+    monkeypatch.setattr(extraction.ssrf, "resolve_public_host", _resolve)
+
+
+async def test_extract_direct_engine_primary_is_a_get(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The direct engine fetches the article with a plain GET, not a Firecrawl POST."""
+
+    _use_direct_engine(monkeypatch, firecrawl_url="http://firecrawl:3002")
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        return httpx.Response(200, text=_gated_article_html())
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    result = await extraction.extract("https://blog.test/post", get_settings())
+    assert "real article body" in result.markdown
+    assert seen["method"] == "GET"
+    assert "/v1/scrape" not in seen["path"]
+
+
+async def test_extract_direct_below_floor_escalates_to_flaresolverr(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_archive
+) -> None:
+    """A near-empty direct fetch auto-escalates to FlareSolverr, same as the Firecrawl
+    engine -- the cascade is engine-agnostic."""
+
+    _use_direct_engine(monkeypatch, firecrawl_url="http://firecrawl:3002")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":  # FlareSolverr /v1 solve
+            return _flaresolverr_ok(_gated_article_html())
+        return httpx.Response(200, text="<html><body></body></html>")  # near-empty direct GET
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    result = await extraction.extract("https://gated.test/post", get_settings())
+    assert "real article body" in result.markdown
+
+
+async def test_extract_direct_skips_firecrawl_rescrape_when_unconfigured(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, no_archive
+) -> None:
+    """With the direct engine and no real Firecrawl configured, a host rule's Firecrawl
+    re-scrape (Medium -> Freedium) is skipped, not POSTed to the placeholder URL."""
+
+    _use_direct_engine(monkeypatch, firecrawl_url="http://firecrawl:3002")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method != "GET":
+            raise AssertionError("Firecrawl re-scrape must be skipped when unconfigured")
+        return httpx.Response(200, text="<html><body><article><p>teaser</p></article></body></html>")
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://medium.com/@a/post", get_settings())

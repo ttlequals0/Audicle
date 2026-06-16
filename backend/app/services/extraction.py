@@ -1,15 +1,17 @@
-"""Firecrawl extraction client.
+"""Article extraction orchestrator.
 
-Wraps the self-hosted Firecrawl ``/v1/scrape`` endpoint with tenacity retries on
-transient failures and a minimum-length guard. Other stages of the pipeline see
-a clean ``ExtractionResult`` or a typed exception.
+Runs the primary engine -- the in-process ``direct`` fetcher (default) or the
+self-hosted ``firecrawl`` client, selected by ``EXTRACTION_ENGINE`` -- then validates
+the result against a minimum-length floor and, when it falls short, walks an
+engine-agnostic fallback cascade (per-host bypass rules, FlareSolverr, web archive,
+Arc XP). Other stages of the pipeline see a clean ``ExtractionResult`` or a typed
+exception. The Firecrawl client and its ``/v1/scrape`` retry logic live below in
+``_scrape``; the direct engine lives in ``direct_fetch``.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -23,7 +25,7 @@ from tenacity import (
 )
 
 from app.config import Settings
-from app.services import arc_extractor, archive, flaresolverr, ssrf
+from app.services import arc_extractor, archive, direct_fetch, flaresolverr, jsonld, ssrf
 
 # Re-exported so existing ``extraction.ExtractionResult`` / ``extraction.ExtractionTooShortError``
 # references (pipeline, tests) keep working now that the types live in extraction_types, which
@@ -45,9 +47,9 @@ async def extract(
     settings: Settings,
     registry: tuple[SourceFallback, ...] | None = None,
 ) -> ExtractionResult:
-    """Scrape ``url`` via Firecrawl and validate the result.
+    """Fetch ``url`` with the configured engine and validate the result.
 
-    A direct scrape that comes back below its floor is retried with a bypass
+    A primary fetch that comes back below its floor is retried with a bypass
     strategy. ``registry`` is the effective rule set: per-host rules (operator config
     over built-ins) plus, when the operator set a global default proxy, a
     lowest-priority catch-all so the default applies to *any* host whose scrape is
@@ -105,7 +107,10 @@ async def extract(
         # A flagged host pays for rawHtml + the JSON-LD teaser check; Arc detection also
         # needs the page HTML, so request it when the Arc extractor is enabled.
         detect_teaser = rule is not None or settings.EXTRACTION_ARC_ENABLED
-        result = await _scrape(client, url, settings, detect_teaser=detect_teaser)
+        if settings.EXTRACTION_ENGINE == "direct":
+            result = await direct_fetch.fetch(url, settings, detect_teaser=detect_teaser)
+        else:
+            result = await _scrape(client, url, settings, detect_teaser=detect_teaser)
         # Arc XP / Fusion: the visible scrape may be a teaser while the full body sits in
         # the page's content_elements JSON. When Arc finds a longer body, prefer it -- then
         # the floor check + fallbacks below run against the real article.
@@ -211,6 +216,17 @@ async def extract(
                     attempt.url, settings, include_archive_today=attempt.is_host_rule
                 )
             else:  # firecrawl re-scrape (googlebot/freedium/custom)
+                # These bypass attempts go through Firecrawl. On a direct-engine
+                # deploy with no real Firecrawl configured, skip them cleanly rather
+                # than POST to a placeholder URL -- FlareSolverr + archive still cover
+                # the host. When the engine IS firecrawl, the primary already proved it
+                # reachable, so never skip there.
+                if settings.EXTRACTION_ENGINE == "direct" and not settings.firecrawl_configured:
+                    logger.debug(
+                        "Skipping Firecrawl re-scrape: direct engine, no Firecrawl configured",
+                        extra={"event": "extraction_firecrawl_skipped", "fallback": attempt.label},
+                    )
+                    continue
                 if not fallback_start_logged:
                     logger.info(
                         "Direct scrape below floor; attempting bypass",
@@ -323,50 +339,6 @@ def _log_fallback_short(label: str, alt_chars: int, floor: int) -> None:
     )
 
 
-_LD_SCRIPT_RE = re.compile(
-    r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
-    re.IGNORECASE | re.DOTALL,
-)
-
-
-def _iter_ld_nodes(data: Any) -> Any:
-    """Yield dict nodes from a parsed JSON-LD blob, flattening the ``@graph`` wrapper
-    and top-level lists so an ``articleBody`` is found wherever the page puts it."""
-
-    if isinstance(data, dict):
-        graph = data.get("@graph")
-        if isinstance(graph, list):
-            for item in graph:
-                if isinstance(item, dict):
-                    yield item
-        yield data
-    elif isinstance(data, list):
-        for item in data:
-            yield from _iter_ld_nodes(item)
-
-
-def _article_body_chars(raw_html: str) -> int | None:
-    """Length of the longest JSON-LD ``articleBody`` the page declares, or None.
-
-    This is the publisher's own article text, so it ignores the related-article and
-    navigation chrome that can pad a scraped teaser past the floor. Never raises --
-    the HTML and its embedded JSON are attacker-controlled."""
-
-    if not raw_html:
-        return None
-    best: int | None = None
-    for script in _LD_SCRIPT_RE.finditer(raw_html):
-        try:
-            data = json.loads(script.group(1).strip())
-        except ValueError:
-            continue
-        for node in _iter_ld_nodes(data):
-            body = node.get("articleBody")
-            if isinstance(body, str):
-                best = max(best or 0, len(body.strip()))
-    return best
-
-
 def _effective_chars(result: ExtractionResult, rule: SourceFallback | None, floor: int) -> int:
     """Body length for the floor decision. For an operator-flagged host (a matched
     rule), when the page's own JSON-LD says the article body is below the floor but the
@@ -441,7 +413,7 @@ async def _scrape(
     if not isinstance(metadata, dict):
         metadata = {}
     raw_html = data.get("rawHtml") if isinstance(data.get("rawHtml"), str) else None
-    article_chars = _article_body_chars(raw_html) if raw_html else None
+    article_chars = jsonld.article_body_chars(raw_html) if raw_html else None
     return ExtractionResult(
         markdown=markdown, metadata=metadata, article_chars=article_chars, raw_html=raw_html
     )

@@ -100,6 +100,13 @@ First-run model download is ~2 GB and persists on the `./data` volume under
 `hf_cache/` and `tts_home/` (the wrapper sets `HF_HOME`/`TTS_HOME` there), so
 restarts load from disk instantly.
 
+Article extraction works out of the box with no extra service: the default
+`direct` engine fetches the page in-process and parses it with trafilatura. To
+use a self-hosted [Firecrawl](https://github.com/firecrawl/firecrawl) instead,
+set `EXTRACTION_ENGINE=firecrawl` and point `FIRECRAWL_URL` at it. Either way,
+JS-rendered and bot-gated pages still fall back to FlareSolverr and the web
+archive (see [Paywalled articles](#paywalled-articles)).
+
 ## Required env vars
 
 | Variable | What it is | Example |
@@ -110,7 +117,8 @@ restarts load from disk instantly.
 | `FEED_EMAIL` | Owner email (required by Apple) | `you@example.com` |
 | `FEED_CATEGORY` | iTunes category (see list below) | `Technology` |
 | `FEED_LANGUAGE` | RFC 5646 tag | `en-US` |
-| `FIRECRAWL_URL` | Self-hosted Firecrawl base URL | `http://firecrawl:3002` |
+| `EXTRACTION_ENGINE` | `direct` (built-in, no extra service) or `firecrawl` | `direct` |
+| `FIRECRAWL_URL` | Self-hosted Firecrawl base URL (only when `EXTRACTION_ENGINE=firecrawl`) | `http://firecrawl:3002` |
 | `FIRECRAWL_API_KEY` | Optional bearer token for a Firecrawl behind auth (blank = open) | _(unset)_ |
 | `LLM_PROVIDER` | `openai-compatible`, `anthropic`, `openrouter`, or `ollama` | `openai-compatible` |
 | `OPENAI_BASE_URL` | for openai-compatible | `http://llm:8080/v1` |
@@ -260,7 +268,7 @@ The Audicle name and logo are reserved; see `branding/README.md`.
         a detected Cloudflare challenge auto-routes through FlareSolverr
         |
         v
-URL --> extract (Firecrawl) --> cleanup (LLM) --> corrections (regex)
+URL --> extract (direct / Firecrawl) --> cleanup (LLM) --> corrections (regex)
                                                        |
                                                        v
                                               chunk + TTS (Chatterbox)

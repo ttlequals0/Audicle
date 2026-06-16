@@ -6,6 +6,36 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-06-16
+
+### Added
+
+- Built-in `direct` extraction engine and a new `EXTRACTION_ENGINE` setting (`direct` |
+  `firecrawl`, default `direct`). The direct engine fetches the article in-process with
+  httpx and parses it with trafilatura (already a dependency), so a fresh deploy needs no
+  Firecrawl container. It is SSRF-pinned (initial request and every redirect hop) and
+  size-capped, returns the same `ExtractionResult` as the other engines, and degrades into
+  the existing FlareSolverr, web-archive, and Arc fallbacks unchanged. Firecrawl stays
+  fully supported as an opt-in engine; its per-host re-scrape bypasses (Googlebot/Freedium/
+  custom) are skipped cleanly when no real `FIRECRAWL_URL` is configured. `EXTRACTION_ENGINE`
+  and `EXTRACTION_DIRECT_TIMEOUT_SECONDS` are runtime-tunable from Settings.
+
+### Fixed
+
+- Plural spelled-acronyms are no longer dropped: "LLMs" now narrates as the spelled plural
+  ("L L ems") instead of passing through as a word (the cause of "LLM" sounding like "lm").
+  Every all-caps correction key (LLM, API, GPU, ...) was being added to the acronym
+  speller's keep-set, so its plural matched neither the speller nor the dictionary.
+- Case-insensitive pronunciation corrections now apply: a user entry keyed "404 media" hits
+  "404 Media" in the article. The deterministic apply path was always case-sensitive,
+  ignoring each lexicon entry's `case_sensitive` flag.
+- Pseudo-phonetic respellings no longer sound "spelled out": an emphasis-capitalized
+  syllable the LLM pronunciation pass introduced ("koo-BER-neh-tees") is folded back to the
+  canonical lowercase ("koo-ber-neh-tees"), since the engine reads an all-caps syllable as
+  letters. The pronunciation prompt also now forbids the capitalization.
+- FlareSolverr error logging no longer crashes on a non-ok solver response (it used the
+  reserved `message` key in the structured-log `extra`).
+
 ## [0.32.1] - 2026-06-15
 
 ### Added

@@ -761,6 +761,76 @@ def test_base_lexicon_confidence_gate(env: Path) -> None:
     assert "kuh-TAR-ee" in out  # high-confidence base row applied
 
 
+def test_corrections_spells_plural_of_spelled_acronym(env: Path) -> None:
+    """The seed 'LLM' key no longer shields its plural: 'LLMs' is spelled with the
+    plural letter-name instead of passing through as a word ('lm')."""
+
+    database.run_migrations(env)
+    out = asyncio.run(
+        pipeline._apply_corrections("We use LLMs and many GPUs daily.", get_settings())
+    )
+    # GPUs is the clean case (no per-letter seed remap): plural letter-name "yoos".
+    assert "G P yoos" in out
+    # LLMs no longer survives as a word; it is spelled with the plural "ems".
+    assert "LLMs" not in out
+    assert "ems" in out
+    # Singular acronym is still spelled, not left raw.
+    single = asyncio.run(pipeline._apply_corrections("train an LLM now", get_settings()))
+    assert "LLM" not in single
+
+
+def test_corrections_word_mode_acronym_reads_as_word(env: Path) -> None:
+    """A word-mode acronym (SQL -> sequel) stays for the dictionary and is NOT
+    letter-spelled by the acronym speller."""
+
+    from app.services import lexicon
+
+    database.run_migrations(env)
+    with database.connection(env) as conn:
+        lexicon.replace_user_entries(
+            conn, {"SQL": {"mode": "word", "spoken": "sequel", "case_sensitive": True}}
+        )
+    out = asyncio.run(pipeline._apply_corrections("a SQL query runs", get_settings()))
+    assert "sequel" in out
+    assert "S Q L" not in out
+
+
+def test_corrections_case_insensitive_user_override(env: Path) -> None:
+    """A case-insensitive override entry keyed '404 media' hits '404 Media' in the
+    article (the actual bug: corrections.apply was always case-sensitive)."""
+
+    from app.services import lexicon
+
+    database.run_migrations(env)
+    with database.connection(env) as conn:
+        lexicon.replace_user_entries(
+            conn,
+            {
+                "404 media": {
+                    "mode": "override",
+                    "spoken": "four oh four media",
+                    "case_sensitive": False,
+                }
+            },
+        )
+    out = asyncio.run(pipeline._apply_corrections("404 Media reported it.", get_settings()))
+    assert "four oh four media" in out
+    assert "404 Media" not in out
+
+
+def test_corrections_folds_emphasis_caps_in_respelling(env: Path) -> None:
+    """An injected respelling the LLM uppercased for stress is folded back to the
+    canonical lowercase so Chatterbox doesn't spell the syllable out. The seed ships
+    Kubernetes -> koo-ber-neh-tees, so its value drives the fold."""
+
+    database.run_migrations(env)
+    out = asyncio.run(
+        pipeline._apply_corrections("We run koo-BER-neh-tees in prod.", get_settings())
+    )
+    assert "koo-ber-neh-tees" in out
+    assert "-BER-" not in out
+
+
 # --- normalize stage: LLM pronunciation pass + deterministic backstop -------
 
 
