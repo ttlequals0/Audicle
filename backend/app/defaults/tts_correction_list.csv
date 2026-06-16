@@ -17,7 +17,6 @@ Tech Acronym,ROM,rom,Pronounce as word
 Tech Acronym,SSD,S S D,Spell out: es es dee
 Tech Acronym,CLI,C L I,Spell out: see el eye
 Tech Acronym,IDE,I D E,Spell out: eye dee ee
-Tech Acronym,BIOS,by-oss,Pronounce as word
 Tech Acronym,IPMI,I P M I,Spell out: eye pee em eye
 Tech Acronym,BMC,B M C,Spell out: bee em see
 Tech Acronym,AI,A I,Spell out: ay eye -- commonly mispronounced as single word
@@ -25,25 +24,13 @@ Tech Acronym,ML,M L,Spell out: em el
 Tech Acronym,CI/CD,C I C D,Spell out: see eye see dee
 Tech Acronym,SQL,sequel,Pronounced as 'sequel' not 'S Q L' in most contexts
 Tech Acronym,GUI,gooey,Pronounced as 'gooey'
-Tech Acronym,regex,reh-jex,Pronounced as word
-Tech Acronym,chmod,ch-mod,Spoken as 'ch-mod'
-Tech Acronym,sudo,soo-doh,Pronounced as word
 Tech Acronym,cron,kron,"Pronounced as word, hard c"
 Tech Acronym,nginx,engine-X,Pronounced 'engine-X'
-Tech Acronym,kubectl,kube-cuttle,Common pronunciation: kube-cuttle or kube-control
 Tech Acronym,GIF,jif,Debated but often 'jif'
 Tech Acronym,EOF,E O F,Spell out
-Tech Acronym,YAML,yam-el,Pronounced as word
-Tech Acronym,JSON,jay-son,Pronounced as name
-Tech Acronym,OAuth,oh-auth,Pronounced 'oh-auth'
-Tech Acronym,POSIX,poz-iks,Pronounced as word
 Tech Acronym,MIME,mime,Pronounced as word
-Tech Acronym,ASCII,ass-kee,Pronounced as word
 Tech Acronym,IEEE,I triple E,Spell out: eye triple ee
 Tech Acronym,IETF,I E T F,Spell out
-Tech Acronym,WYSIWYG,wiz-ee-wig,Pronounced as word
-Tech Acronym,FIFO,fy-foh,Pronounced as word
-Tech Acronym,LIFO,ly-foh,Pronounced as word
 Tech Brand,AWS,A W S,Spell out: ay double-you es
 Tech Brand,GCP,G C P,Spell out: jee see pee
 Tech Brand,GKE,G K E,Spell out: jee kay ee
@@ -53,51 +40,10 @@ Tech Brand,IAM,I A M,"Spell out, not 'I am'"
 Tech Brand,S3,S 3,Spell out: es three
 Tech Brand,PostgreSQL,postgres,Pronounced post-gres
 Tech Brand,EC2,E C 2,Spell out: ee see two
-Tech Brand,PyTorch,pie-torch,Pronounced 'pie-torch'
-Tech Brand,Kubernetes,koo-ber-neh-tees,Commonly mispronounced
-Tech Brand,Grafana,gra-fah-nah,Commonly mispronounced as 'GRAH-fah-nah'
-Tech Brand,Prometheus,proh-mee-thee-us,Greek origin
-Tech Brand,Ansible,an-sih-bul,Pronounced 'AN-sih-bul'
-Tech Brand,Terraform,terra-form,Pronounced 'TERRA-form'
-Tech Brand,Kafka,kaf-kah,Named after Franz Kafka
 Tech Brand,Nginx,engine-X,Pronounced 'engine-X'
-Tech Brand,Debian,deb-ee-an,Named after Debra and Ian
-Tech Brand,Ubuntu,oo-boon-too,Zulu origin
-Tech Brand,Linux,lin-uks,Linus Torvalds' own pronunciation
 Tech Brand,FreeBSD,free B S D,Spell out BSD
 Tech Brand,macOS,mac O S,Spell out OS
 Tech Brand,iOS,eye O S,Spell out
-Tech Brand,Ollama,oh-lah-mah,Commonly mispronounced
-Tech Brand,Hugging Face,hug-ing face,Not 'hyoo-ging'
-Tech Brand,Mistral,mis-tral,French wind name
-Tech Brand,LLaMA,lah-mah,Acronym but pronounced as word
-Consumer Brand,Porsche,por-shuh,"Two syllables, not 'Porsh'"
-Consumer Brand,Nike,ny-kee,Two syllables
-Consumer Brand,Adidas,ah-dee-dahs,Not 'ADD-ih-das'
-Consumer Brand,Hyundai,hun-day,Not 'high-un-die'
-Consumer Brand,Volkswagen,folks-vah-gen,German pronunciation
-Consumer Brand,Audi,ow-dee,German pronunciation
-Consumer Brand,Hermes,air-mez,French brand
-Consumer Brand,Louis Vuitton,loo-ee vwee-tohn,Silent T and N
-Consumer Brand,Givenchy,zhee-vohn-shee,French pronunciation
-Consumer Brand,Versace,ver-sah-chay,"Italian, three syllables"
-Consumer Brand,Moschino,mos-kee-noh,Hard K
-Consumer Brand,Peugeot,pyoo-zhoh,Silent T
-Consumer Brand,Renault,reh-noh,Silent LT
-Consumer Brand,Bvlgari,bool-gah-ree,Italian jeweler
-Consumer Brand,Huawei,wah-way,Chinese pronunciation
-Consumer Brand,Samsung,sam-soong,Korean pronunciation
-Consumer Brand,IKEA,ee-keh-yah,Swedish pronunciation
-Consumer Brand,Adobe,ah-doh-bee,Three syllables
-Consumer Brand,Nutella,noo-tell-ah,Not 'nuh-TELL-ah'
-Consumer Brand,Sriracha,see-rah-chah,Thai origin
-Consumer Brand,Yves Saint Laurent,eev san loh-rahn,French silent letters
-Consumer Brand,Balenciaga,bah-len-see-ah-gah,Spanish origin
-Consumer Brand,Tag Heuer,tag hoy-er,Swiss-German
-Consumer Brand,Miele,mee-leh,German appliance brand
-Consumer Brand,Stella Artois,stell-ah ar-twah,French/Belgian
-Consumer Brand,Chopard,shoh-par,"French, silent D"
-Consumer Brand,Laphroaig,lah-froyg,Scottish Gaelic
 General Acronym,CEO,C E O,Spell out: see ee oh
 General Acronym,CFO,C F O,Spell out
 General Acronym,COO,C O O,Spell out: see oh oh — not 'coo'
@@ -108,15 +54,7 @@ General Acronym,ETA,E T A,Spell out: ee tee ay
 General Acronym,ATM,A T M,Spell out
 General Acronym,FBI,F B I,Spell out
 General Acronym,CIA,C I A,Spell out
-General Acronym,NASA,nah-sah,Pronounced as word
-General Acronym,NATO,nay-toh,Pronounced as word
-General Acronym,RADAR,ray-dar,Pronounced as word
-General Acronym,LASER,lay-zer,Pronounced as word
-General Acronym,SCUBA,skoo-bah,Pronounced as word
 General Acronym,GDPR,G D P R,Spell out: jee dee pee ar
-General Acronym,HIPAA,hip-ah,Pronounced as word
-General Acronym,OSHA,oh-shah,Pronounced as word
-General Acronym,EULA,yoo-lah,Pronounced as word
 General Acronym,SLA,S L A,Spell out: es el ay
 General Acronym,KPI,K P I,Spell out: kay pee eye
 General Acronym,ROI,R O I,Spell out: ar oh eye
@@ -142,74 +80,12 @@ Homograph,close (adjective),klohs,Near: 'close to home'
 Homograph,close (verb),klohz,Shut: 'close the door'
 Homograph,row (argument),roh,Fight: 'had a row'
 Homograph,row (line),roh,Line of seats
-Homograph,object (noun),ob-jekt,A thing
-Homograph,object (verb),ob-jekt,To protest
-Homograph,record (noun),rek-ord,A recording
-Homograph,record (verb),reh-kord,To capture audio/video
-Homograph,invalid (disabled),in-vah-lid,A sick person
-Homograph,invalid (incorrect),in-val-id,Not valid
-Homograph,minute (time),min-it,60 seconds
-Homograph,minute (tiny),my-nyoot,Extremely small
-Homograph,present (gift),prez-ent,A gift or current time
-Homograph,present (verb),preh-zent,To show or introduce
-Homograph,refuse (trash),ref-yoos,Garbage
-Homograph,refuse (deny),reh-fyooz,To decline
-Homograph,desert (dry land),dez-ert,Dry landscape
-Homograph,desert (abandon),deh-zert,To abandon
-Homograph,content (satisfied),kon-tent,Happy
-Homograph,content (material),kon-tent,"Material, subject matter"
-Homograph,conduct (noun),kon-dukt,Behavior
-Homograph,conduct (verb),kon-dukt,To lead or manage
 Mispronounced Word,cache,kash,Not 'cash-ay'
 Mispronounced Word,queue,kyoo,Sounds like the letter Q
 Mispronounced Word,niche,neesh,"French origin, 'neesh' preferred in many regions"
 Mispronounced Word,meme,meem,Not 'meh-may'
-Mispronounced Word,hyperbole,hy-per-boh-lee,Not 'HYPER-bowl'
-Mispronounced Word,quinoa,keen-wah,Not 'kwi-NOH-ah'
-Mispronounced Word,espresso,es-press-oh,Not 'ex-press-oh'
-Mispronounced Word,asterisk,as-teh-risk,Not 'as-ter-ik'
-Mispronounced Word,nuclear,noo-klee-er,Not 'NOO-kyoo-ler'
-Mispronounced Word,February,feb-roo-air-ee,Not 'Feb-yoo-air-ee'
-Mispronounced Word,async,a-sync,Short for asynchronous
-Mispronounced Word,library,ly-brer-ee,Not 'ly-berry'
-Mispronounced Word,et cetera,et set-er-ah,Not 'ek SET-er-ah'
-Mispronounced Word,prescription,preh-skrip-shun,Not 'per-SKRIP-shun'
-Mispronounced Word,particularly,par-tik-yoo-ler-lee,Often garbled by TTS
-Mispronounced Word,deteriorate,deh-teer-ee-oh-rate,6 syllables
-Mispronounced Word,onomatopoeia,on-oh-mat-oh-pee-ah,Often garbled
-Mispronounced Word,segue,seg-way,Not 'seeg'
-Mispronounced Word,colonel,ker-nel,Irregular spelling
-Mispronounced Word,salmon,sam-on,Silent L
-Mispronounced Word,often,off-en,T is often silent in natural speech
 Mispronounced Word,clothes,klohz,Not 'kloh-thes'
-Mispronounced Word,mischievous,mis-chih-vus,Not 'mis-CHEEV-ee-us'
-Mispronounced Word,epitome,eh-pit-oh-mee,Not 'EP-ih-tome'
-Mispronounced Word,chaos,kay-oss,Not 'chay-oss'
-Mispronounced Word,awry,ah-ry,Not 'AW-ree'
-Mispronounced Word,worcestershire,wus-ter-sher,British place name
-Mispronounced Word,paradigm,pair-ah-dyme,Silent G
 Mispronounced Word,coup,koo,"French loanword, silent P"
-Mispronounced Word,facade,fah-sahd,Not 'FAY-kayd'
-Mispronounced Word,debris,deh-bree,Silent S
-Mispronounced Word,genre,zhon-ruh,French loanword
-Mispronounced Word,chassis,chas-ee,Not 'CHAS-is'
-Mispronounced Word,pseudonym,soo-doh-nim,Silent P
-Mispronounced Word,pneumonia,nyoo-moh-nyah,Silent P
-Mispronounced Word,subtle,sut-ul,Silent B
-Medical/Scientific,acetaminophen,ah-see-tah-min-oh-fen,Common pain reliever
-Medical/Scientific,Lisinopril,ly-sin-oh-pril,ACE inhibitor
-Medical/Scientific,Omeprazole,oh-mep-rah-zohl,PPI drug
-Medical/Scientific,Metoprolol,meh-toh-proh-lol,Beta blocker
-Medical/Scientific,Ibuprofen,eye-byoo-proh-fen,Not 'ib-yoo-pro-fen'
-Medical/Scientific,Psoriasis,soh-ry-ah-sis,Silent P
-Medical/Scientific,Anesthesia,an-es-thee-zhah,Not 'an-es-THE-see-ah'
-Medical/Scientific,Eczema,ek-zeh-mah,Not 'ex-EE-mah'
-Medical/Scientific,Alzheimer's,ahlts-hy-merz,Not 'ALZ-hy-merz'
-Medical/Scientific,Quinoa,keen-wah,"Grain, often mispronounced"
-Medical/Scientific,Homeopathy,hoh-mee-op-ah-thee,Not 'homo-pathy'
-Medical/Scientific,Ophthalmologist,off-thal-mol-oh-jist,Silent PH
-Medical/Scientific,Penicillin,pen-ih-sil-in,Not 'peni-SILL-een'
-Medical/Scientific,Aneurysm,an-yoo-riz-um,Not 'AN-yer-iz-um'
 Format,10:00,ten o'clock,Time normalization
 Format,10:00 AM,ten a m,Spell out AM
 Format,10kg,ten kilograms,Unit expansion
@@ -230,7 +106,6 @@ Format,Jr.,Junior,Suffix
 Format,Sr.,Senior,Suffix
 Format,e.g.,for example,Latin abbreviation
 Format,i.e.,that is,Latin abbreviation
-Format,etc.,et set-er-ah,Latin abbreviation
 Format,approx.,approximately,Abbreviation
 Format,v2.0,version two point oh,Version strings
 Format,v1.2.3,version one point two point three,Semantic version
@@ -306,20 +181,14 @@ Tech Brand,Hyper-V,Hyper V,Microsoft hypervisor
 Tech Brand,VMware,V M ware,Virtualization platform
 Tech Brand,SELinux,S E Linux,Security-Enhanced Linux
 Tech Brand,AppArmor,App Armor,Linux security module
-Tech Brand,Spectre,spec-ter,CPU speculative execution vulnerability
 Format,Jan.,January,Month abbreviation
 Format,Feb.,February,Month abbreviation
 Financial,ETF,E T F,Exchange-Traded Fund — spell out
 Financial,REIT,reet,Real Estate Investment Trust — rhymes with 'feet'
-Financial,EBITDA,ee-bit-dah,Earnings Before Interest Taxes Depreciation Amortization
-Financial,LIBOR,ly-bor,London Interbank Offered Rate — pronounced as word
-Financial,SOFR,soh-fer,Secured Overnight Financing Rate — pronounced as word
-Financial,NASDAQ,naz-dak,"Pronounced as word, not spelled out"
 Financial,NYSE,N Y S E,New York Stock Exchange — spell out
 Financial,IPO,I P O,Initial Public Offering — spell out: eye pee oh
 Financial,SEC,S E C,Securities and Exchange Commission — spell out
 Financial,FDIC,F D I C,Federal Deposit Insurance Corporation
-Financial,FINRA,fin-rah,Financial Industry Regulatory Authority — word
 Financial,AUM,A U M,Assets Under Management — spell out: ay you em
 Financial,NAV,N A V,Net Asset Value — spell out: en ay vee
 Financial,P/E,price to earnings,Price-to-earnings ratio — expand
@@ -329,82 +198,43 @@ Financial,LBO,L B O,Leveraged Buyout — spell out: el bee oh
 Financial,M&A,mergers and acquisitions,Expand: mergers and acquisitions
 Financial,APR,A P R,Annual Percentage Rate — spell out: ay pee ar
 Financial,APY,A P Y,Annual Percentage Yield — spell out: ay pee why
-Financial,HELOC,hee-lok,Home Equity Line of Credit — pronounced as word
 Financial,401(k),four oh one K,Retirement account — say letters/numbers
-Financial,529,five twenty-nine,Education savings plan
 Financial,10-K,ten K,Annual SEC filing
 Financial,10-Q,ten Q,Quarterly SEC filing
 Financial,ARR,A R R,Annual Recurring Revenue — spell out
 Financial,MRR,M R R,Monthly Recurring Revenue — spell out
 Financial,YoY,year over year,Expand: year over year
 Financial,QoQ,quarter over quarter,Expand: quarter over quarter
-Financial,CAGR,kay-ger,Compound Annual Growth Rate — pronounced as word
 Financial,WACC,wak,Weighted Average Cost of Capital — rhymes with 'whack'
 Financial,GAAP,gap,Generally Accepted Accounting Principles — word
 Financial,IFRS,I F R S,International Financial Reporting Standards — spell out
 Financial,OTC,O T C,Over the Counter — spell out: oh tee see
 Financial,VIX,viks,Volatility Index — pronounced as word
 Financial,HODL,hoddle,Hold On for Dear Life (crypto) — word
-Financial,DeFi,dee-fy,Decentralized Finance — dee-fy
 Financial,NFT,N F T,Non-Fungible Token — spell out: en ef tee
 Financial,DAO,dow,Decentralized Autonomous Organization — rhymes with 'Dow'
 Financial,SPAC,spak,Special Purpose Acquisition Company — word
-Financial,FOMO,foh-moh,Fear of Missing Out — word
-Financial,YOLO,yoh-loh,You Only Live Once — word
 Financial,FOMC,F O M C,Federal Open Market Committee — spell out
 Financial,CPI,C P I,Consumer Price Index — spell out: see pee eye
 Financial,GDP,G D P,Gross Domestic Product — spell out: jee dee pee
 Financial,Fed,fed,Federal Reserve — pronounced as word
-Financial,Repo,ree-poh,Repurchase agreement — word
 Financial,CDO,C D O,Collateralized Debt Obligation — spell out
 Financial,CDS,C D S,Credit Default Swap — spell out
 Financial,MBS,M B S,Mortgage-Backed Securities — spell out
-Financial,Arbitrage,ar-bih-trahzh,French origin — soft G
-Financial,Fiduciary,fih-doo-shee-air-ee,Not 'fih-DOO-see-air-ee'
-Financial,Amortization,am-or-tih-zay-shun,Not 'am-or-TY-zation'
-Financial,Liquidity,lih-kwid-ih-tee,Not 'lih-KWID-ee-tee'
-Financial,Deloitte,deh-loyt,Silent TE — not 'deh-LOYT-ee'
-Financial,Accenture,ak-sen-cher,Not 'ah-SENT-yer'
-Financial,Vanguard,van-gard,Not 'van-GUARD'
-Financial,Fidelity,fih-del-ih-tee,Not 'FY-del-ih-tee'
 Financial,Schwab,shwob,Charles Schwab — rhymes with 'swab'
-Financial,PIMCO,pim-koh,Pacific Investment Management Company — word
-Financial,BlackRock,black-rok,Two clear syllables
 Financial,JPMorgan,jay pee morgan,Spell out JP
-Financial,Citigroup,sit-ee-groop,Not 'SIH-tee-groop'
 Financial,HSBC,H S B C,Spell out: aitch es bee see
-Financial,Klarna,klar-nah,Swedish fintech
-Financial,Robinhood,rob-in-hood,Not 'ROH-bin-hood'
-Technology,Xiaomi,show-mee,Chinese: 小米 — not 'zhow-mee' or 'zee-ah-oh-mee'
 Technology,Wyze,wyz,Smart home brand — rhymes with 'wise'
-Technology,Figma,fig-mah,Not 'FY-gmah'
-Technology,Notion,noh-shun,Not 'NOH-tee-on'
-Technology,Supabase,soo-pah-base,Not 'soo-PAH-base'
-Technology,Vercel,ver-sel,Not 'VER-sel'
-Technology,Netlify,net-lih-fy,Not 'net-LY-fy'
 Technology,MySQL,my S Q L,Spell out SQL part
 Technology,NoSQL,no S Q L,Spell out SQL
 Technology,SQLite,S Q L light,"Spell out SQL, then 'light'"
-Technology,Regex,reh-jex,Regular Expression — not 'REE-jex'
-Technology,Webpack,web-pak,Not 'web-PACK'
 Technology,npm,N P M,Spell out: en pee em
 Technology,PyPI,pie pee eye,Python Package Index — spell out PI
 Technology,NumPy,num pie,Numerical Python — like 'numb pie'
 Technology,SciPy,sy pie,Scientific Python — like 'sigh pie'
-Technology,Matplotlib,mat-plot-lib,Three parts — not 'mat-PLOT-lib'
-Technology,Pandas,pan-dahs,Data library — like the animal
-Technology,CUDA,koo-duh,NVIDIA parallel computing — word
-Technology,Llama,lah-mah,Meta AI model — not 'el-el-ay-em-ay'
-Technology,Gemini,jem-ih-ny,Google AI — like the zodiac sign
 Technology,Claude,klowd,"Anthropic AI — French name, rhymes with 'cloud'"
 Technology,Groq,grok,AI chip company — rhymes with 'rock'
 Technology,Grok,grok,xAI model — rhymes with 'rock'
-Technology,Replicate,rep-lih-kate,ML platform — not 'reh-PLIH-kit'
-Technology,Weaviate,wee-vee-ate,Vector database — not 'WEV-ee-ate'
-Technology,Milvus,mil-vus,Vector database — not 'mil-VOOS'
-Technology,Qdrant,kwad-rant,Vector database — like 'quadrant'
-Technology,Pinecone,pine-cone,Vector database — like the pine cone
-Technology,Vespa,ves-pah,Search engine — not 'veh-SPAH'
 Technology,etcd,et see dee,Distributed key-value store — spell out
 Technology,systemd,system dee,Linux init system — spell out D
 Technology,dbus,dee bus,D-Bus IPC system — say 'dee bus'
@@ -418,35 +248,20 @@ Technology,SSML,S S M L,Speech Synthesis Markup Language — spell out
 Technology,GPT,G P T,Generative Pre-trained Transformer — spell out
 Technology,LLM,L L M,Large Language Model — spell out: el el em
 Technology,RAG,rag,Retrieval-Augmented Generation — word
-Technology,LoRA,loh-rah,Low-Rank Adaptation — word
 Technology,RLHF,R L H F,Reinforcement Learning from Human Feedback — spell out
-Technology,ONNX,on-iks,Open Neural Network Exchange — rhymes with 'onyx'
-Technology,Xilinx,zy-links,FPGA maker — not 'ZIL-inks'
 Technology,FPGA,F P G A,Field-Programmable Gate Array — spell out
-Technology,ASIC,ay-sik,Application-Specific Integrated Circuit — word
-Technology,Raspberry Pi,raz-berry pie,Not 'RAZZ-berry'
-Technology,Arduino,ar-dwee-noh,Italian origin
 Technology,Rust,rust,Systems language — like the corrosion
 Technology,Golang,go lang,Go programming language
-Technology,Deno,dee-noh,JS runtime — anagram of Node
 Technology,Bun,bun,JS runtime — like bread bun
 Technology,Vite,veet,French for 'fast' — not 'vyt'
 Technology,Svelte,svelt,Web framework — like 'svelte' adjective
 Technology,Nuxt,nuxt,Vue framework — rhymes with 'next'
-Technology,Pinia,pin-yah,Vue state manager — Spanish for pineapple
-Technology,Prisma,priz-mah,ORM — like a prism
-Technology,Tauri,tore-ee,Desktop framework — not 'TOW-ree'
-Technology,Neovim,nee-oh-vim,Not 'neh-OH-vim'
-Technology,tmux,tee-muks,Terminal multiplexer — not 'tuh-muks'
 Technology,zsh,zee shell,Z shell — spell out Z then 'shell'
 Technology,Nix,niks,Package manager — rhymes with 'kicks'
 Technology,NixOS,niks O S,Spell out OS
-Technology,Homebrew,home-broo,Mac package manager
 Technology,winget,win get,Windows package manager — two words
 Technology,FOSS,foss,Free and Open Source Software — word
 Technology,OSS,O S S,Open Source Software — spell out
-Technology,GNU,guh-noo,GNU's Not Unix — not 'gee en you'
-Technology,Emacs,ee-maks,Text editor — not 'eh-MAKS'
 Technology,Vim,vim,Text editor — like vigor
 Business,OKR,O K R,Objectives and Key Results — spell out: oh kay ar
 Business,SOW,S O W,Statement of Work — spell out (not 'sow' the pig)
@@ -461,7 +276,6 @@ Business,WFH,work from home,Expand: work from home
 Business,IRL,in real life,Expand: in real life
 Business,TBD,T B D,To Be Determined — spell out
 Business,FTE,F T E,Full-Time Equivalent — spell out: ef tee ee
-Business,AWOL,ay-wol,Absent Without Leave — pronounced as word
 Business,P&L,P and L,Profit and Loss — say 'P and L'
 Business,COGS,kogz,Cost of Goods Sold — word
 Business,G&A,G and A,General and Administrative — say 'G and A'
@@ -480,96 +294,9 @@ Business,CSR,C S R,Corporate Social Responsibility — spell out
 Business,ESG,E S G,Environmental Social Governance — spell out: ee es jee
 Business,CCPA,C C P A,California Consumer Privacy Act — spell out
 Business,SOC 2,sock two,Security compliance framework — like 'sock'
-Business,ISO,eye-so,International Organization for Standardization — word
-Business,Agile,aj-ile,Project methodology — not 'AJ-ul' or 'ah-JYL'
 Business,Scrum,skrum,Agile framework — like the rugby term
-Business,Kanban,kan-ban,Japanese workflow — not 'kan-BAN'
-Business,Kaizen,ky-zen,Japanese: continuous improvement
-Business,McKinsey,muh-kin-zee,Consulting firm — not 'mak-IN-see'
-Business,Gartner,gart-ner,Research firm — not 'GAR-ner'
-Business,Salesforce,saylz-fors,Second S is a Z sound
-Business,HubSpot,hub-spot,Two clear parts
-Business,Zendesk,zen-desk,Two clear parts
-Business,Twilio,twil-ee-oh,Not 'TWILL-ee-oh' or 'TWEEL-ee-oh'
-Business,Okta,ok-tah,Identity platform — not 'ok-TAH'
-Business,Atlassian,at-las-ee-an,Australian software — not 'at-LASH-un'
-Business,Asana,ah-sah-nah,Project tool — yoga pose origin
-Business,Jira,jee-rah,Not 'JY-rah'
-Business,Confluence,kon-floo-ens,Not 'kon-FLOO-ents'
-Business,Looker,look-er,BI tool — like 'one who looks'
-Business,Tableau,tab-loh,French — silent eau
-Business,Zapier,zap-ee-er,Automation tool — rhymes with 'happier'
-Business,Miro,mee-roh,Collaboration tool — not 'MY-roh'
-Business,Webex,web-eks,Not 'web-EKS'
-Medical Brand,Ozempic,oh-zem-pik,GLP-1 diabetes/weight drug
-Medical Brand,Wegovy,weh-goh-vee,Semaglutide weight loss brand
-Medical Brand,Mounjaro,mown-jar-oh,Tirzepatide — not 'mown-jah-ROH'
-Medical Brand,Zepbound,zep-bownd,Weight loss brand
-Medical Brand,Keytruda,kee-troo-dah,Pembrolizumab — cancer immunotherapy
-Medical Brand,Humira,hyoo-meer-ah,Adalimumab — not 'HEW-mir-ah'
-Medical Brand,Dupixent,doo-pih-xent,Dupilumab — not 'dyoo-PIX-ent'
-Medical Brand,Skyrizi,sky-rih-zee,Risankizumab — not 'skee-REE-zee'
-Medical Brand,Rinvoq,rin-vok,Upadacitinib — not 'rin-VOK'
-Medical Brand,Xeljanz,zel-janz,Tofacitinib — not 'EKS-el-janz'
-Medical Brand,Eliquis,el-ih-kwis,Apixaban — not 'ee-LIK-wis'
-Medical Brand,Xarelto,zah-rel-toh,Rivaroxaban — not 'ZAR-el-toh'
-Medical Brand,Jardiance,jar-dee-ants,Empagliflozin — not 'JAR-dee-ance'
-Medical Brand,Trulicity,troo-lis-ih-tee,Dulaglutide — not 'TROO-lih-sih-tee'
-Medical Brand,Victoza,vik-toh-zah,Liraglutide — not 'VIK-toh-zah'
-Medical Brand,Saxenda,sak-sen-dah,Liraglutide weight loss
-Medical Brand,Rybelsus,ry-bel-sus,Oral semaglutide — not 'RY-bel-sus'
-Medical Brand,Repatha,reh-path-ah,Evolocumab — not 'REP-ah-thah'
-Medical Brand,Praluent,pral-yoo-ent,Alirocumab — not 'pra-LOO-ent'
-Medical Brand,Leqvio,lek-vee-oh,Inclisiran — not 'leek-vee-oh'
-Medical Brand,Metformin,met-for-min,Not 'MET-for-min'
-Medical Brand,Atorvastatin,ah-tor-vah-stat-in,Not 'ah-TOR-vah-STAY-tin'
-Medical Brand,Rosuvastatin,roh-soo-vah-stat-in,Not 'ros-oo-vah-STAY-tin'
-Medical Brand,Simvastatin,sim-vah-stat-in,Not 'sim-vah-STAY-tin'
-Medical Brand,Amlodipine,am-loh-dih-peen,Calcium channel blocker
-Medical Brand,Esomeprazole,ee-soh-mep-rah-zohl,Nexium generic
-Medical Brand,Pantoprazole,pan-toh-prah-zohl,PPI — not 'PAN-toh-pray-zohl'
-Medical Brand,Clopidogrel,kloh-pid-oh-grel,Not 'KLOP-ih-dog-rel'
-Medical Brand,Apixaban,ah-pix-ah-ban,Blood thinner — not 'ap-IK-sah-ban'
-Medical Brand,Rivaroxaban,riv-ah-rox-ah-ban,Blood thinner
-Medical Brand,Semaglutide,sem-ah-gloo-tyd,GLP-1 agonist — not 'se-MAG-loo-tide'
-Medical Brand,Tirzepatide,tir-zep-ah-tyd,GIP/GLP-1 — not 'tir-zeh-PAT-yde'
-Medical Brand,Pembrolizumab,pem-broh-lih-zoo-mab,Immunotherapy — mab suffix = 'mab'
-Medical Brand,Adalimumab,ay-dah-lim-yoo-mab,TNF inhibitor — not 'ad-ah-LIM-uh-mab'
-Medical Brand,Dupilumab,doo-pil-yoo-mab,Biologic — not 'dyoo-pih-LOO-mab'
-Medical Brand,Risankizumab,ris-an-kiz-yoo-mab,IL-23 inhibitor
-Medical Brand,Upadacitinib,oo-pad-ah-sit-ih-nib,JAK inhibitor — not 'up-ah-DAH-sit-in-ib'
-Medical Brand,Tofacitinib,toh-fah-sit-ih-nib,JAK inhibitor — not 'TOF-ah-SIT-in-ib'
-Medical Brand,Levetiracetam,leh-veh-tir-as-eh-tam,Anti-seizure — not 'leh-veh-TY-rah-see-tam'
-Medical Brand,Cetirizine,seh-tir-ih-zeen,Antihistamine — not 'seh-tih-RY-zeen'
-Medical Brand,Montelukast,mon-teh-loo-kast,Singulair generic — not 'mon-TEL-yoo-kast'
-Medical Brand,Gabapentin,gab-ah-pen-tin,Not 'GAB-ah-pen-tin'
-Medical Brand,Pregabalin,preh-gab-ah-lin,Not 'PREH-gab-ah-lin'
-Medical Brand,Duloxetine,doo-lox-eh-teen,Not 'dyoo-LOK-seh-teen'
-Medical Brand,Sertraline,ser-trah-leen,Not 'ser-TRAY-leen'
-Medical Brand,Escitalopram,es-sy-tal-oh-pram,Not 'ess-kih-TAL-oh-pram'
-Medical Brand,Citalopram,sy-tal-oh-pram,Not 'kih-TAL-oh-pram'
-Medical Brand,Bupropion,byoo-proh-pee-on,Not 'boo-PRO-pee-on'
-Medical Brand,Quetiapine,kweh-ty-ah-peen,Not 'kweh-tee-AH-peen'
-Medical Brand,Aripiprazole,air-ih-pip-rah-zohl,Not 'ah-rih-PIH-prah-zohl'
-Medical Brand,Acetaminophen,ah-see-tah-min-oh-fen,Not 'ah-SEAT-ah-min-oh-fen'
-Medical Brand,Naproxen,nah-proks-en,Not 'NAP-roks-en'
-Medical Brand,Ciprofloxacin,sip-roh-flok-sah-sin,Antibiotic — not 'sy-proh-flok-SAH-sin'
-Medical Brand,Azithromycin,az-ith-roh-my-sin,Not 'az-ih-throh-MY-sin' — silent h
-Medical Brand,Amoxicillin,ah-mok-sih-sil-in,Not 'ah-MOK-sih-sil-in'
-Medical Brand,Doxycycline,dok-see-sy-kleen,Not 'dok-SY-kleen'
-Medical Brand,Albuterol,al-byoo-ter-ol,Not 'AL-byoo-ter-ol'
-Medical Brand,Tiotropium,ty-oh-troh-pee-um,COPD drug — not 'tee-oh-TROH-pee-um'
-Medical Brand,Fluticasone,floo-tik-ah-sohn,Not 'floo-tih-KAY-sohn'
-Medical Brand,Mometasone,moh-met-ah-sohn,Not 'moh-meh-TAY-sohn'
-Medical Brand,Budesonide,byoo-des-oh-nyd,Not 'boo-DEH-soh-nide'
-Medical Brand,Warfarin,wor-fah-rin,Not 'war-FAR-in'
-Medical Brand,Enoxaparin,ee-noks-ah-pair-in,LMWH — not 'eh-NOK-sah-pair-in'
-Medical Brand,Vancomycin,van-koh-my-sin,Not 'VAN-koh-my-sin'
-Medical Brand,Tacrolimus,tah-kroh-lih-mus,Immunosuppressant — not 'TAK-roh-lim-us'
-Medical Brand,Mycophenolate,my-koh-fee-noh-late,Not 'my-koh-fen-OH-late'
 Medical Brand,SSRI,S S R I,Selective Serotonin Reuptake Inhibitor — spell out
 Medical Brand,SNRI,S N R I,Serotonin-Norepinephrine Reuptake Inhibitor
-Medical Brand,NSAID,en-said,Nonsteroidal Anti-Inflammatory Drug — word
 Medical Brand,ACE,ace,Angiotensin-Converting Enzyme — word
 Medical Brand,ARB,A R B,Angiotensin Receptor Blocker — spell out
 Medical Brand,PPI,P P I,Proton Pump Inhibitor — spell out
@@ -626,9 +353,7 @@ Internet Slang,TFW,that feeling when,Expand
 Internet Slang,MFW,my face when,Expand
 Internet Slang,MRW,my reaction when,Expand
 Internet Slang,Rizz,riz,Charisma — rhymes with 'fizz' not 'rise'
-Internet Slang,Bussin,bus-sin,Excellent/delicious — not 'BOO-sin'
 Internet Slang,Sus,sus,Suspicious — rhymes with 'bus'
-Internet Slang,Sussy,sus-ee,Suspicious — not 'SOO-see'
 Internet Slang,No cap,no cap,No lie/truthfully — 'cap' as in hat
 Internet Slang,Cap,kap,Lie/falsehood — rhymes with 'map'
 Internet Slang,Based,baysd,Authentic/admirable — like the adjective
@@ -638,11 +363,8 @@ Internet Slang,Slaps,slaps,Something great — 'this slaps'
 Internet Slang,Mid,mid,Mediocre — rhymes with 'bid'
 Internet Slang,W,dub,Win — say 'dub' not 'double-you'
 Internet Slang,L,el,Loss — say 'el'
-Internet Slang,Ratio,ray-shee-oh,Reply-to-ratio attack — not 'RAY-see-oh'
 Internet Slang,Touch grass,touch grass,Go outside — literal phrase
 Internet Slang,Vibe check,vibe check,Assessing mood — two words
-Internet Slang,Lowkey,loh-kee,Somewhat/discreetly — not 'loh-KEE'
-Internet Slang,Highkey,hy-kee,Obviously/very — not 'hy-KEE'
 Internet Slang,Drip,drip,Stylish outfit/accessories
 Internet Slang,Fit,fit,Outfit — rhymes with 'bit'
 Internet Slang,Flex,fleks,Show off — like physical flex
@@ -650,29 +372,14 @@ Internet Slang,Clout,klowt,Social influence — rhymes with 'shout'
 Internet Slang,Simp,simp,Excessive admirer — rhymes with 'wimp'
 Internet Slang,Stan,stan,Obsessive fan — rhymes with 'man'
 Internet Slang,Ship,ship,Romantic pairing — like a boat
-Internet Slang,Salty,sawl-tee,Bitter/upset — like the taste
 Internet Slang,Snatched,snacht,Looking amazing — past tense of snatch
 Internet Slang,Bet,bet,OK/agreement — like gambling term
 Internet Slang,IGTV,I G T V,Instagram TV — spell out
 Internet Slang,Gyatt,gyat,Expression of admiration — like a short 'god damn'
-Internet Slang,Ratioed,ray-shee-ohd,Got ratio'd — past tense
-Internet Slang,Boomer,boo-mer,Baby boomer or outdated person
-Internet Slang,OK Boomer,okay boo-mer,Dismissive phrase
-Internet Slang,Zoomer,zoo-mer,Gen Z person — rhymes with 'boomer'
-Internet Slang,Doomer,doo-mer,Pessimistic person
-Internet Slang,Coomer,koo-mer,Meme archetype — rhymes with 'boomer'
-Internet Slang,Poggers,pog-erz,Gaming: excitement — not 'POH-gerz'
 Internet Slang,Pog,pog,Gaming: impressive — like the milk cap game
 Internet Slang,Kek,kek,Laughter — alternate of LOL
-Internet Slang,Copium,koh-pee-um,Coping + opium blend — not 'KOP-ee-um'
-Internet Slang,Hopium,hoh-pee-um,Hope + opium blend
-Internet Slang,Delulu,deh-loo-loo,Delusional — not 'DEL-yoo-loo'
-Internet Slang,JOMO,joh-moh,Joy of Missing Out — word
 Internet Slang,Yeet,yeet,To throw forcefully — rhymes with 'feet'
-Internet Slang,Yolo,yoh-loh,You Only Live Once — word
 Internet Slang,Swag,swag,Style/confidence — rhymes with 'bag'
-Internet Slang,Periodt,pee-ree-od,For emphasis — ignore the T
-Internet Slang,Snatching,snach-ing,Looking great — not 'SNAT-ching'
 Internet Slang,fr fr,for real for real,Expand: for real for real
 Internet Slang,ngl,not gonna lie,Expand
 Internet Slang,irl,in real life,Expand
@@ -681,16 +388,12 @@ Internet Slang,imo,in my opinion,Expand lowercase variant
 Internet Slang,smh,shaking my head,Expand lowercase variant
 Internet Slang,npc,N P C,Spell out lowercase variant
 Internet Slang,gg,good game,Expand lowercase variant
-Internet Slang,Cheugy,choo-gee,Out of date/tryhard — not 'SHOO-gee'
 Internet Slang,Vibe,vyb,Mood/atmosphere — rhymes with 'tribe'
 Internet Slang,It's giving,it's giving,Gives off a vibe — literal phrase
 Internet Slang,Main character,main character,Acting central to a scene
 Internet Slang,Side quest,side quest,Unplanned detour — gaming term
 Internet Slang,Lore,lor,Backstory — rhymes with 'more'
-Internet Slang,Canon,kan-on,Officially established — not 'kah-NON'
-Internet Slang,Headcanon,head-kan-on,Fan-invented lore — not 'hed-kah-NON'
 Internet Slang,Cringe compilation,krinj,Embarrassing content collection
-Internet Slang,Deepfake,deep-fake,AI-generated fake media
 Symbol/Function,startup_32,startup 32,Kernel entry for 32-bit boot path
 Symbol/Function,startup_64,startup 64,Kernel entry for 64-bit boot path
 Symbol/Function,x86_64_start_kernel,x86 64 start kernel,First C function in kernel boot
@@ -726,116 +429,17 @@ Symbol/Function,fork_init,fork init,Process forking infrastructure init
 Symbol/Function,signals_init,signals init,Signal handling init
 Symbol/Function,proc_root_init,proc root init,Initializes /proc filesystem root
 Symbol/Function,copy_from_user,copy from user,Safely copies data from userspace
-Legal,habeas corpus,hay-bee-us kor-pus,Latin: 'you shall have the body'
-Legal,pro bono,proh boh-noh,Free legal work 'for the public good'
-Legal,prima facie,pry-muh fay-shee,At first glance
-Legal,mens rea,menz ray-uh,Guilty mind
-Legal,actus reus,ak-tus ray-us,Guilty act
-Legal,ipso facto,ip-soh fak-toh,By the fact itself
-Legal,de facto,day fak-toh,In fact
-Legal,de jure,day joor-ay,By law
-Legal,ultra vires,ul-trah vy-reez,Beyond legal power
-Legal,subpoena,suh-pee-nuh,Court order to appear
-Legal,res judicata,rez joo-dih-kah-tah,A matter already judged
-Legal,stare decisis,star-ee deh-sy-sis,To stand by things decided
-Legal,in camera,in kam-er-ah,"In private, in chambers"
-Legal,ex parte,eks par-tay,From one side only
-Legal,per curiam,per kyoo-ree-um,By the court
-Legal,certiorari,ser-shee-oh-rah-ree,Order to review lower-court decision
-Legal,mandamus,man-day-mus,We command
-Legal,quasi,kway-zye,As if / resembling
-Legal,nolo contendere,noh-loh kon-ten-deh-ray,No contest plea
 Legal,pro se,proh say,"On one’s own behalf, self-represented"
-Legal,in loco parentis,in loh-koh pah-ren-tis,In the place of a parent
-Legal,sine qua non,see-nay kwah non,Essential condition
-Legal,ratio decidendi,ray-shee-oh deh-see-den-dee,Reason for the decision
-Legal,obiter dictum,oh-bih-ter dik-tum,By the way remark
 Legal,quid pro quo,kwid proh kwoh,This for that
-Legal,mutatis mutandis,myoo-tah-tis myoo-tan-dis,With necessary changes
-Legal,force majeure,fors mah-zher,"Superior force, act of God"
 Legal,voir dire,vwahr deer,Jury selection questioning
 Legal,tort,tort,Civil wrong
-Legal,plaintiff,plain-tiff,Brings the case
-Legal,defendant,deh-fen-dant,Person being sued
-Legal,appellant,uh-pel-unt,Party appealing
-Legal,appellee,ap-uh-lee,Party responding on appeal
-Legal,amicus curiae,uh-mee-kus kyoo-ree-eye,Friend of the court
-Legal,COPPA,cop-uh,Children's Online Privacy Protection Act
 Legal,PCI DSS,P C I D S S,Payment Card Industry Data Security Standard
 Legal,SOX,socks,Sarbanes-Oxley — pronounced 'socks'
-Legal,FISA,fy-zuh,Foreign Intelligence Surveillance Act
-Legal,FOIA,foy-uh,Freedom of Information Act
-Geographic,Worcester,wuss-ter,Massachusetts city — not 'WAR-chester'
-Geographic,Gloucester,gloss-ter,City name — not 'GLOU-ses-ter'
-Geographic,Leicester,less-ter,UK city — not 'LIE-ses-ter'
-Geographic,Edinburgh,ed-in-buh-rah,Scotland capital — final 'gh' silent
-Geographic,Houston,hyoo-ston,Texas city — note that Houston St. NYC is 'HOW-ston'
-Geographic,Houston Street,how-ston street,NYC street — not 'HYOO-ston'
-Geographic,New Orleans,new or-leens,Locals: 'new or-LINS' — choose one
-Geographic,Des Moines,deh-moin,Iowa — silent S
-Geographic,Boise,boy-zee,Idaho — not 'BOY-see'
-Geographic,Spokane,spoh-kan,Washington — not 'spoh-KANE'
-Geographic,Coeur d'Alene,ker-duh-lane,Idaho — French name
-Geographic,Puyallup,pyoo-al-up,Washington
 Geographic,Sequim,skwim,Washington
-Geographic,La Jolla,la hoy-ah,California — Spanish
-Geographic,San Jose,san ho-zay,Spanish J as H
-Geographic,Los Angeles,loss an-juh-liss,American English
-Geographic,Qatar,kuh-tar,Modern English; many variants
-Geographic,Iraq,ee-rock,Not 'eye-RACK'
-Geographic,Iran,ee-ron,Not 'eye-RAN'
-Geographic,Pakistan,pah-ki-stahn,Not 'PACK-ih-stan'
-Geographic,Afghanistan,af-gan-ih-stan,Stress second syllable
-Geographic,Sri Lanka,shree lank-ah,Not 'sree' or 'shry'
-Geographic,Mumbai,moom-bye,Not 'MUM-bay'
-Geographic,Hyderabad,hy-drah-bahd,Not 'HY-der-bad'
-Geographic,Beijing,bay-jing,Not 'BEE-zhing'
-Geographic,Shanghai,shang-hi,Not 'SHANG-hai'
-Geographic,Guangzhou,gwong-joe,Not 'Gwan-zow'
-Geographic,Xiamen,shya-mun,Mandarin
-Geographic,Xi'an,she-an,Chinese city
-Geographic,Chengdu,chung-doo,Not 'CHENG-doo'
-Geographic,Budapest,boo-dah-pesht,Hungary — 's' as 'sh'
-Geographic,Vienna,vee-en-ah,English form
-Geographic,Munich,myoo-nik,German 'München'
-Geographic,Cologne,kuh-lohn,German 'Köln'
-Geographic,Seville,seh-vill,English; Spanish: 'seh-BEE-ya'
-Geographic,Mallorca,mah-york-ah,Balearic island
-Geographic,Majorca,mah-york-ah,Anglicized spelling of Mallorca
-Geographic,Tijuana,tee-hwah-nah,Not 'TEE-ah-wah-na'
-Geographic,Yucatan,yoo-kah-tan,Peninsula
-Geographic,Québec,keh-beck,Province/city
-Geographic,Toronto,tuh-ron-oh,Locals drop second T
-Geographic,Calgary,kal-gree,Often not 'KAL-gary'
-Geographic,Regina,reh-jy-nah,Saskatchewan capital
-Geographic,Saskatoon,sas-kah-toon,Canada
-Geographic,Dublin,dub-lin,Ireland
-Geographic,Galway,gawl-way,Ireland
-Geographic,Limerick,lim-rick,Ireland
 Geographic,Thames,temz,River Thames
-Geographic,Greenwich,gren-itch,Not 'GREEN-wich'
-Geographic,Marylebone,mar-leh-bun,London area
-Geographic,Cockburn,coh-burn,Scottish surname/place
-Geographic,Norwich,nor-itch,Not 'NOR-witch'
-Geographic,Edinburghshire,ed-in-buh-rah-sher,Region
-Geographic,Ljubljana,lyoob-lyah-nah,Slovenia
-Geographic,Wrocław,vrots-wahf,Poland
 Geographic,Łódź,woodge,Poland
 Geographic,Gdańsk,gdansk,Poland — nasal n
-Geographic,São Paulo,sow pow-lo,Brazil
-Geographic,Rio de Janeiro,ree-oh deh zhah-nair-oh,Brazil
-Geographic,Buenos Aires,bway-nos eye-race,Argentina
-Geographic,Arkansas,ar-kan-saw,Not 'ar-KAN-sas'
-Geographic,Illinois,ill-ih-noy,Silent S
-Geographic,Connecticut,kuh-net-ih-kut,Silent second c
-Geographic,Missouri,mih-zur-ee,Variant 'mih-ZUR-uh'
-Geographic,Oregon,or-eh-gun,Not 'OR-eh-GAHN'
-Geographic,Nevada,neh-vad-ah,"US: 'neh-VAD-ah', not 'neh-VAH-dah'"
-Geographic,Florida,flor-ih-duh,Standard US
-Geographic,Appalachian,ap-uh-latch-un,US common — not 'ap-uh-LAY-shun'
-Business,signage,sy-nij,"Marketing term, not 'SIGN-ij'"
 Technology,cached,kasht,Past tense of cache
-Technology,caching,kash-ing,Process of caching
 Financial,401k,four oh one K,US retirement account
 Financial,$1.5k,one point five thousand dollars,Dollar amount shorthand
 Financial,1.5k,one point five thousand,Numeric shorthand k = thousand
