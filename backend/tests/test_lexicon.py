@@ -12,12 +12,23 @@ def test_migration_creates_table_and_imports_seed(env: Path) -> None:
     with database.connection(env) as conn:
         counts = lexicon.counts_by_origin(conn)
         assert counts.get("seed", 0) > 100  # the curated CSV is imported read-only
-        # February ships in the seed and must be a read-only seed row.
-        feb = lexicon.lookup(conn, "February")
-        assert feb is not None
-        assert feb.origin == "seed"
-        assert feb.read_only is True
-        assert feb.spoken == "feb-roo-air-ee"  # lowercased for Chatterbox
+        # A real-word swap ships in the seed and must be a read-only seed row.
+        sql = lexicon.lookup(conn, "SQL")
+        assert sql is not None
+        assert sql.origin == "seed"
+        assert sql.read_only is True
+        assert sql.spoken == "sequel"
+
+
+def test_migration_017_drops_phonetic_respellings(env: Path) -> None:
+    """Migration 017 re-imports the trimmed seed: a former hyphenated respelling is gone
+    while real-word swaps and acronym spell-outs survive."""
+
+    database.run_migrations(env)
+    with database.connection(env) as conn:
+        assert lexicon.lookup(conn, "Kubernetes") is None  # phonetic respelling removed
+        assert lexicon.lookup(conn, "SQL") is not None       # real-word swap kept
+        assert lexicon.lookup(conn, "LLM") is not None       # acronym spell-out kept
 
 
 def test_migration_imports_legacy_user_dict(env: Path) -> None:

@@ -14,10 +14,8 @@ _KNOWN_CATEGORIES = {
     "Mispronounced Word",
     "Homograph",
     "General Acronym",
-    "Consumer Brand",
     "Tech Brand",
     "Format",
-    "Medical/Scientific",
     "Symbol/Function",
     "File Path",
 }
@@ -52,9 +50,9 @@ def test_annotated_homograph_not_applicable() -> None:
     assert row.applicable is False
 
 
-def test_multiword_brand_is_applicable() -> None:
+def test_multiword_entry_is_applicable() -> None:
     entries = _by_input(seed_corrections.load_seed(seed_corrections.seed_path()))
-    row = entries["Louis Vuitton"]
+    row = entries["SOC 2"]  # multi-word real-word swap -> "sock two"
     assert row.applicable is True
 
 
@@ -77,7 +75,6 @@ def test_spelled_out_acronym_excluded_regardless_of_category() -> None:
 def test_pronounce_as_word_acronym_is_applicable() -> None:
     entries = _by_input(seed_corrections.load_seed(seed_corrections.seed_path()))
     assert entries["RAM"].applicable is True  # 'ram' is not a letter spell-out
-    assert entries["BIOS"].applicable is True  # 'BY-oss'
     assert entries["SQL"].applicable is True  # 'sequel'
 
 
@@ -109,8 +106,8 @@ def test_applicable_dict_excludes_non_applicable_rows() -> None:
     # Excluded: annotated homographs and spelled-out acronyms.
     assert "read (present)" not in applied
     assert "API" not in applied
-    # Included: a brand phrase and a pronounce-as-word acronym.
-    assert applied["Louis Vuitton"] == "loo-ee vwee-tohn"  # lowercased for Chatterbox
+    # Included: a multi-word swap and a pronounce-as-word acronym.
+    assert applied["SOC 2"] == "sock two"
     assert applied["SQL"] == "sequel"
     # Every applicable entry is present and nothing else.
     expected = {e.input_text for e in entries if e.applicable}
@@ -199,20 +196,6 @@ def test_load_seed_row_failing_validation_is_not_applicable(tmp_path: Path) -> N
 
 
 # --- Chatterbox respelling re-tune (lowercase) + merged manual corrections ---
-
-
-def test_seed_respellings_lowercased_for_chatterbox() -> None:
-    """Chatterbox reads ALL-CAPS stress syllables as letters-to-spell, so the
-    bundled respellings are lowercased. Spelled-out letter rows (A P I) keep
-    their single capitals and stay non-applicable."""
-
-    applied = seed_corrections.load_applicable_dict()
-    assert applied["Linux"] == "lin-uks"
-    assert applied["Kubernetes"] == "koo-ber-neh-tees"
-    assert applied["BIOS"] == "by-oss"
-    assert applied["CUDA"] == "koo-duh"  # also a content fix: was "KYOO-dah"
-    # Letter-spelling rows are untouched and stay excluded from the det. pass.
-    assert "API" not in applied
 
 
 def test_seed_includes_merged_manual_corrections() -> None:

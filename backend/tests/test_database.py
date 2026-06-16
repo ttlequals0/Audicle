@@ -27,6 +27,7 @@ def test_run_migrations_creates_tables(tmp_path: Path) -> None:
         "014_job_columns",
         "015_upload_max_mb",
         "016_episode_voice_label",
+        "017_reimport_seed_lexicon",
     ]
 
     conn = database.connect(database.db_path(tmp_path))
@@ -59,6 +60,7 @@ def test_second_run_is_a_noop(tmp_path: Path) -> None:
         "014_job_columns",
         "015_upload_max_mb",
         "016_episode_voice_label",
+        "017_reimport_seed_lexicon",
     ]
     assert second == []
 
@@ -71,9 +73,11 @@ def test_no_backup_on_fresh_init_or_noop(tmp_path: Path) -> None:
 
 def test_m016_backfills_voice_label(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Apply through 015, seed episodes + jobs, then let 016 backfill: a recorded
-    # slot -> "Slot N", a NULL voice_id or a missing job -> "Default".
+    # slot -> "Slot N", a NULL voice_id or a missing job -> "Default". Slice off the
+    # last two migrations (016 voice_label + 017 seed re-import) so 016 runs against
+    # the seeded rows.
     full = database.MIGRATIONS
-    monkeypatch.setattr(database, "MIGRATIONS", full[:-1])
+    monkeypatch.setattr(database, "MIGRATIONS", full[:-2])
     database.run_migrations(tmp_path)
     conn = database.connect(database.db_path(tmp_path))
     try:
