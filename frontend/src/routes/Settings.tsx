@@ -38,6 +38,12 @@ const GROUPS: Record<string, string[]> = {
     "FEED_ARTWORK_URL",
   ],
   Connections: ["FIRECRAWL_URL", "FIRECRAWL_API_KEY", "TTS_URL", "FLARESOLVERR_URL"],
+  Extraction: [
+    "EXTRACTION_ENGINE",
+    "EXTRACTION_DIRECT_TIMEOUT_SECONDS",
+    "EXTRACTION_ARC_ENABLED",
+    "ARCHIVE_FALLBACK_ENABLED",
+  ],
   Webhooks: ["WEBHOOK_URL"],
   TTS: ["TTS_CHUNK_TARGET_WORDS", "TTS_CHUNK_MAX_WORDS", "TTS_CHUNK_SILENCE_MS"],
   Verification: [
@@ -61,6 +67,9 @@ const MASKED_KEYS = new Set([
   "FIRECRAWL_API_KEY",
 ]);
 const PROVIDER_OPTIONS = ["openai-compatible", "anthropic", "openrouter", "ollama"];
+// Keep in sync with the EXTRACTION_ENGINE Literal in backend/app/config.py. The
+// backend rejects any other value on PUT, so this list only drives the dropdown.
+const EXTRACTION_ENGINE_OPTIONS = ["direct", "firecrawl"];
 
 // Which provider-specific keys are relevant per provider. Keys not listed for
 // the selected provider are hidden (openrouter's base URL is fixed server-side;
@@ -295,7 +304,7 @@ export default function SettingsRoute() {
                   <label className={`label ${isBool ? "mb-0" : ""}`} htmlFor={key}>
                     {key}
                   </label>
-                  {key === "LLM_PROVIDER" ? (
+                  {key === "LLM_PROVIDER" || key === "EXTRACTION_ENGINE" ? (
                     <select
                       id={key}
                       className="field"
@@ -304,7 +313,10 @@ export default function SettingsRoute() {
                         setDraft((p) => ({ ...p, [key]: e.target.value }))
                       }
                     >
-                      {PROVIDER_OPTIONS.map((opt) => (
+                      {(key === "EXTRACTION_ENGINE"
+                        ? EXTRACTION_ENGINE_OPTIONS
+                        : PROVIDER_OPTIONS
+                      ).map((opt) => (
                         <option key={opt} value={opt}>
                           {opt}
                         </option>

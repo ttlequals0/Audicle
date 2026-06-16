@@ -228,3 +228,40 @@ def test_feed_save_without_slug_change_does_not_rotate(env: Path) -> None:
         client.put("/api/v1/settings", json={"LLM_MODEL": "m9"})
     g2, e2 = _guids(env)
     assert (g1, e1) == (g2, e2)
+
+
+def test_put_accepts_valid_extraction_engine(env: Path) -> None:
+    with _client(env) as client:
+        resp = client.put("/api/v1/settings", json={"EXTRACTION_ENGINE": "firecrawl"})
+        assert resp.status_code == 200
+        assert client.get("/api/v1/settings").json()["values"]["EXTRACTION_ENGINE"] == "firecrawl"
+
+
+def test_put_rejects_invalid_extraction_engine(env: Path) -> None:
+    with _client(env) as client:
+        resp = client.put("/api/v1/settings", json={"EXTRACTION_ENGINE": "bogus"})
+        assert resp.status_code == 400
+        assert "EXTRACTION_ENGINE" in resp.json()["error"]
+        # Rejected, not stored.
+        assert "EXTRACTION_ENGINE" not in client.get("/api/v1/settings").json()["values"]
+
+
+def test_put_rejects_non_numeric_int_setting(env: Path) -> None:
+    with _client(env) as client:
+        resp = client.put(
+            "/api/v1/settings", json={"EXTRACTION_DIRECT_TIMEOUT_SECONDS": "abc"}
+        )
+        assert resp.status_code == 400
+
+
+def test_put_invalid_value_does_not_partially_apply(env: Path) -> None:
+    """A bad value anywhere in the payload rejects the whole save, so a valid sibling
+    key in the same request is not stored."""
+
+    with _client(env) as client:
+        resp = client.put(
+            "/api/v1/settings",
+            json={"FEED_AUTHOR": "Drew", "EXTRACTION_ENGINE": "bogus"},
+        )
+        assert resp.status_code == 400
+        assert client.get("/api/v1/settings").json()["values"] == {}

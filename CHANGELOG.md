@@ -6,6 +6,24 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.33.1] - 2026-06-16
+
+### Added
+
+- The extraction engine is now a first-class setting in the UI and API. Settings has an
+  "Extraction" section with an `EXTRACTION_ENGINE` dropdown (`direct` / `firecrawl`), the
+  direct-fetch timeout, and the Arc/archive fallback toggles (the latter two were
+  allowlisted but previously had no control).
+
+### Fixed
+
+- `PUT /api/v1/settings` now validates each value against its `Settings` field before
+  storing: an enum field (e.g. `EXTRACTION_ENGINE`) must be one of its allowed members and
+  numeric fields must be coercible, returning `400` otherwise. Previously an invalid value
+  was stored and only surfaced as a crash or silent mis-route when the overlay was read.
+  Validation runs across the whole payload before anything is applied, so one bad value no
+  longer partially saves a multi-key request.
+
 ## [0.33.0] - 2026-06-16
 
 ### Added
