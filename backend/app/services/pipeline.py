@@ -670,10 +670,8 @@ _LETTER_PLURAL = {
 
 # An all-caps acronym: 2+ uppercase letters, optional trailing digits, optional
 # lowercase plural "s". Bounded by non-alphanumerics AND non-hyphen so it never
-# fires inside a word, an already-spaced single letter, or a hyphenated
-# pseudo-phonetic respelling syllable ("FEB-roo-air-ee", "AW-gust") -- those
-# uppercase stress syllables are always hyphen-adjacent. Mixed-case tokens
-# (OAuth, IPv6) don't match -- left to the lexicon.
+# fires inside a word, an already-spaced single letter, or a hyphenated token.
+# Mixed-case tokens (OAuth, IPv6) don't match -- left to the lexicon.
 _ACRONYM_RE = re.compile(r"(?<![A-Za-z0-9-])([A-Z]{2,}[0-9]*)(s)?(?![A-Za-z0-9-])")
 
 
@@ -1311,13 +1309,11 @@ async def _apply_corrections(text: str, settings: Settings) -> str:
     normalized = _normalize_for_tts(text)
     with database.connection(settings.DATA_DIR) as conn:
         cs_pairs, ci_pairs = lexicon.apply_pairs_by_case(conn)
-        # Spell unknown all-caps acronyms BEFORE the dictionary so it runs on
-        # source text only -- never on the injected respellings, whose uppercase
-        # stress syllables ("vwee-TOHN", "FEB-roo-air-ee") would otherwise be
-        # letter-spelled. Word-mode (NASA) and override (fixed-respelling) keys are
-        # kept so the dictionary handles them; spell-mode all-caps keys (LLM) are NOT
-        # kept, so this speller spells them and their plurals ("LLMs" -> "L L ems")
-        # -- corrections.apply cannot match a plural past the trailing "s".
+        # Spell unknown all-caps acronyms BEFORE the dictionary. Word-mode (NASA) and
+        # override (fixed-form, e.g. SQL -> sequel) keys are kept so the dictionary
+        # handles them; spell-mode all-caps keys (LLM) are NOT kept, so this speller
+        # spells them and their plurals ("LLMs" -> "L L ems") -- corrections.apply
+        # cannot match a plural past the trailing "s".
         keep = _ACRONYM_KEEP | lexicon.non_spell_keep_set(conn)
         spelled = _normalize_acronyms(normalized, keep=keep)
         # Explicit pronunciations next (so "ttyS0" -> "T T Y S 0" wins): exact-case
