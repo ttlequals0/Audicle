@@ -36,6 +36,12 @@ work lives under `[Unreleased]`.
 - FlareSolverr error logging no longer crashes on a non-ok solver response (it used the
   reserved `message` key in the structured-log `extra`).
 
+### Docs
+
+- README now documents the pronunciation corrections table, including that the optional
+  IPA field is auto-derived, only feeds the PLS export, and never affects narration (so a
+  gibberish or stale IPA value is expected, not a bug).
+
 ## [0.32.1] - 2026-06-15
 
 ### Added

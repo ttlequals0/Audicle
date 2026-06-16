@@ -155,6 +155,15 @@ Recommended clip: mono, 24 kHz, 8-12 seconds, around 250 kB to 1 MB. The hard li
 
 The output quality is mostly set by the clip quality. Cleaning up the source -- noise reduction, leveling -- helps more than any TTS knob.
 
+## Pronunciation corrections
+
+Settings has a corrections table for words the narrator mispronounces. Each row is a match term, the spoken form to say instead, a mode, an optional IPA field, and an "Aa" case toggle. A curated seed set ships built in (`GET /api/v1/corrections/seed`); your rows override it.
+
+- spoken is what drives narration -- write it the way you want it read ("four oh four media", "clawed").
+- mode is override (say the spoken form), word (read an acronym as a word), or spell (read it letter by letter).
+- Aa makes the match case-sensitive; off (the default) folds case, so a "404 media" row also catches "404 Media".
+- ipa is optional and only feeds the PLS lexicon export -- it does NOT affect narration. Audicle auto-derives it from the spoken form, so it can look like an unreadable string of phonetic symbols, and it can go stale if you edit the spoken text later. That is expected; clear it or ignore it unless you use the PLS export.
+
 ## Webhooks
 
 Audicle can POST a JSON payload to a URL of yours every time an episode finishes
