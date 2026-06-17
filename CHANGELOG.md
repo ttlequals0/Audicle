@@ -6,6 +6,33 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-06-17
+
+### Changed
+
+- Acronyms are no longer letter-spelled. Chatterbox is a BPE/character model with no
+  grapheme-to-phoneme step and no acronym rule, so it pronounces common acronyms (CEO, GPU,
+  API, LLM) natively; the old auto-speller forced "C E O" with spaces, which the model read as
+  three separate letters and voiced choppily. The deterministic acronym speller and the 148
+  letter-spaced spell-out rows in the seed list were removed (an XTTS-2-era carryover). Real-word
+  swaps (`SQL` -> sequel), expansions (`OMG` -> oh my god), the dotted-acronym fix (`U.S.` ->
+  `U S`), and the user dictionary are unchanged; the dictionary is the escape hatch for any
+  acronym Chatterbox mispronounces. Migration 019 re-imports the trimmed seed into existing
+  databases.
+- TTS narration splits more naturally, removing mid-sentence pauses. The wrapper used to cut any
+  sentence over 200 characters at the nearest space -- mid-word -- and insert a short silence
+  there. It now collapses stray whitespace (newlines read as pauses in Chatterbox), splits an
+  oversize sentence at a clause boundary (comma, semicolon, colon, dash) so the gap lands on a
+  natural pause, and raises the per-piece cap to 300 characters so most whole sentences stay
+  intact. `TTS_MAX_CHARS` remains tunable.
+
+### Fixed
+
+- A `403`/`429` from the article host (an IP or WAF block, e.g. inc.com) no longer dead-ends the
+  job. The extraction orchestrator now treats it as a block and runs the existing bypass cascade
+  (FlareSolverr from a different IP, then a Wayback capture) instead of failing immediately; if no
+  bypass succeeds the job fails with the cascade's actionable message rather than a raw "got 403".
+
 ## [0.35.0] - 2026-06-16
 
 ### Changed
