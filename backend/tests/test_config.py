@@ -87,3 +87,29 @@ def test_explicit_upload_max_mb_wins_over_legacy(env: Path, monkeypatch: pytest.
     monkeypatch.setenv("UPLOAD_MAX_MB", "30")
     get_settings.cache_clear()
     assert get_settings().UPLOAD_MAX_MB == 30
+
+
+def test_extraction_engine_defaults_to_direct(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("EXTRACTION_ENGINE", raising=False)
+    get_settings.cache_clear()
+    assert get_settings().EXTRACTION_ENGINE == "direct"
+
+
+def test_extraction_engine_rejects_invalid_value(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from pydantic import ValidationError
+
+    monkeypatch.setenv("EXTRACTION_ENGINE", "bogus")
+    get_settings.cache_clear()
+    with pytest.raises(ValidationError):
+        get_settings()
+
+
+def test_firecrawl_configured_treats_compose_default_as_unset(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FIRECRAWL_URL", "http://firecrawl:3002")
+    get_settings.cache_clear()
+    assert get_settings().firecrawl_configured is False
+    monkeypatch.setenv("FIRECRAWL_URL", "https://api.firecrawl.dev")
+    get_settings.cache_clear()
+    assert get_settings().firecrawl_configured is True

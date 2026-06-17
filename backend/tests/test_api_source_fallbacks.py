@@ -152,13 +152,24 @@ def test_put_rejects_custom_without_placeholder_400(client: TestClient) -> None:
 def test_test_endpoint_reports_chars_without_leaking_cookies(
     client: TestClient, env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Stub Firecrawl so the test endpoint's extract() returns a full article with no
-    # network call; the response must report chars/strategy but never the cookie value.
+    # The default direct engine fetches the article in-process; stub SSRF resolution and
+    # return a full HTML article so extraction clears the rule's floor with no real
+    # network. The response must report chars/strategy but never the cookie value.
+    from app.services import ssrf
+
+    async def _resolve(_host: str) -> str:
+        return "203.0.113.7"
+
+    monkeypatch.setattr(ssrf, "resolve_public_host", _resolve)
+    article = "".join(
+        f"<p>Paragraph {i} of the real article body, with enough words for trafilatura "
+        f"to keep it as genuine content rather than navigation chrome.</p>"
+        for i in range(60)
+    )
+    html = f"<html><head><title>T</title></head><body><article>{article}</article></body></html>"
+
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={"success": True, "data": {"markdown": "word " * 800, "metadata": {"title": "T"}}},
-        )
+        return httpx.Response(200, text=html)
 
     original = httpx.AsyncClient
     transport = httpx.MockTransport(handler)

@@ -691,17 +691,15 @@ async def test_pipeline_audio_stage_cleans_up_intermediate_wavs(
 # --- corrections stage: seed + user merge ----------------------------------
 
 
-def test_corrections_applies_seed_brand_phrase(
+def test_corrections_applies_kept_seed_swap(
     env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An applicable seed row (a brand phrase) is corrected even with no user
+    """An applicable seed row (a real-word swap) is corrected even with no user
     dictionary present."""
 
     database.run_migrations(env)  # no user dict stored -> empty user corrections
-    out = asyncio.run(
-        pipeline._apply_corrections("I bought a Louis Vuitton bag.", get_settings())
-    )
-    assert "loo-ee vwee-tohn" in out
+    out = asyncio.run(pipeline._apply_corrections("a SQL query runs", get_settings()))
+    assert "sequel" in out
 
 
 def test_corrections_user_override_beats_seed(
@@ -761,6 +759,73 @@ def test_base_lexicon_confidence_gate(env: Path) -> None:
     assert "kuh-TAR-ee" in out  # high-confidence base row applied
 
 
+def test_corrections_spells_plural_of_spelled_acronym(env: Path) -> None:
+    """The seed 'LLM' key no longer shields its plural: 'LLMs' is spelled with the
+    plural letter-name instead of passing through as a word ('lm')."""
+
+    database.run_migrations(env)
+    out = asyncio.run(
+        pipeline._apply_corrections("We use LLMs and many GPUs daily.", get_settings())
+    )
+    # GPUs is the clean case (no per-letter seed remap): plural letter-name "yoos".
+    assert "G P yoos" in out
+    # LLMs no longer survives as a word; it is spelled with the plural "ems".
+    assert "LLMs" not in out
+    assert "ems" in out
+    # Singular acronym is still spelled, not left raw.
+    single = asyncio.run(pipeline._apply_corrections("train an LLM now", get_settings()))
+    assert "LLM" not in single
+
+
+def test_corrections_word_mode_acronym_reads_as_word(env: Path) -> None:
+    """A word-mode acronym (SQL -> sequel) stays for the dictionary and is NOT
+    letter-spelled by the acronym speller."""
+
+    from app.services import lexicon
+
+    database.run_migrations(env)
+    with database.connection(env) as conn:
+        lexicon.replace_user_entries(
+            conn, {"SQL": {"mode": "word", "spoken": "sequel", "case_sensitive": True}}
+        )
+    out = asyncio.run(pipeline._apply_corrections("a SQL query runs", get_settings()))
+    assert "sequel" in out
+    assert "S Q L" not in out
+
+
+def test_corrections_case_insensitive_user_override(env: Path) -> None:
+    """A case-insensitive override entry keyed '404 media' hits '404 Media' in the
+    article (the actual bug: corrections.apply was always case-sensitive)."""
+
+    from app.services import lexicon
+
+    database.run_migrations(env)
+    with database.connection(env) as conn:
+        lexicon.replace_user_entries(
+            conn,
+            {
+                "404 media": {
+                    "mode": "override",
+                    "spoken": "four oh four media",
+                    "case_sensitive": False,
+                }
+            },
+        )
+    out = asyncio.run(pipeline._apply_corrections("404 Media reported it.", get_settings()))
+    assert "four oh four media" in out
+    assert "404 Media" not in out
+
+
+def test_corrections_leaves_former_respell_word_plain(env: Path) -> None:
+    """The pseudo-phonetic respellings were removed, so a word that used to be respelled
+    is now left plain for Chatterbox's native pronunciation."""
+
+    database.run_migrations(env)
+    out = asyncio.run(pipeline._apply_corrections("We run Kubernetes in prod.", get_settings()))
+    assert "Kubernetes" in out
+    assert "koo-ber-neh-tees" not in out
+
+
 # --- normalize stage: LLM pronunciation pass + deterministic backstop -------
 
 
@@ -786,10 +851,10 @@ async def test_normalize_runs_llm_pass_then_deterministic_backstop(
     monkeypatch.setattr(pipeline, "_llm_with_retry", _echo_window(seen))
     job = _seed_job(env)
     out = await pipeline._stage_normalize(
-        job, "I shopped for a Louis Vuitton bag today.", get_settings()
+        job, "I ran a SQL query today.", get_settings()
     )
     assert seen.get("called")  # the LLM pass ran
-    assert "loo-ee vwee-tohn" in out  # backstop applied the seed correction
+    assert "sequel" in out  # backstop applied the seed correction
 
 
 async def test_normalize_llm_short_output_falls_back_to_input(
@@ -990,10 +1055,76 @@ def test_normalize_date_months_only_in_date_context() -> None:
     assert pipeline._normalize_date_months("Janet 5 ate") == "Janet 5 ate"
 
 
+def test_normalize_us_states_city_comma() -> None:
+    assert pipeline._normalize_us_states("Chicago, IL") == "Chicago, Illinois"
+    # Trailing sentence punctuation is preserved, not consumed.
+    assert pipeline._normalize_us_states("Springfield, IL.") == "Springfield, Illinois."
+    assert (
+        pipeline._normalize_us_states("a stop in Austin, TX, then home")
+        == "a stop in Austin, Texas, then home"
+    )
+    assert pipeline._normalize_us_states("Denver, CO is high") == "Denver, Colorado is high"
+
+
+def test_normalize_us_states_zip_context() -> None:
+    # A safe code before a ZIP is already handled by the city-comma form.
+    assert pipeline._normalize_us_states("Chicago, IL 60601") == "Chicago, Illinois 60601"
+    # Ambiguous codes (OK/OR/PA/MA/...) expand only inside a comma-anchored ZIP address.
+    assert pipeline._normalize_us_states("Tulsa, OK 74103") == "Tulsa, Oklahoma 74103"
+    assert pipeline._normalize_us_states("Portland, OR 97201") == "Portland, Oregon 97201"
+    assert pipeline._normalize_us_states("Pittsburgh, PA 15201") == "Pittsburgh, Pennsylvania 15201"
+
+
+def test_normalize_us_states_leaves_words_alone() -> None:
+    assert pipeline._normalize_us_states("that's OK with me") == "that's OK with me"
+    assert pipeline._normalize_us_states("Well, OK.") == "Well, OK."  # ambiguous, no ZIP
+    assert pipeline._normalize_us_states("you can fly, OR drive") == "you can fly, OR drive"
+    assert pipeline._normalize_us_states("the group, PA system") == "the group, PA system"
+    assert pipeline._normalize_us_states("filed, MA in economics") == "filed, MA in economics"
+    assert pipeline._normalize_us_states("cats or dogs") == "cats or dogs"  # lowercase
+    assert pipeline._normalize_us_states("Acme Co. shipped") == "Acme Co. shipped"
+    assert pipeline._normalize_us_states("your photo, ID required") == "your photo, ID required"
+    # A bare code before a 5-digit quantity (no comma anchor) is left alone.
+    assert pipeline._normalize_us_states("grew IN 50000 homes") == "grew IN 50000 homes"
+
+
 def test_normalize_for_tts_strips_headings_and_expands_dates() -> None:
-    # "Jan" expands to the full month, then the month normalizer respells it.
+    # "Jan" expands to the full month name (no longer respelled phonetically).
     out = pipeline._normalize_for_tts("### News\nShipped Jan 15 2026.")
-    assert out == "News\nShipped jan-yoo-air-ee 15 2026."
+    assert out == "News\nShipped January 15 2026."
+
+
+def test_normalize_for_tts_expands_state_in_context() -> None:
+    assert pipeline._normalize_for_tts("Based in Chicago, IL.") == "Based in Chicago, Illinois."
+
+
+def test_fire_webhook_includes_resolved_voice(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services import episodes, webhooks
+
+    database.run_migrations(env)
+    monkeypatch.setenv("WEBHOOK_URL", "https://hook.test/x")
+    get_settings.cache_clear()
+    captured: dict = {}
+    monkeypatch.setattr(webhooks, "fire", lambda _s, payload: captured.update(payload))
+    with database.connection(env) as conn:
+        res = jobs.create_job(conn, "https://example.test/a", voice_id="3")
+        episodes.upsert(
+            conn,
+            id=res.job.episode_id,
+            job_id=res.job.id,
+            original_url="https://example.test/a",
+            title="A",
+            author="x",
+            audio_path=None,
+            artwork_path=None,
+            transcript_vtt=None,
+            duration_secs=10,
+            voice_label="Morgan",
+        )
+        conn.commit()
+    pipeline._fire_webhook("episode.processed", res.job.id, get_settings())
+    assert captured["voice"] == "Morgan"
+    assert captured["title"] == "A"
 
 
 def test_normalize_numbers_spells_grouped_and_decimal() -> None:
@@ -1044,16 +1175,6 @@ def test_normalize_dotted_acronyms() -> None:
     # Lowercase latin abbreviations and decimals/versions are left untouched.
     assert pipeline._normalize_dotted_acronyms("e.g. this, i.e. that") == "e.g. this, i.e. that"
     assert pipeline._normalize_dotted_acronyms("v1.2 and pi 3.14") == "v1.2 and pi 3.14"
-
-
-def test_normalize_months_respells_capitalized_only() -> None:
-    assert pipeline._normalize_months("Posted February 3") == "Posted feb-roo-air-ee 3"
-    assert pipeline._normalize_months("in January 2026") == "in jan-yoo-air-ee 2026"
-    assert pipeline._normalize_months("by October") == "by ock-toh-ber"
-    # Lowercase homographs (adjective/verb/modal) are NOT touched.
-    assert pipeline._normalize_months("an august institution") == "an august institution"
-    assert pipeline._normalize_months("they may go") == "they may go"
-    assert pipeline._normalize_months("soldiers march on") == "soldiers march on"
 
 
 def test_normalize_acronyms_spells_unknown_allcaps() -> None:
@@ -1197,14 +1318,14 @@ def test_normalize_identifiers_leaves_prose_and_files_alone() -> None:
 def test_corrections_voices_february_after_date_normalization(
     env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Cleanup normalizes 'Feb 3' -> 'February 3', then the month normalizer
-    respells every month phonetically (January and February here)."""
+    """Cleanup normalizes 'Feb 3' -> 'February 3'; month names are no longer respelled,
+    so they reach the engine as plain full month names."""
 
     database.run_migrations(env)  # no user dict stored
     normalized = pipeline._normalize_for_tts("Posted Jan 15 2026 and Feb 3 2025.")
     out = asyncio.run(pipeline._apply_corrections(normalized, get_settings()))
-    assert "jan-yoo-air-ee 15 2026" in out
-    assert "feb-roo-air-ee 3 2025" in out
+    assert "January 15 2026" in out
+    assert "February 3 2025" in out
 
 
 # --- audio-QA: per-chunk regeneration on bad audio -------------------------

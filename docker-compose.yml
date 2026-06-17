@@ -22,15 +22,15 @@ services:
       # table). The prompts/ and corrections/ mounts are now vestigial: kept only
       # so the 011 migration can import a pre-0.12.0 on-disk pronunciation.json on
       # first boot. They can be dropped once every deployment is post-import.
-      # The reference voice (voice.wav) is a real media file shared with the
-      # wrapper, so it stays a bind mount.
+      # The reference voices (voices/slot{n}.wav) are real media files shared with
+      # the wrapper, so the reference dir stays a bind mount.
       - ./backend/app/prompts:/app/app/prompts
       - ./backend/app/corrections:/app/app/corrections
       - ./backend/app/reference:/app/app/reference
     depends_on:
       # service_started, not service_healthy: the app boots and configures TTS
       # at runtime (voice upload via the UI). Gating on wrapper readiness would
-      # deadlock -- the wrapper is 503 until a reference voice is committed.
+      # deadlock -- the wrapper is 503 until a voice slot is uploaded.
       tts-wrapper:
         condition: service_started
     healthcheck:
@@ -58,6 +58,9 @@ services:
       - TTS_DEVICE=${TTS_DEVICE:-cuda}
       - TTS_LANGUAGE=${TTS_LANGUAGE:-en}
       - DATA_DIR=/data
+      # Anchor for the slots dir: the wrapper conditions on voices/slot{n}.wav next
+      # to this path (its lowest filled slot at boot). The voice.wav file itself is
+      # no longer required (slots-only since 0.35.0).
       - TTS_REFERENCE_PATH=/app/reference/voice.wav
       # Chatterbox generate knobs; defaults are a neutral straight read.
       # TEMPERATURE 0.5 (down from 0.8) trims sampling variance; SEED makes a
@@ -79,9 +82,9 @@ services:
       - WHISPER_MODEL=${WHISPER_MODEL:-base}
     volumes:
       - ./data:/data
-      # Reference voice: read-only here; the app writes voice.wav (host edit or
-      # UI upload) and the wrapper reloads it. No voice yet just means /generate
-      # is unavailable until one is committed.
+      # Reference voices: read-only here; the app writes voices/slot{n}.wav (host
+      # edit or UI upload) and the wrapper selects/reloads them. No slot yet just
+      # means /generate is unavailable until one is uploaded.
       - ./backend/app/reference:/app/reference:ro
       # Multi-GB model weights download on first run (Chatterbox from HuggingFace,
       # and the faster-whisper model when WHISPER_ENABLED=true). HF_HOME/TTS_HOME

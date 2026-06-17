@@ -75,6 +75,15 @@ def test_flaresolverr_url_is_runtime_tunable(env: Path) -> None:
     assert overlaid.FLARESOLVERR_URL == "http://my-solver:8191/v1"
 
 
+def test_extraction_engine_is_runtime_tunable(env: Path) -> None:
+    assert "EXTRACTION_ENGINE" in runtime_settings.ALLOWED_KEYS
+    database.run_migrations(env)
+    with database.connection(env) as conn:
+        runtime_settings.set_value(conn, "EXTRACTION_ENGINE", "firecrawl")
+    overlaid = runtime_settings.overlay(get_settings())
+    assert overlaid.EXTRACTION_ENGINE == "firecrawl"
+
+
 def test_whisper_verify_settings_are_runtime_tunable(env: Path) -> None:
     """The ASR-verify policy can be toggled/tuned live via the Settings API,
     so an operator never has to redeploy to turn the gate on or adjust it."""

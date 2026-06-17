@@ -12,12 +12,23 @@ def test_migration_creates_table_and_imports_seed(env: Path) -> None:
     with database.connection(env) as conn:
         counts = lexicon.counts_by_origin(conn)
         assert counts.get("seed", 0) > 100  # the curated CSV is imported read-only
-        # February ships in the seed and must be a read-only seed row.
-        feb = lexicon.lookup(conn, "February")
-        assert feb is not None
-        assert feb.origin == "seed"
-        assert feb.read_only is True
-        assert feb.spoken == "feb-roo-air-ee"  # lowercased for Chatterbox
+        # A real-word swap ships in the seed and must be a read-only seed row.
+        sql = lexicon.lookup(conn, "SQL")
+        assert sql is not None
+        assert sql.origin == "seed"
+        assert sql.read_only is True
+        assert sql.spoken == "sequel"
+
+
+def test_migration_017_drops_phonetic_respellings(env: Path) -> None:
+    """Migration 017 re-imports the trimmed seed: a former hyphenated respelling is gone
+    while real-word swaps and acronym spell-outs survive."""
+
+    database.run_migrations(env)
+    with database.connection(env) as conn:
+        assert lexicon.lookup(conn, "Kubernetes") is None  # phonetic respelling removed
+        assert lexicon.lookup(conn, "SQL") is not None       # real-word swap kept
+        assert lexicon.lookup(conn, "LLM") is not None       # acronym spell-out kept
 
 
 def test_migration_imports_legacy_user_dict(env: Path) -> None:
@@ -113,3 +124,42 @@ def test_word_keep_set_includes_word_mode_rows(env: Path) -> None:
         lexicon.import_readonly(conn, "base", {"NASA": {"mode": "word", "spoken": "NASA"}})
         conn.commit()
         assert "NASA" in lexicon.word_keep_set(conn)
+
+
+def test_non_spell_keep_set_excludes_spell_mode(env: Path) -> None:
+    # The acronym speller must keep word/override rows but NOT spell-mode rows, so
+    # it can spell "LLM"/"LLMs" itself instead of passing the plural through.
+    database.run_migrations(env)
+    with database.connection(env) as conn:
+        lexicon.import_readonly(
+            conn,
+            "base",
+            {
+                "LLM": {"mode": "spell", "spoken": "L L M"},
+                "NASA": {"mode": "word", "spoken": "NASA"},
+                "Kubernetes": {"mode": "override", "spoken": "koo-ber-neh-tees"},
+            },
+        )
+        conn.commit()
+        keep = lexicon.non_spell_keep_set(conn)
+        assert "NASA" in keep
+        assert "Kubernetes" in keep
+        assert "LLM" not in keep
+
+
+def test_apply_pairs_by_case_splits_on_flag(env: Path) -> None:
+    database.run_migrations(env)
+    with database.connection(env) as conn:
+        lexicon.replace_user_entries(
+            conn,
+            {
+                "404 media": {"mode": "override", "spoken": "four oh four media",
+                              "case_sensitive": False},
+                "US": {"mode": "spell", "spoken": "U S", "case_sensitive": True},
+            },
+        )
+        cs, ci = lexicon.apply_pairs_by_case(conn)
+        assert cs["US"] == "U S"
+        assert "404 media" not in cs
+        assert ci["404 media"] == "four oh four media"
+        assert "US" not in ci

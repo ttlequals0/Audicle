@@ -232,10 +232,19 @@ def _fire_webhook(event: str, job_id: str, settings: Settings) -> None:
         try:
             job = jobs.get_job(conn, job_id)
             episode = episodes.get_by_id(conn, job.episode_id) if job else None
+            voice_label = None
+            if job is not None:
+                # Prefer the episode's voice snapshot; on failure (no episode)
+                # resolve the voice the job would have used from its slot.
+                voice_label = (
+                    episode.voice_label if episode and episode.voice_label else None
+                ) or voices.label_for(conn, job.voice_id)
         finally:
             conn.close()
         if job is not None:
-            webhooks.fire(settings, webhooks.build_payload(event, job, episode))
+            webhooks.fire(
+                settings, webhooks.build_payload(event, job, episode, voice_label=voice_label)
+            )
     except Exception:
         logger.warning(
             "Failed to build episode webhook",
@@ -661,10 +670,8 @@ _LETTER_PLURAL = {
 
 # An all-caps acronym: 2+ uppercase letters, optional trailing digits, optional
 # lowercase plural "s". Bounded by non-alphanumerics AND non-hyphen so it never
-# fires inside a word, an already-spaced single letter, or a hyphenated
-# pseudo-phonetic respelling syllable ("FEB-roo-air-ee", "AW-gust") -- those
-# uppercase stress syllables are always hyphen-adjacent. Mixed-case tokens
-# (OAuth, IPv6) don't match -- left to the lexicon.
+# fires inside a word, an already-spaced single letter, or a hyphenated token.
+# Mixed-case tokens (OAuth, IPv6) don't match -- left to the lexicon.
 _ACRONYM_RE = re.compile(r"(?<![A-Za-z0-9-])([A-Z]{2,}[0-9]*)(s)?(?![A-Za-z0-9-])")
 
 
@@ -686,10 +693,10 @@ def _normalize_dotted_acronyms(text: str) -> str:
 def _normalize_acronyms(text: str, keep: frozenset[str] | set[str] = _ACRONYM_KEEP) -> str:
     """Spell unknown all-caps acronyms letter by letter (digits as words).
 
-    Runs after the corrections dictionary so known spoken forms (SQL -> sequel)
-    win first; this catches the leftovers -- tickers (CRWV), unfamiliar acronyms,
-    and plurals of spelled acronyms (GPUs -> "G P yoos"). ``keep`` lists tokens
-    read as words (NASA) that must not be spelled.
+    Runs before the corrections dictionary, but word/override keys (SQL -> sequel,
+    NASA) sit in ``keep`` so the dictionary still wins on those -- this only spells
+    the leftovers: tickers (CRWV), unfamiliar acronyms, and plurals of spelled
+    acronyms (GPUs -> "G P yoos").
     """
 
     def repl(match: re.Match[str]) -> str:
@@ -713,36 +720,61 @@ def _normalize_acronyms(text: str, keep: frozenset[str] | set[str] = _ACRONYM_KE
     return _ACRONYM_RE.sub(repl, text)
 
 
-# Phonetic respellings for all twelve months so the engine says them correctly
-# (February is the notorious one). Keyed on the CAPITALIZED name and matched
-# case-sensitively: month names are always capitalized in real text, so this
-# dodges the homographs entirely -- lowercase "august" (the adjective, stressed
-# aw-GUST not AW-gust), "may", and "march" are left untouched. February matches
-# the seed's existing respelling.
-# Lowercased respellings: Chatterbox reads ALL-CAPS stress syllables as letters
-# to spell out ("F-E-B"), so stress is encoded by syllable split, not capitals.
-_MONTH_RESPELL = {
-    "January": "jan-yoo-air-ee",
-    "February": "feb-roo-air-ee",
-    "March": "march",
-    "April": "ay-pril",
-    "May": "may",
-    "June": "joon",
-    "July": "joo-lye",
-    "August": "aw-gust",
-    "September": "sep-tem-ber",
-    "October": "ock-toh-ber",
-    "November": "no-vem-ber",
-    "December": "dee-sem-ber",
+# Two-letter US state codes -> full names, expanded only in clear state context
+# so the engine says "Illinois" instead of spelling "I L".
+_US_STATES = {
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
+    "CA": "California", "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware",
+    "FL": "Florida", "GA": "Georgia", "HI": "Hawaii", "ID": "Idaho",
+    "IL": "Illinois", "IN": "Indiana", "IA": "Iowa", "KS": "Kansas",
+    "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
+    "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi",
+    "MO": "Missouri", "MT": "Montana", "NE": "Nebraska", "NV": "Nevada",
+    "NH": "New Hampshire", "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York",
+    "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma",
+    "OR": "Oregon", "PA": "Pennsylvania", "RI": "Rhode Island", "SC": "South Carolina",
+    "SD": "South Dakota", "TN": "Tennessee", "TX": "Texas", "UT": "Utah",
+    "VT": "Vermont", "VA": "Virginia", "WA": "Washington", "WV": "West Virginia",
+    "WI": "Wisconsin", "WY": "Wyoming",
 }
-_MONTH_RE = re.compile(r"\b(" + "|".join(_MONTH_RESPELL) + r")\b")
+# Codes whose UPPERCASE form is a common non-state word/abbreviation in prose
+# (OK=okay, OR=or, ID=identification, AR=augmented reality, VA=Veterans Affairs,
+# PA=public address, MA=Master of Arts, MS=Master of Science/Ms., LA=Los Angeles).
+# These never take the city-comma form; they expand only inside a "City, ST ZIP"
+# address, where the ZIP removes the ambiguity. (Codes that collide only in their
+# rarely-uppercased forms -- "in", "oh", "de facto" -- are left in the city form,
+# since real prose writes those lowercase.)
+_STATE_AMBIGUOUS = {"OK", "OR", "ID", "AR", "VA", "PA", "MA", "MS", "LA"}
+# City context: a Title-case city word ends in a lowercase letter, so requiring a
+# lowercase letter immediately before the comma excludes all-caps tokens (SQL,
+# acronyms, "JOIN, NY"). The comma+space is captured and re-emitted; trailing
+# sentence punctuation is left in place (lookahead, not consumed). Ambiguous codes
+# are excluded here.
+_US_STATE_CITY_RE = re.compile(
+    r"(?<=[a-z])(,\s+)("
+    + "|".join(c for c in _US_STATES if c not in _STATE_AMBIGUOUS)
+    + r")(?=[\s.,;:!?)\]]|$)"
+)
+# Address context: "..., ST 60601" -- a comma-anchored state code on the same line
+# directly before a 5-digit ZIP (+4 optional). The comma anchor keeps a bare
+# "<CODE> 12345" quantity from expanding; same-line ([ \t], not \s) avoids merging
+# across a line break. Every code (including the ambiguous ones) expands here.
+_US_STATE_ZIP_RE = re.compile(
+    r"(,\s+)(" + "|".join(_US_STATES) + r")[ \t]+(?=\d{5}(?:-\d{4})?\b)"
+)
 
 
-def _normalize_months(text: str) -> str:
-    """Respell capitalized month names phonetically. Runs after
-    ``_normalize_date_months`` so abbreviations ("Feb") are already full names."""
+def _normalize_us_states(text: str) -> str:
+    """Expand a two-letter US state code to its full name in state context only:
+    after a city + comma ("Chicago, IL" -> "Chicago, Illinois") or inside a
+    "City, ST ZIP" address ("Tulsa, OK 74103" -> "Tulsa, Oklahoma 74103"). The
+    lowercase-before-comma guard, case-sensitive uppercase codes, and the
+    ambiguous-code set leave ordinary words/abbreviations (OK, OR, Co., Mt., a PA
+    system, an MA degree) untouched outside a ZIP address. Sentence punctuation
+    after the code is preserved ("Chicago, IL." -> "Chicago, Illinois.")."""
 
-    return _MONTH_RE.sub(lambda m: _MONTH_RESPELL[m.group(1)], text)
+    text = _US_STATE_CITY_RE.sub(lambda m: m.group(1) + _US_STATES[m.group(2)], text)
+    return _US_STATE_ZIP_RE.sub(lambda m: m.group(1) + _US_STATES[m.group(2)] + " ", text)
 
 
 def _normalize_for_tts(text: str) -> str:
@@ -762,8 +794,8 @@ def _normalize_for_tts(text: str) -> str:
     return _normalize_numbers(
         _normalize_currency(
             _normalize_ranges(
-                _normalize_months(
-                    _normalize_date_months(
+                _normalize_date_months(
+                    _normalize_us_states(
                         _strip_code_artifacts(_strip_heading_markers(text))
                     )
                 )
@@ -1012,28 +1044,33 @@ async def _stage_tts(
     transient failures. Returns the list of GenerateResult so the audio
     stage can read the per-chunk WAVs."""
 
-    # Select this job's reference voice once, before the first chunk, so every
-    # chunk conditions on the same voice. Best-effort: a missing slot (deleted
-    # after submit) keeps the wrapper's current voice rather than failing the job.
+    # Select this job's reference voice once, before the first chunk, so every chunk
+    # conditions on the same voice. A job with no recorded slot (a pre-slots row or a
+    # reprocess/requeue carrying None), or one whose recorded slot was deleted after
+    # submit, falls back to the default (lowest filled) slot so it never inherits a
+    # slot left selected by an earlier job or an audition. Only when no slot exists at
+    # all is selection skipped -- the wrapper then 503s and the job fails loudly
+    # rather than silently using a stale voice.
+    selected = False
     if job.voice_id:
         try:
             await tts.select_voice(settings, int(job.voice_id))
+            selected = True
         except (ValueError, tts.TTSError):
             logger.warning(
-                "Voice select failed; using the wrapper's current voice",
+                "Voice select failed; falling back to the default slot",
                 extra={"event": "tts_select_voice_failed", "voice_id": job.voice_id},
             )
-    else:
-        # No slot assigned (all slots empty): reset the wrapper to the legacy
-        # voice.wav so this job doesn't inherit a slot left selected by an
-        # earlier job or an audition.
-        try:
-            await tts.reload(settings)
-        except tts.TTSError:
-            logger.warning(
-                "Voice reset to default failed; using the wrapper's current voice",
-                extra={"event": "tts_reset_voice_failed"},
-            )
+    if not selected:
+        default = voices.default_slot()
+        if default is not None:
+            try:
+                await tts.select_voice(settings, default)
+            except (ValueError, tts.TTSError):
+                logger.warning(
+                    "Default voice select failed; using the wrapper's current voice",
+                    extra={"event": "tts_default_voice_failed", "slot": default},
+                )
 
     results: list[tts.GenerateResult] = []
     total = len(chunks)
@@ -1271,22 +1308,23 @@ async def _apply_corrections(text: str, settings: Settings) -> str:
     the aggressive per-token base-lexicon pass, then the snake_case sweep. All
     pronunciation data is sourced from the ``lexicon`` table. This is the
     guaranteed coverage layer: anything the LLM pass missed is corrected here.
-    All pronunciation data is sourced from the ``lexicon`` table.
     """
 
     normalized = _normalize_for_tts(text)
     with database.connection(settings.DATA_DIR) as conn:
-        pairs = lexicon.apply_pairs(conn)
-        # Spell unknown all-caps acronyms BEFORE the dictionary so it runs on
-        # source text only -- never on the injected respellings, whose uppercase
-        # stress syllables ("vwee-TOHN", "FEB-roo-air-ee") would otherwise be
-        # letter-spelled. Word-mode rows (NASA) and correction keys join the
-        # keep-set so they are left for the dictionary rather than spelled here.
-        keep = _ACRONYM_KEEP | lexicon.word_keep_set(conn) | set(pairs)
+        cs_pairs, ci_pairs = lexicon.apply_pairs_by_case(conn)
+        # Spell unknown all-caps acronyms BEFORE the dictionary. Word-mode (NASA) and
+        # override (fixed-form, e.g. SQL -> sequel) keys are kept so the dictionary
+        # handles them; spell-mode all-caps keys (LLM) are NOT kept, so this speller
+        # spells them and their plurals ("LLMs" -> "L L ems") -- corrections.apply
+        # cannot match a plural past the trailing "s".
+        keep = _ACRONYM_KEEP | lexicon.non_spell_keep_set(conn)
         spelled = _normalize_acronyms(normalized, keep=keep)
-        # Explicit pronunciations next (so "ttyS0" -> "T T Y S 0" wins), then the
-        # aggressive base-lexicon pass, then the snake_case identifier sweep.
-        applied = corrections.apply(spelled, pairs)
+        # Explicit pronunciations next (so "ttyS0" -> "T T Y S 0" wins): exact-case
+        # keys first, then the case-insensitive group folds so "404 media" hits
+        # "404 Media". Then the aggressive base-lexicon pass and snake_case sweep.
+        applied = corrections.apply(spelled, cs_pairs)
+        applied = corrections.apply(applied, ci_pairs, case_sensitive=False)
         applied = _apply_base_lexicon(applied, conn, settings)
     # Strip periods from dotted acronyms LAST -- catches both article text ("U.S.")
     # and any dotted respelling a correction injected ("A.I.") -- so the engine
@@ -1296,7 +1334,7 @@ async def _apply_corrections(text: str, settings: Settings) -> str:
         "Corrections applied",
         extra={
             "event": "corrections_complete",
-            "entries_pairs": len(pairs),
+            "entries_pairs": len(cs_pairs) + len(ci_pairs),
             "delta_chars": len(result) - len(text),
         },
     )

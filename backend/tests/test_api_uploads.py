@@ -8,7 +8,7 @@ from app.config import get_settings
 from app.core import database
 from app.core.paths import media_dir
 from app.main import create_app
-from app.services import episodes, feed, file_extraction, jobs, runtime_settings
+from app.services import episodes, feed, file_extraction, jobs, runtime_settings, voices
 from app.services.episodes import Episode
 from fastapi.testclient import TestClient
 
@@ -70,6 +70,20 @@ def test_upload_md_creates_job_and_stores_original(env: Path) -> None:
         assert job.episode_id == episode_id
     finally:
         conn.close()
+
+
+def test_upload_rejects_with_400_when_no_voice_loaded(
+    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Mirrors the submit guard: no loaded voice -> 400 before any file work.
+    from app.services import voices
+
+    empty = tmp_path / "empty_voices"
+    empty.mkdir()
+    monkeypatch.setattr(voices, "voices_dir", lambda: empty)
+    with _client(env) as client:
+        r = client.post("/api/v1/upload", files={"file": ("notes.md", b"# Hi", "text/markdown")})
+    assert r.status_code == 400
 
 
 def test_upload_rejects_unsupported_extension(env: Path) -> None:
@@ -143,6 +157,19 @@ def test_reprocess_upload_reenqueues_from_stored_file(env: Path) -> None:
     body = r.json()
     assert body["episode_id"] == episode_id
     assert body["replaced_previous"] is True
+
+
+def test_reprocess_upload_rejects_with_400_when_no_voice_loaded(
+    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Reprocess is a job-creating path, so it carries the same no-voice guard as upload.
+    episode_id = _seed_upload_episode(env, filename="report.pdf")
+    empty = tmp_path / "empty_voices"
+    empty.mkdir()
+    monkeypatch.setattr(voices, "voices_dir", lambda: empty)
+    with _client(env) as client:
+        r = client.post(f"/api/v1/upload/{episode_id}/reprocess")
+    assert r.status_code == 400
 
 
 def test_reprocess_rejects_url_episode(env: Path) -> None:

@@ -5,7 +5,8 @@ The wrapper exposes three endpoints (build-plan TTS section):
 - ``POST /generate`` - synthesize a single chunk; returns ``wav_path`` (in the
   shared ``/data`` volume), ``duration_secs`` and ``sample_rate``.
 - ``GET /health`` - reports ``ok``, ``model_loaded``, ``reference_loaded``.
-- ``POST /reload`` - re-reads ``reference/voice.wav`` and recomputes embeddings.
+- ``POST /reload`` - re-reads the wrapper's resting voice (its lowest filled slot)
+  and recomputes embeddings.
 
 Typed errors mirror the LLM client so the cleanup-stage retry classification
 extends naturally to the per-chunk TTS calls:
@@ -157,7 +158,8 @@ async def generate_chunk_with_retry(
 
 
 async def reload(settings: Settings) -> dict[str, Any]:
-    """POST ``/reload`` on the wrapper after a reference-voice commit."""
+    """POST ``/reload`` on the wrapper to re-encode its resting voice (lowest filled
+    slot). Used by slot auditions to restore the wrapper after a temporary switch."""
 
     endpoint = f"{settings.TTS_URL.rstrip('/')}/reload"
     timeout = httpx.Timeout(settings.TTS_HTTP_TIMEOUT_SECONDS)

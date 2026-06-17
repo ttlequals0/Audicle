@@ -26,7 +26,7 @@ import threading
 import time
 from pathlib import Path
 
-from config import Config
+from config import NUM_SLOTS, Config
 from engine import (
     GPUOutOfMemoryError,
     InferenceBusyError,
@@ -81,16 +81,17 @@ class ChatterboxEngine:
             },
         )
 
-        # Reference voice is optional at startup (operator uploads via the UI,
-        # which writes voice.wav and calls /reload). A missing OR unreadable clip
-        # just leaves reference_loaded=false and /generate returning 503 -- the
-        # wrapper stays up so the operator can upload a good clip.
-        ref_path = Path(self.config.reference_path)
-        if not ref_path.exists():
+        # Reference voice is optional at startup (operator uploads one to a slot via
+        # the UI/API). Slots-only model: the resting voice is the lowest filled slot,
+        # not a separate committed voice.wav. No slots yet just leaves
+        # reference_loaded=false and /generate returning 503 -- the wrapper stays up
+        # so the operator can upload a clip.
+        ref_path = self._boot_reference_path()
+        if ref_path is None:
             logger.warning(
-                "No reference voice yet; upload one via the UI. /generate is "
-                "unavailable until a voice is committed.",
-                extra={"event": "tts_reference_missing", "path": str(ref_path)},
+                "No voice slots yet; upload one via the UI. /generate is "
+                "unavailable until a voice is added.",
+                extra={"event": "tts_reference_missing"},
             )
             return
         try:
@@ -140,10 +141,26 @@ class ChatterboxEngine:
             self.reference_loaded = previous_loaded
             raise
 
-    async def reload_reference(self) -> None:
-        """Re-encode the committed ``voice.wav`` (after a /commit)."""
+    def _boot_reference_path(self) -> Path | None:
+        """The wrapper's resting voice: the lowest-numbered filled slot, or None when
+        no slots exist. Slots-only model -- there is no separate committed voice.wav.
+        Uses ``Config.slot_path`` (the same layout /select-voice uses). Keep the
+        lowest-filled rule in lockstep with the backend's ``voices.default_slot`` so a
+        no-voice job's audio and its recorded label resolve to the same slot."""
 
-        await self._swap_reference(Path(self.config.reference_path))
+        for slot in range(1, NUM_SLOTS + 1):
+            candidate = self.config.slot_path(slot)
+            if candidate.exists():
+                return candidate
+        return None
+
+    async def reload_reference(self) -> None:
+        """Re-encode the resting voice (lowest filled slot). No-op when no slots
+        exist, so a /reload on an empty wrapper doesn't raise."""
+
+        ref_path = self._boot_reference_path()
+        if ref_path is not None:
+            await self._swap_reference(ref_path)
 
     async def select_voice(self, ref_path: Path) -> None:
         """Encode a specific reference clip (a voice slot) for the next job. Same

@@ -134,20 +134,32 @@ def test_prepare_reference_rejects_when_gpu_busy() -> None:
         engine._gpu_lock.release()
 
 
-async def test_reload_reference_missing_file_raises(tmp_path: Path) -> None:
+def test_boot_reference_path_picks_lowest_filled_slot(tmp_path: Path) -> None:
+    engine = _loaded_engine()
+    object.__setattr__(engine.config, "reference_path", str(tmp_path / "voice.wav"))
+    voices = tmp_path / "voices"
+    voices.mkdir()
+    assert engine._boot_reference_path() is None  # no slots filled
+    (voices / "slot3.wav").write_bytes(b"x")
+    (voices / "slot2.wav").write_bytes(b"x")
+    assert engine._boot_reference_path() == voices / "slot2.wav"  # lowest filled wins
+
+
+async def test_reload_reference_no_slots_is_noop(tmp_path: Path) -> None:
     engine = _loaded_engine()
     engine.config = Config.from_env()
-    object.__setattr__(engine.config, "reference_path", str(tmp_path / "absent.wav"))
-    with pytest.raises(FileNotFoundError):
-        await engine.reload_reference()
+    object.__setattr__(engine.config, "reference_path", str(tmp_path / "voice.wav"))
+    # No voices/ dir -> no slots -> reload is a graceful no-op (must not raise).
+    await engine.reload_reference()
 
 
 async def test_reload_reference_rolls_back_on_failure(tmp_path: Path) -> None:
-    ref = tmp_path / "voice.wav"
-    ref.write_bytes(b"not really a wav")
+    slot = tmp_path / "voices" / "slot1.wav"
+    slot.parent.mkdir(parents=True)
+    slot.write_bytes(b"not really a wav")
     model = FakeChatterboxModel(prepare_raises=True)
     engine = _loaded_engine(model)
-    object.__setattr__(engine.config, "reference_path", str(ref))
+    object.__setattr__(engine.config, "reference_path", str(tmp_path / "voice.wav"))
     engine.reference_loaded = True  # a good voice was previously loaded
     with pytest.raises(RuntimeError):
         await engine.reload_reference()

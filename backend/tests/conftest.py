@@ -69,6 +69,22 @@ def _reset_login_rate_limiter():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _default_voice_slot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """In production a voice is always loaded (migration 018 fills slot 1), so the
+    submit/upload guard expects at least one filled slot. Point the voices dir at an
+    isolated temp folder with slot 1 filled, and never the repo. Tests that exercise
+    the empty-slots / slot-management paths re-monkeypatch ``voices.voices_dir`` to
+    their own dir; that runs after this autouse fixture, so their override wins."""
+
+    from app.services import voices
+
+    d = tmp_path / "_voice_slots"
+    d.mkdir()
+    (d / "slot1.wav").write_bytes(b"RIFFFAKEWAVE")
+    monkeypatch.setattr(voices, "voices_dir", lambda: d)
+
+
 @pytest.fixture
 def env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Stand up a minimal valid env in tmp_path and reset the settings cache.

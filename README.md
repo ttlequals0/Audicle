@@ -100,6 +100,13 @@ First-run model download is ~2 GB and persists on the `./data` volume under
 `hf_cache/` and `tts_home/` (the wrapper sets `HF_HOME`/`TTS_HOME` there), so
 restarts load from disk instantly.
 
+Article extraction works out of the box with no extra service: the default
+`direct` engine fetches the page in-process and parses it with trafilatura. To
+use a self-hosted [Firecrawl](https://github.com/firecrawl/firecrawl) instead,
+set `EXTRACTION_ENGINE=firecrawl` and point `FIRECRAWL_URL` at it. Either way,
+JS-rendered and bot-gated pages still fall back to FlareSolverr and the web
+archive (see [Paywalled articles](#paywalled-articles)).
+
 ## Required env vars
 
 | Variable | What it is | Example |
@@ -110,7 +117,8 @@ restarts load from disk instantly.
 | `FEED_EMAIL` | Owner email (required by Apple) | `you@example.com` |
 | `FEED_CATEGORY` | iTunes category (see list below) | `Technology` |
 | `FEED_LANGUAGE` | RFC 5646 tag | `en-US` |
-| `FIRECRAWL_URL` | Self-hosted Firecrawl base URL | `http://firecrawl:3002` |
+| `EXTRACTION_ENGINE` | `direct` (built-in, no extra service) or `firecrawl` | `direct` |
+| `FIRECRAWL_URL` | Self-hosted Firecrawl base URL (only when `EXTRACTION_ENGINE=firecrawl`) | `http://firecrawl:3002` |
 | `FIRECRAWL_API_KEY` | Optional bearer token for a Firecrawl behind auth (blank = open) | _(unset)_ |
 | `LLM_PROVIDER` | `openai-compatible`, `anthropic`, `openrouter`, or `ollama` | `openai-compatible` |
 | `OPENAI_BASE_URL` | for openai-compatible | `http://llm:8080/v1` |
@@ -147,9 +155,79 @@ Recommended clip: mono, 24 kHz, 8-12 seconds, around 250 kB to 1 MB. The hard li
 
 The output quality is mostly set by the clip quality. Cleaning up the source -- noise reduction, leveling -- helps more than any TTS knob.
 
+## Pronunciation corrections
+
+Settings has a corrections table for words the narrator mispronounces. Each row is a match term, the spoken form to say instead, a mode, an optional IPA field, and an "Aa" case toggle. A curated seed set ships built in (`GET /api/v1/corrections/seed`); your rows override it.
+
+- spoken is what drives narration -- write it the way you want it read ("four oh four media", "clawed").
+- mode is override (say the spoken form), word (read an acronym as a word), or spell (read it letter by letter).
+- Aa makes the match case-sensitive; off (the default) folds case, so a "404 media" row also catches "404 Media".
+- ipa is optional and only feeds the PLS lexicon export -- it does NOT affect narration. Audicle auto-derives it from the spoken form, so it can look like an unreadable string of phonetic symbols, and it can go stale if you edit the spoken text later. That is expected; clear it or ignore it unless you use the PLS export.
+
 ## Webhooks
 
-Set `WEBHOOK_URL` in Settings and Audicle POSTs a JSON payload when an episode finishes (`episode.processed`) or fails (`episode.failed`). The payload carries the title, the source link, how long it took, whether it was a reprocess, and on failure the stage and error. Delivery is fire-and-forget with a few retries and never holds up or fails the pipeline; leave `WEBHOOK_URL` blank to turn it off.
+Audicle can POST a JSON payload to a URL of yours every time an episode finishes
+(`episode.processed`) or fails (`episode.failed`) -- handy for a Slack/Discord ping, a
+dashboard, or kicking off something downstream. Set `WEBHOOK_URL` in Settings (the
+"webhooks" section); leave it blank to turn it off. The "send test webhook" button there
+fires a sample payload at the saved URL and shows the response, so you can wire up a
+receiver before running a real article.
+
+Payload fields:
+
+| Field | Type | When | Meaning |
+|---|---|---|---|
+| `event` | string | always | `episode.processed` or `episode.failed` |
+| `episode_id` | string | always | the episode's stable id |
+| `title` | string | always | episode title (falls back to the filename or URL) |
+| `voice` | string | always | the reference voice that narrated it -- a slot label, `Slot N`, or `Default` |
+| `source_type` | string | always | `url` or `upload` |
+| `url` | string | url jobs | the source article URL |
+| `source_filename` | string | upload jobs | the uploaded document's name |
+| `reprocess` | bool | always | true if this run was a reprocess, not a first pass |
+| `time_to_process_secs` | number or null | processed | seconds from claim to finish (null for very old jobs) |
+| `error` | string | failed | the failure message |
+| `stage` | string | failed | the pipeline stage that failed (e.g. `tts`, `extract`) |
+
+A finished URL episode:
+
+```json
+{
+  "event": "episode.processed",
+  "episode_id": "a1b2c3d4e5f6",
+  "title": "An Interesting Article",
+  "voice": "Morgan",
+  "source_type": "url",
+  "url": "https://example.com/article",
+  "reprocess": false,
+  "time_to_process_secs": 246.0
+}
+```
+
+A failed job:
+
+```json
+{
+  "event": "episode.failed",
+  "episode_id": "a1b2c3d4e5f6",
+  "title": "https://example.com/article",
+  "voice": "Default",
+  "source_type": "url",
+  "url": "https://example.com/article",
+  "reprocess": false,
+  "error": "TTS unreachable",
+  "stage": "tts"
+}
+```
+
+An upload episode is the same shape but with `"source_type": "upload"` and a
+`"source_filename"` instead of `url`. The test button's payload adds a `"test": true`
+flag so your receiver can tell it apart from a real run.
+
+Delivery is fire-and-forget: it runs as a background task with a short timeout
+(`WEBHOOK_TIMEOUT_SECONDS`, default 10s) and a few retries with backoff, so a dead or slow
+receiver never delays or fails the episode. To test from the API instead of the UI,
+`POST /api/v1/webhooks/test` returns `{ "delivered", "status_code", "error" }`.
 
 A failed job can also be requeued straight from the Recents list on the Home screen -- URL jobs re-fetch, uploads re-run from the stored original.
 
@@ -199,7 +277,7 @@ The Audicle name and logo are reserved; see `branding/README.md`.
         a detected Cloudflare challenge auto-routes through FlareSolverr
         |
         v
-URL --> extract (Firecrawl) --> cleanup (LLM) --> corrections (regex)
+URL --> extract (direct / Firecrawl) --> cleanup (LLM) --> corrections (regex)
                                                        |
                                                        v
                                               chunk + TTS (Chatterbox)

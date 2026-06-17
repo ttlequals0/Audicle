@@ -8,8 +8,8 @@ import CollapsibleSection from "../components/CollapsibleSection";
 /**
  * Operator-facing setting groups, plus the prompt
  * editor (which talks to /api/v1/prompt), the corrections table (which
- * talks to /api/v1/corrections), and the reference voice widget
- * (preview/test/commit against /api/v1/reference). System info is a
+ * talks to /api/v1/corrections), and the voice-slots widget
+ * (against /api/v1/reference/slots). System info is a
  * read-only block.
  */
 
@@ -38,6 +38,13 @@ const GROUPS: Record<string, string[]> = {
     "FEED_ARTWORK_URL",
   ],
   Connections: ["FIRECRAWL_URL", "FIRECRAWL_API_KEY", "TTS_URL", "FLARESOLVERR_URL"],
+  Extraction: [
+    "EXTRACTION_ENGINE",
+    "EXTRACTION_DIRECT_TIMEOUT_SECONDS",
+    "EXTRACTION_ARC_ENABLED",
+    "ARCHIVE_FALLBACK_ENABLED",
+  ],
+  Webhooks: ["WEBHOOK_URL"],
   TTS: ["TTS_CHUNK_TARGET_WORDS", "TTS_CHUNK_MAX_WORDS", "TTS_CHUNK_SILENCE_MS"],
   Verification: [
     "WHISPER_VERIFY_ENABLED",
@@ -60,6 +67,9 @@ const MASKED_KEYS = new Set([
   "FIRECRAWL_API_KEY",
 ]);
 const PROVIDER_OPTIONS = ["openai-compatible", "anthropic", "openrouter", "ollama"];
+// Keep in sync with the EXTRACTION_ENGINE Literal in backend/app/config.py. The
+// backend rejects any other value on PUT, so this list only drives the dropdown.
+const EXTRACTION_ENGINE_OPTIONS = ["direct", "firecrawl"];
 
 // Which provider-specific keys are relevant per provider. Keys not listed for
 // the selected provider are hidden (openrouter's base URL is fixed server-side;
@@ -78,6 +88,47 @@ const PROVIDER_SPECIFIC_KEYS = new Set(
 interface PromptBody {
   prompt: string;
   is_default?: boolean;
+}
+
+// Sends a sample payload to the saved WEBHOOK_URL and reports the outcome inline,
+// reusing the same btn-ghost + mono-xs message language as the voice audition.
+function WebhookTest() {
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [pending, setPending] = useState(false);
+
+  const run = async () => {
+    setPending(true);
+    setMsg(null);
+    try {
+      const r = await api<{ delivered: boolean; status_code: number | null; error: string | null }>(
+        "/api/v1/webhooks/test",
+        { method: "POST" }
+      );
+      const code = r.status_code ? ` (${r.status_code})` : "";
+      setMsg(
+        r.delivered
+          ? { ok: true, text: `// delivered${code}` }
+          : { ok: false, text: `// failed${code}: ${r.error ?? "no response"}` }
+      );
+    } catch (e) {
+      const status = e instanceof ApiError ? e.status : 0;
+      setMsg({
+        ok: false,
+        text: status === 409 ? "// save a webhook URL above first" : `// request failed (${status})`,
+      });
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 flex items-center gap-3 flex-wrap">
+      <button type="button" className="btn-ghost" disabled={pending} onClick={run}>
+        {pending ? "testing..." : "send test webhook"}
+      </button>
+      {msg && <span className={`mono-xs ${msg.ok ? "text-accent" : "text-danger"}`}>{msg.text}</span>}
+    </div>
+  );
 }
 
 function Toggle({
@@ -220,6 +271,12 @@ export default function SettingsRoute() {
                 // firecrawl api key optional -- blank for self-hosted
               </p>
             )}
+            {group === "Webhooks" && (
+              <p className="mono-xs text-mute mb-3">
+                // POSTs episode.processed / episode.failed to this URL on every finished or
+                failed job. blank disables. the test sends a sample to the saved URL -- save first
+              </p>
+            )}
             {group === "Verification" && (
               <p className="mono-xs text-mute mb-3">
                 // regenerates chunks when audio drifts from the text. needs
@@ -247,7 +304,7 @@ export default function SettingsRoute() {
                   <label className={`label ${isBool ? "mb-0" : ""}`} htmlFor={key}>
                     {key}
                   </label>
-                  {key === "LLM_PROVIDER" ? (
+                  {key === "LLM_PROVIDER" || key === "EXTRACTION_ENGINE" ? (
                     <select
                       id={key}
                       className="field"
@@ -256,7 +313,10 @@ export default function SettingsRoute() {
                         setDraft((p) => ({ ...p, [key]: e.target.value }))
                       }
                     >
-                      {PROVIDER_OPTIONS.map((opt) => (
+                      {(key === "EXTRACTION_ENGINE"
+                        ? EXTRACTION_ENGINE_OPTIONS
+                        : PROVIDER_OPTIONS
+                      ).map((opt) => (
                         <option key={opt} value={opt}>
                           {opt}
                         </option>
@@ -292,6 +352,7 @@ export default function SettingsRoute() {
                 </div>
               );
             })}
+            {group === "Webhooks" && <WebhookTest />}
           </CollapsibleSection>
         );
       })}
@@ -1132,10 +1193,9 @@ function VoiceUploadButton({
   );
 }
 
-// One card shared by the Default fallback and every slot: badge, name (a static
-// label or a rename input), duration, an inline player for the stored clip, then
-// Replace / Audition / Clear. Clear is omitted (onClear undefined) for the
-// fallback, which can be replaced but not emptied.
+// One card per voice slot: badge, name (a rename input), duration, an inline player
+// for the stored clip, then Replace / Audition / Clear. Clear is omitted (onClear
+// undefined) for the last filled slot, so at least one voice always stays loaded.
 function VoiceRow({
   badge,
   name,
@@ -1184,21 +1244,14 @@ function VoiceRow({
   );
 }
 
-// Merged voices section: the fallback voice.wav ("Default") sits as row 0
-// alongside the 5 slots, each with the same controls -- inline preview of the
-// stored clip, audition (a TTS sample), and replace. Uploads accept any common
+// Voices section: five slots, each with the same controls -- inline preview of the
+// stored clip, audition (a TTS sample), replace, and clear. Uploads accept any common
 // audio format; the backend transcodes non-WAV to WAV with ffmpeg.
 function VoicesWidget() {
   const qc = useQueryClient();
   const slotsQ = useQuery({
     queryKey: ["voice-slots"],
     queryFn: () => api<VoiceSlot[]>("/api/v1/reference/slots"),
-    staleTime: 60_000,
-  });
-  const defaultQ = useQuery({
-    queryKey: ["voice-default"],
-    queryFn: () =>
-      api<{ filled: boolean; duration_secs: number | null }>("/api/v1/reference/status"),
     staleTime: 60_000,
   });
   const [msg, setMsg] = useState<string | null>(null);
@@ -1228,7 +1281,6 @@ function VoicesWidget() {
   const invalidate = () => {
     setBust((b) => b + 1);
     qc.invalidateQueries({ queryKey: ["voice-slots"] });
-    qc.invalidateQueries({ queryKey: ["voice-default"] });
   };
 
   const upload = async (path: string, f: File, ok: string) => {
@@ -1252,7 +1304,7 @@ function VoicesWidget() {
     const r = await sendForm(path, "POST", fd);
     setAuditioning(null);
     if (!r.ok) {
-      setMsg(r.status === 503 ? "no voice committed yet" : `audition failed (${r.status})`);
+      setMsg(`audition failed (${r.status})`);
       return;
     }
     setAuditionUrl(URL.createObjectURL(await r.blob()));
@@ -1263,8 +1315,13 @@ function VoicesWidget() {
     try {
       await api(`/api/v1/reference/slots/${slot}`, { method: "DELETE" });
       invalidate();
-    } catch {
-      setMsg(`slot ${slot} clear failed`);
+    } catch (e) {
+      const status = e instanceof ApiError ? e.status : 0;
+      setMsg(
+        status === 409
+          ? "cannot clear the only loaded voice; add another slot first"
+          : `slot ${slot} clear failed`,
+      );
     }
   };
 
@@ -1277,13 +1334,14 @@ function VoicesWidget() {
   };
 
   const slots = slotsQ.data ?? [];
-  const defaultVoice = defaultQ.data;
+  const filledCount = slots.filter((s) => s.filled).length;
 
   return (
     <div className="space-y-3">
       <p className="mono-xs text-mute">
-        // default is the fallback; a random filled slot is used per episode unless you pick one
-        at submit. uploads take wav/mp3/m4a/flac/ogg -- converted to wav on the server
+        // a random filled slot narrates each episode unless you pick one at submit. at
+        least one slot must stay loaded. uploads take wav/mp3/m4a/flac/ogg -- converted to
+        wav on the server
       </p>
       <div>
         <label className="label" htmlFor="voice-sample">
@@ -1298,23 +1356,6 @@ function VoicesWidget() {
       </div>
       {msg && <p className="mono-xs text-accent">{msg}</p>}
       {auditionUrl && <audio src={auditionUrl} controls autoPlay className="w-full" />}
-
-      <VoiceRow
-        badge="D"
-        name={<span className="flex-1 font-mono text-sm">Default voice</span>}
-        filled={!!defaultVoice?.filled}
-        durationSecs={defaultVoice?.duration_secs ?? null}
-        previewUrl={`/api/v1/reference/preview?v=${bust}`}
-        onUpload={(f) => {
-          // The default is the global fallback and can't be cleared, so guard the
-          // destructive replace (slots are one of five and stay confirm-less).
-          if (confirm("Replace the default fallback voice?")) {
-            upload("/api/v1/reference/commit", f, "default voice replaced");
-          }
-        }}
-        onAudition={() => audition("default", "/api/v1/reference/audition")}
-        auditioning={auditioning === "default"}
-      />
 
       {slots.map((s) => (
         <VoiceRow
@@ -1338,7 +1379,8 @@ function VoicesWidget() {
             audition(`slot-${s.slot}`, `/api/v1/reference/slots/${s.slot}/audition`)
           }
           auditioning={auditioning === `slot-${s.slot}`}
-          onClear={() => clearSlot(s.slot)}
+          // The last filled slot has no Clear -- at least one voice must stay loaded.
+          onClear={s.filled && filledCount > 1 ? () => clearSlot(s.slot) : undefined}
         />
       ))}
     </div>

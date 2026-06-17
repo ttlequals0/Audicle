@@ -93,6 +93,15 @@ class Settings(BaseSettings):
     WEBHOOK_TIMEOUT_SECONDS: float = 10.0
 
     # Extraction tunables.
+    # Primary extraction engine. "direct" fetches the page in-process and parses it
+    # with trafilatura -- no extra service, so a fresh deploy works out of the box.
+    # "firecrawl" uses a self-hosted Firecrawl container (set FIRECRAWL_URL). Either
+    # way, FlareSolverr + the web archive remain the fallbacks for JS/Cloudflare pages.
+    EXTRACTION_ENGINE: Literal["direct", "firecrawl"] = "direct"
+    # Per-request timeout for the in-process direct fetch (seconds).
+    EXTRACTION_DIRECT_TIMEOUT_SECONDS: int = 30
+    # Override the User-Agent the direct engine sends; empty uses a built-in Chrome UA.
+    EXTRACTION_DIRECT_USER_AGENT: str = ""
     FIRECRAWL_RETRY_COUNT: int = 3
     # Arc XP / Fusion static body extractor (0.31.0). When on, the direct scrape also
     # requests rawHtml so the Arc parser can pull the article body out of the page's
@@ -288,6 +297,16 @@ class Settings(BaseSettings):
     @property
     def firecrawl_exclude_tags(self) -> list[str]:
         return [t.strip() for t in self.FIRECRAWL_EXCLUDE_TAGS.split(",") if t.strip()]
+
+    @property
+    def firecrawl_configured(self) -> bool:
+        """True when Firecrawl is actually reachable, i.e. FIRECRAWL_URL was set to a
+        real instance. The compose default placeholder counts as not configured, so a
+        direct-engine deploy never tries the Firecrawl re-scrape fallbacks against a
+        host that isn't there."""
+
+        url = self.FIRECRAWL_URL.strip()
+        return bool(url) and url != "http://firecrawl:3002"
 
 
 @lru_cache(maxsize=1)

@@ -55,8 +55,14 @@ def _time_to_process(job: Job) -> float | None:
     return secs if secs >= 0 else None
 
 
-def build_payload(event: str, job: Job, episode: Episode | None) -> dict[str, Any]:
-    """Assemble the webhook body for ``episode.processed`` / ``episode.failed``."""
+def build_payload(
+    event: str, job: Job, episode: Episode | None, *, voice_label: str | None = None
+) -> dict[str, Any]:
+    """Assemble the webhook body for ``episode.processed`` / ``episode.failed``.
+
+    ``voice_label`` is the reference voice that narrated (or, on failure, would
+    have narrated) -- the caller resolves it from the episode snapshot or the
+    job's slot."""
 
     source = _source(job, episode)
     title = (
@@ -68,6 +74,7 @@ def build_payload(event: str, job: Job, episode: Episode | None) -> dict[str, An
         "event": event,
         "episode_id": job.episode_id,
         "title": title,
+        "voice": voice_label,
         "reprocess": job.reprocess,
         **source,
     }
@@ -118,3 +125,42 @@ async def _deliver(url: str, payload: dict[str, Any], timeout: float, *, attempt
                 )
                 return
         await asyncio.sleep(0.5 * (2**attempt))
+
+
+def sample_payload() -> dict[str, Any]:
+    """A representative ``episode.processed`` body (flagged ``test``) for the
+    'send test webhook' control, so an operator can wire up a receiver before a
+    real episode runs."""
+
+    return {
+        "event": "episode.processed",
+        "episode_id": "test00000000",
+        "title": "Test webhook from Audicle",
+        "voice": "Slot 1",
+        "reprocess": False,
+        "source_type": "url",
+        "url": "https://example.com/article",
+        "time_to_process_secs": 42.0,
+        "test": True,
+    }
+
+
+async def send_test(settings: Settings) -> dict[str, Any]:
+    """POST the sample payload to ``WEBHOOK_URL`` once (no retries) and report the
+    outcome, so the Settings UI / API can show whether the receiver accepted it.
+    Unlike the fire-and-forget pipeline path, this returns the exact result and
+    never raises."""
+
+    url = settings.WEBHOOK_URL.strip()
+    if not url:
+        return {"delivered": False, "status_code": None, "error": "no webhook URL configured"}
+    try:
+        async with httpx.AsyncClient(timeout=settings.WEBHOOK_TIMEOUT_SECONDS) as client:
+            resp = await client.post(url, json=sample_payload())
+    except httpx.HTTPError as exc:
+        return {"delivered": False, "status_code": None, "error": f"{type(exc).__name__}: {exc}"}
+    return {
+        "delivered": resp.is_success,
+        "status_code": resp.status_code,
+        "error": None if resp.is_success else (resp.text[:200] or f"HTTP {resp.status_code}"),
+    }

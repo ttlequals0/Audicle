@@ -45,6 +45,10 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "WEBHOOK_URL",
         # Arc XP static body extractor toggle.
         "EXTRACTION_ARC_ENABLED",
+        # Primary extraction engine (direct | firecrawl) + the direct fetch timeout,
+        # tunable live so an operator can switch engines without an env edit + restart.
+        "EXTRACTION_ENGINE",
+        "EXTRACTION_DIRECT_TIMEOUT_SECONDS",
         # Connections: the bundled service URLs are operator-tunable so they can
         # be pointed at an external Firecrawl/TTS without an env edit + restart.
         "FIRECRAWL_URL",

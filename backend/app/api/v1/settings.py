@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal, get_args, get_origin
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
@@ -69,6 +69,14 @@ async def put_settings_overrides(
     # detected below. Derived live from the effective title (no stored copy
     # to drift from the live FEED_TITLE the feed is actually served at).
     old_slug = slug.feed_slug(_effective_title(runtime_settings.get_all(conn), settings))
+
+    # Validate every value before applying any, so a bad value in a multi-key save
+    # can't partially apply -- and an invalid enum (e.g. EXTRACTION_ENGINE) is
+    # rejected here instead of being stored and crashing/mis-routing at overlay time.
+    for key, value in payload.items():
+        if key in runtime_settings.MASKED_KEYS and value in (runtime_settings.MASK_SENTINEL, ""):
+            continue  # sentinel = unchanged; "" = clear (handled in the apply loop)
+        _validate_value(key, value, settings)
 
     for key, value in payload.items():
         if key in runtime_settings.MASKED_KEYS:
@@ -133,6 +141,33 @@ def _defaults_map(settings: Settings) -> dict[str, Any]:
         else:
             defaults[key] = value
     return defaults
+
+
+def _validate_value(key: str, value: Any, settings: Settings) -> None:
+    """Reject a value that doesn't fit its ``Settings`` field, with a 400.
+
+    Enum (``Literal``) fields must be one of their allowed members; int/float fields
+    must be coercible. Unknown fields and string/bool fields pass through (bool
+    coercion is intentionally lenient). Runs before anything is stored, so a bad
+    value never reaches the DB to crash or mis-route at overlay time.
+    """
+
+    field = settings.__class__.model_fields.get(key)
+    if field is None:
+        return
+    annotation = field.annotation
+    if get_origin(annotation) is Literal:
+        allowed = [str(arg) for arg in get_args(annotation)]
+        if str(value) not in allowed:
+            raise HTTPException(
+                status_code=400, detail=f"{key} must be one of {allowed}, got {value!r}"
+            )
+        return
+    if annotation in (int, float) and not isinstance(
+        _coerce(key, value if isinstance(value, str) else json.dumps(value), settings),
+        annotation,
+    ):
+        raise HTTPException(status_code=400, detail=f"{key} must be a {annotation.__name__}")
 
 
 def _coerce(key: str, value: str, settings: Settings) -> Any:

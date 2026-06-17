@@ -52,6 +52,9 @@ export default function Home() {
     staleTime: 60_000,
   });
   const filledSlots = (slotsQ.data ?? []).filter((s) => s.filled);
+  // Slots-only: the backend rejects submit/upload with 400 when no voice is loaded.
+  // Gate on isSuccess so the button isn't disabled while the slots query is in flight.
+  const noVoiceLoaded = slotsQ.isSuccess && filledSlots.length === 0;
   const voiceChoiceLabel =
     voice === "random"
       ? "random"
@@ -283,10 +286,15 @@ export default function Home() {
           <button
             type="submit"
             className="btn-primary w-full"
-            disabled={pending || (mode === "url" ? !url : !file)}
+            disabled={pending || noVoiceLoaded || (mode === "url" ? !url : !file)}
           >
             {pending ? "Submitting..." : "Submit"}
           </button>
+          {noVoiceLoaded && (
+            <p className="mono-xs text-mute mt-2">
+              // no voice loaded -- add a voice slot in settings before submitting
+            </p>
+          )}
           <div>
             <button
               type="button"
@@ -317,7 +325,7 @@ export default function Home() {
                 </select>
                 {filledSlots.length === 0 && (
                   <p className="mono-xs text-mute mt-1">
-                    // random and last both use the default voice -- add slots in settings
+                    // no voice loaded -- add a slot in settings before submitting
                   </p>
                 )}
               </>

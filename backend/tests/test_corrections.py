@@ -42,6 +42,26 @@ def test_apply_auto_escapes_regex_specials() -> None:
     assert "node J S" in out
 
 
+def test_apply_case_insensitive_folds_key_to_text() -> None:
+    # An entry keyed lowercase still hits the article's mixed-case form.
+    out = corrections.apply(
+        "404 Media reported it; 404 media also.",
+        {"404 media": "four oh four media"},
+        case_sensitive=False,
+    )
+    assert out == "four oh four media reported it; four oh four media also."
+
+
+def test_apply_case_insensitive_longest_key_wins() -> None:
+    # Longest-first ordering must hold under folding too: "aero" beats "aer".
+    out = corrections.apply(
+        "AERO is great",
+        {"aero": "air oh", "aer": "WRONG"},
+        case_sensitive=False,
+    )
+    assert out == "air oh is great"
+
+
 def test_apply_empty_dictionary_returns_original() -> None:
     assert corrections.apply("hello world", {}) == "hello world"
 

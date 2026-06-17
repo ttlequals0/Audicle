@@ -18,7 +18,7 @@ from fastapi import Depends, HTTPException, Request
 
 from app.config import Settings, get_settings
 from app.core import database
-from app.services import auth, csrf
+from app.services import auth, csrf, voices
 
 SESSION_KEY_USER = "audicle_user"
 
@@ -89,3 +89,15 @@ def require_admin(
         request.cookies.get(csrf.CSRF_COOKIE_NAME),
     ):
         raise HTTPException(status_code=403, detail="csrf token mismatch")
+
+
+def require_voice_loaded() -> None:
+    """Reject a new job when no reference voice is loaded. Slots-only model: a job
+    has nothing to narrate with until at least one slot is filled, so submit/upload
+    fail fast with 400 instead of queuing a job that can only die at the TTS stage."""
+
+    if not voices.filled_slots():
+        raise HTTPException(
+            status_code=400,
+            detail="no reference voice is loaded; add at least one voice slot in Settings first",
+        )

@@ -116,7 +116,9 @@ async def fetch(url: str, settings: Settings, cookies: str = "") -> ExtractionRe
         message = body.get("message") if isinstance(body, dict) else None
         logger.warning(
             "FlareSolverr did not solve the challenge",
-            extra={"event": "flaresolverr_error", "message": message},
+            # "message" is a reserved LogRecord field; the solver's own message rides
+            # in "solver_message" so structured logging never crashes on it.
+            extra={"event": "flaresolverr_error", "solver_message": message},
         )
         return None
 

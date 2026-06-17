@@ -181,12 +181,17 @@ def _validate_value(key: str, value: Any) -> list[ValidationFailure]:
     return out
 
 
-def apply(text: str, dictionary: dict[str, str]) -> str:
+def apply(text: str, dictionary: dict[str, str], *, case_sensitive: bool = True) -> str:
     """Replace every whole-word match in ``text`` per the dictionary.
 
     Single pass via regex alternation -- a longer key's replacement can never
     be re-matched by a shorter key because the longer alternative wins at the
     same starting position.
+
+    ``case_sensitive=False`` folds case so an entry keyed ``404 media`` still hits
+    ``404 Media`` in the article (the lexicon marks override entries case-insensitive
+    by default). The matched text then differs from the key, so the lookup folds too;
+    on a fold collision the longest key wins (sorted longest-first).
     """
 
     if not dictionary:
@@ -198,9 +203,15 @@ def apply(text: str, dictionary: dict[str, str]) -> str:
     # - Keys ending in non-word symbols like ``C++`` still match correctly
     #   (``\b`` would refuse to match ``+`` next to whitespace).
     pattern = re.compile(
-        r"(?<![\w-])(?:" + "|".join(re.escape(k) for k in sorted_keys) + r")(?![\w-])"
+        r"(?<![\w-])(?:" + "|".join(re.escape(k) for k in sorted_keys) + r")(?![\w-])",
+        0 if case_sensitive else re.IGNORECASE,
     )
-    return pattern.sub(lambda match: dictionary[match.group(0)], text)
+    if case_sensitive:
+        return pattern.sub(lambda match: dictionary[match.group(0)], text)
+    folded: dict[str, str] = {}
+    for key in sorted_keys:  # longest first: it wins any fold collision
+        folded.setdefault(key.casefold(), dictionary[key])
+    return pattern.sub(lambda match: folded[match.group(0).casefold()], text)
 
 
 def load(path: Path) -> dict[str, str]:

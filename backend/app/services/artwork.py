@@ -259,30 +259,13 @@ async def _download(url: str, settings: Settings) -> bytes:
     # it with SSLV3_ALERT_HANDSHAKE_FAILURE.
     pinned_url = ssrf.pin_url_to_ip(url, pinned_ip)
 
-    async def _check_redirect(request: httpx.Request) -> None:
-        # Fires for every outgoing request including redirects, so we re-run
-        # the SSRF guard against the redirected hostname. The initial GET is
-        # already pinned to a resolved public IP; this hook covers the
-        # ``Location:`` header path where httpx synthesizes a fresh URL. We
-        # pin that URL to the validated IP too -- otherwise httpx re-resolves
-        # the hostname at connect time, reopening the DNS-rebinding TOCTOU on
-        # the redirect hop (validation lookup gets a public IP, connect lookup
-        # gets a private one).
-        if request.url.host == pinned_ip:
-            return  # initial GET, already pinned above
-        original_host = request.url.host or ""
-        redirect_ip = await ssrf.resolve_public_host(original_host)
-        request.url = request.url.copy_with(host=redirect_ip)
-        request.headers["Host"] = original_host
-        request.extensions["sni_hostname"] = original_host
-
     timeout = httpx.Timeout(settings.ARTWORK_FETCH_TIMEOUT_SECONDS)
     max_bytes = settings.ARTWORK_MAX_DOWNLOAD_BYTES
     async with (
         httpx.AsyncClient(
             timeout=timeout,
             follow_redirects=True,
-            event_hooks={"request": [_check_redirect]},
+            event_hooks={"request": [ssrf.build_redirect_pin_hook(pinned_ip)]},
         ) as client,
         client.stream(
             "GET",

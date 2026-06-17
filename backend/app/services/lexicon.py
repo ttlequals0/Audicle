@@ -166,20 +166,26 @@ def lookup(conn: sqlite3.Connection, token: str) -> LexEntry | None:
     return candidates[0]
 
 
-def apply_pairs(conn: sqlite3.Connection) -> dict[str, str]:
-    """``{input_text: spoken}`` for user + seed rows, user winning on collision.
+def apply_pairs_by_case(conn: sqlite3.Connection) -> tuple[dict[str, str], dict[str, str]]:
+    """``(case_sensitive, case_insensitive)`` ``{input_text: spoken}`` maps for user +
+    seed rows, split by each row's ``case_sensitive`` flag, user winning on collision.
 
-    Feeds the longest-key-first regex substitution (multi-word phrases). The
-    large base layer is applied per-token via :func:`lookup`, not here.
+    Feeds the longest-key-first regex substitution (multi-word phrases). The large
+    base layer is applied per-token via :func:`lookup`, not here. Splitting by case
+    lets ``corrections.apply`` fold the case-insensitive group so an entry keyed
+    ``404 media`` hits ``404 Media``, while ``US``/``OS`` stay exact-case.
     """
 
-    pairs: dict[str, str] = {}
-    for origin in ("seed", "user"):  # user last so it overwrites seed
+    rows: dict[str, tuple[str, bool]] = {}
+    for origin in ("seed", "user"):  # user last so it overwrites seed (case flag and all)
         for row in conn.execute(
-            "SELECT input_text, spoken FROM lexicon WHERE origin = ?", (origin,)
+            "SELECT input_text, spoken, case_sensitive FROM lexicon WHERE origin = ?",
+            (origin,),
         ):
-            pairs[row["input_text"]] = row["spoken"]
-    return pairs
+            rows[row["input_text"]] = (row["spoken"], bool(row["case_sensitive"]))
+    cs = {key: spoken for key, (spoken, sensitive) in rows.items() if sensitive}
+    ci = {key: spoken for key, (spoken, sensitive) in rows.items() if not sensitive}
+    return cs, ci
 
 
 def word_keep_set(conn: sqlite3.Connection) -> set[str]:
@@ -189,6 +195,21 @@ def word_keep_set(conn: sqlite3.Connection) -> set[str]:
     return {
         row["input_text"]
         for row in conn.execute("SELECT input_text FROM lexicon WHERE mode = 'word'")
+    }
+
+
+def non_spell_keep_set(conn: sqlite3.Connection) -> set[str]:
+    """Inputs the deterministic acronym speller must NOT letter-spell: mode 'word'
+    (read as words, NASA) plus 'override' (fixed respellings, Kubernetes). Spell-mode
+    all-caps keys (LLM, API) are deliberately excluded so _normalize_acronyms spells
+    them and their plurals ("LLMs" -> "L L ems") -- corrections.apply cannot match a
+    plural past the trailing "s", so leaving them in the keep-set drops the plural."""
+
+    return {
+        row["input_text"]
+        for row in conn.execute(
+            "SELECT input_text FROM lexicon WHERE mode IN ('word', 'override')"
+        )
     }
 
 

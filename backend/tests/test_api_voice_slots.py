@@ -69,11 +69,39 @@ def test_upload_label_list_clear(client: TestClient) -> None:
     # preview serves the clip
     assert client.get("/api/v1/reference/slots/2/preview").status_code == 200
 
+    # A second slot must exist before slot 2 can be cleared (one voice always stays).
+    client.post("/api/v1/reference/slots/5", files={"voice": ("v.wav", _wav(), "audio/wav")})
+
     # clear empties it and drops the label
     assert client.delete("/api/v1/reference/slots/2").status_code == 200
     after = {s["slot"]: s for s in client.get("/api/v1/reference/slots").json()}[2]
     assert after["filled"] is False
     assert after["label"] is None
+
+
+def test_clear_last_slot_rejected(client: TestClient) -> None:
+    # At least one voice must stay loaded: clearing the only filled slot is a 409.
+    client.post("/api/v1/reference/slots/1", files={"voice": ("v.wav", _wav(), "audio/wav")})
+    r = client.delete("/api/v1/reference/slots/1")
+    assert r.status_code == 409
+    # The slot is untouched.
+    assert {s["slot"]: s for s in client.get("/api/v1/reference/slots").json()}[1]["filled"] is True
+
+
+def test_upload_rejects_too_short_clip(client: TestClient) -> None:
+    r = client.post(
+        "/api/v1/reference/slots/1",
+        files={"voice": ("short.wav", _wav(duration_secs=1.0), "audio/wav")},
+    )
+    assert r.status_code == 400
+
+
+def test_upload_rejects_oversize_clip(client: TestClient) -> None:
+    r = client.post(
+        "/api/v1/reference/slots/1",
+        files={"voice": ("huge.wav", b"\x00" * (6 * 1024 * 1024), "audio/wav")},
+    )
+    assert r.status_code == 400
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required for mp3 transcode")
