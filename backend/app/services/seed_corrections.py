@@ -101,9 +101,10 @@ def format_reference(
 
     Unlike the deterministic dictionary, the reference is NOT category-curated --
     the LLM sees every seed row (homographs, acronyms, brands, slang) plus the
-    operator's user dictionary, and decides by context what to apply. The user dictionary is layered on top: it wins on key
-    collision (replacing the seed's spelling in place) and appends its own keys.
-    Returns "" when there is nothing to reference.
+    operator's user dictionary, and decides by context what to apply. The user
+    dictionary is layered on top: it wins on key collision (replacing the seed's
+    spelling in place) and appends its own keys. Returns "" when there is nothing
+    to reference.
     """
 
     merged: dict[str, tuple[str, str]] = {}

@@ -1249,8 +1249,8 @@ async def _apply_corrections(text: str, settings: Settings) -> str:
     with database.connection(settings.DATA_DIR) as conn:
         cs_pairs, ci_pairs = lexicon.apply_pairs_by_case(conn)
         # Acronyms get no automatic letter-spelling: Chatterbox (BPE/char-based, no g2p)
-        # pronounces common ones natively, and forcing "C E O" makes it choppy. The user
-        # dictionary is the escape hatch for any acronym it actually mispronounces.
+        # pronounces common ones natively, and forcing "C E O" makes it choppy. A dictionary
+        # entry (seed or user) is the escape hatch for any acronym it should say differently.
         # Explicit pronunciations from the dictionary apply here: exact-case keys first,
         # then the case-insensitive group folds so "404 media" hits "404 Media". Then the
         # aggressive base-lexicon pass and the snake_case sweep.

@@ -10,15 +10,16 @@ work lives under `[Unreleased]`.
 
 ### Changed
 
-- Acronyms are no longer letter-spelled. Chatterbox is a BPE/character model with no
-  grapheme-to-phoneme step and no acronym rule, so it pronounces common acronyms (CEO, GPU,
-  API, LLM) natively; the old auto-speller forced "C E O" with spaces, which the model read as
-  three separate letters and voiced choppily. The deterministic acronym speller and the 148
-  letter-spaced spell-out rows in the seed list were removed (an XTTS-2-era carryover). Real-word
-  swaps (`SQL` -> sequel), expansions (`OMG` -> oh my god), the dotted-acronym fix (`U.S.` ->
-  `U S`), and the user dictionary are unchanged; the dictionary is the escape hatch for any
-  acronym Chatterbox mispronounces. Migration 019 re-imports the trimmed seed into existing
-  databases.
+- Common acronyms are no longer auto-spelled into separate letters. Chatterbox is a
+  BPE/character model with no grapheme-to-phoneme step and no acronym rule, so it pronounces
+  common acronyms (CEO, GPU, API, LLM) natively; the old deterministic speller forced every
+  unknown all-caps token to "C E O" with spaces, which the model read as three separate letters
+  and voiced choppily. That speller and the 148 pure letter-spaced rows in the seed list (an
+  XTTS-2-era carryover) were removed, so bare acronyms now reach Chatterbox verbatim. Real-word
+  swaps (`SQL` -> sequel), expansions (`OMG` -> oh my god), curated brand/identifier
+  pronunciations (`MySQL` -> "my S Q L"), the dotted-acronym fix (`U.S.` -> `U S`), and the user
+  dictionary are unchanged; the dictionary is the escape hatch for any acronym Chatterbox
+  mispronounces. Migration 019 re-imports the trimmed seed into existing databases.
 - TTS narration splits more naturally, removing mid-sentence pauses. The wrapper used to cut any
   sentence over 200 characters at the nearest space -- mid-word -- and insert a short silence
   there. It now collapses stray whitespace (newlines read as pauses in Chatterbox), splits an
