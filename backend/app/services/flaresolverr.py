@@ -51,30 +51,28 @@ def looks_like_challenge(result: ExtractionResult) -> bool:
     return any(marker in haystack for marker in _CHALLENGE_MARKERS)
 
 
-# Markers of an INTERACTIVE CAPTCHA (DataDome/PerimeterX slider, hCaptcha/reCAPTCHA
-# gate) -- the case FlareSolverr cannot auto-solve, so even a "solved" page is still a
-# wall. High-precision strings (vendor script domains, verification copy) so a real
-# article that merely embeds a widget doesn't trip it. Matched on the raw solved HTML.
+# Visible copy of an INTERACTIVE CAPTCHA gate (DataDome/PerimeterX slider,
+# hCaptcha/reCAPTCHA) -- the case FlareSolverr cannot auto-solve, so even a "solved"
+# page is still a wall. Matched (like the challenge markers) against a below-floor
+# scrape's extracted markdown + title, not the raw HTML: vendor sensor scripts
+# ("perimeterx", "captcha-delivery.com") ship on plenty of legit pages, so scanning the
+# full HTML would drop real articles. Only the human-readable gate text survives
+# extraction, and only when the page is too short to be the article.
 _CAPTCHA_MARKERS = (
-    "captcha-delivery.com",  # DataDome challenge script
     "verification required",
     "slide right to secure",
     "unusual activity from your device",
     "please verify you are a human",
-    "px-captcha",
-    "perimeterx",
     "complete the security check to access",
 )
-# Only the top of a solved page is scanned -- CAPTCHA gates are small and the markers
-# sit in the head/early body, so this avoids lowercasing a full-size article.
-_CAPTCHA_SCAN_BYTES = 30000
 
 
-def looks_like_captcha(html: str) -> bool:
-    """True when solved HTML is an interactive CAPTCHA gate (DataDome/PerimeterX/etc.)
-    rather than the article -- a wall FlareSolverr can't get through."""
+def looks_like_captcha(result: ExtractionResult) -> bool:
+    """True when a below-floor scrape's extracted text is an interactive CAPTCHA gate
+    (DataDome/PerimeterX/etc.) rather than the article -- a wall FlareSolverr can't get
+    through. Mirrors ``looks_like_challenge``: scans markdown + title, not raw HTML."""
 
-    haystack = html[:_CAPTCHA_SCAN_BYTES].lower()
+    haystack = f"{result.markdown} {result.metadata.get('title', '')}".lower()
     return any(marker in haystack for marker in _CAPTCHA_MARKERS)
 
 
@@ -166,16 +164,6 @@ async def fetch(url: str, settings: Settings, cookies: str = "") -> ExtractionRe
         logger.warning("FlareSolverr response was not HTML text", extra={"event": "flaresolverr_bad_html"})
         return None
 
-    if looks_like_captcha(html):
-        # FlareSolverr cleared the JS challenge but the host escalated to an
-        # interactive CAPTCHA (e.g. inc.com's DataDome slider) it cannot solve. Log the
-        # real cause so a failed extraction reads as "blocked by CAPTCHA", not "no text".
-        logger.warning(
-            "FlareSolverr reached an interactive CAPTCHA; cannot auto-solve",
-            extra={"event": "flaresolverr_captcha", "host": urlsplit(url).hostname or ""},
-        )
-        return None
-
     markdown, metadata = html_to_markdown(html)
     if not markdown:
         logger.warning(
@@ -183,4 +171,16 @@ async def fetch(url: str, settings: Settings, cookies: str = "") -> ExtractionRe
             extra={"event": "flaresolverr_empty_extract"},
         )
         return None
-    return ExtractionResult(markdown=markdown, metadata=metadata)
+
+    result = ExtractionResult(markdown=markdown, metadata=metadata)
+    if len(markdown) < settings.MIN_EXTRACTION_CHARS and looks_like_captcha(result):
+        # FlareSolverr cleared the JS challenge but the host escalated to an interactive
+        # CAPTCHA (e.g. inc.com's DataDome slider) it cannot solve. The extracted text is
+        # below floor and reads as the gate, not the article -- log the real cause so a
+        # failed extraction reads as "blocked by CAPTCHA", not "no text".
+        logger.warning(
+            "FlareSolverr reached an interactive CAPTCHA; cannot auto-solve",
+            extra={"event": "flaresolverr_captcha", "host": urlsplit(url).hostname or ""},
+        )
+        return None
+    return result
