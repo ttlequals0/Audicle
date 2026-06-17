@@ -693,10 +693,10 @@ def _normalize_dotted_acronyms(text: str) -> str:
 def _normalize_acronyms(text: str, keep: frozenset[str] | set[str] = _ACRONYM_KEEP) -> str:
     """Spell unknown all-caps acronyms letter by letter (digits as words).
 
-    Runs after the corrections dictionary so known spoken forms (SQL -> sequel)
-    win first; this catches the leftovers -- tickers (CRWV), unfamiliar acronyms,
-    and plurals of spelled acronyms (GPUs -> "G P yoos"). ``keep`` lists tokens
-    read as words (NASA) that must not be spelled.
+    Runs before the corrections dictionary, but word/override keys (SQL -> sequel,
+    NASA) sit in ``keep`` so the dictionary still wins on those -- this only spells
+    the leftovers: tickers (CRWV), unfamiliar acronyms, and plurals of spelled
+    acronyms (GPUs -> "G P yoos").
     """
 
     def repl(match: re.Match[str]) -> str:
