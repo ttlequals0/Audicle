@@ -28,6 +28,7 @@ def test_run_migrations_creates_tables(tmp_path: Path) -> None:
         "015_upload_max_mb",
         "016_episode_voice_label",
         "017_reimport_seed_lexicon",
+        "018_voice_wav_to_slot1",
     ]
 
     conn = database.connect(database.db_path(tmp_path))
@@ -61,6 +62,7 @@ def test_second_run_is_a_noop(tmp_path: Path) -> None:
         "015_upload_max_mb",
         "016_episode_voice_label",
         "017_reimport_seed_lexicon",
+        "018_voice_wav_to_slot1",
     ]
     assert second == []
 
@@ -74,10 +76,10 @@ def test_no_backup_on_fresh_init_or_noop(tmp_path: Path) -> None:
 def test_m016_backfills_voice_label(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Apply through 015, seed episodes + jobs, then let 016 backfill: a recorded
     # slot -> "Slot N", a NULL voice_id or a missing job -> "Default". Slice off the
-    # last two migrations (016 voice_label + 017 seed re-import) so 016 runs against
-    # the seeded rows.
+    # last three migrations (016 voice_label + 017 seed re-import + 018 voice.wav
+    # -> slot1) so 016 runs against the seeded rows.
     full = database.MIGRATIONS
-    monkeypatch.setattr(database, "MIGRATIONS", full[:-2])
+    monkeypatch.setattr(database, "MIGRATIONS", full[:-3])
     database.run_migrations(tmp_path)
     conn = database.connect(database.db_path(tmp_path))
     try:
@@ -103,6 +105,41 @@ def test_m016_backfills_voice_label(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     finally:
         conn.close()
     assert got == {"e1": "Slot 3", "e2": "Default", "e3": "Default"}
+
+
+def test_m018_copies_voice_wav_into_slot1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A pre-0.35.0 install has a committed reference/voice.wav and an empty slot 1;
+    # 018 copies the clip into slot 1 and leaves voice.wav in place (rollback safety).
+    from app.services import voices
+
+    vdir = tmp_path / "reference" / "voices"
+    vdir.mkdir(parents=True)
+    monkeypatch.setattr(voices, "voices_dir", lambda: vdir)
+    (vdir.parent / "voice.wav").write_bytes(b"LEGACYVOICE")
+
+    database.run_migrations(tmp_path)
+
+    assert (vdir / "slot1.wav").read_bytes() == b"LEGACYVOICE"
+    assert (vdir.parent / "voice.wav").is_file()  # copied, not moved
+
+
+def test_m018_noop_when_slot1_already_filled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An operator who already uploaded slot 1 keeps it; the legacy clip doesn't clobber it.
+    from app.services import voices
+
+    vdir = tmp_path / "reference" / "voices"
+    vdir.mkdir(parents=True)
+    monkeypatch.setattr(voices, "voices_dir", lambda: vdir)
+    (vdir.parent / "voice.wav").write_bytes(b"LEGACYVOICE")
+    (vdir / "slot1.wav").write_bytes(b"EXISTINGSLOT")
+
+    database.run_migrations(tmp_path)
+
+    assert (vdir / "slot1.wav").read_bytes() == b"EXISTINGSLOT"
 
 
 def test_m011_imports_legacy_corrections_into_db(

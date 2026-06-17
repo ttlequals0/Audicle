@@ -28,6 +28,12 @@ def test_filled_slots(_slots: Path) -> None:
     assert voices.filled_slots() == [2, 4]
 
 
+def test_default_slot(_slots: Path) -> None:
+    assert voices.default_slot() is None  # no slots filled
+    _fill(_slots, 3, 5)
+    assert voices.default_slot() == 3  # lowest filled wins
+
+
 def test_resolve_no_slots_is_legacy_none(env: Path, _slots: Path) -> None:
     database.run_migrations(env)
     with database.connection(env) as conn:
@@ -74,10 +80,15 @@ def test_labels_round_trip(env: Path, _slots: Path) -> None:
         assert voices.get_labels(conn) == {"2": "Alex"}
 
 
-def test_label_for(env: Path) -> None:
+def test_label_for(env: Path, _slots: Path) -> None:
     database.run_migrations(env)
     with database.connection(env) as conn:
-        assert voices.label_for(conn, None) == "Default"  # legacy voice.wav
-        assert voices.label_for(conn, "3") == "Slot 3"  # unlabelled slot
+        # No slot loaded: a None voice_id is the legacy "Default".
+        assert voices.label_for(conn, None) == "Default"
+        # With a slot loaded, None resolves to the default (lowest) slot -- the voice
+        # synthesis falls back to -- so the label matches the audio.
+        _fill(_slots, 2)
+        assert voices.label_for(conn, None) == "Slot 2"
+        assert voices.label_for(conn, "3") == "Slot 3"  # explicit unlabelled slot
         voices.set_label(conn, 3, "Morgan")
         assert voices.label_for(conn, "3") == "Morgan"

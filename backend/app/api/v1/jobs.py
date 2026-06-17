@@ -14,7 +14,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict
 
-from app.api.deps import get_conn
+from app.api.deps import get_conn, require_voice_loaded
 from app.api.v1.submit import SubmitResponse
 from app.config import Settings, get_settings
 from app.services import file_extraction, ssrf
@@ -106,6 +106,7 @@ async def list_jobs(
     status_code=201,
     response_model=SubmitResponse,
     summary="Re-enqueue a job (reprocess a failed/finished run)",
+    dependencies=[Depends(require_voice_loaded)],
 )
 async def requeue_job(
     job_id: str,

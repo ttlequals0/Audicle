@@ -1044,28 +1044,33 @@ async def _stage_tts(
     transient failures. Returns the list of GenerateResult so the audio
     stage can read the per-chunk WAVs."""
 
-    # Select this job's reference voice once, before the first chunk, so every
-    # chunk conditions on the same voice. Best-effort: a missing slot (deleted
-    # after submit) keeps the wrapper's current voice rather than failing the job.
+    # Select this job's reference voice once, before the first chunk, so every chunk
+    # conditions on the same voice. A job with no recorded slot (a pre-slots row or a
+    # reprocess/requeue carrying None), or one whose recorded slot was deleted after
+    # submit, falls back to the default (lowest filled) slot so it never inherits a
+    # slot left selected by an earlier job or an audition. Only when no slot exists at
+    # all is selection skipped -- the wrapper then 503s and the job fails loudly
+    # rather than silently using a stale voice.
+    selected = False
     if job.voice_id:
         try:
             await tts.select_voice(settings, int(job.voice_id))
+            selected = True
         except (ValueError, tts.TTSError):
             logger.warning(
-                "Voice select failed; using the wrapper's current voice",
+                "Voice select failed; falling back to the default slot",
                 extra={"event": "tts_select_voice_failed", "voice_id": job.voice_id},
             )
-    else:
-        # No slot assigned (all slots empty): reset the wrapper to the legacy
-        # voice.wav so this job doesn't inherit a slot left selected by an
-        # earlier job or an audition.
-        try:
-            await tts.reload(settings)
-        except tts.TTSError:
-            logger.warning(
-                "Voice reset to default failed; using the wrapper's current voice",
-                extra={"event": "tts_reset_voice_failed"},
-            )
+    if not selected:
+        default = voices.default_slot()
+        if default is not None:
+            try:
+                await tts.select_voice(settings, default)
+            except (ValueError, tts.TTSError):
+                logger.warning(
+                    "Default voice select failed; using the wrapper's current voice",
+                    extra={"event": "tts_default_voice_failed", "slot": default},
+                )
 
     results: list[tts.GenerateResult] = []
     total = len(chunks)

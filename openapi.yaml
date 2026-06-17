@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.34.0
+  version: 0.35.0
 paths:
   /health/live:
     get:
@@ -750,143 +750,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-  /api/v1/reference/preview:
-    get:
-      tags:
-      - reference
-      summary: Preview
-      operationId: preview_api_v1_reference_preview_get
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-  /api/v1/reference/status:
-    get:
-      tags:
-      - reference
-      summary: Default Voice Status
-      description: 'Whether the fallback voice.wav is installed, plus its duration.
-        The merged
-
-        voices UI renders this as the ''Default'' row alongside the slots.'
-      operationId: default_voice_status_api_v1_reference_status_get
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                additionalProperties: true
-                type: object
-                title: Response Default Voice Status Api V1 Reference Status Get
-  /api/v1/reference/test:
-    post:
-      tags:
-      - reference
-      summary: Test Candidate
-      description: 'Synthesize ``sample_text`` using ``voice`` without committing.
-
-
-        Staged through the live reference path so the wrapper picks it up
-
-        via /reload; on every exit path the committed clip is restored. If
-
-        no clip was previously committed, the candidate is removed on exit
-
-        so /test never silently turns into /commit.'
-      operationId: test_candidate_api_v1_reference_test_post
-      requestBody:
-        content:
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/Body_test_candidate_api_v1_reference_test_post'
-        required: true
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /api/v1/reference/audition:
-    post:
-      tags:
-      - reference
-      summary: Audition Committed
-      description: 'Synthesize ``sample_text`` with the currently-committed reference
-        voice.
-
-
-        Unlike ``/test`` there is no upload and no staging -- it just exercises the
-
-        wrapper''s ``/generate`` against the voice it already conditions on. Returns
-
-        503 if no voice is committed. Takes the reference lock so a concurrent
-
-        ``/test`` (which temporarily stages a candidate) can''t make the audition
-        use
-
-        the wrong voice.'
-      operationId: audition_committed_api_v1_reference_audition_post
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/Body_audition_committed_api_v1_reference_audition_post'
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /api/v1/reference/commit:
-    post:
-      tags:
-      - reference
-      summary: Commit Candidate
-      description: 'Atomically replace ``backend/app/reference/voice.wav`` and ask
-        the
-
-        TTS wrapper to ``/reload`` so the next ``/generate`` picks it up.'
-      operationId: commit_candidate_api_v1_reference_commit_post
-      requestBody:
-        content:
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/Body_commit_candidate_api_v1_reference_commit_post'
-        required: true
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                additionalProperties:
-                  anyOf:
-                  - type: string
-                  - type: integer
-                  - type: boolean
-                type: object
-                title: Response Commit Candidate Api V1 Reference Commit Post
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/reference/slots:
     get:
       tags:
@@ -1040,11 +903,13 @@ paths:
       tags:
       - reference
       summary: Audition Slot
-      description: 'Synthesize a sample with slot ``slot`` (selects it on the wrapper,
+      description: 'Synthesize a sample with slot ``slot``: selects it on the wrapper,
+        generates,
 
-        generates, then restores the committed voice.wav). Mirrors /test''s restore
+        then reloads the wrapper''s resting voice so an audition never leaves the
+        wrapper
 
-        contract so an audition never leaves the wrapper switched to a slot.'
+        switched to the auditioned slot.'
       operationId: audition_slot_api_v1_reference_slots__slot__audition_post
       parameters:
       - name: slot
@@ -1451,20 +1316,6 @@ components:
       - authenticated
       - password_set
       title: AuthActionResponse
-    Body_audition_committed_api_v1_reference_audition_post:
-      properties:
-        sample_text:
-          type: string
-          maxLength: 400
-          minLength: 4
-          title: Sample Text
-          description: text to synthesize using the committed voice
-          default: But I must explain to you how all this mistaken idea of denouncing
-            of a pleasure and praising pain was born and I will give you a complete
-            account of the system, and expound the actual teachings of the great explorer
-            of the truth, the master-builder of human happiness.
-      type: object
-      title: Body_audition_committed_api_v1_reference_audition_post
     Body_audition_slot_api_v1_reference_slots__slot__audition_post:
       properties:
         sample_text:
@@ -1478,17 +1329,6 @@ components:
             of the truth, the master-builder of human happiness.
       type: object
       title: Body_audition_slot_api_v1_reference_slots__slot__audition_post
-    Body_commit_candidate_api_v1_reference_commit_post:
-      properties:
-        voice:
-          type: string
-          contentMediaType: application/octet-stream
-          title: Voice
-          description: new voice clip to install (WAV/MP3/M4A/FLAC/OGG)
-      type: object
-      required:
-      - voice
-      title: Body_commit_candidate_api_v1_reference_commit_post
     Body_rename_slot_api_v1_reference_slots__slot__label_put:
       properties:
         label:
@@ -1499,27 +1339,6 @@ components:
       required:
       - label
       title: Body_rename_slot_api_v1_reference_slots__slot__label_put
-    Body_test_candidate_api_v1_reference_test_post:
-      properties:
-        voice:
-          type: string
-          contentMediaType: application/octet-stream
-          title: Voice
-          description: candidate voice clip (WAV/MP3/M4A/FLAC/OGG)
-        sample_text:
-          type: string
-          maxLength: 400
-          minLength: 4
-          title: Sample Text
-          description: text to synthesize using the candidate clip
-          default: But I must explain to you how all this mistaken idea of denouncing
-            of a pleasure and praising pain was born and I will give you a complete
-            account of the system, and expound the actual teachings of the great explorer
-            of the truth, the master-builder of human happiness.
-      type: object
-      required:
-      - voice
-      title: Body_test_candidate_api_v1_reference_test_post
     Body_upload_api_v1_upload_post:
       properties:
         file:

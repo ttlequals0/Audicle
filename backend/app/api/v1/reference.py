@@ -1,16 +1,16 @@
 """``/api/v1/reference/*`` -- operator-side reference voice management.
 
-Three endpoints:
+Slots-only since 0.35.0: there is no separate committed ``voice.wav``. Voices live
+entirely in five fixed slots under ``reference/voices/slot{n}.wav``:
 
-- ``GET /api/v1/reference/preview`` returns the currently-installed
-  ``voice.wav`` (the clip the TTS wrapper conditions on).
-- ``POST /api/v1/reference/test`` accepts a candidate WAV + sample text,
-  calls the TTS wrapper using the candidate (without permanently
-  committing it), and returns the generated audio for audition.
-- ``POST /api/v1/reference/commit`` accepts a candidate WAV, validates,
-  atomically swaps it into ``backend/app/reference/voice.wav``, and
-  asks the TTS wrapper to ``/reload`` so the next ``/generate`` call
-  uses the new voice without a container restart.
+- ``GET    /api/v1/reference/slots`` lists the five slots (filled, label, duration).
+- ``POST   /api/v1/reference/slots/{n}`` installs/replaces a slot's clip.
+- ``DELETE /api/v1/reference/slots/{n}`` clears a slot (refused for the last one,
+  so at least one voice is always loaded).
+- ``PUT    /api/v1/reference/slots/{n}/label`` renames a slot.
+- ``GET    /api/v1/reference/slots/{n}/preview`` returns the stored clip.
+- ``POST   /api/v1/reference/slots/{n}/audition`` synthesizes a sample with the slot
+  on the wrapper, then restores the wrapper's resting voice.
 """
 
 from __future__ import annotations
@@ -54,31 +54,23 @@ DEFAULT_SAMPLE_TEXT = (
     "the great explorer of the truth, the master-builder of human happiness."
 )
 
-# Serialises the reference-voice critical section. The in-process asyncio.Lock
-# gives intra-worker fairness and a cheap fast path; the cross-process fcntl
-# flock (database.reference_lock) is what actually prevents the read-stage-
-# generate-restore sequence from interleaving across uvicorn --workers N and
-# clobbering the committed voice.wav. /commit takes it too so /test never sees a
-# half-swapped voice.
+# Serialises the slot-audition critical section. The in-process asyncio.Lock gives
+# intra-worker fairness and a cheap fast path; the cross-process fcntl flock
+# (database.reference_lock) is what prevents two auditions (each select-voice +
+# generate, then restore the resting voice) from interleaving across uvicorn
+# --workers N and leaving the wrapper switched to the wrong slot.
 _reference_lock = asyncio.Lock()
 
 
 @asynccontextmanager
 async def _serialized_reference_access(data_dir: Path) -> AsyncIterator[None]:
     """Hold the in-process lock and the cross-process flock for the duration of
-    a reference-voice critical section. The asyncio.Lock queues same-process
+    a slot-audition critical section. The asyncio.Lock queues same-process
     callers cheaply; the flock (cancellation-safe, see reference_lock_async)
     serializes across worker processes."""
 
     async with _reference_lock, database.reference_lock_async(data_dir):
         yield
-
-
-def _reference_path() -> Path:
-    """Where the wrapper picks the voice clip up. Matches the bind mount
-    in docker-compose."""
-
-    return Path(__file__).resolve().parent.parent.parent / "reference" / "voice.wav"
 
 
 def _validate_wav(data: bytes) -> tuple[int, float]:
@@ -165,178 +157,6 @@ async def _read_upload_capped(voice: UploadFile) -> bytes:
     return b"".join(chunks)
 
 
-@router.get("/preview")
-async def preview() -> FileResponse:
-    path = _reference_path()
-    if not path.is_file():
-        raise HTTPException(
-            status_code=404, detail="reference voice.wav not installed"
-        )
-    return FileResponse(path, media_type="audio/wav")
-
-
-@router.get("/status")
-async def default_voice_status() -> dict[str, Any]:
-    """Whether the fallback voice.wav is installed, plus its duration. The merged
-    voices UI renders this as the 'Default' row alongside the slots."""
-
-    path = _reference_path()
-    filled = path.is_file()
-    return {"filled": filled, "duration_secs": _wav_seconds(path) if filled else None}
-
-
-@router.post("/test")
-async def test_candidate(
-    settings: Annotated[Settings, Depends(get_settings)],
-    voice: Annotated[UploadFile, File(description="candidate voice clip (WAV/MP3/M4A/FLAC/OGG)")],
-    sample_text: Annotated[
-        str,
-        Form(
-            min_length=4,
-            max_length=400,
-            description="text to synthesize using the candidate clip",
-        ),
-    ] = DEFAULT_SAMPLE_TEXT,
-) -> Response:
-    """Synthesize ``sample_text`` using ``voice`` without committing.
-
-    Staged through the live reference path so the wrapper picks it up
-    via /reload; on every exit path the committed clip is restored. If
-    no clip was previously committed, the candidate is removed on exit
-    so /test never silently turns into /commit.
-    """
-
-    candidate = await _read_upload_capped(voice)
-    candidate, _, _ = await asyncio.to_thread(_prepare_reference_wav, candidate)
-
-    reference = _reference_path()
-    reference.parent.mkdir(parents=True, exist_ok=True)
-
-    async with _serialized_reference_access(settings.DATA_DIR):
-        backup = reference.read_bytes() if reference.is_file() else None
-        try:
-            write_bytes_atomic(reference, candidate, prefix=".ref-test-")
-            async with httpx.AsyncClient(
-                timeout=settings.TTS_HTTP_TIMEOUT_SECONDS
-            ) as client:
-                try:
-                    await client.post(f"{settings.TTS_URL.rstrip('/')}/reload")
-                except httpx.HTTPError as exc:
-                    raise HTTPException(
-                        status_code=502,
-                        detail=f"tts wrapper /reload failed: {exc}",
-                    ) from exc
-                response = await client.post(
-                    f"{settings.TTS_URL.rstrip('/')}/generate",
-                    json={
-                        "text": sample_text,
-                        "episode_id": "reftest",
-                        "chunk_index": 0,
-                    },
-                )
-                body = _read_generated_wav(response, settings)
-                # Restore (or remove if there was nothing committed) and
-                # reload BEFORE releasing the lock so the next /generate
-                # never sees the candidate.
-                _restore_or_clear(reference, backup)
-                await _reload_silently(client, settings)
-                return Response(content=body, media_type="audio/wav")
-        except Exception:
-            # Generate path raised after the candidate was staged: roll
-            # back disk state on the way out. Reload is best-effort.
-            _restore_or_clear(reference, backup)
-            async with httpx.AsyncClient(
-                timeout=settings.TTS_HTTP_TIMEOUT_SECONDS
-            ) as cleanup_client:
-                await _reload_silently(cleanup_client, settings)
-            raise
-
-
-@router.post("/audition")
-async def audition_committed(
-    settings: Annotated[Settings, Depends(get_settings)],
-    sample_text: Annotated[
-        str,
-        Form(
-            min_length=4,
-            max_length=400,
-            description="text to synthesize using the committed voice",
-        ),
-    ] = DEFAULT_SAMPLE_TEXT,
-) -> Response:
-    """Synthesize ``sample_text`` with the currently-committed reference voice.
-
-    Unlike ``/test`` there is no upload and no staging -- it just exercises the
-    wrapper's ``/generate`` against the voice it already conditions on. Returns
-    503 if no voice is committed. Takes the reference lock so a concurrent
-    ``/test`` (which temporarily stages a candidate) can't make the audition use
-    the wrong voice.
-    """
-
-    if not _reference_path().is_file():
-        raise HTTPException(
-            status_code=503, detail="no reference voice committed; commit one first"
-        )
-    async with _serialized_reference_access(settings.DATA_DIR), httpx.AsyncClient(
-        timeout=settings.TTS_HTTP_TIMEOUT_SECONDS
-    ) as client:
-        try:
-            response = await client.post(
-                f"{settings.TTS_URL.rstrip('/')}/generate",
-                json={"text": sample_text, "episode_id": "audition", "chunk_index": 0},
-            )
-        except httpx.HTTPError as exc:
-            raise HTTPException(
-                status_code=502, detail=f"tts wrapper /generate failed: {exc}"
-            ) from exc
-        body = _read_generated_wav(response, settings)
-    return Response(content=body, media_type="audio/wav")
-
-
-@router.post("/commit")
-async def commit_candidate(
-    settings: Annotated[Settings, Depends(get_settings)],
-    voice: Annotated[UploadFile, File(description="new voice clip to install (WAV/MP3/M4A/FLAC/OGG)")],
-) -> dict[str, str | int | bool]:
-    """Atomically replace ``backend/app/reference/voice.wav`` and ask the
-    TTS wrapper to ``/reload`` so the next ``/generate`` picks it up."""
-
-    candidate = await _read_upload_capped(voice)
-    candidate, sample_rate, duration_secs = await asyncio.to_thread(
-        _prepare_reference_wav, candidate
-    )
-
-    reference = _reference_path()
-    reference.parent.mkdir(parents=True, exist_ok=True)
-
-    async with _serialized_reference_access(settings.DATA_DIR):
-        write_bytes_atomic(reference, candidate, prefix=".ref-")
-        async with httpx.AsyncClient(
-            timeout=settings.TTS_HTTP_TIMEOUT_SECONDS
-        ) as client:
-            try:
-                await client.post(f"{settings.TTS_URL.rstrip('/')}/reload")
-            except httpx.HTTPError as exc:
-                # Clip is committed on disk; the wrapper just didn't reload.
-                # Operator can re-trigger. Log the underlying error rather than
-                # returning it so transport detail isn't exposed to the client.
-                logger.warning(
-                    "Reference committed but TTS /reload failed",
-                    extra={"event": "reference_reload_failed", "error": str(exc)},
-                )
-                return {
-                    "committed": True,
-                    "tts_reload_warning": "voice committed but TTS reload failed; retry /commit",
-                    "sample_rate": sample_rate,
-                    "duration_secs": round(duration_secs),
-                }
-    return {
-        "committed": True,
-        "sample_rate": sample_rate,
-        "duration_secs": round(duration_secs),
-    }
-
-
 def _read_generated_wav(response: httpx.Response, settings: Settings) -> bytes:
     """Validate the wrapper ``/generate`` response and read the produced WAV.
 
@@ -354,23 +174,6 @@ def _read_generated_wav(response: httpx.Response, settings: Settings) -> bytes:
     if not wav_path.is_relative_to(data_root) or not wav_path.is_file():
         raise HTTPException(status_code=502, detail="tts wrapper returned an invalid wav path")
     return wav_path.read_bytes()
-
-
-def _restore_or_clear(reference: Path, backup: bytes | None) -> None:
-    """Either restore the prior reference clip or remove the staged
-    candidate when no prior clip existed."""
-
-    try:
-        if backup is not None:
-            write_bytes_atomic(reference, backup, prefix=".ref-restore-")
-        else:
-            reference.unlink(missing_ok=True)
-    except OSError:
-        logger.error(
-            "Reference rollback failed -- manual recovery required",
-            extra={"event": "reference_rollback_failed", "path": str(reference)},
-            exc_info=True,
-        )
 
 
 async def _reload_silently(client: httpx.AsyncClient, settings: Settings) -> None:
@@ -472,6 +275,13 @@ async def clear_slot(
     conn: Annotated[sqlite3.Connection, Depends(get_conn)],
     slot: Annotated[int, PathParam(ge=1, le=voices.NUM_SLOTS)],
 ) -> dict[str, Any]:
+    # At least one voice must stay loaded at all times (a job submitted with no
+    # voice has nothing to fall back to). Refuse to empty the only filled slot.
+    if voices.filled_slots() == [slot]:
+        raise HTTPException(
+            status_code=409,
+            detail="cannot clear the only loaded voice; upload another slot first",
+        )
     with suppress(FileNotFoundError):
         _safe_slot_path(slot).unlink()
     voices.set_label(conn, slot, "")
@@ -504,9 +314,9 @@ async def audition_slot(
     slot: Annotated[int, PathParam(ge=1, le=voices.NUM_SLOTS)],
     sample_text: Annotated[str, Form(min_length=4, max_length=400)] = DEFAULT_SAMPLE_TEXT,
 ) -> Response:
-    """Synthesize a sample with slot ``slot`` (selects it on the wrapper,
-    generates, then restores the committed voice.wav). Mirrors /test's restore
-    contract so an audition never leaves the wrapper switched to a slot."""
+    """Synthesize a sample with slot ``slot``: selects it on the wrapper, generates,
+    then reloads the wrapper's resting voice so an audition never leaves the wrapper
+    switched to the auditioned slot."""
 
     if not _safe_slot_path(slot).is_file():
         raise HTTPException(status_code=404, detail=f"voice slot {slot} is empty")
@@ -523,8 +333,8 @@ async def audition_slot(
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=f"tts wrapper call failed: {exc}") from exc
         finally:
-            # Restore the committed voice.wav so the wrapper's resting voice
-            # never leaks into a later job that resolves to the legacy default.
+            # Reload the wrapper's resting voice (its lowest filled slot) so the
+            # auditioned slot never leaks into a later job's synthesis.
             await _reload_silently(client, settings)
         body = _read_generated_wav(response, settings)
     return Response(content=body, media_type="audio/wav")

@@ -18,7 +18,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
-from app.api.deps import get_conn
+from app.api.deps import get_conn, require_voice_loaded
 from app.api.v1.submit import SubmitResponse
 from app.config import Settings, get_settings
 from app.services import episodes as episodes_service
@@ -50,6 +50,7 @@ async def _read_upload_capped(upload: UploadFile, cap: int) -> bytes:
     status_code=201,
     response_model=SubmitResponse,
     summary="Upload a document (PDF/DOCX/Markdown/text/HTML) for processing",
+    dependencies=[Depends(require_voice_loaded)],
 )
 async def upload(
     conn: Annotated[sqlite3.Connection, Depends(get_conn)],
@@ -112,6 +113,7 @@ async def upload(
     status_code=201,
     response_model=SubmitResponse,
     summary="Reprocess an uploaded episode from its stored original",
+    dependencies=[Depends(require_voice_loaded)],
 )
 async def reprocess_upload(
     episode_id: str,

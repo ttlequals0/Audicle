@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from app.config import get_settings
 from app.core import database
 from app.main import create_app
-from app.services import file_extraction, jobs
+from app.services import file_extraction, jobs, voices
 from fastapi.testclient import TestClient
 
 
@@ -57,6 +58,20 @@ def test_requeue_404_when_job_missing(env: Path) -> None:
     with _client(env) as client:
         r = client.post("/api/v1/jobs/nope/requeue")
     assert r.status_code == 404
+
+
+def test_requeue_rejects_with_400_when_no_voice_loaded(
+    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Requeue is a job-creating path, so it carries the same no-voice guard as submit.
+    database.run_migrations(env)
+    job_id = _failed_job(env, "https://example.test/article")
+    empty = tmp_path / "empty_voices"
+    empty.mkdir()
+    monkeypatch.setattr(voices, "voices_dir", lambda: empty)
+    with _client(env) as client:
+        r = client.post(f"/api/v1/jobs/{job_id}/requeue")
+    assert r.status_code == 400
 
 
 def test_jobs_list_exposes_source_filename(env: Path) -> None:

@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator
 
-from app.api.deps import get_conn
+from app.api.deps import get_conn, require_voice_loaded
 from app.services import jobs, ssrf, voices
 
 router = APIRouter(tags=["jobs"])
@@ -66,6 +66,7 @@ class SubmitResponse(BaseModel):
     status_code=201,
     response_model=SubmitResponse,
     summary="Submit an article URL for processing",
+    dependencies=[Depends(require_voice_loaded)],
 )
 async def submit(
     body: SubmitRequest,

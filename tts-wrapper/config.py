@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
+
+NUM_SLOTS = 5  # reference-voice slots; matches the backend's voices.NUM_SLOTS
 
 
 def _float_env(name: str, default: float) -> float:
@@ -92,3 +95,10 @@ class Config:
                 "WHISPER_COMPUTE_TYPE", "float16" if whisper_device == "cuda" else "int8"
             ),
         )
+
+    def slot_path(self, slot: int) -> Path:
+        """Path to reference-voice slot ``slot``, under ``voices/`` next to
+        ``reference_path`` (the read-only mount the backend writes slots into).
+        Single source of the slot layout for the wrapper (boot pick + /select-voice)."""
+
+        return Path(self.reference_path).parent / "voices" / f"slot{slot}.wav"

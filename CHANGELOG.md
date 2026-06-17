@@ -6,10 +6,21 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
-## [0.34.0] - 2026-06-16
+## [0.35.0] - 2026-06-16
 
 ### Changed
 
+- Voices are now slots-only. The single fallback `voice.wav` ("Default") is gone; every
+  voice lives in one of the five reference slots. A random filled slot narrates each episode
+  unless you pick one at submit. Migration 018 copies an existing committed `voice.wav` into
+  slot 1 (a copy, so a rollback to a pre-0.35.0 build still finds the old file). At least one
+  slot must stay loaded: the API refuses to clear the last filled slot (409), and every
+  job-creating path (submit, upload, reprocess, requeue) returns 400 when every slot is
+  empty. The committed-voice endpoints
+  (`/api/v1/reference` `preview`, `status`, `test`, `audition`, `commit`) and the Settings
+  "Default" row were removed -- manage voices entirely through the five slots. The wrapper
+  boots on its lowest filled slot and stays up (returning 503 from `/generate`) until a slot
+  is uploaded.
 - Removed all pseudo-phonetic respellings from the pronunciation system. The seed list
   spelled ~396 words and names as hyphenated syllables (`Kubernetes -> koo-ber-neh-tees`,
   `pseudonym -> soo-doh-nim`, `Nike -> ny-kee`), and the month names were respelled the
@@ -19,6 +30,16 @@ work lives under `[Unreleased]`.
   (`read -> reed`), the city-name base lexicon, and the user dictionary are unchanged.
   Migration 017 re-imports the trimmed seed into existing databases. The 0.33.0
   respelling case-fold and its prompt instruction were removed as no longer needed.
+
+### Fixed
+
+- The "random" voice picker now varies across episodes. The legacy `voice.wav` was never a
+  candidate in the random pool, so an install whose only real voice was a single slot always
+  picked that same voice. Migrating `voice.wav` into slot 1 adds it to the rotation.
+- Auditioning a voice in Settings now uses the slot you picked. The removed committed
+  `/audition` generated against whatever voice the wrapper had last loaded rather than the
+  selected one; the Settings widget now runs entirely through the per-slot audition, which
+  selects the slot first and restores the wrapper's resting voice afterward.
 
 ## [0.33.1] - 2026-06-16
 

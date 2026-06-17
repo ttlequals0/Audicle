@@ -27,7 +27,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from config import Config
+from config import NUM_SLOTS, Config
 from engine import Engine, GPUOutOfMemoryError, InferenceBusyError
 from log_setup import setup_logging
 from whisper_verify import WhisperVerifier
@@ -125,9 +125,9 @@ def _default_engine_factory() -> Engine:
 
 
 class SelectVoiceRequest(BaseModel):
-    """Pick one of the 5 reference-voice slots for the next job."""
+    """Pick one of the reference-voice slots for the next job."""
 
-    slot: int = Field(ge=1, le=5)
+    slot: int = Field(ge=1, le=NUM_SLOTS)
 
 
 def create_app(
@@ -412,8 +412,8 @@ def create_app(
         engine: Engine = Depends(get_engine),
         lock: asyncio.Lock = Depends(get_lock),
     ) -> dict[str, Any]:
-        # Slots live next to the committed voice.wav, mounted read-only.
-        ref_path = Path(cfg.reference_path).parent / "voices" / f"slot{body.slot}.wav"
+        # Slots live under voices/ next to reference_path, mounted read-only.
+        ref_path = cfg.slot_path(body.slot)
         async with lock:
             try:
                 await engine.select_voice(ref_path)

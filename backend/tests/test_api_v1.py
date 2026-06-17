@@ -35,6 +35,21 @@ def test_submit_rejects_invalid_url_with_400(client: TestClient) -> None:
     assert "details" in body
 
 
+def test_submit_rejects_with_400_when_no_voice_loaded(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The slots-only model requires at least one loaded voice; submit is a 400 when
+    # every slot is empty (point the voices dir at an empty folder to simulate it).
+    from app.services import voices
+
+    empty = tmp_path / "empty_voices"
+    empty.mkdir()
+    monkeypatch.setattr(voices, "voices_dir", lambda: empty)
+    with client:
+        response = client.post("/api/v1/submit", json={"url": "https://example.test/novoice"})
+    assert response.status_code == 400
+
+
 def test_admin_request_opens_single_connection(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

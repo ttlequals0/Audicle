@@ -136,7 +136,7 @@ def sample_payload() -> dict[str, Any]:
         "event": "episode.processed",
         "episode_id": "test00000000",
         "title": "Test webhook from Audicle",
-        "voice": "Default",
+        "voice": "Slot 1",
         "reprocess": False,
         "source_type": "url",
         "url": "https://example.com/article",

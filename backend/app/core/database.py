@@ -128,10 +128,10 @@ async def reference_lock_async(data_dir: Path) -> AsyncIterator[None]:
     """Cross-process exclusive lock for the reference-voice critical section,
     safe to hold across awaits.
 
-    ``/api/v1/reference/test`` and ``/commit`` both read-stage-generate-restore
-    the single shared ``voice.wav``; an in-process asyncio.Lock can't serialize
-    them across ``uvicorn --workers N``, so they race and clobber the committed
-    clip. This flock closes that gap.
+    A slot audition (``/api/v1/reference/slots/{n}/audition``) selects a slot on the
+    wrapper, generates, then reloads the resting voice; an in-process asyncio.Lock can't
+    serialize those across ``uvicorn --workers N``, so two auditions race and one can
+    leave the wrapper switched to the wrong slot. This flock closes that gap.
 
     Uses a non-blocking flock with async retry rather than a blocking acquire on
     a worker thread: every suspension point is an ``asyncio.sleep`` holding only
@@ -568,6 +568,44 @@ def _m017_reimport_seed_lexicon(conn: sqlite3.Connection) -> None:
     lexicon.import_readonly(conn, "seed", seed_corrections.build_lexicon_rows(seed_entries))
 
 
+def _m018_voice_wav_to_slot1(conn: sqlite3.Connection) -> None:
+    """Migrate the legacy committed ``voice.wav`` into voice slot 1 (0.35.0).
+
+    The slots-only model dropped the separate ``voice.wav`` as the default voice.
+    On an existing install the operator's committed clip lives at
+    ``reference/voice.wav``; copy it into the lowest empty slot it can take (slot 1)
+    so that voice survives the cut-over. Copy, not move, so a rollback to pre-0.35.0
+    still finds ``voice.wav``. A no-op when there is no committed clip (a fresh
+    install -- the operator uploads slots directly) or slot 1 is already filled. This
+    touches the bind-mounted reference dir, not ``conn``; the unused parameter keeps the
+    migration signature uniform. Best-effort: a copy failure (e.g. a read-only mount) is
+    logged and swallowed so it never blocks app boot. The write is atomic (temp +
+    os.replace), so a crash mid-copy can't leave a truncated slot the ``slot1.is_file()``
+    guard would then treat as filled.
+    """
+
+    from app.services import voices
+    from app.services.atomic_write import write_bytes_atomic
+
+    legacy = voices.voices_dir().parent / "voice.wav"
+    slot1 = voices.slot_path(1)
+    if not legacy.is_file() or slot1.is_file():
+        return
+    try:
+        write_bytes_atomic(slot1, legacy.read_bytes(), prefix=".slot-migrate-")
+    except OSError:
+        logger.warning(
+            "Could not migrate voice.wav into slot 1; upload a voice slot via the UI",
+            extra={"event": "voice_wav_migrate_failed"},
+            exc_info=True,
+        )
+        return
+    logger.info(
+        "Migrated legacy voice.wav into slot 1",
+        extra={"event": "voice_wav_migrated_to_slot1"},
+    )
+
+
 MIGRATIONS: list[tuple[str, Migration]] = [
     ("001_initial_schema", _m001_initial_schema),
     ("002_settings_kv", _m002_settings_kv),
@@ -586,6 +624,7 @@ MIGRATIONS: list[tuple[str, Migration]] = [
     ("015_upload_max_mb", _m015_upload_max_mb),
     ("016_episode_voice_label", _m016_episode_voice_label),
     ("017_reimport_seed_lexicon", _m017_reimport_seed_lexicon),
+    ("018_voice_wav_to_slot1", _m018_voice_wav_to_slot1),
 ]
 
 

@@ -18,34 +18,25 @@ generated audio commercially.
 
 ## Endpoints
 
-| Method | Path        | Purpose                                                                |
-|--------|-------------|------------------------------------------------------------------------|
-| POST   | /generate   | Synthesize a chunk. Body: `{text, episode_id, chunk_index, seed?, verify?}`. |
-| GET    | /health     | `{ok, model_loaded, reference_loaded}`. 503 until everything is ready. |
-| POST   | /reload     | Re-read `reference/voice.wav` and recompute the speaker conditionals.  |
+| Method | Path           | Purpose                                                             |
+|--------|----------------|---------------------------------------------------------------------|
+| POST   | /generate      | Synthesize a chunk. Body: `{text, episode_id, chunk_index, seed?, verify?}`. |
+| GET    | /health        | `{ok, model_loaded, reference_loaded}`. 503 until everything is ready. |
+| POST   | /select-voice  | Switch the active voice to a slot. Body: `{slot}` (1-5).            |
+| POST   | /reload        | Re-encode the resting voice (the lowest filled slot) into the speaker conditionals. |
 
-## Reference voice
+## Reference voices
 
-Drop a single WAV at `backend/app/reference/voice.wav` on the host. The compose
-mount makes it visible inside the container at `/app/reference/voice.wav`. Spec
-(see `backend/app/reference/README.md` for the authoritative version):
-
-- 8-12 seconds recommended; 3-60 s hard limits enforced by `/api/v1/reference/commit`
-- 24 kHz recommended (16-48 kHz accepted)
-- Mono
-- <= 5 MB
-- Clean speech (no background music, low noise)
-
-Convert any clean ~10 s clip with ffmpeg:
-
-```
-ffmpeg -i your-clip.flac -ar 24000 -ac 1 -t 10 backend/app/reference/voice.wav
-```
+Voices are slots-only (since 0.35.0): there is no separate `voice.wav`. The wrapper
+conditions on `reference/voices/slot{1..5}.wav`, mounted from the host. It boots on its
+lowest filled slot and switches per job via `/select-voice`. Manage slots through the
+app's Settings UI or `POST /api/v1/reference/slots/{n}`; see
+`backend/app/reference/README.md` for the clip spec and the authoritative version.
 
 The wrapper starts without a voice: the model loads, `/health` reports
-`reference_loaded=false`, and `/generate` returns 503 until a voice is committed
-(upload one via the app's Settings UI, or drop a `voice.wav` in and call
-`/reload`). Only a model-load failure exits the process.
+`reference_loaded=false`, and `/generate` returns 503 until a slot is uploaded. The
+first job's `/select-voice` (or a `/reload`) then encodes it with no restart. Only a
+model-load failure exits the process.
 
 ## Local dev
 
