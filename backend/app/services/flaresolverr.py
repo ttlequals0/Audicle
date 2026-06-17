@@ -57,7 +57,6 @@ def looks_like_challenge(result: ExtractionResult) -> bool:
 # article that merely embeds a widget doesn't trip it. Matched on the raw solved HTML.
 _CAPTCHA_MARKERS = (
     "captcha-delivery.com",  # DataDome challenge script
-    "geo.captcha-delivery.com",
     "verification required",
     "slide right to secure",
     "unusual activity from your device",
@@ -66,14 +65,17 @@ _CAPTCHA_MARKERS = (
     "perimeterx",
     "complete the security check to access",
 )
+# Only the top of a solved page is scanned -- CAPTCHA gates are small and the markers
+# sit in the head/early body, so this avoids lowercasing a full-size article.
+_CAPTCHA_SCAN_BYTES = 30000
 
 
 def looks_like_captcha(html: str) -> bool:
     """True when solved HTML is an interactive CAPTCHA gate (DataDome/PerimeterX/etc.)
-    rather than the article -- a wall FlareSolverr can't get through. Only the first
-    chunk is scanned; these pages are small and the markers appear up top."""
+    rather than the article -- a wall FlareSolverr can't get through."""
 
-    return any(marker in html[:30000].lower() for marker in _CAPTCHA_MARKERS)
+    haystack = html[:_CAPTCHA_SCAN_BYTES].lower()
+    return any(marker in haystack for marker in _CAPTCHA_MARKERS)
 
 
 def _parse_cookies(cookie_string: str, url: str) -> list[dict[str, str]]:
