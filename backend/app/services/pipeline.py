@@ -1303,7 +1303,6 @@ async def _apply_corrections(text: str, settings: Settings) -> str:
     the aggressive per-token base-lexicon pass, then the snake_case sweep. All
     pronunciation data is sourced from the ``lexicon`` table. This is the
     guaranteed coverage layer: anything the LLM pass missed is corrected here.
-    All pronunciation data is sourced from the ``lexicon`` table.
     """
 
     normalized = _normalize_for_tts(text)
