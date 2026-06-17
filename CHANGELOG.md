@@ -6,6 +6,20 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.37.1] - 2026-06-17
+
+### Security
+
+- Cleared the fixable HIGH advisories in both images. The app bumps `python-multipart` to 0.0.32
+  (CVE-2026-53539, querystring-parsing DoS) and `starlette` to 1.3.1 (CVE-2026-54283, form-limit
+  DoS). The tts-wrapper Dockerfile now runs a full `apt-get upgrade`, picking up the patched
+  openssl/libssl3 (CVE-2026-45447) and kernel-header (`linux-libc-dev`) packages.
+- Documented the four remaining wrapper advisories that cannot be cleared yet: `diffusers==0.29.0`
+  and `gradio==6.8.0` are exact pins inside chatterbox-tts, and neither advisory is reachable here
+  (the diffusers `trust_remote_code` path is never used; the wrapper exposes only JSON and GET
+  endpoints, so the starlette form-parsing issue has no entry point). The pins will be relaxed once
+  chatterbox-tts ships a release that moves off them.
+
 ## [0.37.0] - 2026-06-17
 
 ### Added

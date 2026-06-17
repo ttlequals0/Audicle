@@ -24,10 +24,13 @@ ENV PYTHONUNBUFFERED=1 \
 
 # OS deps: curl for healthchecks; libsndfile for soundfile WAV IO; git so the
 # chatterbox backend can install resemble-perth (a git+https dependency).
-# --only-upgrade gpgv pulls the patched base-image package (CVE-2025-68973).
+# ``apt-get upgrade`` pulls every available base-image security patch in one shot
+# (openssl/libssl3 CVE-2026-45447, the linux-libc-dev kernel-header CVEs, and the
+# gpgv CVE-2025-68973 the old --only-upgrade line targeted by hand). Same-release
+# Jammy point updates are ABI-stable; the torch/CUDA stack is pip-installed, not apt.
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends curl ca-certificates libsndfile1 git \
-    && apt-get install -y --only-upgrade gpgv \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
