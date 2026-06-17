@@ -186,6 +186,8 @@ Payload fields:
 | `source_filename` | string | upload jobs | the uploaded document's name |
 | `reprocess` | bool | always | true if this run was a reprocess, not a first pass |
 | `time_to_process_secs` | number or null | processed | seconds from claim to finish (null for very old jobs) |
+| `time_to_process` | string or null | processed | the same time as `mm:ss` |
+| `length` | string or null | processed | the episode's audio length as `mm:ss` |
 | `error` | string | failed | the failure message |
 | `stage` | string | failed | the pipeline stage that failed (e.g. `tts`, `extract`) |
 
@@ -200,7 +202,9 @@ A finished URL episode:
   "source_type": "url",
   "url": "https://example.com/article",
   "reprocess": false,
-  "time_to_process_secs": 246.0
+  "time_to_process_secs": 246.0,
+  "time_to_process": "04:06",
+  "length": "12:30"
 }
 ```
 

@@ -6,6 +6,21 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-06-17
+
+### Added
+
+- Webhook payloads for `episode.processed` now include `length` (the finished episode's audio
+  duration) and `time_to_process`, both as `mm:ss`, alongside the existing numeric
+  `time_to_process_secs`.
+
+### Changed
+
+- Extraction logs when a fetch is blocked by an interactive CAPTCHA. When FlareSolverr clears a
+  site's JS challenge but the host escalates to a DataDome/PerimeterX-style CAPTCHA it cannot
+  solve (e.g. inc.com), the failure is logged as `flaresolverr_captcha` with the host, so a
+  blocked article reads as "blocked by CAPTCHA" rather than a silent "no article text."
+
 ## [0.36.0] - 2026-06-17
 
 ### Changed

@@ -51,6 +51,31 @@ def looks_like_challenge(result: ExtractionResult) -> bool:
     return any(marker in haystack for marker in _CHALLENGE_MARKERS)
 
 
+# Markers of an INTERACTIVE CAPTCHA (DataDome/PerimeterX slider, hCaptcha/reCAPTCHA
+# gate) -- the case FlareSolverr cannot auto-solve, so even a "solved" page is still a
+# wall. High-precision strings (vendor script domains, verification copy) so a real
+# article that merely embeds a widget doesn't trip it. Matched on the raw solved HTML.
+_CAPTCHA_MARKERS = (
+    "captcha-delivery.com",  # DataDome challenge script
+    "geo.captcha-delivery.com",
+    "verification required",
+    "slide right to secure",
+    "unusual activity from your device",
+    "please verify you are a human",
+    "px-captcha",
+    "perimeterx",
+    "complete the security check to access",
+)
+
+
+def looks_like_captcha(html: str) -> bool:
+    """True when solved HTML is an interactive CAPTCHA gate (DataDome/PerimeterX/etc.)
+    rather than the article -- a wall FlareSolverr can't get through. Only the first
+    chunk is scanned; these pages are small and the markers appear up top."""
+
+    return any(marker in html[:30000].lower() for marker in _CAPTCHA_MARKERS)
+
+
 def _parse_cookies(cookie_string: str, url: str) -> list[dict[str, str]]:
     """Parse a raw ``name=value; name2=value2`` Cookie string into FlareSolverr's
     ``[{name, value, domain}]`` shape, with the request URL's host as the domain."""
@@ -137,6 +162,16 @@ async def fetch(url: str, settings: Settings, cookies: str = "") -> ExtractionRe
     html = solution.get("response")
     if not isinstance(html, str):
         logger.warning("FlareSolverr response was not HTML text", extra={"event": "flaresolverr_bad_html"})
+        return None
+
+    if looks_like_captcha(html):
+        # FlareSolverr cleared the JS challenge but the host escalated to an
+        # interactive CAPTCHA (e.g. inc.com's DataDome slider) it cannot solve. Log the
+        # real cause so a failed extraction reads as "blocked by CAPTCHA", not "no text".
+        logger.warning(
+            "FlareSolverr reached an interactive CAPTCHA; cannot auto-solve",
+            extra={"event": "flaresolverr_captcha", "host": urlsplit(url).hostname or ""},
+        )
         return None
 
     markdown, metadata = html_to_markdown(html)

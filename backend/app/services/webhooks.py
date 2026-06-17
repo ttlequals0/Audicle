@@ -55,6 +55,18 @@ def _time_to_process(job: Job) -> float | None:
     return secs if secs >= 0 else None
 
 
+def _mmss(seconds: float | int | None) -> str | None:
+    """Format a duration as ``MM:SS`` (minutes may exceed 59 for long items). ``None``
+    passes through so a missing value stays absent rather than rendering ``00:00``."""
+
+    if seconds is None:
+        return None
+    total = round(seconds)
+    if total < 0:
+        return None
+    return f"{total // 60:02d}:{total % 60:02d}"
+
+
 def build_payload(
     event: str, job: Job, episode: Episode | None, *, voice_label: str | None = None
 ) -> dict[str, Any]:
@@ -82,7 +94,12 @@ def build_payload(
         payload["error"] = job.error
         payload["stage"] = job.stage
     else:
-        payload["time_to_process_secs"] = _time_to_process(job)
+        secs = _time_to_process(job)
+        payload["time_to_process_secs"] = secs
+        # mm:ss views for receivers that render directly (the numeric secs stays for
+        # programmatic use). ``length`` is the finished episode's audio duration.
+        payload["time_to_process"] = _mmss(secs)
+        payload["length"] = _mmss(episode.duration_secs if episode else None)
     return payload
 
 
@@ -141,6 +158,8 @@ def sample_payload() -> dict[str, Any]:
         "source_type": "url",
         "url": "https://example.com/article",
         "time_to_process_secs": 42.0,
+        "time_to_process": "00:42",
+        "length": "03:30",
         "test": True,
     }
 

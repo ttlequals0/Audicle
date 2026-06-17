@@ -55,6 +55,8 @@ def test_processed_payload_url() -> None:
     assert p["url"] == "https://example.test/article"
     assert p["reprocess"] is True
     assert p["time_to_process_secs"] == 270.0
+    assert p["time_to_process"] == "04:30"  # mm:ss view of 270s
+    assert p["length"] == "01:00"  # episode duration_secs=60
     assert "error" not in p
 
 
@@ -159,4 +161,21 @@ def test_sample_payload_shape() -> None:
     p = webhooks.sample_payload()
     assert p["event"] == "episode.processed"
     assert p["test"] is True
-    assert {"episode_id", "title", "voice", "source_type", "url", "reprocess"} <= p.keys()
+    assert {
+        "episode_id", "title", "voice", "source_type", "url", "reprocess",
+        "length", "time_to_process",
+    } <= p.keys()
+
+
+def test_mmss_formats_and_passes_none_through() -> None:
+    assert webhooks._mmss(0) == "00:00"
+    assert webhooks._mmss(60) == "01:00"
+    assert webhooks._mmss(148) == "02:28"
+    assert webhooks._mmss(3725) == "62:05"  # minutes exceed 59 for long items
+    assert webhooks._mmss(None) is None
+    assert webhooks._mmss(-5) is None  # clock skew -> drop rather than render garbage
+
+
+def test_processed_payload_length_none_when_no_duration() -> None:
+    p = webhooks.build_payload("episode.processed", _job(), _episode(duration_secs=None))
+    assert p["length"] is None
