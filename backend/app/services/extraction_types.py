@@ -43,6 +43,15 @@ class ExtractionPermanentError(ExtractionError):
     """4xx, malformed response, or any other non-retryable failure."""
 
 
+class ExtractionBlockedError(ExtractionPermanentError):
+    """The host refused the request (403/429) -- an IP/WAF/rate block, not a missing
+    page. A retry with the same client won't help, but a bypass might (FlareSolverr
+    from a different IP, or a Wayback capture), so the orchestrator routes this into
+    the fallback cascade instead of failing the job outright. Subclasses
+    ``ExtractionPermanentError`` so a caller that doesn't special-case it still treats
+    it as non-retryable."""
+
+
 class ExtractionTooShortError(ExtractionPermanentError):
     """No scrape (direct or fallback) cleared the minimum length.
 
