@@ -87,7 +87,7 @@ class Config:
             chatterbox_temperature=_float_env("CHATTERBOX_TEMPERATURE", 0.5),
             chatterbox_seed=_int_env("CHATTERBOX_SEED", 1234),
             sample_rate=_int_env("TTS_SAMPLE_RATE", 24000),
-            max_chars=_int_env("TTS_MAX_CHARS", 200),
+            max_chars=_int_env("TTS_MAX_CHARS", 300),
             whisper_enabled=_bool_env("WHISPER_ENABLED", False),
             whisper_model=_str_env("WHISPER_MODEL", "base"),
             whisper_device=whisper_device,
