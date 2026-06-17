@@ -118,16 +118,6 @@ def test_reference_text_includes_homograph_notes(env: Path) -> None:
     assert "Present tense" in ref  # the note context is preserved
 
 
-def test_word_keep_set_includes_word_mode_rows(env: Path) -> None:
-    database.run_migrations(env)
-    with database.connection(env) as conn:
-        lexicon.import_readonly(conn, "base", {"NASA": {"mode": "word", "spoken": "NASA"}})
-        conn.commit()
-        assert "NASA" in lexicon.word_keep_set(conn)
-
-
-
-
 def test_apply_pairs_by_case_splits_on_flag(env: Path) -> None:
     database.run_migrations(env)
     with database.connection(env) as conn:

@@ -45,10 +45,7 @@ def _cut_oversize(sentence: str, max_chars: int) -> tuple[str, str]:
         cut = window.rfind(" ")
     if cut <= 0:
         cut = max_chars
-    head, rest = sentence[:cut].strip(), sentence[cut:].strip()
-    if not head:  # pathological cut (leading punctuation/space) -- force progress
-        head, rest = sentence[:max_chars].strip(), sentence[max_chars:].strip()
-    return head, rest
+    return sentence[:cut].strip(), sentence[cut:].strip()
 
 
 def _split_into_pieces(text: str, max_chars: int = _DEFAULT_MAX_CHARS) -> list[str]:

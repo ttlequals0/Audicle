@@ -27,6 +27,7 @@ from tenacity import (
 from app.config import Settings
 from app.services import jsonld, ssrf
 from app.services.extraction_types import (
+    BLOCKED_STATUS_CODES,
     ExtractionBlockedError,
     ExtractionPermanentError,
     ExtractionResult,
@@ -113,7 +114,7 @@ async def _fetch_html(url: str, settings: Settings) -> str:
                 raise ExtractionTransientError(
                     f"Direct fetch got {response.status_code} from the article host"
                 )
-            if response.status_code in (403, 429):
+            if response.status_code in BLOCKED_STATUS_CODES:
                 # A block (forbidden / rate-limited), not a missing page: the same
                 # client won't get further, but a bypass might (FlareSolverr from a
                 # different IP, or a Wayback capture). Signal the orchestrator to run

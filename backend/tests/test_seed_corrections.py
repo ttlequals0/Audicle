@@ -43,37 +43,11 @@ def test_load_seed_known_categories_present() -> None:
     assert cats >= _KNOWN_CATEGORIES
 
 
-def test_annotated_homograph_not_applicable() -> None:
+def test_load_seed_keeps_real_word_swaps() -> None:
+    # Acronym auto-spelling was removed; real-word swaps and multi-word expansions stay.
     entries = _by_input(seed_corrections.load_seed(seed_corrections.seed_path()))
-    row = entries["read (present)"]
-    assert row.category == "Homograph"
-    assert row.applicable is False
-
-
-def test_multiword_entry_is_applicable() -> None:
-    entries = _by_input(seed_corrections.load_seed(seed_corrections.seed_path()))
-    row = entries["SOC 2"]  # multi-word real-word swap -> "sock two"
-    assert row.applicable is True
-
-
-def test_pronounce_as_word_acronym_is_applicable() -> None:
-    entries = _by_input(seed_corrections.load_seed(seed_corrections.seed_path()))
-    assert entries["RAM"].applicable is True  # 'ram' is not a letter spell-out
-    assert entries["SQL"].applicable is True  # 'sequel'
-
-
-def test_applicable_dict_excludes_non_applicable_rows() -> None:
-    entries = seed_corrections.load_seed(seed_corrections.seed_path())
-    applied = seed_corrections.applicable_dict(entries)
-    # Excluded: annotated homographs and spelled-out acronyms.
-    assert "read (present)" not in applied
-    assert "API" not in applied
-    # Included: a multi-word swap and a pronounce-as-word acronym.
-    assert applied["SOC 2"] == "sock two"
-    assert applied["SQL"] == "sequel"
-    # Every applicable entry is present and nothing else.
-    expected = {e.input_text for e in entries if e.applicable}
-    assert set(applied) == expected
+    assert entries["SQL"].replacement_text == "sequel"
+    assert entries["SOC 2"].replacement_text == "sock two"
 
 
 # --- format_reference() / load_reference() ---------------------------------
@@ -81,23 +55,22 @@ def test_applicable_dict_excludes_non_applicable_rows() -> None:
 
 def test_format_reference_includes_every_category_with_notes() -> None:
     entries = [
-        SeedEntry("Homograph", "read (present)", "reed", "Present tense", False),
-        SeedEntry("Consumer Brand", "Porsche", "POR-shuh", "", True),
-        SeedEntry("Tech Acronym", "API", "A P I", "spell out", False),
-        SeedEntry("Symbol/Function", "kmalloc", "kay malloc", "", True),
+        SeedEntry("Homograph", "read (present)", "reed", "Present tense"),
+        SeedEntry("Consumer Brand", "Porsche", "POR-shuh", ""),
+        SeedEntry("Symbol/Function", "kmalloc", "kay malloc", ""),
     ]
     block = seed_corrections.format_reference(entries)
-    # Full set: no category curation, no applicability gating -- even the
-    # non-applicable annotated homograph and the spelled-out acronym appear.
+    # The reference is not category-curated: every row appears, annotation and all.
     assert "read (present) -> reed  (Present tense)" in block
     assert "Porsche -> POR-shuh" in block
-    assert "API -> A P I  (spell out)" in block
     assert "kmalloc -> kay malloc" in block
 
 
 def test_format_reference_layers_user_dict_over_seed() -> None:
-    entries = [SeedEntry("Consumer Brand", "Porsche", "POR-shuh", "note", True)]
-    block = seed_corrections.format_reference(entries, {"Porsche": "PORSH", "Kubernetes": "koo-ber-net-eez"})
+    entries = [SeedEntry("Consumer Brand", "Porsche", "POR-shuh", "note")]
+    block = seed_corrections.format_reference(
+        entries, {"Porsche": "PORSH", "Kubernetes": "koo-ber-net-eez"}
+    )
     # User wins on collision (seed note dropped) and adds its own keys.
     assert "Porsche -> PORSH" in block
     assert "POR-shuh" not in block
@@ -105,7 +78,7 @@ def test_format_reference_layers_user_dict_over_seed() -> None:
 
 
 def test_format_reference_skips_blank_rows() -> None:
-    entries = [SeedEntry("Homograph", "", "x", "", False), SeedEntry("Homograph", "y", "", "", False)]
+    entries = [SeedEntry("Homograph", "", "x", ""), SeedEntry("Homograph", "y", "", "")]
     assert seed_corrections.format_reference(entries) == ""
 
 
@@ -118,17 +91,6 @@ def test_load_reference_from_bundled_csv() -> None:
     assert "SQL -> sequel" in block
 
 
-# --- applicable_dict() edge cases ------------------------------------------
-
-
-def test_applicable_dict_duplicate_key_first_wins() -> None:
-    entries = [
-        SeedEntry("Tech Brand", "Acme", "ACK-mee", "", True),
-        SeedEntry("Tech Brand", "Acme", "ay-see-em-ee", "dup", True),
-    ]
-    assert seed_corrections.applicable_dict(entries) == {"Acme": "ACK-mee"}
-
-
 # --- load_seed() error handling --------------------------------------------
 
 
@@ -138,32 +100,18 @@ def test_load_seed_missing_file_returns_empty(tmp_path: Path) -> None:
 
 def test_load_seed_malformed_columns_raises(tmp_path: Path) -> None:
     bad = tmp_path / "bad.csv"
-    bad.write_text("word,pronounce\nAPI,A P I\n", encoding="utf-8")
+    bad.write_text("word,pronounce\nFoo,bar\n", encoding="utf-8")
     with pytest.raises(ValueError, match="must have columns"):
         seed_corrections.load_seed(bad)
 
 
-def test_load_seed_row_failing_validation_is_not_applicable(tmp_path: Path) -> None:
-    over_limit = "x" * 201  # exceeds MAX_VALUE_CHARS (200)
-    csv_text = (
-        "category,input_text,replacement_text,notes\n"
-        f"Mispronounced Word,widget,{over_limit},too long\n"
-    )
-    path = tmp_path / "seed.csv"
-    path.write_text(csv_text, encoding="utf-8")
-    entries = seed_corrections.load_seed(path)
-    assert len(entries) == 1
-    assert entries[0].applicable is False
-    assert seed_corrections.applicable_dict(entries) == {}
-
-
-# --- Chatterbox respelling re-tune (lowercase) + merged manual corrections ---
+# --- merged manual corrections survive the trim ----------------------------
 
 
 def test_seed_includes_merged_manual_corrections() -> None:
-    applied = seed_corrections.load_applicable_dict()
-    assert applied["OS"] == "oh ess"
-    assert applied["VMs"] == "vee emz"
-    assert applied["Opex"] == "op eks"
-    assert applied["OpenAI"] == "open ay eye"  # fixes the prod "opemai" typo
-    assert applied["retry"] == "ree try"
+    entries = _by_input(seed_corrections.load_seed(seed_corrections.seed_path()))
+    assert entries["OS"].replacement_text == "oh ess"
+    assert entries["VMs"].replacement_text == "vee emz"
+    assert entries["Opex"].replacement_text == "op eks"
+    assert entries["OpenAI"].replacement_text == "open ay eye"  # fixes the prod "opemai" typo
+    assert entries["retry"].replacement_text == "ree try"

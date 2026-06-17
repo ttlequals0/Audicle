@@ -31,6 +31,7 @@ from app.services import arc_extractor, archive, direct_fetch, flaresolverr, jso
 # references (pipeline, tests) keep working now that the types live in extraction_types, which
 # the FlareSolverr engine also imports without a circular dependency.
 from app.services.extraction_types import (
+    BLOCKED_STATUS_CODES,
     ExtractionBlockedError,
     ExtractionError,
     ExtractionPermanentError,
@@ -466,7 +467,7 @@ def _raise_for_status(response: httpx.Response) -> None:
         raise ExtractionTransientError(
             f"Firecrawl returned {response.status_code}: {response.text[:200]}"
         )
-    if response.status_code in (403, 429):
+    if response.status_code in BLOCKED_STATUS_CODES:
         # A host block forwarded by Firecrawl: route to the bypass cascade, same as
         # the direct engine, rather than dead-ending the job.
         raise ExtractionBlockedError(
