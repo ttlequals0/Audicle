@@ -56,48 +56,10 @@ def test_multiword_entry_is_applicable() -> None:
     assert row.applicable is True
 
 
-def test_spelled_out_acronym_not_applicable() -> None:
-    entries = _by_input(seed_corrections.load_seed(seed_corrections.seed_path()))
-    assert entries["API"].applicable is False  # 'A P I' -- LLM cleanup handles this
-    assert entries["CEO"].applicable is False
-
-
-def test_spelled_out_acronym_excluded_regardless_of_category() -> None:
-    """A spelled-out acronym in a non-acronym category (Tech Brand 'AWS' ->
-    'A W S') must still be excluded -- the cleanup stage dots it anyway."""
-
-    entries = _by_input(seed_corrections.load_seed(seed_corrections.seed_path()))
-    aws = entries["AWS"]
-    assert aws.category == "Tech Brand"
-    assert aws.applicable is False
-
-
 def test_pronounce_as_word_acronym_is_applicable() -> None:
     entries = _by_input(seed_corrections.load_seed(seed_corrections.seed_path()))
     assert entries["RAM"].applicable is True  # 'ram' is not a letter spell-out
     assert entries["SQL"].applicable is True  # 'sequel'
-
-
-def test_ai_seed_uses_spaced_form_not_dotted() -> None:
-    # 'AI' is spelled with spaces, not periods -- the engine reads a period as a pause
-    # ("A <pause> I"). Like other all-caps spelled-out rows it is NOT in the
-    # applicable dict (the deterministic acronym speller produces "A I"); it stays
-    # in the seed for the LLM reference.
-    entries = _by_input(seed_corrections.load_seed(seed_corrections.seed_path()))
-    assert entries["AI"].replacement_text == "A I"
-    assert "." not in entries["AI"].replacement_text
-    assert entries["AI"].applicable is False
-    applied = seed_corrections.applicable_dict(seed_corrections.load_seed(seed_corrections.seed_path()))
-    assert "AI" not in applied
-
-
-def test_mixed_case_spelled_out_token_is_applicable() -> None:
-    # The LLM dot-spells all-caps tokens, so a mixed-case spelled-out row
-    # ('ttyS0' -> 'T T Y S 0') is the only thing that voices it -- keep it applied.
-    entries = _by_input(seed_corrections.load_seed(seed_corrections.seed_path()))
-    assert entries["ttyS0"].applicable is True
-    # All-caps spelled-out tokens stay excluded (cleanup dots them).
-    assert entries["GRUB"].applicable is False
 
 
 def test_applicable_dict_excludes_non_applicable_rows() -> None:
@@ -152,8 +114,8 @@ def test_load_reference_from_bundled_csv() -> None:
     assert block  # the shipped CSV has rows
     # A known homograph carries its context annotation through to the reference.
     assert "read (present) -> reed" in block
-    # An acronym the deterministic pass skips is still shown to the LLM.
-    assert "API ->" in block
+    # A real-word swap is shown to the LLM.
+    assert "SQL -> sequel" in block
 
 
 # --- applicable_dict() edge cases ------------------------------------------

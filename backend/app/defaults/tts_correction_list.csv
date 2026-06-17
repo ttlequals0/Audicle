@@ -1,65 +1,18 @@
 category,input_text,replacement_text,notes
-Tech Acronym,API,A P I,Spell out: ay pee eye
-Tech Acronym,URL,U R L,Spell out: you are el
-Tech Acronym,SDK,S D K,Spell out: es dee kay
-Tech Acronym,DNS,D N S,Spell out: dee en es
-Tech Acronym,TCP,T C P,Spell out: tee see pee
-Tech Acronym,UDP,U D P,Spell out: you dee pee
-Tech Acronym,IP,I P,Spell out: eye pee
-Tech Acronym,HTTP,H T T P,Spell out: aitch tee tee pee
-Tech Acronym,HTTPS,H T T P S,Spell out: aitch tee tee pee es
-Tech Acronym,SSH,S S H,Spell out: es es aitch
-Tech Acronym,VPN,V P N,Spell out: vee pee en
-Tech Acronym,CPU,C P U,Spell out: see pee you
-Tech Acronym,GPU,G P U,Spell out: jee pee you
 Tech Acronym,RAM,ram,Pronounce as word
 Tech Acronym,ROM,rom,Pronounce as word
-Tech Acronym,SSD,S S D,Spell out: es es dee
-Tech Acronym,CLI,C L I,Spell out: see el eye
-Tech Acronym,IDE,I D E,Spell out: eye dee ee
-Tech Acronym,IPMI,I P M I,Spell out: eye pee em eye
-Tech Acronym,BMC,B M C,Spell out: bee em see
-Tech Acronym,AI,A I,Spell out: ay eye -- commonly mispronounced as single word
-Tech Acronym,ML,M L,Spell out: em el
-Tech Acronym,CI/CD,C I C D,Spell out: see eye see dee
 Tech Acronym,SQL,sequel,Pronounced as 'sequel' not 'S Q L' in most contexts
 Tech Acronym,GUI,gooey,Pronounced as 'gooey'
 Tech Acronym,cron,kron,"Pronounced as word, hard c"
 Tech Acronym,nginx,engine-X,Pronounced 'engine-X'
 Tech Acronym,GIF,jif,Debated but often 'jif'
-Tech Acronym,EOF,E O F,Spell out
 Tech Acronym,MIME,mime,Pronounced as word
 Tech Acronym,IEEE,I triple E,Spell out: eye triple ee
-Tech Acronym,IETF,I E T F,Spell out
-Tech Brand,AWS,A W S,Spell out: ay double-you es
-Tech Brand,GCP,G C P,Spell out: jee see pee
-Tech Brand,GKE,G K E,Spell out: jee kay ee
-Tech Brand,EKS,E K S,Spell out: ee kay es
-Tech Brand,AKS,A K S,Spell out: ay kay es
-Tech Brand,IAM,I A M,"Spell out, not 'I am'"
-Tech Brand,S3,S 3,Spell out: es three
 Tech Brand,PostgreSQL,postgres,Pronounced post-gres
-Tech Brand,EC2,E C 2,Spell out: ee see two
 Tech Brand,Nginx,engine-X,Pronounced 'engine-X'
 Tech Brand,FreeBSD,free B S D,Spell out BSD
 Tech Brand,macOS,mac O S,Spell out OS
 Tech Brand,iOS,eye O S,Spell out
-General Acronym,CEO,C E O,Spell out: see ee oh
-General Acronym,CFO,C F O,Spell out
-General Acronym,COO,C O O,Spell out: see oh oh — not 'coo'
-General Acronym,HR,H R,Spell out
-General Acronym,PR,P R,Spell out
-General Acronym,FAQ,F A Q,"Spell out, or 'fak' — context dependent"
-General Acronym,ETA,E T A,Spell out: ee tee ay
-General Acronym,ATM,A T M,Spell out
-General Acronym,FBI,F B I,Spell out
-General Acronym,CIA,C I A,Spell out
-General Acronym,GDPR,G D P R,Spell out: jee dee pee ar
-General Acronym,SLA,S L A,Spell out: es el ay
-General Acronym,KPI,K P I,Spell out: kay pee eye
-General Acronym,ROI,R O I,Spell out: ar oh eye
-General Acronym,NDA,N D A,Spell out
-General Acronym,RFP,R F P,Spell out
 General Acronym,TL;DR,too long didn't read,Expand abbreviation
 General Acronym,ICYMI,in case you missed it,Expand
 General Acronym,AFAIK,as far as I know,Expand
@@ -109,34 +62,11 @@ Format,i.e.,that is,Latin abbreviation
 Format,approx.,approximately,Abbreviation
 Format,v2.0,version two point oh,Version strings
 Format,v1.2.3,version one point two point three,Semantic version
-Tech Acronym,GRUB,G R U B,Grand Unified Bootloader — spell out
-Tech Acronym,UEFI,U E F I,Unified Extensible Firmware Interface
-Tech Acronym,KASLR,K A S L R,Kernel Address Space Layout Randomization
-Tech Acronym,GDT,G D T,Global Descriptor Table
-Tech Acronym,IDT,I D T,Interrupt Descriptor Table
-Tech Acronym,SME,S M E,Secure Memory Encryption
-Tech Acronym,SEV,S E V,Secure Encrypted Virtualization
-Tech Acronym,TDX,T D X,Trust Domain Extensions (Intel)
-Tech Acronym,TME,T M E,Total Memory Encryption
-Tech Acronym,SSE2,S S E 2,Streaming SIMD Extensions 2
-Tech Acronym,CPUID,C P U I D,CPU Identification instruction
 Tech Acronym,AVX-512,A V X 512,Advanced Vector Extensions 512-bit
-Tech Acronym,ACPI,A C P I,Advanced Configuration and Power Interface
-Tech Acronym,E820,E 8 2 0,BIOS memory map standard
-Tech Acronym,KVM,K V M,Kernel-based Virtual Machine
-Tech Acronym,RCU,R C U,Read-Copy-Update
-Tech Acronym,IRQ,I R Q,Interrupt Request
-Tech Acronym,LSM,L S M,Linux Security Module
-Tech Acronym,SLUB,S L U B,Slab allocator variant — spell out
-Tech Acronym,PID,P I D,Process ID
 Tech Acronym,ARM,arm,Pronounced as a word
 Tech Acronym,RISC-V,risk five,Pronounced 'risk five'
-Tech Acronym,EFI,E F I,Extensible Firmware Interface
-Tech Acronym,DMI,D M I,Desktop Management Interface
-Tech Acronym,SMP,S M P,Symmetric Multi-Processing
 Tech Acronym,NOP,nop,No Operation — pronounced as a word
 Tech Acronym,JMP,jump,Assembly jump instruction
-Tech Acronym,MDS,M D S,Microarchitectural Data Sampling
 Symbol/Function,__pi___startup_64,P I startup 64,Position-independent thunk for startup 64
 Symbol/Function,cr4_init_shadow,C R 4 init shadow,CR4 control register shadow init
 Symbol/Function,clear_bss,clear B S S,Zeroes .bss section
@@ -152,7 +82,6 @@ Symbol/Function,e820__memblock_setup,E 8 2 0 memblock setup,Feeds memory map int
 Symbol/Function,memblock,mem block,Primitive early memory allocator
 Symbol/Function,early_ioremap_init,early I O remap init,Sets up early I/O memory mapping
 Symbol/Function,earlyprintk,early printk,Early kernel print before console
-Symbol/Function,ttyS0,T T Y S 0,First serial terminal device
 Symbol/Function,efi_init,E F I init,Hooks up UEFI runtime services
 Symbol/Function,dmi_setup,D M I setup,Reads firmware DMI tables
 Symbol/Function,reserve_brk,reserve B R K,Reserves kernel scratch memory
@@ -183,52 +112,27 @@ Tech Brand,SELinux,S E Linux,Security-Enhanced Linux
 Tech Brand,AppArmor,App Armor,Linux security module
 Format,Jan.,January,Month abbreviation
 Format,Feb.,February,Month abbreviation
-Financial,ETF,E T F,Exchange-Traded Fund — spell out
 Financial,REIT,reet,Real Estate Investment Trust — rhymes with 'feet'
-Financial,NYSE,N Y S E,New York Stock Exchange — spell out
-Financial,IPO,I P O,Initial Public Offering — spell out: eye pee oh
-Financial,SEC,S E C,Securities and Exchange Commission — spell out
-Financial,FDIC,F D I C,Federal Deposit Insurance Corporation
-Financial,AUM,A U M,Assets Under Management — spell out: ay you em
-Financial,NAV,N A V,Net Asset Value — spell out: en ay vee
 Financial,P/E,price to earnings,Price-to-earnings ratio — expand
-Financial,EPS,E P S,Earnings per share — spell out
-Financial,DCF,D C F,Discounted Cash Flow — spell out
-Financial,LBO,L B O,Leveraged Buyout — spell out: el bee oh
 Financial,M&A,mergers and acquisitions,Expand: mergers and acquisitions
-Financial,APR,A P R,Annual Percentage Rate — spell out: ay pee ar
-Financial,APY,A P Y,Annual Percentage Yield — spell out: ay pee why
 Financial,401(k),four oh one K,Retirement account — say letters/numbers
 Financial,10-K,ten K,Annual SEC filing
 Financial,10-Q,ten Q,Quarterly SEC filing
-Financial,ARR,A R R,Annual Recurring Revenue — spell out
-Financial,MRR,M R R,Monthly Recurring Revenue — spell out
 Financial,YoY,year over year,Expand: year over year
 Financial,QoQ,quarter over quarter,Expand: quarter over quarter
 Financial,WACC,wak,Weighted Average Cost of Capital — rhymes with 'whack'
 Financial,GAAP,gap,Generally Accepted Accounting Principles — word
-Financial,IFRS,I F R S,International Financial Reporting Standards — spell out
-Financial,OTC,O T C,Over the Counter — spell out: oh tee see
 Financial,VIX,viks,Volatility Index — pronounced as word
 Financial,HODL,hoddle,Hold On for Dear Life (crypto) — word
-Financial,NFT,N F T,Non-Fungible Token — spell out: en ef tee
 Financial,DAO,dow,Decentralized Autonomous Organization — rhymes with 'Dow'
 Financial,SPAC,spak,Special Purpose Acquisition Company — word
-Financial,FOMC,F O M C,Federal Open Market Committee — spell out
-Financial,CPI,C P I,Consumer Price Index — spell out: see pee eye
-Financial,GDP,G D P,Gross Domestic Product — spell out: jee dee pee
 Financial,Fed,fed,Federal Reserve — pronounced as word
-Financial,CDO,C D O,Collateralized Debt Obligation — spell out
-Financial,CDS,C D S,Credit Default Swap — spell out
-Financial,MBS,M B S,Mortgage-Backed Securities — spell out
 Financial,Schwab,shwob,Charles Schwab — rhymes with 'swab'
 Financial,JPMorgan,jay pee morgan,Spell out JP
-Financial,HSBC,H S B C,Spell out: aitch es bee see
 Technology,Wyze,wyz,Smart home brand — rhymes with 'wise'
 Technology,MySQL,my S Q L,Spell out SQL part
 Technology,NoSQL,no S Q L,Spell out SQL
 Technology,SQLite,S Q L light,"Spell out SQL, then 'light'"
-Technology,npm,N P M,Spell out: en pee em
 Technology,PyPI,pie pee eye,Python Package Index — spell out PI
 Technology,NumPy,num pie,Numerical Python — like 'numb pie'
 Technology,SciPy,sy pie,Scientific Python — like 'sigh pie'
@@ -244,12 +148,7 @@ Technology,gRPC,gee R P C,Google Remote Procedure Call — spell out
 Technology,WebAssembly,web assembly,Not 'web-AH-sem-blee'
 Technology,WebGL,web G L,Spell out GL
 Technology,WebRTC,web R T C,Spell out RTC: ar tee see
-Technology,SSML,S S M L,Speech Synthesis Markup Language — spell out
-Technology,GPT,G P T,Generative Pre-trained Transformer — spell out
-Technology,LLM,L L M,Large Language Model — spell out: el el em
 Technology,RAG,rag,Retrieval-Augmented Generation — word
-Technology,RLHF,R L H F,Reinforcement Learning from Human Feedback — spell out
-Technology,FPGA,F P G A,Field-Programmable Gate Array — spell out
 Technology,Rust,rust,Systems language — like the corrosion
 Technology,Golang,go lang,Go programming language
 Technology,Bun,bun,JS runtime — like bread bun
@@ -261,60 +160,21 @@ Technology,Nix,niks,Package manager — rhymes with 'kicks'
 Technology,NixOS,niks O S,Spell out OS
 Technology,winget,win get,Windows package manager — two words
 Technology,FOSS,foss,Free and Open Source Software — word
-Technology,OSS,O S S,Open Source Software — spell out
 Technology,Vim,vim,Text editor — like vigor
-Business,OKR,O K R,Objectives and Key Results — spell out: oh kay ar
-Business,SOW,S O W,Statement of Work — spell out (not 'sow' the pig)
-Business,CRM,C R M,Customer Relationship Management — spell out
-Business,ERP,E R P,Enterprise Resource Planning — spell out: ee ar pee
 Business,B2B,B to B,Business-to-Business — say 'B to B'
 Business,B2C,B to C,Business-to-Consumer — say 'B to C'
-Business,COB,C O B,Close of Business — spell out
-Business,EOD,E O D,End of Day — spell out: ee oh dee
 Business,OOO,out of office,Out of Office — expand
 Business,WFH,work from home,Expand: work from home
 Business,IRL,in real life,Expand: in real life
-Business,TBD,T B D,To Be Determined — spell out
-Business,FTE,F T E,Full-Time Equivalent — spell out: ef tee ee
 Business,P&L,P and L,Profit and Loss — say 'P and L'
 Business,COGS,kogz,Cost of Goods Sold — word
 Business,G&A,G and A,General and Administrative — say 'G and A'
-Business,VC,V C,Venture Capital — spell out: vee see
-Business,PE,P E,Private Equity — spell out: pee ee
-Business,MVP,M V P,Minimum Viable Product — spell out: em vee pee
-Business,PMF,P M F,Product-Market Fit — spell out
-Business,GTM,G T M,Go-to-Market — spell out: jee tee em
 Business,SWOT,swot,Strengths Weaknesses Opportunities Threats — word
-Business,CMO,C M O,Chief Marketing Officer — spell out: see em oh
-Business,CTO,C T O,Chief Technology Officer — spell out: see tee oh
-Business,CLM,C L M,Contract Lifecycle Management — spell out
 Business,LMGTFY,let me Google that for you,Expand: let me Google that for you
-Business,DEI,D E I,Diversity Equity Inclusion — spell out: dee ee eye
-Business,CSR,C S R,Corporate Social Responsibility — spell out
-Business,ESG,E S G,Environmental Social Governance — spell out: ee es jee
-Business,CCPA,C C P A,California Consumer Privacy Act — spell out
 Business,SOC 2,sock two,Security compliance framework — like 'sock'
 Business,Scrum,skrum,Agile framework — like the rugby term
-Medical Brand,SSRI,S S R I,Selective Serotonin Reuptake Inhibitor — spell out
-Medical Brand,SNRI,S N R I,Serotonin-Norepinephrine Reuptake Inhibitor
 Medical Brand,ACE,ace,Angiotensin-Converting Enzyme — word
-Medical Brand,ARB,A R B,Angiotensin Receptor Blocker — spell out
-Medical Brand,PPI,P P I,Proton Pump Inhibitor — spell out
-Medical Brand,GLP-1,G L P one,"Glucagon-Like Peptide 1 — spell out, say 'one'"
-Medical Brand,GIP,G I P,Glucose-dependent Insulinotropic Polypeptide
-Medical Brand,BMI,B M I,Body Mass Index — spell out: bee em eye
-Medical Brand,ECG,E C G,Electrocardiogram — spell out (or 'EKG')
-Medical Brand,EKG,E K G,German abbreviation for ECG — spell out
-Medical Brand,ICU,I C U,Intensive Care Unit — spell out: eye see you
-Medical Brand,ER,E R,Emergency Room — spell out: ee ar
-Medical Brand,OR,O R,Operating Room — spell out: oh ar
-Medical Brand,MRI,M R I,Magnetic Resonance Imaging — spell out
-Medical Brand,CT,C T,Computed Tomography — spell out: see tee
-Medical Brand,IV,I V,Intravenous — spell out: eye vee
 Medical Brand,BP,blood pressure,Expand: blood pressure
-Medical Brand,ADHD,A D H D,Spell out: ay dee aitch dee
-Medical Brand,PTSD,P T S D,Post-Traumatic Stress Disorder — spell out
-Medical Brand,OCD,O C D,Obsessive-Compulsive Disorder — spell out
 Internet Slang,LOL,laughing out loud,Expand — not 'lol' as a word
 Internet Slang,LMAO,laughing my ass off,Expand
 Internet Slang,ROFL,rolling on the floor laughing,Expand
@@ -335,10 +195,6 @@ Internet Slang,GOAT,greatest of all time,Expand — don't read as 'goat'
 Internet Slang,IYKYK,if you know you know,Expand
 Internet Slang,HMU,hit me up,Expand
 Internet Slang,LMK,let me know,Expand
-Internet Slang,NPC,N P C,Non-Playable Character — spell out
-Internet Slang,OP,O P,Original Poster — spell out: oh pee
-Internet Slang,OG,O G,Original Gangster/Original — spell out: oh jee
-Internet Slang,GG,G G,Good Game — spell out: jee jee
 Internet Slang,GG EZ,G G easy,Good game easy — spell out GG
 Internet Slang,GGWP,G G well played,Expand: good game well played
 Internet Slang,AMA,ask me anything,Expand
@@ -346,7 +202,6 @@ Internet Slang,ELI5,explain like I'm five,Expand: explain like I'm five
 Internet Slang,TIL,today I learned,Expand
 Internet Slang,OOTD,outfit of the day,Expand
 Internet Slang,GRWM,get ready with me,Expand
-Internet Slang,POV,P O V,Point of View — spell out: pee oh vee
 Internet Slang,NSFW,not safe for work,Expand
 Internet Slang,NSFL,not safe for life,Expand
 Internet Slang,TFW,that feeling when,Expand
@@ -374,7 +229,6 @@ Internet Slang,Stan,stan,Obsessive fan — rhymes with 'man'
 Internet Slang,Ship,ship,Romantic pairing — like a boat
 Internet Slang,Snatched,snacht,Looking amazing — past tense of snatch
 Internet Slang,Bet,bet,OK/agreement — like gambling term
-Internet Slang,IGTV,I G T V,Instagram TV — spell out
 Internet Slang,Gyatt,gyat,Expression of admiration — like a short 'god damn'
 Internet Slang,Pog,pog,Gaming: impressive — like the milk cap game
 Internet Slang,Kek,kek,Laughter — alternate of LOL
@@ -386,7 +240,6 @@ Internet Slang,irl,in real life,Expand
 Internet Slang,istg,I swear to god,Expand
 Internet Slang,imo,in my opinion,Expand lowercase variant
 Internet Slang,smh,shaking my head,Expand lowercase variant
-Internet Slang,npc,N P C,Spell out lowercase variant
 Internet Slang,gg,good game,Expand lowercase variant
 Internet Slang,Vibe,vyb,Mood/atmosphere — rhymes with 'tribe'
 Internet Slang,It's giving,it's giving,Gives off a vibe — literal phrase
@@ -433,7 +286,6 @@ Legal,pro se,proh say,"On one’s own behalf, self-represented"
 Legal,quid pro quo,kwid proh kwoh,This for that
 Legal,voir dire,vwahr deer,Jury selection questioning
 Legal,tort,tort,Civil wrong
-Legal,PCI DSS,P C I D S S,Payment Card Industry Data Security Standard
 Legal,SOX,socks,Sarbanes-Oxley — pronounced 'socks'
 Geographic,Sequim,skwim,Washington
 Geographic,Thames,temz,River Thames

@@ -640,41 +640,6 @@ def _normalize_ranges(text: str) -> str:
     return _RANGE_CHAIN_RE.sub(repl, text)
 
 
-# Read-as-word acronyms (and common all-caps English words) the deterministic
-# speller must NOT spell letter-by-letter. Backstop set; the lexicon's word-mode
-# rows (balacoon acronym vocabulary, CMUdict "is it a real word") augment it -- pass
-# the merged set as ``keep`` once the lexicon is wired. Most tech acronyms with a
-# known spoken form (SQL->sequel, GUI->gooey) are already replaced by
-# corrections.apply before this runs, so they never reach here.
-_ACRONYM_KEEP = frozenset(
-    {
-        "NASA", "NATO", "SCUBA", "RADAR", "SONAR", "LASER", "ASCII", "COVID",
-        "AIDS", "NASDAQ", "OPEC", "UNESCO", "UNICEF", "NAFTA", "FIFA", "CAPTCHA",
-        # Common all-caps English words that must read normally, not as letters.
-        "THE", "AND", "FOR", "ARE", "BUT", "NOT", "YOU", "ALL", "ANY", "CAN",
-        "HAD", "HER", "WAS", "ONE", "OUR", "OUT", "DAY", "GET", "HAS", "HIM",
-        "HIS", "HOW", "MAN", "NEW", "NOW", "OLD", "SEE", "TWO", "WHO", "DID",
-        "ITS", "LET", "PUT", "SAY", "SHE", "TOO", "USE", "YES",
-    }
-)
-
-# Spoken plural of each letter name (final letter of a pluralized acronym):
-# "GPUs" -> "G P yoos", "URLs" -> "U R els".
-_LETTER_PLURAL = {
-    "A": "ays", "B": "bees", "C": "cees", "D": "dees", "E": "ees", "F": "effs",
-    "G": "gees", "H": "aitches", "I": "eyes", "J": "jays", "K": "kays", "L": "els",
-    "M": "ems", "N": "ens", "O": "ohs", "P": "pees", "Q": "cues", "R": "ars",
-    "S": "esses", "T": "tees", "U": "yoos", "V": "vees", "W": "double-yoos",
-    "X": "exes", "Y": "wise", "Z": "zees",
-}
-
-# An all-caps acronym: 2+ uppercase letters, optional trailing digits, optional
-# lowercase plural "s". Bounded by non-alphanumerics AND non-hyphen so it never
-# fires inside a word, an already-spaced single letter, or a hyphenated token.
-# Mixed-case tokens (OAuth, IPv6) don't match -- left to the lexicon.
-_ACRONYM_RE = re.compile(r"(?<![A-Za-z0-9-])([A-Z]{2,}[0-9]*)(s)?(?![A-Za-z0-9-])")
-
-
 # Dotted acronyms ("A.I.", "U.S.", "U.S.A.") -- the engine reads each period as a
 # pause ("A <pause> I"), so collapse the dots to spaced letters it voices cleanly.
 # Uppercase-only (so "e.g."/"i.e." and decimals are untouched); needs 2+ letter-dot
@@ -688,36 +653,6 @@ def _normalize_dotted_acronyms(text: str) -> str:
     return _DOTTED_ACRONYM_RE.sub(
         lambda m: " ".join(ch for ch in m.group(0) if ch.isalpha()), text
     )
-
-
-def _normalize_acronyms(text: str, keep: frozenset[str] | set[str] = _ACRONYM_KEEP) -> str:
-    """Spell unknown all-caps acronyms letter by letter (digits as words).
-
-    Runs before the corrections dictionary, but word/override keys (SQL -> sequel,
-    NASA) sit in ``keep`` so the dictionary still wins on those -- this only spells
-    the leftovers: tickers (CRWV), unfamiliar acronyms, and plurals of spelled
-    acronyms (GPUs -> "G P yoos").
-    """
-
-    def repl(match: re.Match[str]) -> str:
-        core, plural = match.group(1), match.group(2)
-        if core in keep:
-            return match.group(0)
-        tokens: list[str] = []
-        for i, ch in enumerate(core):
-            last = i == len(core) - 1
-            if ch.isdigit():
-                tokens.append(_ONES[int(ch)])
-            elif last and plural:
-                tokens.append(_LETTER_PLURAL[ch])
-            else:
-                tokens.append(ch)
-        spoken = " ".join(tokens)
-        if plural and core[-1].isdigit():  # rare digit-final plural ("MP3s")
-            spoken += "s"
-        return spoken
-
-    return _ACRONYM_RE.sub(repl, text)
 
 
 # Two-letter US state codes -> full names, expanded only in clear state context
@@ -1303,27 +1238,23 @@ def _apply_base_lexicon(text: str, conn, settings: Settings) -> str:
 async def _apply_corrections(text: str, settings: Settings) -> str:
     """Deterministic normalization backstop, run after the LLM pronunciation pass.
 
-    Order: regex fixups (``_normalize_for_tts``), the deterministic acronym
-    speller, the user+seed pronunciation dictionary (longest-key-first regex),
-    the aggressive per-token base-lexicon pass, then the snake_case sweep. All
-    pronunciation data is sourced from the ``lexicon`` table. This is the
-    guaranteed coverage layer: anything the LLM pass missed is corrected here.
+    Order: regex fixups (``_normalize_for_tts``), the user+seed pronunciation
+    dictionary (longest-key-first regex), the aggressive per-token base-lexicon
+    pass, then the snake_case sweep. All pronunciation data is sourced from the
+    ``lexicon`` table. This is the guaranteed coverage layer: anything the LLM pass
+    missed is corrected here.
     """
 
     normalized = _normalize_for_tts(text)
     with database.connection(settings.DATA_DIR) as conn:
         cs_pairs, ci_pairs = lexicon.apply_pairs_by_case(conn)
-        # Spell unknown all-caps acronyms BEFORE the dictionary. Word-mode (NASA) and
-        # override (fixed-form, e.g. SQL -> sequel) keys are kept so the dictionary
-        # handles them; spell-mode all-caps keys (LLM) are NOT kept, so this speller
-        # spells them and their plurals ("LLMs" -> "L L ems") -- corrections.apply
-        # cannot match a plural past the trailing "s".
-        keep = _ACRONYM_KEEP | lexicon.non_spell_keep_set(conn)
-        spelled = _normalize_acronyms(normalized, keep=keep)
-        # Explicit pronunciations next (so "ttyS0" -> "T T Y S 0" wins): exact-case
-        # keys first, then the case-insensitive group folds so "404 media" hits
-        # "404 Media". Then the aggressive base-lexicon pass and snake_case sweep.
-        applied = corrections.apply(spelled, cs_pairs)
+        # Acronyms get no automatic letter-spelling: Chatterbox (BPE/char-based, no g2p)
+        # pronounces common ones natively, and forcing "C E O" makes it choppy. The user
+        # dictionary is the escape hatch for any acronym it actually mispronounces.
+        # Explicit pronunciations from the dictionary apply here: exact-case keys first,
+        # then the case-insensitive group folds so "404 media" hits "404 Media". Then the
+        # aggressive base-lexicon pass and the snake_case sweep.
+        applied = corrections.apply(normalized, cs_pairs)
         applied = corrections.apply(applied, ci_pairs, case_sensitive=False)
         applied = _apply_base_lexicon(applied, conn, settings)
     # Strip periods from dotted acronyms LAST -- catches both article text ("U.S.")

@@ -759,27 +759,23 @@ def test_base_lexicon_confidence_gate(env: Path) -> None:
     assert "kuh-TAR-ee" in out  # high-confidence base row applied
 
 
-def test_corrections_spells_plural_of_spelled_acronym(env: Path) -> None:
-    """The seed 'LLM' key no longer shields its plural: 'LLMs' is spelled with the
-    plural letter-name instead of passing through as a word ('lm')."""
+def test_corrections_leaves_acronyms_unspelled(env: Path) -> None:
+    """The auto-speller was removed: common acronyms reach Chatterbox verbatim (it says
+    them natively) instead of being letter-spaced ("C E O"). Plurals pass through too."""
 
     database.run_migrations(env)
     out = asyncio.run(
-        pipeline._apply_corrections("We use LLMs and many GPUs daily.", get_settings())
+        pipeline._apply_corrections("The CEO bought a GPU for the LLM.", get_settings())
     )
-    # GPUs is the clean case (no per-letter seed remap): plural letter-name "yoos".
-    assert "G P yoos" in out
-    # LLMs no longer survives as a word; it is spelled with the plural "ems".
-    assert "LLMs" not in out
-    assert "ems" in out
-    # Singular acronym is still spelled, not left raw.
-    single = asyncio.run(pipeline._apply_corrections("train an LLM now", get_settings()))
-    assert "LLM" not in single
+    assert "CEO" in out and "GPU" in out and "LLM" in out
+    assert "C E O" not in out and "G P U" not in out and "L L M" not in out
+    plural = asyncio.run(pipeline._apply_corrections("many GPUs and APIs", get_settings()))
+    assert "GPUs" in plural and "APIs" in plural
 
 
 def test_corrections_word_mode_acronym_reads_as_word(env: Path) -> None:
-    """A word-mode acronym (SQL -> sequel) stays for the dictionary and is NOT
-    letter-spelled by the acronym speller."""
+    """A word-mode dictionary entry (SQL -> sequel) is applied as its spoken word, not
+    letter by letter."""
 
     from app.services import lexicon
 
@@ -1175,31 +1171,6 @@ def test_normalize_dotted_acronyms() -> None:
     # Lowercase latin abbreviations and decimals/versions are left untouched.
     assert pipeline._normalize_dotted_acronyms("e.g. this, i.e. that") == "e.g. this, i.e. that"
     assert pipeline._normalize_dotted_acronyms("v1.2 and pi 3.14") == "v1.2 and pi 3.14"
-
-
-def test_normalize_acronyms_spells_unknown_allcaps() -> None:
-    # Unknown all-caps (tickers, unfamiliar acronyms) spelled letter by letter.
-    assert pipeline._normalize_acronyms("the CRWV stock") == "the C R W V stock"
-    assert pipeline._normalize_acronyms("buy NVDA now") == "buy N V D A now"
-    # Letters with a trailing digit: digit read as a word.
-    assert pipeline._normalize_acronyms("SSE2 support") == "S S E two support"
-
-
-def test_normalize_acronyms_handles_plurals() -> None:
-    assert pipeline._normalize_acronyms("many GPUs here") == "many G P yoos here"
-    assert pipeline._normalize_acronyms("two APIs") == "two A P eyes"
-    assert pipeline._normalize_acronyms("the URLs") == "the U R els"
-    assert pipeline._normalize_acronyms("three SDKs") == "three S D kays"
-
-
-def test_normalize_acronyms_keeps_read_as_word_and_singletons() -> None:
-    # Read-as-word acronyms are left intact.
-    assert pipeline._normalize_acronyms("NASA and NATO") == "NASA and NATO"
-    assert pipeline._normalize_acronyms("COVID cases") == "COVID cases"
-    # Already-spaced single letters are not re-spelled.
-    assert pipeline._normalize_acronyms("G P U here") == "G P U here"
-    # Mixed-case tokens are left to the lexicon (not letter-spelled).
-    assert pipeline._normalize_acronyms("OAuth and IPv6") == "OAuth and IPv6"
 
 
 def test_normalize_ranges_converts_dash_to_word() -> None:
