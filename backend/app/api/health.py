@@ -79,18 +79,23 @@ async def health_ready(request: Request, response: Response) -> dict[str, Any]:
         llm_headers = dict(extra_headers)
         if api_key:
             llm_headers["Authorization"] = f"Bearer {api_key}"
-    tts_result, firecrawl_result, llm_result = await asyncio.gather(
+    tts_result, firecrawl_result, llm_result, render_result = await asyncio.gather(
         _probe_tts_wrapper(settings.TTS_URL, 2.0),
         # Firecrawl's liveness is /v0/health/liveness (its /health path 404s);
         # the scrape API the pipeline uses is /v1/scrape on the same base.
         _probe_http(settings.FIRECRAWL_URL, "/v0/health/liveness", 2.0),
         _probe_http(llm_url, "/models", 2.0, llm_headers),
+        _probe_render(settings.RENDER_URL, 2.0),
         return_exceptions=True,
     )
     tts_check, tts_detail = _coerce_tts(tts_result)
     checks["tts_wrapper"] = tts_check
     checks["firecrawl"] = _coerce_result(firecrawl_result)
     checks["llm"] = _coerce_result(llm_result)
+    # Render is optional enrichment, so it is surfaced under components.render for
+    # visibility but is NOT added to ``checks`` -- a down render sidecar must not
+    # 503 readiness (the pipeline still produces episodes, just front-half only).
+    render_check, render_detail = _coerce_tts(render_result)
 
     # Per build plan: aggregate component-level detail (wrapper version/torch/
     # device from its /health, LLM + Firecrawl reachability) alongside the local
@@ -113,6 +118,11 @@ async def health_ready(request: Request, response: Response) -> dict[str, Any]:
             "model": settings.LLM_MODEL,
             "base_url": llm_url,
             "reachable": _reachable(checks["llm"]),
+        },
+        "render": {
+            "url": settings.RENDER_URL or None,
+            **render_detail,
+            "reachable": _reachable(render_check),
         },
     }
 
@@ -248,4 +258,29 @@ async def _probe_tts_wrapper(base: str | None, timeout_secs: float) -> tuple[str
         )
         if key in payload
     }
+    return ("ok" if r.is_success else f"http_{r.status_code}"), detail
+
+
+async def _probe_render(base: str | None, timeout_secs: float) -> tuple[str, dict[str, Any]]:
+    """``GET {base}/health/live`` -> ``(check_status, {version})``. The render
+    sidecar reports only ``ok``/``version``; surface its version under
+    ``components.render``. Skipped (and treated as reachable) when unconfigured."""
+
+    if not base:
+        return "skipped", {}
+    url = f"{base.rstrip('/')}/health/live"
+    try:
+        async with httpx.AsyncClient(timeout=timeout_secs) as client:
+            r = await client.get(url)
+    except httpx.HTTPError as exc:
+        return f"unreachable_{type(exc).__name__}", {}
+    try:
+        payload = r.json()
+    except ValueError:
+        payload = {}
+    detail = (
+        {"version": payload["version"]}
+        if isinstance(payload, dict) and "version" in payload
+        else {}
+    )
     return ("ok" if r.is_success else f"http_{r.status_code}"), detail

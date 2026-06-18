@@ -69,6 +69,41 @@ def test_health_ready_reflects_runtime_settings_overlay(env: Path, monkeypatch) 
     assert body["components"]["llm"]["model"] == "operator-chosen-model"
 
 
+def test_health_ready_render_component_present_and_not_gating(env: Path, monkeypatch) -> None:
+    # Render is unconfigured by default: surfaced as a component (skipped =>
+    # reachable) but never added to checks, so a down/absent sidecar cannot 503
+    # readiness.
+    _stub_probes(monkeypatch)
+    with _client(env) as client:
+        body = client.get("/health/ready").json()
+    assert body["components"]["render"]["reachable"] is True
+    assert body["components"]["render"]["url"] is None
+    assert "render" not in body["checks"]
+
+
+async def test_probe_render_returns_version(monkeypatch) -> None:
+    import httpx
+    from app.api import health as health_mod
+
+    payload = {"ok": True, "version": "0.38.0"}
+    transport = httpx.MockTransport(lambda _req: httpx.Response(200, json=payload))
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda *a, **kw: original(*a, **{**kw, "transport": transport})
+    )
+    status, detail = await health_mod._probe_render("http://render:8000", 2.0)
+    assert status == "ok"
+    assert detail["version"] == "0.38.0"
+
+
+async def test_probe_render_skipped_when_unconfigured() -> None:
+    from app.api import health as health_mod
+
+    status, detail = await health_mod._probe_render("", 2.0)
+    assert status == "skipped"
+    assert detail == {}
+
+
 def test_health_alias_returns_same_shape(env: Path, monkeypatch) -> None:
     _stub_probes(monkeypatch)
     with _client(env) as client:
