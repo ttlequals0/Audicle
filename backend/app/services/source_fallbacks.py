@@ -95,8 +95,9 @@ class SourceFallback:
 
 
 # Render rules for the maintainer-curated hosts in config.RENDER_BUILTIN_HOSTS. The
-# render strategy triggers post-cascade regardless of the teaser floor, so min_chars
-# is left at 0 (it plays no role for render rules; see extraction._maybe_render_full).
+# render strategy triggers post-cascade, and extraction.extract() uses the global floor
+# (not rule.min_chars) for a render rule, so min_chars is left at 0 -- it is unused for
+# render rules.
 _RENDER_BUILTINS: tuple[SourceFallback, ...] = tuple(
     SourceFallback(
         name=f"render:{host}",

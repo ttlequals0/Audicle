@@ -1151,11 +1151,12 @@ async def test_render_rescue_none_when_below_floor(
 
 
 async def test_extract_render_rescue_end_to_end(
-    env: Path, monkeypatch: pytest.MonkeyPatch, no_archive
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_archive, caplog: pytest.LogCaptureFixture
 ) -> None:
     # inc.com is a builtin render rule; with the cascade unable to clear the floor
-    # (firecrawl below-floor + FlareSolverr below-floor), extract() falls back to the
-    # render rescue instead of raising ExtractionTooShortError.
+    # (firecrawl below-floor + FlareSolverr below-floor), extract() must walk the full
+    # cascade and reach the render RESCUE rather than short-circuiting on the empty
+    # primary or raising ExtractionTooShortError. The render_rescue log proves the path.
     settings = _render_settings(monkeypatch)
     transport = _stub_transport(
         _ok_response("Access Denied"),
@@ -1168,5 +1169,28 @@ async def test_extract_render_rescue_end_to_end(
         return full
 
     monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
-    result = await extraction.extract("https://www.inc.com/a", settings)
+    with caplog.at_level(logging.INFO, logger="app.services.extraction"):
+        result = await extraction.extract("https://www.inc.com/a", settings)
     assert result is full
+    assert any(getattr(r, "event", "") == "render_rescue" for r in caplog.records)
+
+
+async def test_extract_render_host_raises_when_everything_fails(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_archive
+) -> None:
+    # Regression for the render-rule floor bug: a render host (inc.com builtin) uses the
+    # global floor, so a below-floor primary + below-floor FlareSolverr + a failed render
+    # must RAISE too-short -- never return the empty/blocked primary as success.
+    settings = _render_settings(monkeypatch)
+    transport = _stub_transport(
+        _ok_response("Access Denied"),
+        _flaresolverr_ok("<html><body><p>blocked</p></body></html>"),
+    )
+    _patch_async_client(monkeypatch, transport)
+
+    async def fail_fetch(url: str, _settings) -> None:
+        return None
+
+    monkeypatch.setattr(extraction.render, "fetch", fail_fetch)
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://www.inc.com/a", settings)

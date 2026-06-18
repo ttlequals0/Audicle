@@ -16,8 +16,9 @@ had.
   `{ "status": "ok|captcha|error", "html": "...", "clicks": N, "word_estimate": N }`
 - `GET /health/live` -> `{ "ok": true, "version": "..." }`
 
-The backend calls this only when a host is listed in `RENDER_HOSTS` or a solved
-page still looks truncated, and never on the request path of a normal extraction.
+The backend calls this only for a host whose Site-override rule is the `render`
+strategy (or a solved page that still looks truncated), and never on the request
+path of a normal extraction.
 
 ## Layout
 

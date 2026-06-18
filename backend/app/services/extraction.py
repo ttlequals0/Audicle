@@ -94,7 +94,14 @@ async def extract(
     # teaser paywall (real text but below the floor) drops below it and routes to the
     # solver instead of being silently returned. The solver's full-page result is then
     # accepted against the hard MIN_EXTRACTION_CHARS in the loop.
-    floor = settings.MIN_EXTRACTION_CHARS if rule is None else rule.min_chars
+    # A render rule is a post-cascade strategy (it emits no loop attempt), so it uses the
+    # global floor, NOT its own min_chars -- otherwise a blocked/empty primary would
+    # "clear" a render rule's min_chars and skip the cascade and the render rescue.
+    floor = (
+        settings.MIN_EXTRACTION_CHARS
+        if rule is None or rule.proxy == "render"
+        else rule.min_chars
+    )
     host = (urlsplit(url).hostname or "").lower()
 
     timeout = httpx.Timeout(settings.FIRECRAWL_TIMEOUT_SECONDS)
