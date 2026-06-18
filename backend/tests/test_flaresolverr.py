@@ -16,7 +16,6 @@ _CAPTCHA_HTML = (
     "<h1>Verification Required</h1>"
     "<p>We detected unusual activity from your device or network. "
     "Please verify you are a human by completing the challenge below.</p>"
-    '<script src="https://geo.captcha-delivery.com/captcha/"></script>'
     "<p>Slide right to secure your access and continue to the page you requested.</p>"
     "</body></html>"
 )
