@@ -6,6 +6,15 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.38.1] - 2026-06-17
+
+### Fixed
+
+- The render sidecar settings (`RENDER_URL`, `RENDER_HOSTS`) now appear on the Settings page.
+  They were already accepted by the settings API but were missing from the page's field groups,
+  so they only showed up in 0.38.1. `RENDER_URL` sits under Connections and `RENDER_HOSTS` under
+  Extraction; both stay tunable from the API as well.
+
 ## [0.38.0] - 2026-06-17
 
 ### Added
