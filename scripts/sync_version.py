@@ -17,7 +17,11 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
 _VERSION_FILE = _ROOT / "VERSION"
-_PYPROJECTS = (_ROOT / "pyproject.toml", _ROOT / "tts-wrapper" / "pyproject.toml")
+_PYPROJECTS = (
+    _ROOT / "pyproject.toml",
+    _ROOT / "tts-wrapper" / "pyproject.toml",
+    _ROOT / "render" / "pyproject.toml",
+)
 # Match the first ``version = "..."`` (the [project] one is first in both files).
 _VERSION_RE = re.compile(r'^version = "[^"]*"', re.MULTILINE)
 

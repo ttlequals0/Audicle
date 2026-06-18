@@ -6,7 +6,23 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
-## [0.37.1] - 2026-06-17
+## [0.38.0] - 2026-06-17
+
+### Added
+
+- Full-article render sidecar. Some sites (inc.com and similar, behind DataDome) hide the back
+  half of an article behind an "EXPAND TO CONTINUE READING" click. FlareSolverr clears the JS
+  challenge but runs a headless browser that cannot click, so the cascade was accepting the
+  visible front half as a complete article. The new `audicle-render` container runs a headful
+  Camoufox browser under xvfb, clicks the expander until the body stops growing, and returns the
+  full HTML; the backend turns it into article markdown with the same trafilatura path it uses
+  for FlareSolverr. It runs as a post-extraction step, not in the fallback loop: after the
+  cascade settles on a result, a page whose host is in `RENDER_HOSTS` (default `inc.com`) or that
+  still looks truncated is sent to the sidecar, and the rendered body is kept only when it is
+  longer than what the cascade already had. DataDome is probabilistic, so a render that hits a
+  CAPTCHA falls back to the front-half partial and is logged. New `RENDER_URL` (empty disables),
+  `RENDER_TIMEOUT_SECONDS`, and `RENDER_HOSTS` settings; `RENDER_URL`/`RENDER_HOSTS` are tunable
+  from the Settings page. `/health/ready` reports the sidecar under `components.render`.
 
 ### Security
 

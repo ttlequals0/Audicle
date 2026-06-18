@@ -33,6 +33,10 @@ services:
       # deadlock -- the wrapper is 503 until a voice slot is uploaded.
       tts-wrapper:
         condition: service_started
+      # Optional full-article render sidecar (RENDER_URL in .env). service_started
+      # so the app never waits on the browser; render is enrichment, not critical.
+      render:
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
       interval: 30s
@@ -44,6 +48,30 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  render:
+    # Stealth headful-render sidecar (Camoufox + xvfb), CPU-only. Clicks the
+    # "EXPAND TO CONTINUE READING" gate to recover full article bodies (e.g.
+    # inc.com). Internal only -- never expose this; the app reaches it at
+    # RENDER_URL=http://render:8000 (set in .env). Disable by clearing RENDER_URL.
+    image: ttlequals0/audicle-render:latest
+    # Headful Firefox needs a large /dev/shm or it crashes mid-render; the Docker
+    # default (64m) is too small.
+    shm_size: "1gb"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: json-file
       options:

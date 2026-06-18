@@ -57,6 +57,7 @@ That's what this is. If you don't have a GPU, it'll run on CPU too, just slower.
 ```
 backend/        FastAPI app, SQLite, the job pipeline
 tts-wrapper/    TTS model server (Chatterbox; separate GPU container)
+render/         full-article render sidecar (Camoufox + xvfb; clicks expand gates)
 frontend/       React + Tailwind operator UI
 data/           runtime artifacts (gitignored: SQLite, MP3, JPG, VTT)
 docker-compose.yml
@@ -256,6 +257,8 @@ Some sites pad a one-paragraph teaser with a "Recommended For You" rail and a "L
 
 Hard blocks are handled automatically, not as a per-host strategy. If you've set `FLARESOLVERR_URL` (env or live in Settings), Audicle re-fetches through your own [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) -- a real browser from a residential IP -- and pulls the article out of the solved HTML. It fires for any host in two cases: a scrape that looks like a Cloudflare challenge ("Just a moment...", a Ray ID), or a near-empty scrape (below `MIN_EXTRACTION_CHARS`) -- the signature of a 403/IP block where the site served almost nothing. It stays bounded: a real article or a partial teaser never triggers a browser solve. Audicle doesn't bundle a solver. As a final automatic step, when a hard block isn't recovered any other way, Audicle tries a Wayback capture before failing (`ARCHIVE_FALLBACK_ENABLED`, on by default).
 
+Some sites hide the second half of an article behind an "EXPAND TO CONTINUE READING" click (inc.com and others behind DataDome). FlareSolverr clears the challenge but runs a headless browser that can't click, so it only returns the visible front half -- and since that clears the length floor, it looks like a complete article. The bundled `audicle-render` sidecar handles this: it loads the page in a headful Camoufox browser, clicks the expander until the body stops growing, and hands back the full HTML. It runs after the cascade settles, only for hosts in `RENDER_HOSTS` (default `inc.com`) or pages that still look truncated, and the rendered body is kept only when it is longer than what the cascade already had. Set `RENDER_URL` (empty disables it); the sidecar is internal-only. DataDome is probabilistic, so a render that hits a CAPTCHA falls back to the front-half partial and logs it.
+
 When extraction still fails, the job says why: a hard block with no solver set points you at `FLARESOLVERR_URL`; a hard block the solver couldn't clear means the site likely needs a login; a short teaser means add a per-host bypass.
 
 ### Subscriber paywalls (cookie jar)
@@ -321,7 +324,7 @@ There's no message queue. SQLite handles the work queue via a single locked row 
 - Background retention sweep runs from the worker on a fixed cadence -- configurable via `RETENTION_DAYS`.
 - Default rate limits are conservative; the `slowapi` middleware wiring lives in `backend/app/main.py`.
 
-If something's broken, start with `/health/ready` -- it tells you which dependency is unhappy. Logs live where docker put them (`docker compose logs app` / `docker compose logs tts-wrapper`).
+If something's broken, start with `/health/ready` -- it tells you which dependency is unhappy. Logs live where docker put them (`docker compose logs app` / `docker compose logs tts-wrapper` / `docker compose logs render`).
 
 ## Development
 
