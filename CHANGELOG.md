@@ -6,6 +6,60 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.38.1] - 2026-06-17
+
+### Fixed
+
+- The render sidecar settings (`RENDER_URL`, `RENDER_HOSTS`) now appear on the Settings page.
+  They were already accepted by the settings API but were missing from the page's field groups,
+  so they only showed up in 0.38.1. `RENDER_URL` sits under Connections and `RENDER_HOSTS` under
+  Extraction; both stay tunable from the API as well.
+
+## [0.38.0] - 2026-06-17
+
+### Added
+
+- Full-article render sidecar. Some sites (inc.com and similar, behind DataDome) hide the back
+  half of an article behind an "EXPAND TO CONTINUE READING" click. FlareSolverr clears the JS
+  challenge but runs a headless browser that cannot click, so the cascade was accepting the
+  visible front half as a complete article. The new `audicle-render` container runs a headful
+  Camoufox browser under xvfb, clicks the expander until the body stops growing, and returns the
+  full HTML; the backend turns it into article markdown with the same trafilatura path it uses
+  for FlareSolverr. It runs as a post-extraction step, not in the fallback loop: after the
+  cascade settles on a result, a page whose host is in `RENDER_HOSTS` (default `inc.com`) or that
+  still looks truncated is sent to the sidecar, and the rendered body is kept only when it is
+  longer than what the cascade already had. DataDome is probabilistic, so a render that hits a
+  CAPTCHA falls back to the front-half partial and is logged. New `RENDER_URL` (empty disables),
+  `RENDER_TIMEOUT_SECONDS`, and `RENDER_HOSTS` settings; `RENDER_URL`/`RENDER_HOSTS` are tunable
+  from the Settings page. `/health/ready` reports the sidecar under `components.render`.
+
+### Security
+
+- Cleared the fixable HIGH advisories in both images. The app bumps `python-multipart` to 0.0.32
+  (CVE-2026-53539, querystring-parsing DoS) and `starlette` to 1.3.1 (CVE-2026-54283, form-limit
+  DoS). The tts-wrapper Dockerfile now runs a full `apt-get upgrade`, picking up the patched
+  openssl/libssl3 (CVE-2026-45447) and kernel-header (`linux-libc-dev`) packages.
+- Documented the four remaining wrapper advisories that cannot be cleared yet: `diffusers==0.29.0`
+  and `gradio==6.8.0` are exact pins inside chatterbox-tts, and neither advisory is reachable here
+  (the diffusers `trust_remote_code` path is never used; the wrapper exposes only JSON and GET
+  endpoints, so the starlette form-parsing issue has no entry point). The pins will be relaxed once
+  chatterbox-tts ships a release that moves off them.
+
+## [0.37.0] - 2026-06-17
+
+### Added
+
+- Webhook payloads for `episode.processed` now include `length` (the finished episode's audio
+  duration) and `time_to_process`, both as `mm:ss`, alongside the existing numeric
+  `time_to_process_secs`.
+
+### Changed
+
+- Extraction logs when a fetch is blocked by an interactive CAPTCHA. When FlareSolverr clears a
+  site's JS challenge but the host escalates to a DataDome/PerimeterX-style CAPTCHA it cannot
+  solve (e.g. inc.com), the failure is logged as `flaresolverr_captcha` with the host, so a
+  blocked article reads as "blocked by CAPTCHA" rather than a silent "no article text."
+
 ## [0.36.0] - 2026-06-17
 
 ### Changed

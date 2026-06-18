@@ -976,3 +976,121 @@ async def test_extract_direct_skips_firecrawl_rescrape_when_unconfigured(
     _patch_async_client(monkeypatch, httpx.MockTransport(handler))
     with pytest.raises(extraction.ExtractionTooShortError):
         await extraction.extract("https://medium.com/@a/post", get_settings())
+
+
+# --- Render enrichment (post-cascade full-article render) -----------------------
+
+
+def _render_settings(
+    monkeypatch: pytest.MonkeyPatch, hosts: str = "inc.com", url: str = "http://render.test:8000"
+):
+    monkeypatch.setenv("RENDER_URL", url)
+    monkeypatch.setenv("RENDER_HOSTS", hosts)
+    get_settings.cache_clear()
+    return get_settings()
+
+
+def test_looks_truncated_detects_marker() -> None:
+    teaser = extraction.ExtractionResult(markdown="The intro... continue reading", metadata={})
+    article = extraction.ExtractionResult(
+        markdown="A whole article body with no gate copy.", metadata={"title": "X"}
+    )
+    assert extraction.looks_truncated(teaser)
+    assert not extraction.looks_truncated(article)
+
+
+def test_host_in_render_list_suffix_match(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = _render_settings(monkeypatch, hosts="inc.com, example.org")
+    assert extraction._host_in_render_list("https://www.inc.com/a", settings)
+    assert extraction._host_in_render_list("https://inc.com/a", settings)
+    assert extraction._host_in_render_list("https://example.org/a", settings)
+    assert not extraction._host_in_render_list("https://other.com/a", settings)
+
+
+async def test_render_enrichment_replaces_with_longer_body(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _render_settings(monkeypatch)
+    partial = extraction.ExtractionResult(markdown="short " * 10, metadata={})
+    full = extraction.ExtractionResult(markdown="full " * 200, metadata={"title": "T"})
+
+    async def fake_fetch(url: str, _settings) -> extraction.ExtractionResult:
+        return full
+
+    monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
+    out = await extraction._maybe_render_full(partial, "https://www.inc.com/a", settings)
+    assert out is full
+
+
+async def test_render_enrichment_keeps_partial_when_render_is_shorter(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _render_settings(monkeypatch)
+    partial = extraction.ExtractionResult(markdown="long " * 200, metadata={})
+
+    async def fake_fetch(url: str, _settings) -> extraction.ExtractionResult:
+        return extraction.ExtractionResult(markdown="short", metadata={})
+
+    monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
+    out = await extraction._maybe_render_full(partial, "https://www.inc.com/a", settings)
+    assert out is partial
+
+
+async def test_render_enrichment_keeps_partial_on_none(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _render_settings(monkeypatch)
+    partial = extraction.ExtractionResult(markdown="x " * 100, metadata={})
+
+    async def fake_fetch(url: str, _settings) -> None:
+        return None
+
+    monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
+    out = await extraction._maybe_render_full(partial, "https://www.inc.com/a", settings)
+    assert out is partial
+
+
+async def test_render_enrichment_noop_when_url_empty(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _render_settings(monkeypatch, url="")
+    partial = extraction.ExtractionResult(markdown="x " * 100, metadata={})
+
+    async def boom(url: str, _settings):
+        raise AssertionError("render.fetch must not run when RENDER_URL is empty")
+
+    monkeypatch.setattr(extraction.render, "fetch", boom)
+    out = await extraction._maybe_render_full(partial, "https://www.inc.com/a", settings)
+    assert out is partial
+
+
+async def test_render_enrichment_noop_for_unlisted_untruncated_host(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _render_settings(monkeypatch, hosts="inc.com")
+    partial = extraction.ExtractionResult(markdown="A complete article body.", metadata={})
+
+    async def boom(url: str, _settings):
+        raise AssertionError("render.fetch must not run for an unlisted, untruncated host")
+
+    monkeypatch.setattr(extraction.render, "fetch", boom)
+    out = await extraction._maybe_render_full(partial, "https://other.com/a", settings)
+    assert out is partial
+
+
+async def test_render_enrichment_triggers_on_truncation_for_unlisted_host(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _render_settings(monkeypatch, hosts="inc.com")
+    partial = extraction.ExtractionResult(markdown="Intro paragraph... read more", metadata={})
+    full = extraction.ExtractionResult(markdown="full " * 200, metadata={})
+    calls: list[str] = []
+
+    async def fake_fetch(url: str, _settings) -> extraction.ExtractionResult:
+        calls.append(url)
+        return full
+
+    monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
+    out = await extraction._maybe_render_full(partial, "https://other.com/a", settings)
+    assert calls == ["https://other.com/a"]
+    assert out is full

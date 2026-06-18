@@ -1,0 +1,53 @@
+[project]
+name = "audicle-render"
+version = "0.38.1"
+description = "Stealth headful-render sidecar for Audicle (Camoufox)."
+requires-python = ">=3.11,<3.13"
+# Camoufox/Playwright wheels track a conservative Python range; 3.12 is the safe
+# upper bound for the browser stack (the backend is separate, pinned >=3.13).
+license = { text = "MIT" }
+authors = [{ name = "ttlequals0" }]
+
+# Core deps are browser-agnostic: just the FastAPI app and validation. The
+# headful browser is an optional extra so the dev/test environment installs no
+# browser and the pure helpers + app stay testable.
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+]
+
+[project.optional-dependencies]
+# camoufox: anti-fingerprint Firefox fork driven via Playwright; the image
+# installs this extra and runs `camoufox fetch` to bake the browser in.
+render = ["camoufox>=0.4"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# Flat layout: declare the top-level modules explicitly (modern setuptools won't
+# auto-discover a multi-module flat layout).
+[tool.setuptools]
+py-modules = ["main", "renderer", "camoufox_renderer"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",
+    "ruff>=0.7",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-ra -q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

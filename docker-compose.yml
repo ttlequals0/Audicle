@@ -33,6 +33,9 @@ services:
       # deadlock -- the wrapper is 503 until a voice slot is uploaded.
       tts-wrapper:
         condition: service_started
+      # No depends_on for the render sidecar: it is optional enrichment and the app
+      # tolerates it being down or absent (render.fetch fails closed to the cascade
+      # result), so it must not gate app startup or block `up` if its image is missing.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
       interval: 30s
@@ -44,6 +47,33 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  render:
+    # Stealth headful-render sidecar (Camoufox + xvfb), CPU-only. Clicks the
+    # "EXPAND TO CONTINUE READING" gate to recover full article bodies (e.g.
+    # inc.com). Internal only -- never expose this; the app reaches it at
+    # RENDER_URL=http://render:8000 (set in .env). Disable by clearing RENDER_URL.
+    image: ttlequals0/audicle-render:latest
+    # Headful Firefox needs a large /dev/shm or it crashes mid-render; the Docker
+    # default (64m) is too small.
+    shm_size: "1gb"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+    # no-new-privileges, but NOT cap_drop: ALL like the other services -- a headful
+    # Firefox under xvfb can need more latitude than a plain web app. Tighten with
+    # cap_drop once validated against the live browser if you want to harden further.
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: json-file
       options:

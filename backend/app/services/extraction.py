@@ -25,7 +25,7 @@ from tenacity import (
 )
 
 from app.config import Settings
-from app.services import arc_extractor, archive, direct_fetch, flaresolverr, jsonld, ssrf
+from app.services import arc_extractor, archive, direct_fetch, flaresolverr, jsonld, render, ssrf
 
 # Re-exported so existing ``extraction.ExtractionResult`` / ``extraction.ExtractionTooShortError``
 # references (pipeline, tests) keep working now that the types live in extraction_types, which
@@ -38,6 +38,7 @@ from app.services.extraction_types import (
     ExtractionResult,
     ExtractionTooShortError,
     ExtractionTransientError,
+    scan_markers,
 )
 from app.services.source_fallbacks import Attempt, SourceFallback, candidate_attempts, match
 
@@ -145,7 +146,7 @@ async def extract(
                 )
                 result = ExtractionResult(markdown=arc_md, metadata=result.metadata)
         if _effective_chars(result, rule, floor) >= floor:
-            return result
+            return await _maybe_render_full(result, url, settings)
         # Best result seen across direct + every bypass, and whether the browser
         # solver was attempted -- together they classify the failure message.
         best_chars = _effective_chars(result, rule, floor)
@@ -276,7 +277,7 @@ async def extract(
             best_chars = max(best_chars, alt_chars)
             if alt_chars >= accept_floor:
                 _log_fallback_used(attempt.label, result.markdown, alt.markdown)
-                return alt
+                return await _maybe_render_full(alt, url, settings)
             _log_fallback_short(attempt.label, alt_chars, accept_floor)
 
     # Only claim "your cookies look expired" when a solver attempt actually carried
@@ -364,6 +365,64 @@ def _effective_chars(result: ExtractionResult, rule: SourceFallback | None, floo
     if rule is not None and declared is not None and declared < floor <= scraped:
         return declared
     return scraped
+
+
+# Markers that mean a solved page is only the visible front of an article whose body
+# is gated behind an expand click. Matched (case-insensitively) against the result's
+# markdown + title, like the FlareSolverr detectors. Best effort: trafilatura may strip
+# a button's label, so RENDER_HOSTS is the reliable trigger and this is the bonus net.
+_TRUNCATION_MARKERS = (
+    "expand to continue reading",
+    "continue reading",
+    "read more",
+)
+
+
+def looks_truncated(result: ExtractionResult) -> bool:
+    """True when a solved result still reads like a click-gated teaser."""
+
+    return scan_markers(result, _TRUNCATION_MARKERS)
+
+
+def _host_in_render_list(url: str, settings: Settings) -> bool:
+    """True when the URL's host matches a RENDER_HOSTS entry (suffix match, so
+    ``inc.com`` covers ``www.inc.com``)."""
+
+    host = (urlsplit(url).hostname or "").lower()
+    if not host:
+        return False
+    for entry in settings.RENDER_HOSTS.split(","):
+        h = entry.strip().lower()
+        if h and (host == h or host.endswith(f".{h}")):
+            return True
+    return False
+
+
+async def _maybe_render_full(
+    result: ExtractionResult, url: str, settings: Settings
+) -> ExtractionResult:
+    """Post-cascade enrichment. When the render sidecar is configured and this result
+    is for a ``RENDER_HOSTS`` host or still looks truncated, drive the sidecar to click
+    the expander and keep its body only if it is strictly longer. A ``None`` or shorter
+    render leaves ``result`` untouched, so a broken click never loses the cascade's body."""
+
+    if not settings.RENDER_URL.strip():
+        return result
+    if not (_host_in_render_list(url, settings) or looks_truncated(result)):
+        return result
+    alt = await render.fetch(url, settings)
+    if alt is None or len(alt.markdown) <= len(result.markdown):
+        return result
+    logger.info(
+        "Render enriched a truncated article",
+        extra={
+            "event": "render_enriched",
+            "host": urlsplit(url).hostname or "",
+            "before_chars": len(result.markdown),
+            "after_chars": len(alt.markdown),
+        },
+    )
+    return alt
 
 
 def _build_payload(

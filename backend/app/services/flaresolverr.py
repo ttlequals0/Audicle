@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from app.config import Settings
-from app.services.extraction_types import ExtractionResult
+from app.services.extraction_types import ExtractionResult, scan_markers
 from app.services.html_markdown import html_to_markdown
 
 logger = logging.getLogger("app.services.flaresolverr")
@@ -47,8 +47,31 @@ def looks_like_challenge(result: ExtractionResult) -> bool:
     """True when a below-floor scrape looks like a Cloudflare/bot-challenge page
     (the case FlareSolverr is meant to solve) rather than a real short article."""
 
-    haystack = f"{result.markdown} {result.metadata.get('title', '')}".lower()
-    return any(marker in haystack for marker in _CHALLENGE_MARKERS)
+    return scan_markers(result, _CHALLENGE_MARKERS)
+
+
+# Visible copy of an INTERACTIVE CAPTCHA gate (DataDome/PerimeterX slider,
+# hCaptcha/reCAPTCHA) -- the case FlareSolverr cannot auto-solve, so even a "solved"
+# page is still a wall. Matched (like the challenge markers) against a below-floor
+# scrape's extracted markdown + title, not the raw HTML: vendor sensor scripts
+# ("perimeterx", "captcha-delivery.com") ship on plenty of legit pages, so scanning the
+# full HTML would drop real articles. Only the human-readable gate text survives
+# extraction, and only when the page is too short to be the article.
+_CAPTCHA_MARKERS = (
+    "verification required",
+    "slide right to secure",
+    "unusual activity from your device",
+    "please verify you are a human",
+    "complete the security check to access",
+)
+
+
+def looks_like_captcha(result: ExtractionResult) -> bool:
+    """True when a below-floor scrape's extracted text is an interactive CAPTCHA gate
+    (DataDome/PerimeterX/etc.) rather than the article -- a wall FlareSolverr can't get
+    through. Mirrors ``looks_like_challenge``: scans markdown + title, not raw HTML."""
+
+    return scan_markers(result, _CAPTCHA_MARKERS)
 
 
 def _parse_cookies(cookie_string: str, url: str) -> list[dict[str, str]]:
@@ -146,4 +169,16 @@ async def fetch(url: str, settings: Settings, cookies: str = "") -> ExtractionRe
             extra={"event": "flaresolverr_empty_extract"},
         )
         return None
-    return ExtractionResult(markdown=markdown, metadata=metadata)
+
+    result = ExtractionResult(markdown=markdown, metadata=metadata)
+    if len(markdown) < settings.MIN_EXTRACTION_CHARS and looks_like_captcha(result):
+        # FlareSolverr cleared the JS challenge but the host escalated to an interactive
+        # CAPTCHA (e.g. inc.com's DataDome slider) it cannot solve. The extracted text is
+        # below floor and reads as the gate, not the article -- log the real cause so a
+        # failed extraction reads as "blocked by CAPTCHA", not "no text".
+        logger.warning(
+            "FlareSolverr reached an interactive CAPTCHA; cannot auto-solve",
+            extra={"event": "flaresolverr_captcha", "host": urlsplit(url).hostname or ""},
+        )
+        return None
+    return result

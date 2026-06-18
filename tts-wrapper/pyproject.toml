@@ -1,6 +1,6 @@
 [project]
 name = "audicle-tts-wrapper"
-version = "0.36.0"
+version = "0.38.1"
 description = "FastAPI TTS wrapper for Audicle (Chatterbox)."
 requires-python = ">=3.11,<3.13"
 # 3.11 lower bound: torch wheels for the TTS engine lag the latest Python.
@@ -28,13 +28,20 @@ chatterbox = ["chatterbox-tts>=0.1.7"]
 # every image but import-gated at runtime by WHISPER_ENABLED -- the model only
 # loads when an operator turns verification on.
 whisper = ["faster-whisper>=1.0"]
-# NOTE: chatterbox-tts pins ``diffusers==0.29.0`` transitively, which carries two
-# HIGH advisories (CVE-2026-44513, CVE-2026-45804) -- both ``trust_remote_code`` /
-# TOCTOU remote-code-load bypasses, fixed only in diffusers 0.38.0. Not reachable
-# here: chatterbox imports diffusers only for its flow-matching decoder and never
-# uses ``trust_remote_code``, and the wrapper loads only the trusted Chatterbox
-# weights. Cannot bump diffusers without overriding chatterbox's pin; revisit when
-# chatterbox-tts ships a release that moves off 0.29.0.
+# NOTE: chatterbox-tts 0.1.7 hard-pins two transitive deps that each carry HIGH
+# advisories, neither reachable in this wrapper:
+#   * ``diffusers==0.29.0`` -- CVE-2026-44513 / CVE-2026-45804, ``trust_remote_code``
+#     / TOCTOU remote-code-load bypasses (fixed in 0.38.0). Chatterbox imports
+#     diffusers only for its flow-matching decoder, never sets ``trust_remote_code``,
+#     and the wrapper loads only trusted Chatterbox weights.
+#   * ``gradio==6.8.0`` -> ``starlette<1.0`` -- CVE-2026-48818 / CVE-2026-54283,
+#     ``request.form()`` DoS (fixed in starlette 1.1.0 / 1.3.1). The wrapper exposes
+#     only JSON and GET endpoints (no form/multipart parsing) and never imports gradio.
+# Both are blocked by chatterbox's exact pins; clearing them means overriding those
+# pins, which risks the TTS engine for zero real exposure reduction. No upstream
+# relief is available -- 0.1.7 (latest) and master keep both pins, and the relax-pins
+# PR (resemble-ai/chatterbox#486) is stale with conflicts. Revisit when chatterbox-tts
+# ships a release that moves off these pins.
 
 [build-system]
 requires = ["setuptools>=68"]
