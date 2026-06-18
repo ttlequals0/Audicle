@@ -43,7 +43,6 @@ const GROUPS: Record<string, string[]> = {
     "EXTRACTION_DIRECT_TIMEOUT_SECONDS",
     "EXTRACTION_ARC_ENABLED",
     "ARCHIVE_FALLBACK_ENABLED",
-    "RENDER_HOSTS",
   ],
   Webhooks: ["WEBHOOK_URL"],
   TTS: ["TTS_CHUNK_TARGET_WORDS", "TTS_CHUNK_MAX_WORDS", "TTS_CHUNK_SILENCE_MS"],
@@ -378,7 +377,7 @@ export default function SettingsRoute() {
         </CollapsibleSection>
       )}
       {fallbacksQ.data !== undefined && (
-        <CollapsibleSection title="paywall sites">
+        <CollapsibleSection title="site overrides">
           <SourceFallbacksTable initial={fallbacksQ.data} />
         </CollapsibleSection>
       )}
@@ -1000,8 +999,9 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
         </p>
       </div>
       <p className="text-mute text-xs">
-        List a paywalled host and how to bypass it. The default applies to any host
-        that scrapes near-empty.
+        Override how a site is extracted: list a host and the strategy to use (paywall
+        bypass, FlareSolverr, archive, or render for click-to-expand articles). The
+        default applies to any host that scrapes near-empty.
       </p>
       <p className="text-mute text-xs">
         Cookie jar (flaresolverr only): paste a logged-in Cookie header to fetch as a
@@ -1102,7 +1102,7 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
 
       <div className="flex items-center gap-3">
         <button className="btn-primary" disabled={m.isPending} onClick={() => m.mutate()}>
-          {m.isPending ? "saving..." : "save paywall sites"}
+          {m.isPending ? "saving..." : "save site overrides"}
         </button>
         {msg && <span className="font-mono text-xs text-accent">{msg}</span>}
       </div>
