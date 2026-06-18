@@ -57,6 +57,12 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         # FlareSolverr endpoint for the flaresolverr paywall strategy; operator-
         # tunable so they can point at their own solver without an env edit.
         "FLARESOLVERR_URL",
+        # Render sidecar endpoint (empty disables) + the hosts that always route to
+        # render enrichment; tunable live so an operator can point at their own
+        # sidecar or add a gated host without an env edit. RENDER_TIMEOUT_SECONDS
+        # stays env-only (a structural per-request budget, like FLARESOLVERR_MAX_TIMEOUT_MS).
+        "RENDER_URL",
+        "RENDER_HOSTS",
         # Try a Wayback capture as a last resort on a hard block; tunable live.
         "ARCHIVE_FALLBACK_ENABLED",
         "TTS_CHUNK_TARGET_WORDS",
