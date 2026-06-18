@@ -6,6 +6,24 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.39.3] - 2026-06-18
+
+### Fixed
+
+- Render extraction now keeps the full article tail. inc.com renders capped at a stable
+  4736 chars even after the 0.39.2 scroll change, which pointed at extraction rather than
+  the browser: trafilatura's default precision was cutting the article at a mid-article
+  promo block ("more from Inc."). The render path now extracts with `favor_recall`, which
+  keeps the trailing paragraphs. Other extraction paths (FlareSolverr, archive, direct
+  fetch) keep the default precision.
+
+### Added
+
+- A `render_extracted` log line (browser word estimate, click count, extracted character
+  count) so a short render can be attributed to the browser (little loaded) versus
+  extraction (a lot loaded, little kept). The empty-extract warning now carries the same
+  browser counts.
+
 ## [0.39.2] - 2026-06-18
 
 ### Fixed

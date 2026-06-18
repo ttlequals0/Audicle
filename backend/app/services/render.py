@@ -81,8 +81,30 @@ async def fetch(url: str, settings: Settings) -> ExtractionResult | None:
         logger.warning("Render sidecar returned no HTML", extra={"event": "render_bad_html"})
         return None
 
-    markdown, metadata = html_to_markdown(html)
+    # favor_recall: the render path fetches gated long-reads (inc.com) whose tail
+    # trafilatura's default precision drops at a mid-article promo block; recall keeps it.
+    markdown, metadata = html_to_markdown(html, favor_recall=True)
     if not markdown:
-        logger.warning("Render HTML yielded no article text", extra={"event": "render_empty_extract"})
+        # Carry the browser-side counts so an empty extract reads as "browser got a
+        # near-empty/challenge page" rather than "extraction failed on a full page".
+        logger.warning(
+            "Render HTML yielded no article text",
+            extra={
+                "event": "render_empty_extract",
+                "word_estimate": body.get("word_estimate"),
+                "clicks": body.get("clicks"),
+            },
+        )
         return None
+    # Log the browser-side word count next to the extracted length so a short result can
+    # be attributed to the browser (little loaded) vs extraction (lots loaded, little kept).
+    logger.info(
+        "Render extracted article",
+        extra={
+            "event": "render_extracted",
+            "word_estimate": body.get("word_estimate"),
+            "clicks": body.get("clicks"),
+            "markdown_chars": len(markdown),
+        },
+    )
     return ExtractionResult(markdown=markdown, metadata=metadata)

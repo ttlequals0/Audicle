@@ -20,11 +20,16 @@ logger = logging.getLogger("app.services.html_markdown")
 MAX_HTML_CHARS = 8_000_000
 
 
-def html_to_markdown(html: str) -> tuple[str, dict[str, Any]]:
+def html_to_markdown(html: str, *, favor_recall: bool = False) -> tuple[str, dict[str, Any]]:
     """Extract the main article body from raw HTML as markdown, plus best-effort
     title/author/og:image metadata mapped into the same keys the finalize and artwork
     stages already read from Firecrawl. Returns ``("", {})`` when there is no
-    extractable article. Never raises -- the HTML is attacker-controlled."""
+    extractable article. Never raises -- the HTML is attacker-controlled.
+
+    ``favor_recall`` trades extraction precision for recall: trafilatura keeps article
+    text it would otherwise score as boilerplate (such as a tail after a mid-article
+    promo block). Callers opt in when completeness matters more than tight boundaries;
+    the default keeps trafilatura's standard precision."""
 
     if not html.strip():
         return "", {}
@@ -37,7 +42,11 @@ def html_to_markdown(html: str) -> tuple[str, dict[str, Any]]:
     try:
         markdown = (
             trafilatura.extract(
-                html, output_format="markdown", include_comments=False, include_tables=True
+                html,
+                output_format="markdown",
+                include_comments=False,
+                include_tables=True,
+                favor_recall=favor_recall,
             )
             or ""
         )
