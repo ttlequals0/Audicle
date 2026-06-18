@@ -188,31 +188,6 @@ def apply_pairs_by_case(conn: sqlite3.Connection) -> tuple[dict[str, str], dict[
     return cs, ci
 
 
-def word_keep_set(conn: sqlite3.Connection) -> set[str]:
-    """Inputs whose mode is 'word' -- acronyms read as words (NASA), so the
-    deterministic speller must not letter-spell them."""
-
-    return {
-        row["input_text"]
-        for row in conn.execute("SELECT input_text FROM lexicon WHERE mode = 'word'")
-    }
-
-
-def non_spell_keep_set(conn: sqlite3.Connection) -> set[str]:
-    """Inputs the deterministic acronym speller must NOT letter-spell: mode 'word'
-    (read as words, NASA) plus 'override' (fixed respellings, Kubernetes). Spell-mode
-    all-caps keys (LLM, API) are deliberately excluded so _normalize_acronyms spells
-    them and their plurals ("LLMs" -> "L L ems") -- corrections.apply cannot match a
-    plural past the trailing "s", so leaving them in the keep-set drops the plural."""
-
-    return {
-        row["input_text"]
-        for row in conn.execute(
-            "SELECT input_text FROM lexicon WHERE mode IN ('word', 'override')"
-        )
-    }
-
-
 def reference_text(conn: sqlite3.Connection) -> str:
     """Format seed + user rows as the LLM pronunciation reference.
 

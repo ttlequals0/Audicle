@@ -668,6 +668,34 @@ async def test_too_short_message_hard_block_no_solver(
         await extraction.extract("https://hardblock.test/a", get_settings())
 
 
+async def test_extract_403_block_routes_to_flaresolverr(
+    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A 403 from the primary engine is a block (IP/WAF), not a dead end: it must route
+    # into the bypass cascade instead of failing the job with a raw "got 403". The solver,
+    # from a different IP, gets the article.
+    transport = _stub_transport(
+        httpx.Response(403, text="Forbidden"),  # Firecrawl scrape: host blocked us
+        _flaresolverr_ok(_gated_article_html()),  # solver gets the full article
+    )
+    _patch_async_client(monkeypatch, transport)
+    with caplog.at_level(logging.INFO, logger="app.services.extraction"):
+        result = await extraction.extract("https://blocked.test/post", get_settings())
+    assert "real article body" in result.markdown
+    assert any(getattr(r, "event", "") == "extraction_blocked_primary" for r in caplog.records)
+
+
+async def test_extract_403_no_solver_surfaces_blocked_not_raw_403(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, no_archive
+) -> None:
+    # 403 + no bypass configured: the job fails with the cascade's actionable message
+    # (set FLARESOLVERR_URL), not a raw "Direct fetch got 403" dead end.
+    transport = _stub_transport(httpx.Response(403, text="Forbidden"))
+    _patch_async_client(monkeypatch, transport)
+    with pytest.raises(extraction.ExtractionTooShortError, match="Set FLARESOLVERR_URL"):
+        await extraction.extract("https://blocked.test/a", get_settings())
+
+
 async def test_too_short_message_hard_block_solver_failed(
     env: Path, monkeypatch: pytest.MonkeyPatch, no_archive
 ) -> None:

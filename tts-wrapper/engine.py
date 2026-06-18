@@ -24,27 +24,46 @@ logger = logging.getLogger("tts.engine")
 # the audio, so the wrapper never 500s/truncates on a long chunk regardless of how
 # the backend chunked it. The runtime cap comes from Config.max_chars; this
 # constant is the fallback default.
-_DEFAULT_MAX_CHARS = 200
+_DEFAULT_MAX_CHARS = 300
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+_WHITESPACE = re.compile(r"\s+")
+# Clause breaks to cut an oversize sentence on, so a join-gap lands on a natural pause
+# rather than mid-clause: comma/semicolon/colon, or a spaced hyphen/em-dash.
+_CLAUSE_BREAK = re.compile(r"[,;:]|\s--?\s|\s—\s")
+
+
+def _cut_oversize(sentence: str, max_chars: int) -> tuple[str, str]:
+    """Cut an oversize sentence into ``(head, rest)``. Prefer the rightmost clause break
+    within the cap (keeping its punctuation on the head so the gap reads as a pause),
+    then the rightmost word boundary, then a hard cut for a single oversize token."""
+
+    window = sentence[:max_chars]
+    cut = -1
+    for match in _CLAUSE_BREAK.finditer(window):
+        cut = match.end()
+    if cut <= 0:
+        cut = window.rfind(" ")
+    if cut <= 0:
+        cut = max_chars
+    return sentence[:cut].strip(), sentence[cut:].strip()
 
 
 def _split_into_pieces(text: str, max_chars: int = _DEFAULT_MAX_CHARS) -> list[str]:
     """Split ``text`` into pieces each <= ``max_chars``.
 
-    Sentence boundaries first; an oversize sentence is cut at the last space
-    before the cap (a hard cut only if a single token exceeds the cap).
+    Whitespace runs (including stray newlines, which Chatterbox reads as ~0.1s pauses)
+    are collapsed to single spaces first. Sentence boundaries split next; an oversize
+    sentence is cut at a clause boundary, falling back to a word boundary, then a hard
+    cut only for a single token longer than the cap.
     """
 
+    text = _WHITESPACE.sub(" ", text).strip()
     pieces: list[str] = []
-    for sentence in _SENTENCE_SPLIT.split(text.strip()):
+    for sentence in _SENTENCE_SPLIT.split(text):
         sentence = sentence.strip()
         while len(sentence) > max_chars:
-            cut = sentence.rfind(" ", 0, max_chars)
-            if cut <= 0:
-                cut = max_chars
-            head, sentence = sentence[:cut].strip(), sentence[cut:].strip()
-            if head:
-                pieces.append(head)
+            head, sentence = _cut_oversize(sentence, max_chars)
+            pieces.append(head)
         if sentence:
             pieces.append(sentence)
     return pieces

@@ -21,14 +21,14 @@ def test_migration_creates_table_and_imports_seed(env: Path) -> None:
 
 
 def test_migration_017_drops_phonetic_respellings(env: Path) -> None:
-    """Migration 017 re-imports the trimmed seed: a former hyphenated respelling is gone
-    while real-word swaps and acronym spell-outs survive."""
+    """The seed re-imports (017 + 019) drop the trimmed-out rows: a former hyphenated
+    respelling and a letter-spelled acronym are gone, while real-word swaps survive."""
 
     database.run_migrations(env)
     with database.connection(env) as conn:
-        assert lexicon.lookup(conn, "Kubernetes") is None  # phonetic respelling removed
+        assert lexicon.lookup(conn, "Kubernetes") is None  # phonetic respelling removed (017)
+        assert lexicon.lookup(conn, "LLM") is None           # letter-spelled acronym removed (019)
         assert lexicon.lookup(conn, "SQL") is not None       # real-word swap kept
-        assert lexicon.lookup(conn, "LLM") is not None       # acronym spell-out kept
 
 
 def test_migration_imports_legacy_user_dict(env: Path) -> None:
@@ -116,35 +116,6 @@ def test_reference_text_includes_homograph_notes(env: Path) -> None:
         ref = lexicon.reference_text(conn)
     assert "read (present) -> reed" in ref
     assert "Present tense" in ref  # the note context is preserved
-
-
-def test_word_keep_set_includes_word_mode_rows(env: Path) -> None:
-    database.run_migrations(env)
-    with database.connection(env) as conn:
-        lexicon.import_readonly(conn, "base", {"NASA": {"mode": "word", "spoken": "NASA"}})
-        conn.commit()
-        assert "NASA" in lexicon.word_keep_set(conn)
-
-
-def test_non_spell_keep_set_excludes_spell_mode(env: Path) -> None:
-    # The acronym speller must keep word/override rows but NOT spell-mode rows, so
-    # it can spell "LLM"/"LLMs" itself instead of passing the plural through.
-    database.run_migrations(env)
-    with database.connection(env) as conn:
-        lexicon.import_readonly(
-            conn,
-            "base",
-            {
-                "LLM": {"mode": "spell", "spoken": "L L M"},
-                "NASA": {"mode": "word", "spoken": "NASA"},
-                "Kubernetes": {"mode": "override", "spoken": "koo-ber-neh-tees"},
-            },
-        )
-        conn.commit()
-        keep = lexicon.non_spell_keep_set(conn)
-        assert "NASA" in keep
-        assert "Kubernetes" in keep
-        assert "LLM" not in keep
 
 
 def test_apply_pairs_by_case_splits_on_flag(env: Path) -> None:

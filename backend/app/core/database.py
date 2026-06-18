@@ -547,16 +547,11 @@ def _m016_episode_voice_label(conn: sqlite3.Connection) -> None:
     )
 
 
-def _m017_reimport_seed_lexicon(conn: sqlite3.Connection) -> None:
-    """Re-import the seed corrections from the shipped CSV, replacing the read-only
-    seed rows (0.34.0).
-
-    Existing databases imported the seed via ``_m012`` before the pseudo-phonetic
-    respellings were removed from the CSV; this re-sync drops them. ``import_readonly``
-    replaces only ``origin='seed'`` rows, so user corrections and base rows are
-    untouched. A fresh DB already loaded the trimmed CSV in ``_m012``, so it gets an
-    identical no-op re-import.
-    """
+def _reimport_seed_lexicon(conn: sqlite3.Connection) -> None:
+    """Re-import the seed corrections from the shipped CSV, replacing only the read-only
+    ``origin='seed'`` rows -- user corrections and base rows are untouched. The seed-resync
+    migrations call this so an existing DB picks up a later trim of the seed list; a fresh
+    DB that already loaded the current CSV in ``_m012`` gets an identical no-op re-import."""
 
     from app.services import lexicon, seed_corrections
 
@@ -566,6 +561,19 @@ def _m017_reimport_seed_lexicon(conn: sqlite3.Connection) -> None:
         logger.warning("Seed CSV unreadable during re-import", exc_info=True)
         return
     lexicon.import_readonly(conn, "seed", seed_corrections.build_lexicon_rows(seed_entries))
+
+
+def _m017_reimport_seed_lexicon(conn: sqlite3.Connection) -> None:
+    """0.34.0: re-sync the seed after the pseudo-phonetic respellings were removed."""
+
+    _reimport_seed_lexicon(conn)
+
+
+def _m019_reimport_seed_lexicon(conn: sqlite3.Connection) -> None:
+    """0.36.0: re-sync the seed after the letter-spelled acronyms were removed -- Chatterbox
+    pronounces common acronyms natively, so the spaced 'C E O' form was an XTTS-2-era crutch."""
+
+    _reimport_seed_lexicon(conn)
 
 
 def _m018_voice_wav_to_slot1(conn: sqlite3.Connection) -> None:
@@ -625,6 +633,7 @@ MIGRATIONS: list[tuple[str, Migration]] = [
     ("016_episode_voice_label", _m016_episode_voice_label),
     ("017_reimport_seed_lexicon", _m017_reimport_seed_lexicon),
     ("018_voice_wav_to_slot1", _m018_voice_wav_to_slot1),
+    ("019_reimport_seed_lexicon", _m019_reimport_seed_lexicon),
 ]
 
 

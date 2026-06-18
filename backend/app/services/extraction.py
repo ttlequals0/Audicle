@@ -31,6 +31,8 @@ from app.services import arc_extractor, archive, direct_fetch, flaresolverr, jso
 # references (pipeline, tests) keep working now that the types live in extraction_types, which
 # the FlareSolverr engine also imports without a circular dependency.
 from app.services.extraction_types import (
+    BLOCKED_STATUS_CODES,
+    ExtractionBlockedError,
     ExtractionError,
     ExtractionPermanentError,
     ExtractionResult,
@@ -107,10 +109,21 @@ async def extract(
         # A flagged host pays for rawHtml + the JSON-LD teaser check; Arc detection also
         # needs the page HTML, so request it when the Arc extractor is enabled.
         detect_teaser = rule is not None or settings.EXTRACTION_ARC_ENABLED
-        if settings.EXTRACTION_ENGINE == "direct":
-            result = await direct_fetch.fetch(url, settings, detect_teaser=detect_teaser)
-        else:
-            result = await _scrape(client, url, settings, detect_teaser=detect_teaser)
+        try:
+            if settings.EXTRACTION_ENGINE == "direct":
+                result = await direct_fetch.fetch(url, settings, detect_teaser=detect_teaser)
+            else:
+                result = await _scrape(client, url, settings, detect_teaser=detect_teaser)
+        except ExtractionBlockedError as exc:
+            # 403/429: the primary engine was blocked (IP/WAF/rate limit). Treat it as a
+            # near-empty scrape so the bypass cascade below (FlareSolverr from a different
+            # IP, then a Wayback capture) gets a chance, instead of dead-ending the job.
+            # If no bypass clears the floor, the cascade raises its own blocked message.
+            logger.info(
+                "Primary engine blocked; routing to fallback cascade",
+                extra={"event": "extraction_blocked_primary", "host": host, "detail": str(exc)},
+            )
+            result = ExtractionResult(markdown="")
         # Arc XP / Fusion: the visible scrape may be a teaser while the full body sits in
         # the page's content_elements JSON. When Arc finds a longer body, prefer it -- then
         # the floor check + fallbacks below run against the real article.
@@ -453,6 +466,12 @@ def _raise_for_status(response: httpx.Response) -> None:
     if response.is_server_error:
         raise ExtractionTransientError(
             f"Firecrawl returned {response.status_code}: {response.text[:200]}"
+        )
+    if response.status_code in BLOCKED_STATUS_CODES:
+        # A host block forwarded by Firecrawl: route to the bypass cascade, same as
+        # the direct engine, rather than dead-ending the job.
+        raise ExtractionBlockedError(
+            f"Firecrawl rejected request ({response.status_code}): {response.text[:200]}"
         )
     if response.is_client_error:
         raise ExtractionPermanentError(
