@@ -45,6 +45,17 @@ _CAPTCHA_MARKERS = (
     "complete the security check to access",
 )
 
+# Challenge hosts that serve the bot wall inside an iframe/script. When the wall is an
+# iframe (DataDome, hCaptcha, Cloudflare Turnstile) the visible body is near-empty so the
+# text markers above never match -- the only signal is the host in the page HTML. Only
+# consulted when the body is already below the article floor, so a real article whose page
+# merely loads one of these scripts is never misread as a wall.
+_CAPTCHA_HTML_MARKERS = (
+    "captcha-delivery.com",  # DataDome (inc.com)
+    "hcaptcha.com",
+    "challenges.cloudflare.com",  # Turnstile
+)
+
 
 @dataclass
 class RenderResult:
@@ -79,21 +90,21 @@ def expandable_targets(control_texts: list[str]) -> list[int]:
     return [i for i, text in enumerate(control_texts) if _EXPAND_RE.search(_normalize(text))]
 
 
-def is_captcha_gate(body_text: str) -> bool:
-    """True when the visible body is short and carries CAPTCHA gate copy -- the
-    wall itself, not an article that happens to mention "verification required"."""
+def is_captcha_wall(body_text: str, html: str = "") -> bool:
+    """True when the page is a bot wall, not an article -- the signal to retry.
+
+    A wall has almost no visible body. Below the article floor it is a wall if either the
+    visible copy carries known gate text, or the HTML embeds a known challenge host
+    (DataDome/hCaptcha/Turnstile serve the challenge in an iframe, so the visible body is
+    empty and only the host appears in the HTML). The floor guard means a real article --
+    which renders far more than the floor of visible text -- is never misread as a wall."""
 
     if len(body_text) >= CAPTCHA_BODY_FLOOR:
         return False
-    haystack = body_text.lower()
-    return any(marker in haystack for marker in _CAPTCHA_MARKERS)
-
-
-def scroll_exhausted(prev_height: int, cur_height: int) -> bool:
-    """True when a scroll step did not grow the document -- lazy content has settled,
-    so the scroll loop can stop instead of burning its step budget."""
-
-    return cur_height <= prev_height
+    if any(marker in body_text.lower() for marker in _CAPTCHA_MARKERS):
+        return True
+    page = html.lower()
+    return any(marker in page for marker in _CAPTCHA_HTML_MARKERS)
 
 
 def word_estimate(text: str) -> int:

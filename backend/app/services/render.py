@@ -81,9 +81,7 @@ async def fetch(url: str, settings: Settings) -> ExtractionResult | None:
         logger.warning("Render sidecar returned no HTML", extra={"event": "render_bad_html"})
         return None
 
-    # favor_recall: the render path fetches gated long-reads (inc.com) whose tail
-    # trafilatura's default precision drops at a mid-article promo block; recall keeps it.
-    markdown, metadata = html_to_markdown(html, favor_recall=True)
+    markdown, metadata = html_to_markdown(html)
     if not markdown:
         # Carry the browser-side counts so an empty extract reads as "browser got a
         # near-empty/challenge page" rather than "extraction failed on a full page".

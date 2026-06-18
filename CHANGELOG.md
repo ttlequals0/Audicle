@@ -6,6 +6,28 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.39.4] - 2026-06-18
+
+### Fixed
+
+- The render sidecar now retries when DataDome blocks it, which is the actual cause of the
+  missing-tail inc.com articles. A captured render proved the article -- tail included --
+  was already fully extracted whenever render got through; the truncated copies were the
+  FlareSolverr front-half partial, kept on the attempts where DataDome served a CAPTCHA
+  shell instead of the page. Because that wall is probabilistic and tied to the browser
+  fingerprint, the sidecar now retries up to three times, each with a fresh Camoufox
+  context, and keeps the first attempt that returns the article. A wall is detected by its
+  near-empty body plus the challenge host in the page HTML. The whole retry loop is capped
+  at 80 seconds so it stays inside the backend's render timeout.
+
+### Removed
+
+- The lazy-load scroll added in 0.39.2 and the `favor_recall` extraction tweak from 0.39.3
+  -- the captured render showed the expand click alone already pulls the full article into
+  the DOM and trafilatura already extracts all of it, so neither change did anything for
+  inc.com. Removing the scroll also drops up to ~24 seconds of settle waits per render,
+  which is what makes room for the retries.
+
 ## [0.39.3] - 2026-06-18
 
 ### Fixed

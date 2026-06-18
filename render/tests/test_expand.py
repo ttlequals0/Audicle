@@ -3,9 +3,8 @@ from __future__ import annotations
 from renderer import (
     CAPTCHA_BODY_FLOOR,
     expandable_targets,
-    is_captcha_gate,
+    is_captcha_wall,
     is_public_url,
-    scroll_exhausted,
     word_estimate,
 )
 
@@ -38,24 +37,34 @@ def test_expandable_targets_empty() -> None:
     assert expandable_targets(["Next", "Previous", "Comments"]) == []
 
 
-def test_is_captcha_gate_detects_short_gate() -> None:
-    assert is_captcha_gate("Verification Required. We detected unusual activity from your device.")
+def test_is_captcha_wall_detects_short_gate() -> None:
+    assert is_captcha_wall("Verification Required. We detected unusual activity from your device.")
 
 
-def test_is_captcha_gate_ignores_long_article_mentioning_marker() -> None:
+def test_is_captcha_wall_ignores_long_article_mentioning_marker() -> None:
     body = "This article discusses how a verification required gate works. " + ("word " * 200)
     assert len(body) >= CAPTCHA_BODY_FLOOR
-    assert not is_captcha_gate(body)
+    assert not is_captcha_wall(body)
 
 
-def test_is_captcha_gate_ignores_short_real_text() -> None:
-    assert not is_captcha_gate("A short blurb with no gate copy at all.")
+def test_is_captcha_wall_ignores_short_real_text() -> None:
+    assert not is_captcha_wall("A short blurb with no gate copy at all.")
 
 
-def test_scroll_exhausted() -> None:
-    assert scroll_exhausted(1000, 1000)  # no growth -> settled
-    assert scroll_exhausted(1000, 900)  # shrank -> settled
-    assert not scroll_exhausted(1000, 1500)  # grew -> keep scrolling
+def test_is_captcha_wall_detects_iframe_challenge_with_empty_body() -> None:
+    # DataDome serves the wall in an iframe: the visible body is empty, so the only
+    # signal is the challenge host in the page HTML. This is the retry trigger.
+    html = '<iframe src="https://geo.captcha-delivery.com/captcha/?cid=x"></iframe>'
+    assert is_captcha_wall("", html)
+
+
+def test_is_captcha_wall_ignores_full_page_loading_challenge_script() -> None:
+    # A real article whose page also loads a DataDome script is not a wall: its visible
+    # body is well above the floor, so the HTML marker must not trip it (no wasted retry).
+    body = "Full article body. " + ("word " * 200)
+    html = '<script src="https://ct.captcha-delivery.com/c.js"></script>'
+    assert len(body) >= CAPTCHA_BODY_FLOOR
+    assert not is_captcha_wall(body, html)
 
 
 def test_word_estimate() -> None:
