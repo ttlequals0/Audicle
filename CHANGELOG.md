@@ -6,6 +6,25 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-06-18
+
+### Changed
+
+- The render sidecar is now a per-host extraction strategy, not a global setting. Pick "render"
+  for a host in the Settings page (the section formerly "paywall sites", now "Site overrides")
+  the same way you pick FlareSolverr or archive. Render runs after the normal cascade: as
+  enrichment when FlareSolverr returned only the front half, and -- new in this release -- as a
+  rescue when the cascade was blocked entirely, so a render site still gets the stronger headful
+  browser when FlareSolverr is DataDome-blocked. inc.com ships with the render strategy by
+  default; the shipped defaults live in one place, `config.RENDER_BUILTIN_HOSTS`, so adding a site
+  over time is a one-line edit.
+
+### Removed
+
+- The `RENDER_HOSTS` setting (added in 0.38.0). Which hosts use render is now a per-host Site-
+  override rule. A `RENDER_HOSTS` value stored from 0.38.x is ignored, not migrated; set the
+  affected hosts to the "render" strategy in Site overrides instead. `RENDER_URL` is unchanged.
+
 ## [0.38.1] - 2026-06-17
 
 ### Fixed
