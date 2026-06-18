@@ -36,12 +36,6 @@ USER render
 ENV HOME=/home/render
 RUN python -m camoufox fetch
 
-# Single-source version: the build passes the repo-root VERSION value here since
-# this build context is render/ and can't read the root file. main.py reads
-# AUDICLE_RENDER_VERSION.
-ARG RENDER_VERSION=0.0.0
-ENV AUDICLE_RENDER_VERSION=${RENDER_VERSION}
-
 EXPOSE 8000
 
 # Generous start-period: the first request still pays browser spin-up, but the

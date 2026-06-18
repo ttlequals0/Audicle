@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+from importlib import metadata
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -25,13 +26,17 @@ logger = logging.getLogger("render.main")
 
 
 # Sidecar version, surfaced in /health/live so the main app's /health/ready can
-# aggregate it into components.render.version. The repo-root VERSION file is the
-# single source; in dev/tests we walk up to it, in the image the build passes it
-# as AUDICLE_RENDER_VERSION (from `cat VERSION`) since the build context is render/.
+# aggregate it into components.render.version. In the image the package is pip-installed,
+# so its baked dist metadata (from render/pyproject.toml, which sync_version keeps in step
+# with the repo-root VERSION) is the source -- no build arg to forget. In dev/tests the
+# package isn't installed, so we walk up to the repo-root VERSION file instead.
 def _render_version() -> str:
-    env = os.environ.get("AUDICLE_RENDER_VERSION")
-    if env:
-        return env.strip()
+    try:
+        version = metadata.version("audicle-render")
+        if version:
+            return version
+    except Exception:  # a missing/damaged dist must not crash app import over a version
+        pass
     for parent in Path(__file__).resolve().parents:
         candidate = parent / "VERSION"
         if candidate.is_file():

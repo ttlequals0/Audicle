@@ -141,7 +141,7 @@ logs show inc.com matches the global googlebot rule and FlareSolverr auto-escala
   like the other two images. This makes three images to build, scan, push, and version each
   release - a real and acknowledged cost.
 - `render/Dockerfile`: a Python base with Camoufox and xvfb, `xvfb-run` wrapping uvicorn.
-  Version injected by `--build-arg RENDER_VERSION=$(cat VERSION)` like the wrapper.
+  Version comes from the pip-installed package's dist metadata (no build arg needed).
 
 ## Data flow
 

@@ -6,6 +6,16 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.39.5] - 2026-06-18
+
+### Fixed
+
+- The render sidecar reports its real version in `/health/ready` instead of `0.0.0`. It
+  read the version from a build argument the build command had to pass by hand, which was
+  easy to forget; it now reads the version baked into its installed package metadata (from
+  `render/pyproject.toml`, which `sync_version` already keeps current), so no build
+  argument is needed. The dev/test path still falls back to the repo-root VERSION file.
+
 ## [0.39.4] - 2026-06-18
 
 ### Fixed
