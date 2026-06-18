@@ -6,6 +6,76 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.39.5] - 2026-06-18
+
+### Fixed
+
+- The render sidecar reports its real version in `/health/ready` instead of `0.0.0`. It
+  read the version from a build argument the build command had to pass by hand, which was
+  easy to forget; it now reads the version baked into its installed package metadata (from
+  `render/pyproject.toml`, which `sync_version` already keeps current), so no build
+  argument is needed. The dev/test path still falls back to the repo-root VERSION file.
+
+## [0.39.4] - 2026-06-18
+
+### Fixed
+
+- The render sidecar now retries when DataDome blocks it, which is the actual cause of the
+  missing-tail inc.com articles. A captured render proved the article -- tail included --
+  was already fully extracted whenever render got through; the truncated copies were the
+  FlareSolverr front-half partial, kept on the attempts where DataDome served a CAPTCHA
+  shell instead of the page. Because that wall is probabilistic and tied to the browser
+  fingerprint, the sidecar now retries up to three times, each with a fresh Camoufox
+  context, and keeps the first attempt that returns the article. A wall is detected by its
+  near-empty body plus the challenge host in the page HTML. The whole retry loop is capped
+  at 80 seconds so it stays inside the backend's render timeout.
+
+### Removed
+
+- The lazy-load scroll added in 0.39.2 and the `favor_recall` extraction tweak from 0.39.3
+  -- the captured render showed the expand click alone already pulls the full article into
+  the DOM and trafilatura already extracts all of it, so neither change did anything for
+  inc.com. Removing the scroll also drops up to ~24 seconds of settle waits per render,
+  which is what makes room for the retries.
+
+## [0.39.3] - 2026-06-18
+
+### Fixed
+
+- Render extraction now keeps the full article tail. inc.com renders capped at a stable
+  4736 chars even after the 0.39.2 scroll change, which pointed at extraction rather than
+  the browser: trafilatura's default precision was cutting the article at a mid-article
+  promo block ("more from Inc."). The render path now extracts with `favor_recall`, which
+  keeps the trailing paragraphs. Other extraction paths (FlareSolverr, archive, direct
+  fetch) keep the default precision.
+
+### Added
+
+- A `render_extracted` log line (browser word estimate, click count, extracted character
+  count) so a short render can be attributed to the browser (little loaded) versus
+  extraction (a lot loaded, little kept). The empty-extract warning now carries the same
+  browser counts.
+
+## [0.39.2] - 2026-06-18
+
+### Fixed
+
+- The render sidecar now scrolls the page before capturing it, so it returns the full article
+  body instead of the front half. inc.com (and sites like it) mount the article tail into the DOM
+  only as it nears the viewport, so a render that never scrolled captured what was loaded above the
+  fold and stopped -- the click expanded the gate, but the paragraphs below it never rendered. The
+  driver now scrolls to the bottom in steps until the page stops growing, clicks the expand gate,
+  then scrolls again to pull in whatever the gate revealed. The scroll height uses the larger of
+  `document.body` and `document.documentElement` so it still reaches the bottom on sites whose
+  scroll container is the `<html>` element. A diagnostic with this fix off confirmed inc.com's
+  render capped at 4736 chars (about 790 words) versus the roughly 6300-char full article.
+
+### Added
+
+- A `render_ok` log line on every successful render (clicks, scroll steps, word estimate, HTML
+  size). The render success path was previously silent, which made it hard to tell from logs
+  whether a short result came from the browser or from extraction.
+
 ## [0.39.1] - 2026-06-18
 
 ### Fixed

@@ -8,6 +8,7 @@ environment that has no browser installed.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from camoufox.async_api import AsyncCamoufox
@@ -17,7 +18,7 @@ from renderer import (
     MAX_HTML_CHARS,
     RenderResult,
     expandable_targets,
-    is_captcha_gate,
+    is_captcha_wall,
     is_public_url,
     word_estimate,
 )
@@ -30,6 +31,15 @@ logger = logging.getLogger("render.camoufox")
 _NAV_TIMEOUT_MS = 45_000
 _CLICK_TIMEOUT_MS = 5_000
 _GROW_WAIT_MS = 1_500
+# DataDome's wall is probabilistic and fingerprint-tied: the same page renders the full
+# article on one attempt and a CAPTCHA shell (or a stalled nav) on the next. Each attempt
+# opens a FRESH Camoufox context (new fingerprint), so retrying re-rolls the challenge.
+_RENDER_ATTEMPTS = 3
+# Hard wall-clock cap on the whole retry loop. The backend's render read timeout is 90s,
+# so the sidecar must finish under it (with margin for the HTTP round-trip) or the backend
+# discards the render mid-flight. A single attempt can run up to the nav budget, so this
+# cap -- not the attempt count -- is what guarantees we stay inside the backend's budget.
+_RENDER_BUDGET_SECONDS = 80.0
 # Only treat these as expand controls. Body prose is never a candidate, so a
 # stray "read more" in an article cannot be clicked.
 _CONTROL_SELECTOR = "button, a, [role=button]"
@@ -80,33 +90,66 @@ async def _run_expand(page) -> int:
 
 class CamoufoxRenderer:
     """Loads a page in a fresh headful Camoufox context, clicks the expander, and
-    returns the final HTML. A new context per call keeps each render stateless
-    (fresh fingerprint, no carried session)."""
+    returns the final HTML. A new context per attempt keeps each render stateless
+    (fresh fingerprint, no carried session) -- which is also what lets a retry clear a
+    probabilistic DataDome wall."""
 
     async def render(self, url: str, expand: bool) -> RenderResult:
         if not is_public_url(url):
             logger.warning("refused non-public render target", extra={"event": "render_blocked_host"})
             return RenderResult(status="error")
+        # Bound the whole retry loop so it can't outrun the backend's read timeout. On the
+        # cap, report "captcha" -- the backend then keeps whatever the cascade already had,
+        # the same outcome as a render that stayed blocked.
+        try:
+            return await asyncio.wait_for(
+                self._render_with_retries(url, expand), timeout=_RENDER_BUDGET_SECONDS
+            )
+        except asyncio.TimeoutError:
+            logger.warning("render exceeded its time budget", extra={"event": "render_timeout"})
+            return RenderResult(status="captcha")
+
+    async def _render_with_retries(self, url: str, expand: bool) -> RenderResult:
+        # Retry anything short of a usable article: a fresh fingerprint re-rolls DataDome's
+        # probabilistic challenge, whether it surfaced as a CAPTCHA shell or a stalled load.
+        result = RenderResult(status="error")
+        for attempt in range(1, _RENDER_ATTEMPTS + 1):
+            result = await self._render_once(url, expand, attempt)
+            if result.status == "ok":
+                return result
+        return result
+
+    async def _render_once(self, url: str, expand: bool, attempt: int) -> RenderResult:
         try:
             async with AsyncCamoufox(headless=False) as browser:
                 page = await browser.new_page()
                 await page.goto(url, wait_until="networkidle", timeout=_NAV_TIMEOUT_MS)
                 clicks = await _run_expand(page) if expand else 0
                 body_text = await page.inner_text("body")
-                if is_captcha_gate(body_text):
-                    logger.warning(
-                        "render reached a CAPTCHA gate",
-                        extra={"event": "render_captcha", "clicks": clicks},
-                    )
-                    return RenderResult(
-                        status="captcha", clicks=clicks, word_estimate=word_estimate(body_text)
-                    )
                 html = await page.content()
                 if len(html) > MAX_HTML_CHARS:
                     html = html[:MAX_HTML_CHARS]
-                return RenderResult(
-                    status="ok", html=html, clicks=clicks, word_estimate=word_estimate(body_text)
+                words = word_estimate(body_text)
+                if is_captcha_wall(body_text, html):
+                    logger.warning(
+                        "render reached a CAPTCHA gate",
+                        extra={"event": "render_captcha", "clicks": clicks, "attempt": attempt},
+                    )
+                    return RenderResult(status="captcha", clicks=clicks, word_estimate=words)
+                logger.info(
+                    "render complete",
+                    extra={
+                        "event": "render_ok",
+                        "clicks": clicks,
+                        "attempt": attempt,
+                        "word_estimate": words,
+                        "html_chars": len(html),
+                    },
                 )
+                return RenderResult(status="ok", html=html, clicks=clicks, word_estimate=words)
         except Exception as exc:
-            logger.warning("render failed", extra={"event": "render_error", "error": str(exc)})
+            logger.warning(
+                "render failed",
+                extra={"event": "render_error", "error": str(exc), "attempt": attempt},
+            )
             return RenderResult(status="error")
