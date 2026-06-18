@@ -8,16 +8,17 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# xvfb for the headful browser's virtual display; curl for the healthcheck.
-# Full apt upgrade pulls base-image security patches (same approach as the wrapper).
+# xvfb for the headful browser's virtual display; xauth because xvfb-run needs it;
+# curl for the healthcheck. Full apt upgrade pulls base-image security patches
+# (same approach as the wrapper).
 RUN apt-get update \
     && apt-get upgrade -y \
-    && apt-get install -y --no-install-recommends xvfb curl ca-certificates \
+    && apt-get install -y --no-install-recommends xvfb xauth curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY pyproject.toml ./
-COPY main.py renderer.py camoufox_renderer.py ./
+COPY main.py renderer.py camoufox_renderer.py entrypoint.sh ./
 
 # Install the app + the browser extra, then let Playwright pull Firefox's OS
 # dependencies (it maintains the correct per-distro package list, so we don't
@@ -28,7 +29,9 @@ RUN pip install --no-cache-dir ".[render]" \
 
 # Run the browser as a non-root user (Firefox is happier non-root) and bake the
 # Camoufox browser into that user's home so it ships in the image.
-RUN useradd --create-home --uid 1000 render && chown -R render:render /app
+RUN useradd --create-home --uid 1000 render \
+    && chmod +x entrypoint.sh \
+    && chown -R render:render /app
 USER render
 ENV HOME=/home/render
 RUN python -m camoufox fetch
@@ -46,6 +49,6 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=60s \
     CMD curl -fsS http://localhost:8000/health/live || exit 1
 
-# xvfb-run wraps uvicorn so the per-request headful browser has a display.
-# --workers 1: one browser context at a time keeps memory bounded.
-CMD ["xvfb-run", "-a", "uvicorn", "main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+# entrypoint.sh starts Xvfb then exec's uvicorn (one worker -> one browser context
+# at a time, bounded memory). See the script for why xvfb-run is not used here.
+CMD ["./entrypoint.sh"]
