@@ -20,19 +20,29 @@ Strategies (``proxy`` key on a rule):
   residential IP. Emitted as a flaresolverr-engine ``Attempt`` like every strategy, so
   it needs ``FLARESOLVERR_URL`` set.
 
+- ``render`` -- recover the full article body with the headful render sidecar (it clicks
+  "EXPAND TO CONTINUE READING"-style gates, e.g. inc.com). Unlike the others this emits no
+  loop ``Attempt``; the sidecar runs post-cascade (see ``extraction._maybe_render_full``
+  and the too-short rescue) as both enrichment on a partial and a rescue when the cascade
+  fails, so a render host always gets the sidecar's stronger browser.
+
 FlareSolverr also runs automatically, for any host, when a below-floor scrape is
 detected as a Cloudflare/bot-challenge page (see ``flaresolverr.looks_like_challenge``)
 -- that detection-gated path is independent of whether a host selects the
 ``flaresolverr`` strategy above.
 
-``BUILTIN`` ships a Medium -> Freedium rule. Operators layer their own host rules on top
-(``build_registry``); an operator rule wins over a built-in rule for the same host.
+``BUILTIN`` ships a Medium -> Freedium rule plus a render rule for each host in
+``config.RENDER_BUILTIN_HOSTS`` (the single place to curate shipped render defaults).
+Operators layer their own host rules on top (``build_registry``); an operator rule wins
+over a built-in rule for the same host.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
+
+from app.config import RENDER_BUILTIN_HOSTS
 
 # The built-in "Ladder" technique: re-scrape the original URL with these headers.
 GOOGLEBOT_UA = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
@@ -59,7 +69,7 @@ class Attempt:
     is_host_rule: bool = False
 
 # Proxy strategy keys offered to operators.
-PROXY_KEYS = ("googlebot", "freedium", "custom", "none", "flaresolverr", "archive")
+PROXY_KEYS = ("googlebot", "freedium", "custom", "none", "flaresolverr", "archive", "render")
 
 _FREEDIUM_TEMPLATES = ("https://freedium.cfd/{url}", "https://freedium-mirror.cfd/{url}")
 
@@ -84,7 +94,21 @@ class SourceFallback:
     cookies: str = ""
 
 
-# Built-in seed: Freedium reliably serves the full Medium body.
+# Render rules for the maintainer-curated hosts in config.RENDER_BUILTIN_HOSTS. The
+# render strategy triggers post-cascade regardless of the teaser floor, so min_chars
+# is left at 0 (it plays no role for render rules; see extraction._maybe_render_full).
+_RENDER_BUILTINS: tuple[SourceFallback, ...] = tuple(
+    SourceFallback(
+        name=f"render:{host}",
+        host_suffixes=(host,),
+        proxy="render",
+        custom_template="",
+        min_chars=0,
+    )
+    for host in RENDER_BUILTIN_HOSTS
+)
+
+# Built-in seed: Freedium reliably serves the full Medium body; plus the render hosts.
 BUILTIN: tuple[SourceFallback, ...] = (
     SourceFallback(
         name="medium",
@@ -95,6 +119,7 @@ BUILTIN: tuple[SourceFallback, ...] = (
         # global 500-char floor, so use a higher bar to detect it.
         min_chars=3000,
     ),
+    *_RENDER_BUILTINS,
 )
 
 
@@ -149,7 +174,10 @@ def candidate_attempts(rule: SourceFallback, url: str) -> list[Attempt]:
     if rule.proxy == "archive":
         # Pull the article from a public archive (Wayback, then archive.today). No cookies.
         return [Attempt("host-rule#archive", "archive", url, is_host_rule=True)]
-    return []  # "none"/reject, or "custom" without a template
+    # "render" emits no loop attempt on purpose: the render sidecar runs post-cascade
+    # (extraction._maybe_render_full / the too-short rescue), not as a first-above-floor
+    # loop engine. FlareSolverr still auto-escalates to provide a baseline partial.
+    return []  # "none"/reject, "custom" without a template, or "render"
 
 
 def build_registry(

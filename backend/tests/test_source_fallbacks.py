@@ -123,3 +123,23 @@ def test_build_registry_operator_overrides_builtin_and_uses_default_proxy() -> N
     wapo = sf.match("https://www.washingtonpost.com/a", reg)
     assert wapo is not None and wapo.proxy == "googlebot" and wapo.min_chars == 4000
     assert sf.match("https://example.com/x", reg) is None
+
+
+def test_render_is_selectable_and_emits_no_loop_attempt() -> None:
+    # render is post-cascade (enrichment/rescue in extraction.py), so it contributes NO
+    # loop Attempt -- candidate_attempts returns [].
+    assert "render" in sf.PROXY_KEYS
+    rule = sf.SourceFallback("operator:inc.com", ("inc.com",), "render", "", 0)
+    assert sf.candidate_attempts(rule, "https://www.inc.com/a") == []
+
+
+def test_builtin_render_rule_ships_for_inc_com() -> None:
+    rule = sf.match("https://www.inc.com/article")
+    assert rule is not None
+    assert rule.proxy == "render"
+
+
+def test_operator_rule_overrides_builtin_render() -> None:
+    reg = sf.build_registry([{"host": "inc.com", "proxy": "flaresolverr"}], "googlebot", 3000, 500)
+    rule = sf.match("https://www.inc.com/a", reg)
+    assert rule is not None and rule.proxy == "flaresolverr"
