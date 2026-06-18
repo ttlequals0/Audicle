@@ -46,7 +46,7 @@ dependencies = [
     "gruut>=2.4.0",
     # Direct file upload (0.30.0): parse uploaded PDF/DOCX into article text. HTML
     # reuses the existing trafilatura path (html_markdown); md/txt are read directly.
-    "pypdf>=5.1",
+    "pypdf>=6.13.3",
     "python-docx>=1.1",
 ]
 
