@@ -14,6 +14,13 @@ from typing import Literal
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Hosts that ship with the "render" Site-override strategy (the headful render
+# sidecar that clicks expand-to-read gates). This is the single place to maintain
+# the shipped defaults -- add a host here as more sites are found to need render.
+# Operators can also add their own render hosts in the Site-overrides UI, which
+# override these on a host collision.
+RENDER_BUILTIN_HOSTS: tuple[str, ...] = ("inc.com",)
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -122,13 +129,13 @@ class Settings(BaseSettings):
     FLARESOLVERR_URL: str = "http://flaresolverr:8191/v1"
     FLARESOLVERR_MAX_TIMEOUT_MS: int = 60000  # solver's own per-request browser budget
     # Render sidecar: a headful stealth browser that clicks "EXPAND TO CONTINUE
-    # READING"-style controls to recover the full article body (e.g. inc.com). Used
-    # only as a post-cascade enrichment step (see extraction._maybe_render_full).
-    # Empty disables it. RENDER_HOSTS is the comma-separated list of hosts that always
-    # route to render; any solved page that looks truncated also triggers it.
+    # READING"-style controls to recover the full article body (e.g. inc.com). It runs
+    # post-cascade for a host whose Site-override rule is the "render" strategy (or any
+    # solved page that looks truncated) -- as enrichment on a partial and as a rescue
+    # when the cascade fails. Empty RENDER_URL disables it. Builtin render hosts live in
+    # RENDER_BUILTIN_HOSTS (below).
     RENDER_URL: str = ""
     RENDER_TIMEOUT_SECONDS: float = 90.0
-    RENDER_HOSTS: str = "inc.com"
     # Archive fallback: when a scrape is near-empty (a hard block) and no other bypass
     # recovered the article, try a Wayback Machine capture before failing. No cookies,
     # no bot wall; archive.today (via FlareSolverr) is opt-in per host, not automatic.

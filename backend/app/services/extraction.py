@@ -94,7 +94,14 @@ async def extract(
     # teaser paywall (real text but below the floor) drops below it and routes to the
     # solver instead of being silently returned. The solver's full-page result is then
     # accepted against the hard MIN_EXTRACTION_CHARS in the loop.
-    floor = settings.MIN_EXTRACTION_CHARS if rule is None else rule.min_chars
+    # A render rule is a post-cascade strategy (it emits no loop attempt), so it uses the
+    # global floor, NOT its own min_chars -- otherwise a blocked/empty primary would
+    # "clear" a render rule's min_chars and skip the cascade and the render rescue.
+    floor = (
+        settings.MIN_EXTRACTION_CHARS
+        if rule is None or rule.proxy == "render"
+        else rule.min_chars
+    )
     host = (urlsplit(url).hostname or "").lower()
 
     timeout = httpx.Timeout(settings.FIRECRAWL_TIMEOUT_SECONDS)
@@ -146,7 +153,7 @@ async def extract(
                 )
                 result = ExtractionResult(markdown=arc_md, metadata=result.metadata)
         if _effective_chars(result, rule, floor) >= floor:
-            return await _maybe_render_full(result, url, settings)
+            return await _maybe_render_full(result, url, settings, rule)
         # Best result seen across direct + every bypass, and whether the browser
         # solver was attempted -- together they classify the failure message.
         best_chars = _effective_chars(result, rule, floor)
@@ -277,8 +284,15 @@ async def extract(
             best_chars = max(best_chars, alt_chars)
             if alt_chars >= accept_floor:
                 _log_fallback_used(attempt.label, result.markdown, alt.markdown)
-                return await _maybe_render_full(alt, url, settings)
+                return await _maybe_render_full(alt, url, settings, rule)
             _log_fallback_short(attempt.label, alt_chars, accept_floor)
+
+    # Every other strategy came up short. For a render-rule host, give the render
+    # sidecar's own browser a last shot before failing -- its Camoufox can clear a
+    # DataDome block that left FlareSolverr below floor.
+    rescued = await _render_rescue(url, settings, rule)
+    if rescued is not None:
+        return rescued
 
     # Only claim "your cookies look expired" when a solver attempt actually carried
     # cookies -- an auto-escalation solver runs without them, so the rule merely having
@@ -370,7 +384,8 @@ def _effective_chars(result: ExtractionResult, rule: SourceFallback | None, floo
 # Markers that mean a solved page is only the visible front of an article whose body
 # is gated behind an expand click. Matched (case-insensitively) against the result's
 # markdown + title, like the FlareSolverr detectors. Best effort: trafilatura may strip
-# a button's label, so RENDER_HOSTS is the reliable trigger and this is the bonus net.
+# a button's label, so a per-host render rule is the reliable trigger and this is the
+# host-agnostic bonus net.
 _TRUNCATION_MARKERS = (
     "expand to continue reading",
     "continue reading",
@@ -384,31 +399,23 @@ def looks_truncated(result: ExtractionResult) -> bool:
     return scan_markers(result, _TRUNCATION_MARKERS)
 
 
-def _host_in_render_list(url: str, settings: Settings) -> bool:
-    """True when the URL's host matches a RENDER_HOSTS entry (suffix match, so
-    ``inc.com`` covers ``www.inc.com``)."""
+def _is_render_rule(rule: SourceFallback | None) -> bool:
+    """True when the matched Site-override rule selects the render strategy."""
 
-    host = (urlsplit(url).hostname or "").lower()
-    if not host:
-        return False
-    for entry in settings.RENDER_HOSTS.split(","):
-        h = entry.strip().lower()
-        if h and (host == h or host.endswith(f".{h}")):
-            return True
-    return False
+    return rule is not None and rule.proxy == "render"
 
 
 async def _maybe_render_full(
-    result: ExtractionResult, url: str, settings: Settings
+    result: ExtractionResult, url: str, settings: Settings, rule: SourceFallback | None
 ) -> ExtractionResult:
-    """Post-cascade enrichment. When the render sidecar is configured and this result
-    is for a ``RENDER_HOSTS`` host or still looks truncated, drive the sidecar to click
-    the expander and keep its body only if it is strictly longer. A ``None`` or shorter
-    render leaves ``result`` untouched, so a broken click never loses the cascade's body."""
+    """Post-cascade enrichment. When the render sidecar is configured and the host has a
+    render Site-override rule (or the result still looks truncated), drive the sidecar to
+    click the expander and keep its body only if it is strictly longer. A ``None`` or
+    shorter render leaves ``result`` untouched, so a broken click never loses the body."""
 
     if not settings.RENDER_URL.strip():
         return result
-    if not (_host_in_render_list(url, settings) or looks_truncated(result)):
+    if not (_is_render_rule(rule) or looks_truncated(result)):
         return result
     alt = await render.fetch(url, settings)
     if alt is None or len(alt.markdown) <= len(result.markdown):
@@ -420,6 +427,31 @@ async def _maybe_render_full(
             "host": urlsplit(url).hostname or "",
             "before_chars": len(result.markdown),
             "after_chars": len(alt.markdown),
+        },
+    )
+    return alt
+
+
+async def _render_rescue(
+    url: str, settings: Settings, rule: SourceFallback | None
+) -> ExtractionResult | None:
+    """Last resort for a render-rule host whose cascade produced nothing above floor
+    (e.g. FlareSolverr was DataDome-blocked). Drive the render sidecar's own browser; if
+    it clears the floor, return it instead of failing the job. ``None`` lets the
+    too-short error stand. Keyed on the render rule only -- a failed cascade has no
+    markdown to auto-detect against."""
+
+    if not settings.RENDER_URL.strip() or not _is_render_rule(rule):
+        return None
+    alt = await render.fetch(url, settings)
+    if alt is None or len(alt.markdown) < settings.MIN_EXTRACTION_CHARS:
+        return None
+    logger.info(
+        "Render rescued a blocked extraction",
+        extra={
+            "event": "render_rescue",
+            "host": urlsplit(url).hostname or "",
+            "chars": len(alt.markdown),
         },
     )
     return alt

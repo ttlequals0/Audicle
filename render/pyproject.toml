@@ -1,6 +1,6 @@
 [project]
 name = "audicle-render"
-version = "0.38.1"
+version = "0.39.1"
 description = "Stealth headful-render sidecar for Audicle (Camoufox)."
 requires-python = ">=3.11,<3.13"
 # Camoufox/Playwright wheels track a conservative Python range; 3.12 is the safe
@@ -20,7 +20,11 @@ dependencies = [
 [project.optional-dependencies]
 # camoufox: anti-fingerprint Firefox fork driven via Playwright; the image
 # installs this extra and runs `camoufox fetch` to bake the browser in.
-render = ["camoufox>=0.4"]
+# Pin playwright < 1.60: camoufox 0.4.11 declares no playwright cap, but Playwright
+# 1.60.0 (microsoft/playwright#39767) crashes camoufox's Firefox driver on a page
+# error with no location ("Cannot read properties of undefined (reading 'url')" in
+# addPageError) -- daijro/camoufox#617. 1.59.0 is the last good release.
+render = ["camoufox>=0.4", "playwright<1.60"]
 
 [build-system]
 requires = ["setuptools>=68"]

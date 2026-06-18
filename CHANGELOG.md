@@ -6,6 +6,39 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.39.1] - 2026-06-18
+
+### Fixed
+
+- The render sidecar now actually returns the full article instead of crashing. Camoufox 0.4.11
+  declares no Playwright version cap, so the image picked up Playwright 1.60.0, whose Firefox
+  driver crashes on a page error with no location ("Cannot read properties of undefined (reading
+  'url')") -- which inc.com triggers. Render came back with an error and the pipeline fell back to
+  the front-half partial. Pinning `playwright<1.60` (1.59.0) fixes it: a live inc.com render now
+  clicks the expander and returns ~1019 words versus the 449-word partial.
+- The "test a URL" button (`POST /api/v1/source-fallbacks/test`) now applies the runtime-settings
+  overlay, so it reflects the operator's UI-set config. Without this it used only env defaults, so
+  it could never exercise the render strategy (the render sidecar URL is set in the UI, not env).
+
+## [0.39.0] - 2026-06-18
+
+### Changed
+
+- The render sidecar is now a per-host extraction strategy, not a global setting. Pick "render"
+  for a host in the Settings page (the section formerly "paywall sites", now "Site overrides")
+  the same way you pick FlareSolverr or archive. Render runs after the normal cascade: as
+  enrichment when FlareSolverr returned only the front half, and -- new in this release -- as a
+  rescue when the cascade was blocked entirely, so a render site still gets the stronger headful
+  browser when FlareSolverr is DataDome-blocked. inc.com ships with the render strategy by
+  default; the shipped defaults live in one place, `config.RENDER_BUILTIN_HOSTS`, so adding a site
+  over time is a one-line edit.
+
+### Removed
+
+- The `RENDER_HOSTS` setting (added in 0.38.0). Which hosts use render is now a per-host Site-
+  override rule. A `RENDER_HOSTS` value stored from 0.38.x is ignored, not migrated; set the
+  affected hosts to the "render" strategy in Site overrides instead. `RENDER_URL` is unchanged.
+
 ## [0.38.1] - 2026-06-17
 
 ### Fixed

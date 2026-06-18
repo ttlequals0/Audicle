@@ -3,8 +3,10 @@
 A third fetch path alongside Firecrawl and FlareSolverr: the render sidecar runs
 a headful browser, clicks an "EXPAND TO CONTINUE READING"-style control, and hands
 back the fully expanded HTML; trafilatura pulls the article body out of it.
-``extraction.extract`` decides when to use it (a ``RENDER_HOSTS`` host or a solved
-page that still looks truncated); this module owns the HTTP call, the sidecar's
+``extraction.extract`` decides when to use it (a host whose Site-override rule is the
+render strategy, or a solved page that still looks truncated -- as enrichment on a
+partial and as a rescue when the cascade fails); this module owns the HTTP call, the
+sidecar's
 status handling, and the HTML->markdown conversion. It never raises, so a flaky
 sidecar can't turn a usable partial into a stack trace.
 """

@@ -77,6 +77,10 @@ def _validate(config: dict[str, Any]) -> dict[str, Any]:
         # below-floor scrape through an expensive solve, defeating the challenge gate.
         # It is a per-host remedy for hosts that hard-block the scraper IP.
         raise ValueError("default_proxy cannot be 'flaresolverr'; set it per-site instead")
+    if default_proxy == "render":
+        # Same reasoning: the render sidecar drives a headful browser per page. As a global
+        # default it would render every article. It is a per-host strategy for click-gated sites.
+        raise ValueError("default_proxy cannot be 'render'; set it per-site instead")
     raw_min = config.get("min_chars", _DEFAULT_MIN_CHARS)
     if isinstance(raw_min, bool):  # bool is an int subclass; True would coerce to 1
         raise ValueError("min_chars must be an integer")

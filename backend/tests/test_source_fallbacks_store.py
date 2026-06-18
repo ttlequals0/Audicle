@@ -71,6 +71,30 @@ def test_save_rejects_default_proxy_custom(env: Path) -> None:
         store.save(conn, {"default_proxy": "custom", "min_chars": 3000, "rules": []})
 
 
+def test_save_rejects_default_proxy_render(env: Path) -> None:
+    # render drives a headful browser per page; as a global default it would render
+    # every article. It is a per-host strategy only.
+    database.run_migrations(env)
+    with database.connection(env) as conn, pytest.raises(ValueError):
+        store.save(conn, {"default_proxy": "render", "min_chars": 3000, "rules": []})
+
+
+def test_save_accepts_render_per_host_rule(env: Path) -> None:
+    database.run_migrations(env)
+    with database.connection(env) as conn:
+        store.save(
+            conn,
+            {
+                "default_proxy": "googlebot",
+                "min_chars": 3000,
+                "rules": [{"host": "inc.com", "proxy": "render"}],
+            },
+        )
+        loaded = store.load(conn)
+    assert loaded["rules"][0]["host"] == "inc.com"
+    assert loaded["rules"][0]["proxy"] == "render"
+
+
 def test_save_rejects_bool_min_chars(env: Path) -> None:
     # bool is an int subclass; True would silently coerce to 1 and disable detection.
     database.run_migrations(env)

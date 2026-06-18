@@ -28,8 +28,10 @@ def test_get_defaults_with_available_proxies_and_builtin(client: TestClient) -> 
         "none",
         "flaresolverr",
         "archive",
+        "render",
     }
     assert any(b["host"] == "medium.com" for b in body["builtin"])
+    assert any(b["host"] == "inc.com" and b["proxy"] == "render" for b in body["builtin"])
 
 
 def test_put_round_trips_and_normalizes(client: TestClient) -> None:
@@ -120,6 +122,30 @@ def test_put_rejects_flaresolverr_as_global_default_400(client: TestClient) -> N
             json={"default_proxy": "flaresolverr", "min_chars": 3000, "rules": []},
         )
     assert response.status_code == 400
+
+
+def test_put_rejects_render_as_global_default_400(client: TestClient) -> None:
+    # render drives a headful browser per page; allowed per-host, blocked as a global default.
+    with client:
+        response = client.put(
+            "/api/v1/source-fallbacks",
+            json={"default_proxy": "render", "min_chars": 3000, "rules": []},
+        )
+    assert response.status_code == 400
+
+
+def test_put_accepts_render_as_per_host_rule(client: TestClient) -> None:
+    with client:
+        response = client.put(
+            "/api/v1/source-fallbacks",
+            json={
+                "default_proxy": "googlebot",
+                "min_chars": 3000,
+                "rules": [{"host": "inc.com", "proxy": "render", "custom_template": ""}],
+            },
+        )
+    assert response.status_code == 200
+    assert response.json()["rules"][0]["proxy"] == "render"
 
 
 def test_put_accepts_flaresolverr_as_per_host_rule(client: TestClient) -> None:

@@ -981,13 +981,20 @@ async def test_extract_direct_skips_firecrawl_rescrape_when_unconfigured(
 # --- Render enrichment (post-cascade full-article render) -----------------------
 
 
-def _render_settings(
-    monkeypatch: pytest.MonkeyPatch, hosts: str = "inc.com", url: str = "http://render.test:8000"
-):
+def _render_settings(monkeypatch: pytest.MonkeyPatch, url: str = "http://render.test:8000"):
     monkeypatch.setenv("RENDER_URL", url)
-    monkeypatch.setenv("RENDER_HOSTS", hosts)
     get_settings.cache_clear()
     return get_settings()
+
+
+def _render_rule(host: str = "inc.com"):
+    return extraction.SourceFallback(
+        name=f"render:{host}",
+        host_suffixes=(host,),
+        proxy="render",
+        custom_template="",
+        min_chars=0,
+    )
 
 
 def test_looks_truncated_detects_marker() -> None:
@@ -999,12 +1006,13 @@ def test_looks_truncated_detects_marker() -> None:
     assert not extraction.looks_truncated(article)
 
 
-def test_host_in_render_list_suffix_match(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    settings = _render_settings(monkeypatch, hosts="inc.com, example.org")
-    assert extraction._host_in_render_list("https://www.inc.com/a", settings)
-    assert extraction._host_in_render_list("https://inc.com/a", settings)
-    assert extraction._host_in_render_list("https://example.org/a", settings)
-    assert not extraction._host_in_render_list("https://other.com/a", settings)
+def test_is_render_rule() -> None:
+    assert extraction._is_render_rule(_render_rule())
+    assert not extraction._is_render_rule(None)
+    other = extraction.SourceFallback(
+        name="x", host_suffixes=("x.com",), proxy="flaresolverr", custom_template="", min_chars=0
+    )
+    assert not extraction._is_render_rule(other)
 
 
 async def test_render_enrichment_replaces_with_longer_body(
@@ -1018,7 +1026,9 @@ async def test_render_enrichment_replaces_with_longer_body(
         return full
 
     monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
-    out = await extraction._maybe_render_full(partial, "https://www.inc.com/a", settings)
+    out = await extraction._maybe_render_full(
+        partial, "https://www.inc.com/a", settings, _render_rule()
+    )
     assert out is full
 
 
@@ -1032,7 +1042,9 @@ async def test_render_enrichment_keeps_partial_when_render_is_shorter(
         return extraction.ExtractionResult(markdown="short", metadata={})
 
     monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
-    out = await extraction._maybe_render_full(partial, "https://www.inc.com/a", settings)
+    out = await extraction._maybe_render_full(
+        partial, "https://www.inc.com/a", settings, _render_rule()
+    )
     assert out is partial
 
 
@@ -1046,7 +1058,9 @@ async def test_render_enrichment_keeps_partial_on_none(
         return None
 
     monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
-    out = await extraction._maybe_render_full(partial, "https://www.inc.com/a", settings)
+    out = await extraction._maybe_render_full(
+        partial, "https://www.inc.com/a", settings, _render_rule()
+    )
     assert out is partial
 
 
@@ -1060,28 +1074,30 @@ async def test_render_enrichment_noop_when_url_empty(
         raise AssertionError("render.fetch must not run when RENDER_URL is empty")
 
     monkeypatch.setattr(extraction.render, "fetch", boom)
-    out = await extraction._maybe_render_full(partial, "https://www.inc.com/a", settings)
+    out = await extraction._maybe_render_full(
+        partial, "https://www.inc.com/a", settings, _render_rule()
+    )
     assert out is partial
 
 
-async def test_render_enrichment_noop_for_unlisted_untruncated_host(
+async def test_render_enrichment_noop_for_non_render_untruncated_host(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    settings = _render_settings(monkeypatch, hosts="inc.com")
+    settings = _render_settings(monkeypatch)
     partial = extraction.ExtractionResult(markdown="A complete article body.", metadata={})
 
     async def boom(url: str, _settings):
-        raise AssertionError("render.fetch must not run for an unlisted, untruncated host")
+        raise AssertionError("render.fetch must not run without a render rule or truncation")
 
     monkeypatch.setattr(extraction.render, "fetch", boom)
-    out = await extraction._maybe_render_full(partial, "https://other.com/a", settings)
+    out = await extraction._maybe_render_full(partial, "https://other.com/a", settings, None)
     assert out is partial
 
 
-async def test_render_enrichment_triggers_on_truncation_for_unlisted_host(
+async def test_render_enrichment_triggers_on_truncation_without_rule(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    settings = _render_settings(monkeypatch, hosts="inc.com")
+    settings = _render_settings(monkeypatch)
     partial = extraction.ExtractionResult(markdown="Intro paragraph... read more", metadata={})
     full = extraction.ExtractionResult(markdown="full " * 200, metadata={})
     calls: list[str] = []
@@ -1091,6 +1107,90 @@ async def test_render_enrichment_triggers_on_truncation_for_unlisted_host(
         return full
 
     monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
-    out = await extraction._maybe_render_full(partial, "https://other.com/a", settings)
+    out = await extraction._maybe_render_full(partial, "https://other.com/a", settings, None)
     assert calls == ["https://other.com/a"]
     assert out is full
+
+
+async def test_render_rescue_returns_when_cascade_failed(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _render_settings(monkeypatch)
+    full = extraction.ExtractionResult(markdown="full " * 200, metadata={})
+
+    async def fake_fetch(url: str, _settings) -> extraction.ExtractionResult:
+        return full
+
+    monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
+    out = await extraction._render_rescue("https://www.inc.com/a", settings, _render_rule())
+    assert out is full
+
+
+async def test_render_rescue_none_for_non_render_rule(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _render_settings(monkeypatch)
+
+    async def boom(url: str, _settings):
+        raise AssertionError("render.fetch must not run without a render rule")
+
+    monkeypatch.setattr(extraction.render, "fetch", boom)
+    assert await extraction._render_rescue("https://other.com/a", settings, None) is None
+
+
+async def test_render_rescue_none_when_below_floor(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _render_settings(monkeypatch)
+
+    async def fake_fetch(url: str, _settings) -> extraction.ExtractionResult:
+        return extraction.ExtractionResult(markdown="too short", metadata={})
+
+    monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
+    assert await extraction._render_rescue("https://www.inc.com/a", settings, _render_rule()) is None
+
+
+async def test_extract_render_rescue_end_to_end(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_archive, caplog: pytest.LogCaptureFixture
+) -> None:
+    # inc.com is a builtin render rule; with the cascade unable to clear the floor
+    # (firecrawl below-floor + FlareSolverr below-floor), extract() must walk the full
+    # cascade and reach the render RESCUE rather than short-circuiting on the empty
+    # primary or raising ExtractionTooShortError. The render_rescue log proves the path.
+    settings = _render_settings(monkeypatch)
+    transport = _stub_transport(
+        _ok_response("Access Denied"),
+        _flaresolverr_ok("<html><body><p>still blocked</p></body></html>"),
+    )
+    _patch_async_client(monkeypatch, transport)
+    full = extraction.ExtractionResult(markdown="full " * 200, metadata={"title": "Inc"})
+
+    async def fake_fetch(url: str, _settings) -> extraction.ExtractionResult:
+        return full
+
+    monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
+    with caplog.at_level(logging.INFO, logger="app.services.extraction"):
+        result = await extraction.extract("https://www.inc.com/a", settings)
+    assert result is full
+    assert any(getattr(r, "event", "") == "render_rescue" for r in caplog.records)
+
+
+async def test_extract_render_host_raises_when_everything_fails(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_archive
+) -> None:
+    # Regression for the render-rule floor bug: a render host (inc.com builtin) uses the
+    # global floor, so a below-floor primary + below-floor FlareSolverr + a failed render
+    # must RAISE too-short -- never return the empty/blocked primary as success.
+    settings = _render_settings(monkeypatch)
+    transport = _stub_transport(
+        _ok_response("Access Denied"),
+        _flaresolverr_ok("<html><body><p>blocked</p></body></html>"),
+    )
+    _patch_async_client(monkeypatch, transport)
+
+    async def fail_fetch(url: str, _settings) -> None:
+        return None
+
+    monkeypatch.setattr(extraction.render, "fetch", fail_fetch)
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://www.inc.com/a", settings)
