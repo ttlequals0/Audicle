@@ -8,6 +8,7 @@ extraction time. Admin-gated by the ``/api/v1`` router group.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import sqlite3
 from typing import Annotated, Any
@@ -104,6 +105,12 @@ async def test_source_fallback(
         AnyHttpUrl(url)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="A valid http(s) URL is required.") from exc
+    # Apply the runtime-settings overlay (like /health/ready) so the test reflects the
+    # operator's UI-set config -- the render sidecar URL in particular is overlay-only,
+    # so without this the "test a URL" button could never exercise the render strategy.
+    # A DB hiccup must not 500 the test; fall back to the base settings already bound.
+    with contextlib.suppress(Exception):
+        settings = runtime_settings.overlay(settings)
     registry = source_fallbacks_store.load_registry(settings)
     matched = source_fallbacks.match(url, registry)
     strategy = matched.proxy if matched is not None else None

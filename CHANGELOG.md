@@ -6,6 +6,20 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.39.1] - 2026-06-18
+
+### Fixed
+
+- The render sidecar now actually returns the full article instead of crashing. Camoufox 0.4.11
+  declares no Playwright version cap, so the image picked up Playwright 1.60.0, whose Firefox
+  driver crashes on a page error with no location ("Cannot read properties of undefined (reading
+  'url')") -- which inc.com triggers. Render came back with an error and the pipeline fell back to
+  the front-half partial. Pinning `playwright<1.60` (1.59.0) fixes it: a live inc.com render now
+  clicks the expander and returns ~1019 words versus the 449-word partial.
+- The "test a URL" button (`POST /api/v1/source-fallbacks/test`) now applies the runtime-settings
+  overlay, so it reflects the operator's UI-set config. Without this it used only env defaults, so
+  it could never exercise the render strategy (the render sidecar URL is set in the UI, not env).
+
 ## [0.39.0] - 2026-06-18
 
 ### Changed
