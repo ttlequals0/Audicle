@@ -17,8 +17,11 @@ def test_expandable_targets_finds_controls_and_ignores_prose() -> None:
         "Subscribe",
         "Show more",
         "Home",
+        "See more",
+        "Load more",
+        "View more",
     ]
-    assert expandable_targets(controls) == [0, 2, 4]
+    assert expandable_targets(controls) == [0, 2, 4, 6, 7, 8]
 
 
 def test_expandable_targets_normalizes_whitespace() -> None:

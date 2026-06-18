@@ -33,10 +33,9 @@ services:
       # deadlock -- the wrapper is 503 until a voice slot is uploaded.
       tts-wrapper:
         condition: service_started
-      # Optional full-article render sidecar (RENDER_URL in .env). service_started
-      # so the app never waits on the browser; render is enrichment, not critical.
-      render:
-        condition: service_started
+      # No depends_on for the render sidecar: it is optional enrichment and the app
+      # tolerates it being down or absent (render.fetch fails closed to the cascade
+      # result), so it must not gate app startup or block `up` if its image is missing.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
       interval: 30s
@@ -70,6 +69,9 @@ services:
       retries: 5
       start_period: 60s
     restart: unless-stopped
+    # no-new-privileges, but NOT cap_drop: ALL like the other services -- a headful
+    # Firefox under xvfb can need more latitude than a plain web app. Tighten with
+    # cap_drop once validated against the live browser if you want to harden further.
     security_opt:
       - no-new-privileges:true
     logging:

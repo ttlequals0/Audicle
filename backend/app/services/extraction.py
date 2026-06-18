@@ -38,6 +38,7 @@ from app.services.extraction_types import (
     ExtractionResult,
     ExtractionTooShortError,
     ExtractionTransientError,
+    scan_markers,
 )
 from app.services.source_fallbacks import Attempt, SourceFallback, candidate_attempts, match
 
@@ -380,8 +381,7 @@ _TRUNCATION_MARKERS = (
 def looks_truncated(result: ExtractionResult) -> bool:
     """True when a solved result still reads like a click-gated teaser."""
 
-    haystack = f"{result.markdown} {result.metadata.get('title', '')}".lower()
-    return any(marker in haystack for marker in _TRUNCATION_MARKERS)
+    return scan_markers(result, _TRUNCATION_MARKERS)
 
 
 def _host_in_render_list(url: str, settings: Settings) -> bool:

@@ -37,9 +37,15 @@ _CONTROL_SELECTOR = "button, a, [role=button]"
 
 async def _run_expand(page) -> int:
     """Click expand/read-more controls until the body stops growing or the cap is
-    hit. Returns how many clicks were made."""
+    hit. Returns how many clicks were made.
+
+    Within a round it keeps trying expand targets until one grows the body, so a
+    single dud control (a decoy, or one whose click reveals nothing) does not stop a
+    real expander later in the list. A ``seen`` set of control labels prevents
+    re-clicking the same persistent "show more" every round and burning the cap on it."""
 
     clicks = 0
+    seen: set[str] = set()
     for _ in range(EXPAND_CLICK_CAP):
         controls = await page.locator(_CONTROL_SELECTOR).all()
         texts: list[str] = []
@@ -48,22 +54,26 @@ async def _run_expand(page) -> int:
                 texts.append(await control.inner_text())
             except Exception:  # a control detached mid-scan; treat as unmatchable
                 texts.append("")
-        progressed = False
+        grew = False
         for idx in expandable_targets(texts):
+            label = texts[idx].strip()
+            if label in seen:
+                continue
+            seen.add(label)
             control = controls[idx]
             try:
                 if not await control.is_visible():
                     continue
                 before = len(await page.inner_text("body"))
                 await control.click(timeout=_CLICK_TIMEOUT_MS)
-            except Exception:  # not clickable / navigated away; try the next round
+            except Exception:  # not clickable / navigated away; try the next target
                 continue
             await page.wait_for_timeout(_GROW_WAIT_MS)
-            after = len(await page.inner_text("body"))
             clicks += 1
-            progressed = after > before
-            break
-        if not progressed:
+            if len(await page.inner_text("body")) > before:
+                grew = True
+                break  # re-scan from the top: the click may have revealed new controls
+        if not grew:
             break
     return clicks
 

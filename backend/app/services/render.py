@@ -23,13 +23,6 @@ from app.services.html_markdown import html_to_markdown
 
 logger = logging.getLogger("app.services.render")
 
-# Sidecar status -> structured log event. "captcha"/"blocked" mean the sidecar hit
-# a wall it cannot pass; anything else (including "error") is a generic failure.
-_STATUS_EVENT = {
-    "captcha": "render_captcha",
-    "blocked": "render_blocked",
-}
-
 
 async def fetch(url: str, settings: Settings) -> ExtractionResult | None:
     """Render ``url`` through the sidecar and return the expanded article markdown.
@@ -69,10 +62,12 @@ async def fetch(url: str, settings: Settings) -> ExtractionResult | None:
 
     status = body.get("status")
     if status != "ok":
+        # A CAPTCHA wall is the one failure worth its own event (so a partial reads
+        # as "blocked by CAPTCHA"); every other non-ok status is a generic failure.
         logger.warning(
             "Render sidecar did not return article HTML",
             extra={
-                "event": _STATUS_EVENT.get(status, "render_failed"),
+                "event": "render_captcha" if status == "captcha" else "render_failed",
                 "status": status,
                 "host": urlsplit(url).hostname or "",
             },

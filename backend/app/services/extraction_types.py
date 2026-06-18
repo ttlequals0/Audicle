@@ -31,6 +31,15 @@ class ExtractionResult:
     raw_html: str | None = None
 
 
+def scan_markers(result: ExtractionResult, markers: tuple[str, ...]) -> bool:
+    """True when any marker appears in the result's markdown + title, matched
+    case-insensitively. Shared by the challenge / CAPTCHA / truncation detectors so
+    they agree on which fields are scanned; each keeps its own named marker tuple."""
+
+    haystack = f"{result.markdown} {result.metadata.get('title', '')}".lower()
+    return any(marker in haystack for marker in markers)
+
+
 class ExtractionError(Exception):
     """Base class so callers can do a single except for any extraction failure."""
 

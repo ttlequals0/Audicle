@@ -62,16 +62,6 @@ async def test_fetch_returns_none_and_logs_on_captcha(
     assert any(getattr(r, "event", "") == "render_captcha" for r in caplog.records)
 
 
-async def test_fetch_returns_none_and_logs_on_blocked(
-    env, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    _patch_render(monkeypatch, {"status": "blocked", "html": ""})
-    with caplog.at_level(logging.WARNING, logger="app.services.render"):
-        result = await render.fetch("https://www.inc.com/x", _settings(monkeypatch))
-    assert result is None
-    assert any(getattr(r, "event", "") == "render_blocked" for r in caplog.records)
-
-
 async def test_fetch_returns_none_on_error_status(
     env, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

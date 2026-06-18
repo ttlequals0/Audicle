@@ -13,7 +13,7 @@ had.
 ## API
 
 - `POST /render` `{ "url": "...", "expand": true }` ->
-  `{ "status": "ok|captcha|blocked|error", "html": "...", "clicks": N, "word_estimate": N }`
+  `{ "status": "ok|captcha|error", "html": "...", "clicks": N, "word_estimate": N }`
 - `GET /health/live` -> `{ "ok": true, "version": "..." }`
 
 The backend calls this only when a host is listed in `RENDER_HOSTS` or a solved

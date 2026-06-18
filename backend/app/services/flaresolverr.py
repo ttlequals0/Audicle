@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from app.config import Settings
-from app.services.extraction_types import ExtractionResult
+from app.services.extraction_types import ExtractionResult, scan_markers
 from app.services.html_markdown import html_to_markdown
 
 logger = logging.getLogger("app.services.flaresolverr")
@@ -47,8 +47,7 @@ def looks_like_challenge(result: ExtractionResult) -> bool:
     """True when a below-floor scrape looks like a Cloudflare/bot-challenge page
     (the case FlareSolverr is meant to solve) rather than a real short article."""
 
-    haystack = f"{result.markdown} {result.metadata.get('title', '')}".lower()
-    return any(marker in haystack for marker in _CHALLENGE_MARKERS)
+    return scan_markers(result, _CHALLENGE_MARKERS)
 
 
 # Visible copy of an INTERACTIVE CAPTCHA gate (DataDome/PerimeterX slider,
@@ -72,8 +71,7 @@ def looks_like_captcha(result: ExtractionResult) -> bool:
     (DataDome/PerimeterX/etc.) rather than the article -- a wall FlareSolverr can't get
     through. Mirrors ``looks_like_challenge``: scans markdown + title, not raw HTML."""
 
-    haystack = f"{result.markdown} {result.metadata.get('title', '')}".lower()
-    return any(marker in haystack for marker in _CAPTCHA_MARKERS)
+    return scan_markers(result, _CAPTCHA_MARKERS)
 
 
 def _parse_cookies(cookie_string: str, url: str) -> list[dict[str, str]]:

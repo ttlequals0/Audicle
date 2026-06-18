@@ -14,7 +14,7 @@ import ipaddress
 import re
 import socket
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 from urllib.parse import urlsplit
 
 # Match the backend's html_markdown cap so an oversize DOM can't be serialized
@@ -30,7 +30,10 @@ CAPTCHA_BODY_FLOOR = 500
 
 # Visible copy of an expand/read-more control. Applied to clickable control texts
 # (buttons/links), not body prose, so a generic "read more" rarely misfires.
-_EXPAND_RE = re.compile(r"\b(expand|continue reading|read more|show more)\b", re.IGNORECASE)
+_EXPAND_RE = re.compile(
+    r"\b(expand|continue reading|read more|show more|see more|view more|load more)\b",
+    re.IGNORECASE,
+)
 
 # Same visible CAPTCHA-gate strings the backend flaresolverr detector uses, so a
 # DataDome/PerimeterX wall reads as "captcha" on both sides.
@@ -47,9 +50,9 @@ _CAPTCHA_MARKERS = (
 class RenderResult:
     """What the sidecar returns for one page render.
 
-    ``status`` is ``ok`` (usable HTML), ``captcha``/``blocked`` (hit a wall it
-    cannot pass), or ``error`` (load/click failed). ``html`` is the final DOM on
-    ``ok``, empty otherwise."""
+    ``status`` is ``ok`` (usable HTML), ``captcha`` (hit a wall it cannot pass), or
+    ``error`` (load/click failed, or a non-public host). ``html`` is the final DOM
+    on ``ok``, empty otherwise."""
 
     status: str
     html: str = ""
@@ -57,7 +60,6 @@ class RenderResult:
     word_estimate: int = 0
 
 
-@runtime_checkable
 class Renderer(Protocol):
     async def render(self, url: str, expand: bool) -> RenderResult: ...
 
@@ -107,15 +109,11 @@ def is_public_url(url: str) -> bool:
         infos = socket.getaddrinfo(host, None)
     except OSError:
         return False
+    # ``not is_global`` is the canonical "public address" test: it rejects private,
+    # loopback, link-local, multicast, reserved, unspecified AND shared/CGNAT space
+    # (100.64.0.0/10), which a hand-rolled predicate list misses. Reject if ANY
+    # resolved address is non-global.
     for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_reserved
-            or ip.is_multicast
-            or ip.is_unspecified
-        ):
+        if not ipaddress.ip_address(info[4][0]).is_global:
             return False
     return True
