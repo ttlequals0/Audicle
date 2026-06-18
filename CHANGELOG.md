@@ -6,6 +6,26 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.39.2] - 2026-06-18
+
+### Fixed
+
+- The render sidecar now scrolls the page before capturing it, so it returns the full article
+  body instead of the front half. inc.com (and sites like it) mount the article tail into the DOM
+  only as it nears the viewport, so a render that never scrolled captured what was loaded above the
+  fold and stopped -- the click expanded the gate, but the paragraphs below it never rendered. The
+  driver now scrolls to the bottom in steps until the page stops growing, clicks the expand gate,
+  then scrolls again to pull in whatever the gate revealed. The scroll height uses the larger of
+  `document.body` and `document.documentElement` so it still reaches the bottom on sites whose
+  scroll container is the `<html>` element. A diagnostic with this fix off confirmed inc.com's
+  render capped at 4736 chars (about 790 words) versus the roughly 6300-char full article.
+
+### Added
+
+- A `render_ok` log line on every successful render (clicks, scroll steps, word estimate, HTML
+  size). The render success path was previously silent, which made it hard to tell from logs
+  whether a short result came from the browser or from extraction.
+
 ## [0.39.1] - 2026-06-18
 
 ### Fixed

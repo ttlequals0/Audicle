@@ -89,6 +89,13 @@ def is_captcha_gate(body_text: str) -> bool:
     return any(marker in haystack for marker in _CAPTCHA_MARKERS)
 
 
+def scroll_exhausted(prev_height: int, cur_height: int) -> bool:
+    """True when a scroll step did not grow the document -- lazy content has settled,
+    so the scroll loop can stop instead of burning its step budget."""
+
+    return cur_height <= prev_height
+
+
 def word_estimate(text: str) -> int:
     """Rough word count of visible text, for logging how much the expand added."""
 

@@ -19,6 +19,7 @@ from renderer import (
     expandable_targets,
     is_captcha_gate,
     is_public_url,
+    scroll_exhausted,
     word_estimate,
 )
 
@@ -30,9 +31,46 @@ logger = logging.getLogger("render.camoufox")
 _NAV_TIMEOUT_MS = 45_000
 _CLICK_TIMEOUT_MS = 5_000
 _GROW_WAIT_MS = 1_500
+# Scroll the page to the bottom in viewport steps so lazy-mounted article paragraphs
+# (and below-the-fold expand gates) load before capture. Capped so an infinite
+# "recommended articles" feed can't scroll forever; the settle wait lets each revealed
+# chunk render before we re-measure the height.
+_SCROLL_STEP_CAP = 15
+_SCROLL_SETTLE_MS = 800
 # Only treat these as expand controls. Body prose is never a candidate, so a
 # stray "read more" in an article cannot be clicked.
 _CONTROL_SELECTOR = "button, a, [role=button]"
+
+
+async def _scroll_to_load(page) -> int:
+    """Scroll to the bottom in viewport steps until the document stops growing or the
+    step cap is hit, then return to the top. Lazy-loading sites (inc.com) only mount
+    paragraphs as they near the viewport, so without this the article tail never enters
+    the DOM and cannot be captured. Returns how many steps grew the page.
+
+    Defensive: a failed scroll eval degrades to "no scroll" rather than killing the
+    render -- the caller still captures whatever loaded."""
+
+    steps = 0
+    prev_height = 0
+    # Use the larger of body/documentElement: on sites whose scroll container is the
+    # <html> element, document.body.scrollHeight under-reports and would stop the loop
+    # before the tail loads.
+    height_js = "Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)"
+    try:
+        for _ in range(_SCROLL_STEP_CAP):
+            height = int(await page.evaluate(height_js))
+            if scroll_exhausted(prev_height, height):
+                break
+            prev_height = height
+            await page.evaluate(f"window.scrollTo(0, {height_js})")
+            await page.wait_for_timeout(_SCROLL_SETTLE_MS)
+            steps += 1
+        # Back to the top so the expand-control visibility checks behave predictably.
+        await page.evaluate("window.scrollTo(0, 0)")
+    except Exception:  # a scroll eval can race a navigation; keep what loaded
+        logger.warning("scroll-to-load failed", extra={"event": "render_scroll_error"})
+    return steps
 
 
 async def _run_expand(page) -> int:
@@ -91,22 +129,36 @@ class CamoufoxRenderer:
             async with AsyncCamoufox(headless=False) as browser:
                 page = await browser.new_page()
                 await page.goto(url, wait_until="networkidle", timeout=_NAV_TIMEOUT_MS)
+                # Load lazy content and surface any below-the-fold gate, click the gate,
+                # then load whatever the gate revealed -- so the full body is in the DOM.
+                scrolls = await _scroll_to_load(page)
                 clicks = await _run_expand(page) if expand else 0
+                # Only re-scroll when a gate was actually clicked: otherwise the DOM is
+                # unchanged from the first scroll and a second pass is wasted work.
+                if clicks:
+                    scrolls += await _scroll_to_load(page)
                 body_text = await page.inner_text("body")
+                words = word_estimate(body_text)
                 if is_captcha_gate(body_text):
                     logger.warning(
                         "render reached a CAPTCHA gate",
-                        extra={"event": "render_captcha", "clicks": clicks},
+                        extra={"event": "render_captcha", "clicks": clicks, "scrolls": scrolls},
                     )
-                    return RenderResult(
-                        status="captcha", clicks=clicks, word_estimate=word_estimate(body_text)
-                    )
+                    return RenderResult(status="captcha", clicks=clicks, word_estimate=words)
                 html = await page.content()
                 if len(html) > MAX_HTML_CHARS:
                     html = html[:MAX_HTML_CHARS]
-                return RenderResult(
-                    status="ok", html=html, clicks=clicks, word_estimate=word_estimate(body_text)
+                logger.info(
+                    "render complete",
+                    extra={
+                        "event": "render_ok",
+                        "clicks": clicks,
+                        "scrolls": scrolls,
+                        "word_estimate": words,
+                        "html_chars": len(html),
+                    },
                 )
+                return RenderResult(status="ok", html=html, clicks=clicks, word_estimate=words)
         except Exception as exc:
             logger.warning("render failed", extra={"event": "render_error", "error": str(exc)})
             return RenderResult(status="error")

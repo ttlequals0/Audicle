@@ -5,6 +5,7 @@ from renderer import (
     expandable_targets,
     is_captcha_gate,
     is_public_url,
+    scroll_exhausted,
     word_estimate,
 )
 
@@ -49,6 +50,12 @@ def test_is_captcha_gate_ignores_long_article_mentioning_marker() -> None:
 
 def test_is_captcha_gate_ignores_short_real_text() -> None:
     assert not is_captcha_gate("A short blurb with no gate copy at all.")
+
+
+def test_scroll_exhausted() -> None:
+    assert scroll_exhausted(1000, 1000)  # no growth -> settled
+    assert scroll_exhausted(1000, 900)  # shrank -> settled
+    assert not scroll_exhausted(1000, 1500)  # grew -> keep scrolling
 
 
 def test_word_estimate() -> None:
