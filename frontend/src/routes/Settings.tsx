@@ -1447,9 +1447,8 @@ function ChimeWidget() {
   return (
     <div className="space-y-3">
       <p className="mono-xs text-mute">
-        // a short clip played at the end of every episode, so back-to-back episodes are
-        easy to tell apart. turn it on with CHIME_ENABLED in TTS settings. uploads take
-        wav/mp3/m4a/flac/ogg -- converted and trimmed to ~15s on the server
+        // plays at the end of every episode. enable with CHIME_ENABLED in TTS settings.
+        wav/mp3/m4a/flac/ogg, trimmed to 15s
       </p>
       {msg && <p className="mono-xs text-accent">{msg}</p>}
       {data?.present && (

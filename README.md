@@ -158,7 +158,7 @@ The output quality is mostly set by the clip quality. Cleaning up the source -- 
 
 ## End-of-episode chime
 
-Settings has an "end chime" section where you upload one short clip that plays at the end of every episode -- handy so back-to-back episodes are easy to tell apart on autoplay. Turn it on with the `CHIME_ENABLED` toggle (under TTS settings); the clip is transcoded to the episode format and loudness-matched, so it sits at the same level as the narration. Upload WAV/MP3/M4A/FLAC/OGG (trimmed to about 15 seconds); delete it to stop appending it.
+Settings has an "end chime" section where you upload one short clip that plays at the end of every episode -- handy for telling back-to-back episodes apart on autoplay. Turn it on with the `CHIME_ENABLED` toggle under TTS settings; the clip is transcoded and loudness-matched to the narration. Upload WAV/MP3/M4A/FLAC/OGG, trimmed to about 15 seconds. Delete it to stop.
 
 ## Pronunciation corrections
 

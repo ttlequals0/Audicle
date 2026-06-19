@@ -10,23 +10,21 @@ work lives under `[Unreleased]`.
 
 ### Added
 
-- Cancel a processing or queued article. Each item in the queue has a Cancel button; a
-  queued job never starts, and a running job stops at the worker's next checkpoint (within
-  one chunk during narration) and is marked cancelled rather than failed.
-- An optional end-of-episode chime. Upload a short clip under Settings -> end chime and turn
-  on CHIME_ENABLED, and every episode ends with it, so back-to-back episodes are easy to
-  tell apart. The clip is transcoded to the episode format and loudness-matched.
+- Cancel a queued or processing article. Each queue row has a Cancel button: a queued job
+  never starts, and a running one stops at the worker's next checkpoint (within a chunk) and
+  is marked cancelled, not failed.
+- An optional end-of-episode chime. Upload a short clip under Settings -> end chime, enable
+  CHIME_ENABLED, and every episode ends with it -- handy for telling back-to-back episodes
+  apart. The clip is transcoded and loudness-matched to the narration.
 
 ### Fixed
 
-- The narrating voice no longer switches partway through an episode. A voice audition that
-  ran while an article was being narrated could reset the wrapper's voice between chunks,
-  so the rest of the episode came out in a different voice. The pipeline now re-asserts the
-  job's voice before every chunk, and the wrapper skips the re-encode when the voice is
-  already loaded, so it stays cheap.
-- Seed abbreviations are spelled with run-together phonetic letters ("bee ess dee") instead
-  of spaced single letters ("B S D"), which Chatterbox reads more cleanly, and EBITDA/EBIT
-  are pronounced as words instead of being spelled out.
+- The narrating voice no longer switches partway through an episode. A voice audition during
+  narration could reset the wrapper's voice between chunks, leaving the rest of the episode
+  in a different voice. The pipeline now re-asserts the job's voice before every chunk, and
+  the wrapper skips the re-encode when nothing changed, so it stays cheap.
+- Seed abbreviations are spelled phonetically ("bee ess dee") instead of as spaced letters
+  ("B S D"), which Chatterbox reads more cleanly, and EBITDA/EBIT are said as words.
 
 ### Fixed
 
