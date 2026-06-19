@@ -23,7 +23,10 @@ Per-chunk WAVs and the concatenated WAV are removed by the caller in a
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import os
+import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -32,6 +35,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 import torch
+from mutagen.id3 import APIC, ID3
 from mutagen.mp3 import MP3
 
 from app.config import Settings
@@ -109,6 +113,33 @@ def wav_duration_secs(path: Path) -> float:
 
     info = sf.info(str(path))
     return float(info.duration)
+
+
+def embed_cover(mp3_path: Path, cover_jpg_bytes: bytes) -> None:
+    """Embed ``cover_jpg_bytes`` into the MP3 as an ID3v2.3 front-cover (APIC) frame, so
+    players that read only embedded art (Pocket Casts) show per-episode artwork. Writes
+    ID3v2.3 with a latin-1 description -- the most broadly supported tag version, since v2.4
+    APIC is read inconsistently by podcast clients. Replaces any existing APIC so a reprocess
+    doesn't stack covers. Tags a temp copy and atomically replaces the original, so an
+    interrupted tag write can't corrupt the episode."""
+
+    tmp = mp3_path.with_name(f".cover-{mp3_path.name}")
+    try:
+        shutil.copyfile(mp3_path, tmp)
+        tagged = MP3(tmp, ID3=ID3)
+        if tagged.tags is None:
+            tagged.add_tags()
+        tagged.tags.delall("APIC")
+        tagged.tags.add(
+            APIC(encoding=0, mime="image/jpeg", type=3, desc="Cover", data=cover_jpg_bytes)
+        )
+        tagged.save(v2_version=3)
+        os.replace(tmp, mp3_path)
+    finally:
+        # missing_ok only swallows FileNotFoundError; suppress the rest so a cleanup
+        # error can't mask the real failure (the pipeline logs that one).
+        with contextlib.suppress(OSError):
+            tmp.unlink()
 
 
 # --- Stage 1: silence trim --------------------------------------------------

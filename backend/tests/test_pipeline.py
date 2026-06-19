@@ -470,6 +470,72 @@ async def test_pipeline_succeeds_when_artwork_falls_back(
     assert not (env / "media" / f"{job.episode_id}.jpg").exists()
 
 
+async def test_pipeline_embeds_cover_when_artwork_present(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With per-episode art, the pipeline embeds the artwork's downsized copy into
+    the episode MP3 (Pocket Casts reads only embedded art)."""
+
+    database.run_migrations(env)
+
+    async def _fake_extract(_url, _settings, _registry=None):
+        return extraction.ExtractionResult(
+            markdown="raw " * 250,
+            metadata={"title": "Example", "ogImage": "https://example.test/cover.png"},
+        )
+
+    async def _fake_llm(_system, _user, _settings, **_kwargs):
+        return "A cleaned narration sentence. Another sentence here. " * 20
+
+    monkeypatch.setattr(extraction, "extract", _fake_extract)
+    monkeypatch.setattr(llm, "generate", _fake_llm)
+    _stub_tts_and_audio(monkeypatch)
+    _stub_artwork_download(monkeypatch, _png_bytes())
+
+    embedded: dict[str, object] = {}
+
+    def _spy_embed(mp3_path, cover_jpg_bytes):
+        embedded["mp3_path"] = mp3_path
+        embedded["bytes"] = cover_jpg_bytes
+
+    monkeypatch.setattr(pipeline.audio, "embed_cover", _spy_embed)
+
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+
+    assert _job_after(env, job.id).status == "done"
+    assert embedded["mp3_path"] == env / "media" / f"{job.episode_id}.mp3"
+    # The embed copy is a real JPEG at the configured embed size.
+    img = Image.open(io.BytesIO(embedded["bytes"]))
+    img.load()
+    assert img.format == "JPEG"
+    assert img.size == (get_settings().EMBED_ARTWORK_SIZE_PX,) * 2
+
+
+async def test_pipeline_skips_cover_embed_on_fallback_art(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No per-episode art -> nothing to embed; the MP3 ships untagged and players
+    fall back to feed art, so embed_cover must not be called."""
+
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)  # no ogImage -> artwork returns None
+
+    called = False
+
+    def _spy_embed(*_args, **_kwargs):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(pipeline.audio, "embed_cover", _spy_embed)
+
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+
+    assert _job_after(env, job.id).status == "done"
+    assert called is False
+
+
 async def test_pipeline_transcript_stage_builds_vtt_from_chunks(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

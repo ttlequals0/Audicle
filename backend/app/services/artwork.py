@@ -35,6 +35,9 @@ logger = logging.getLogger("app.services.artwork")
 class ArtworkResult:
     jpg_path: Path
     source_url: str
+    # A downsized copy of the same cover, for embedding into the episode MP3 (ID3 APIC)
+    # so players that ignore the feed's per-episode art still show it.
+    embed_jpg_bytes: bytes
 
 
 # Pillow formats we treat as supported. Anything else (notably SVG) falls
@@ -177,7 +180,9 @@ async def process_artwork(
             "jpg_bytes": len(rendered.jpg_bytes),
         },
     )
-    return ArtworkResult(jpg_path=output_path, source_url=source_url)
+    return ArtworkResult(
+        jpg_path=output_path, source_url=source_url, embed_jpg_bytes=rendered.embed_jpg_bytes
+    )
 
 
 def _extract_og_image(metadata: dict[str, Any]) -> str | None:
@@ -294,8 +299,15 @@ async def _download(url: str, settings: Settings) -> bytes:
 @dataclass(frozen=True)
 class _RenderedImage:
     jpg_bytes: bytes
+    embed_jpg_bytes: bytes
     source_width: int
     source_height: int
+
+
+def _encode_jpeg(img: Image.Image, quality: int) -> bytes:
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=quality, optimize=True, exif=b"")
+    return buf.getvalue()
 
 
 def _decode_and_render(data: bytes, settings: Settings) -> _RenderedImage:
@@ -326,16 +338,18 @@ def _decode_and_render(data: bytes, settings: Settings) -> _RenderedImage:
         if square.size != (target, target):
             square = square.resize((target, target), Image.Resampling.LANCZOS)
 
-        buf = io.BytesIO()
-        square.save(
-            buf,
-            format="JPEG",
-            quality=settings.ARTWORK_JPG_QUALITY,
-            optimize=True,
-            exif=b"",
+        quality = settings.ARTWORK_JPG_QUALITY
+        # A smaller copy of the same square for embedding into the MP3 (ID3 APIC).
+        # Clamp to the master size so a misconfigured embed size can't upscale and bloat it.
+        embed_px = min(settings.EMBED_ARTWORK_SIZE_PX, target)
+        embed_img = (
+            square
+            if square.size == (embed_px, embed_px)
+            else square.resize((embed_px, embed_px), Image.Resampling.LANCZOS)
         )
         return _RenderedImage(
-            jpg_bytes=buf.getvalue(),
+            jpg_bytes=_encode_jpeg(square, quality),
+            embed_jpg_bytes=_encode_jpeg(embed_img, quality),
             source_width=width,
             source_height=height,
         )

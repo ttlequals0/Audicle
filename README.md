@@ -160,6 +160,10 @@ The output quality is mostly set by the clip quality. Cleaning up the source -- 
 
 Settings has an "end chime" section where you upload one short clip that plays at the end of every episode -- handy for telling back-to-back episodes apart on autoplay. Turn it on with the `CHIME_ENABLED` toggle under TTS settings; the clip is transcoded and loudness-matched to the narration. Upload WAV/MP3/M4A/FLAC/OGG, trimmed to about 15 seconds. Delete it to stop.
 
+## Episode artwork
+
+Each episode's cover goes into the feed (`itunes:image`) and is also embedded into the MP3, because some players -- Pocket Casts among them -- only read embedded art and ignore the feed tag. Episodes that didn't pull their own cover fall back to the show's feed image. The embedded copy is a smaller 1400px JPEG (`EMBED_ARTWORK_SIZE_PX`) to hold file size down; the feed still serves the full 3000px master.
+
 ## Pronunciation corrections
 
 Settings has a corrections table for words the narrator mispronounces. Each row is a match term, the spoken form to say instead, a mode, an optional IPA field, and an "Aa" case toggle. A curated seed set ships built in (`GET /api/v1/corrections/seed`); your rows override it.

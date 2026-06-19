@@ -6,6 +6,21 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-06-19
+
+### Added
+
+- Episode cover art is embedded into each MP3 as an ID3v2.3 APIC frame, so players that read
+  only embedded art (Pocket Casts) show the per-episode cover instead of the feed icon. Only
+  episodes with their own artwork get an embedded cover; the rest still fall back to the feed
+  image. The embed is a 1400px copy (EMBED_ARTWORK_SIZE_PX); the 3000px master still drives
+  the feed. The feed's itunes:image tag is unchanged, so nothing regresses for players that
+  already use it.
+
+### Changed
+
+- pypdf upgraded to 6.13.3 (supersedes the dependabot bump).
+
 ## [0.40.0] - 2026-06-19
 
 ### Added

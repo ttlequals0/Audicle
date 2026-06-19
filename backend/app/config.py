@@ -277,6 +277,10 @@ class Settings(BaseSettings):
 
     # Artwork.
     ARTWORK_SIZE_PX: int = 3000
+    # Size of the cover embedded in each MP3 (ID3 APIC) for players that read only
+    # embedded art (Pocket Casts). Smaller than the 3000px feed master to keep the
+    # per-episode file-size cost down; a 1400px JPEG is ~150-350 kB.
+    EMBED_ARTWORK_SIZE_PX: int = 1400
     ARTWORK_JPG_QUALITY: int = 85
     ARTWORK_FETCH_TIMEOUT_SECONDS: float = 15
     ARTWORK_MIN_SOURCE_PX: int = 600

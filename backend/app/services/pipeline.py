@@ -347,6 +347,12 @@ async def _run_stages(
         job.id,
         settings,
     )
+    # Embed the episode cover into the MP3 so players that read only embedded art
+    # (Pocket Casts) show per-episode artwork -- they ignore the feed's itunes:image.
+    # Only for episodes with their OWN art; a None result means we fell back to feed art,
+    # which those players already display correctly, so embedding would just bloat the file.
+    if artwork_result is not None:
+        _embed_episode_cover(audio_result.mp3_path, artwork_result.embed_jpg_bytes)
     vtt = await _run_stage(
         "transcript",
         lambda: _stage_transcript(chunks, chunk_results, settings),
@@ -1132,6 +1138,20 @@ async def _stage_audio(
     finally:
         # Per-chunk WAVs + concatenated WAV are not persistent artifacts.
         audio.remove_quietly(combined_path, *chunk_paths)
+
+
+def _embed_episode_cover(mp3_path: Path, cover_jpg_bytes: bytes) -> None:
+    """Best-effort: embed the episode cover into the MP3. A tag-write failure leaves the
+    (playable) MP3 untouched and logs -- the episode still ships, just without embedded art."""
+
+    try:
+        audio.embed_cover(mp3_path, cover_jpg_bytes)
+    except Exception:
+        logger.warning(
+            "Episode cover embed failed; MP3 ships without embedded art",
+            extra={"event": "cover_embed_failed"},
+            exc_info=True,
+        )
 
 
 async def _stage_artwork(
