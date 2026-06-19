@@ -202,3 +202,26 @@ def test_transcode_to_wav_decodes_mp3(tmp_path: Path) -> None:
 def test_transcode_to_wav_rejects_garbage() -> None:
     with pytest.raises(audio.FfmpegError):
         audio.transcode_to_wav(b"this is not audio")
+
+
+def test_append_clip_lengthens_by_gap_plus_clip(tmp_path: Path) -> None:
+    rate = 24000
+    body = tmp_path / "body.wav"
+    clip = tmp_path / "clip.wav"
+    _write_tone_wav(body, duration_secs=1.0, sample_rate=rate)
+    _write_tone_wav(clip, duration_secs=0.5, sample_rate=rate)
+    lead_ms = 700
+    audio.append_clip(body, clip, lead_silence_ms=lead_ms)
+    wave, got_rate = _load_for_test(body)
+    assert got_rate == rate
+    expected = round(1.0 * rate) + round(lead_ms * rate / 1000) + round(0.5 * rate)
+    assert wave.size(1) == expected
+
+
+def test_append_clip_rejects_rate_mismatch(tmp_path: Path) -> None:
+    body = tmp_path / "body.wav"
+    clip = tmp_path / "clip.wav"
+    _write_tone_wav(body, duration_secs=0.5, sample_rate=24000)
+    _write_tone_wav(clip, duration_secs=0.5, sample_rate=16000)
+    with pytest.raises(audio.AudioError):
+        audio.append_clip(body, clip)

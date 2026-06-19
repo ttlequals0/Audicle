@@ -104,6 +104,13 @@ def transcode_to_wav(data: bytes, *, max_seconds: int = 70) -> bytes:
         return dst.read_bytes()
 
 
+def wav_duration_secs(path: Path) -> float:
+    """Duration of a WAV in seconds (via soundfile's header, no full decode)."""
+
+    info = sf.info(str(path))
+    return float(info.duration)
+
+
 # --- Stage 1: silence trim --------------------------------------------------
 
 
@@ -194,6 +201,29 @@ def concat_with_padding(
     combined = torch.cat(pieces, dim=1)
     _save_wav(output_path, combined, sample_rate)
     return output_path, sample_rate
+
+
+def append_clip(
+    combined_path: Path,
+    clip_path: Path,
+    *,
+    lead_silence_ms: int = 700,
+) -> None:
+    """Append ``clip_path`` (an end-of-episode chime) to the combined episode WAV,
+    in place, after a short lead silence. Both WAVs are written by our own pipeline at
+    the same rate/channels (``transcode_to_wav`` produces 24 kHz mono), so they
+    concatenate directly; a mismatch raises rather than producing garbage. The append
+    happens before normalization, so the chime is loudness-matched to the episode."""
+
+    body, body_rate = _load_wav(combined_path)
+    clip, clip_rate = _load_wav(clip_path)
+    if clip_rate != body_rate:
+        raise AudioError(f"chime sample rate {clip_rate} != episode {body_rate}")
+    if clip.size(0) != body.size(0):
+        raise AudioError(f"chime has {clip.size(0)} channels but episode has {body.size(0)}")
+    pad_n = round(lead_silence_ms * body_rate / 1000)
+    gap = torch.zeros((body.size(0), pad_n), dtype=body.dtype)
+    _save_wav(combined_path, torch.cat([body, gap, clip], dim=1), body_rate)
 
 
 def _load_wav(path: Path) -> tuple[torch.Tensor, int]:

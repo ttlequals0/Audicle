@@ -67,6 +67,7 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "TTS_CHUNK_TARGET_WORDS",
         "TTS_CHUNK_MAX_WORDS",
         "TTS_CHUNK_SILENCE_MS",
+        "CHIME_ENABLED",
         # Audio-QA thresholds: tunable live since they need empirical tuning
         # against real failures. The frame/hop sizes stay env-only (structural).
         "AUDIO_ANALYSIS_ENABLED",

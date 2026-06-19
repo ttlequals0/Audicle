@@ -576,6 +576,14 @@ def _m019_reimport_seed_lexicon(conn: sqlite3.Connection) -> None:
     _reimport_seed_lexicon(conn)
 
 
+def _m020_reimport_seed_lexicon(conn: sqlite3.Connection) -> None:
+    """0.40.0: re-sync the seed after every spaced-letter abbreviation was rewritten as
+    run-together phonetic letter-words ('B S D' -> 'bee ess dee') and EBITDA/EBIT were
+    added -- the spaced form was reading awkwardly in Chatterbox."""
+
+    _reimport_seed_lexicon(conn)
+
+
 def _m018_voice_wav_to_slot1(conn: sqlite3.Connection) -> None:
     """Migrate the legacy committed ``voice.wav`` into voice slot 1 (0.35.0).
 
@@ -634,6 +642,7 @@ MIGRATIONS: list[tuple[str, Migration]] = [
     ("017_reimport_seed_lexicon", _m017_reimport_seed_lexicon),
     ("018_voice_wav_to_slot1", _m018_voice_wav_to_slot1),
     ("019_reimport_seed_lexicon", _m019_reimport_seed_lexicon),
+    ("020_reimport_seed_lexicon", _m020_reimport_seed_lexicon),
 ]
 
 

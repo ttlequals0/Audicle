@@ -156,6 +156,10 @@ Recommended clip: mono, 24 kHz, 8-12 seconds, around 250 kB to 1 MB. The hard li
 
 The output quality is mostly set by the clip quality. Cleaning up the source -- noise reduction, leveling -- helps more than any TTS knob.
 
+## End-of-episode chime
+
+Settings has an "end chime" section where you upload one short clip that plays at the end of every episode -- handy so back-to-back episodes are easy to tell apart on autoplay. Turn it on with the `CHIME_ENABLED` toggle (under TTS settings); the clip is transcoded to the episode format and loudness-matched, so it sits at the same level as the narration. Upload WAV/MP3/M4A/FLAC/OGG (trimmed to about 15 seconds); delete it to stop appending it.
+
 ## Pronunciation corrections
 
 Settings has a corrections table for words the narrator mispronounces. Each row is a match term, the spoken form to say instead, a mode, an optional IPA field, and an "Aa" case toggle. A curated seed set ships built in (`GET /api/v1/corrections/seed`); your rows override it.

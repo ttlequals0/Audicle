@@ -6,7 +6,27 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
-## [0.39.5] - 2026-06-18
+## [0.40.0] - 2026-06-19
+
+### Added
+
+- Cancel a processing or queued article. Each item in the queue has a Cancel button; a
+  queued job never starts, and a running job stops at the worker's next checkpoint (within
+  one chunk during narration) and is marked cancelled rather than failed.
+- An optional end-of-episode chime. Upload a short clip under Settings -> end chime and turn
+  on CHIME_ENABLED, and every episode ends with it, so back-to-back episodes are easy to
+  tell apart. The clip is transcoded to the episode format and loudness-matched.
+
+### Fixed
+
+- The narrating voice no longer switches partway through an episode. A voice audition that
+  ran while an article was being narrated could reset the wrapper's voice between chunks,
+  so the rest of the episode came out in a different voice. The pipeline now re-asserts the
+  job's voice before every chunk, and the wrapper skips the re-encode when the voice is
+  already loaded, so it stays cheap.
+- Seed abbreviations are spelled with run-together phonetic letters ("bee ess dee") instead
+  of spaced single letters ("B S D"), which Chatterbox reads more cleanly, and EBITDA/EBIT
+  are pronounced as words instead of being spelled out.
 
 ### Fixed
 

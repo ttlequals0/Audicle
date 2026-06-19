@@ -198,6 +198,10 @@
     background: #4a1f1f;
     color: #ff5252;
   }
+  .tag-cancelled {
+    background: #2a2a30;
+    color: #8a8a96;
+  }
   .tag-processing::before,
   .tag-queued::before {
     content: "";

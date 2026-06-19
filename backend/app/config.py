@@ -230,6 +230,9 @@ class Settings(BaseSettings):
     TTS_CHUNK_SILENCE_MS: int = 250
 
     # Audio pipeline.
+    # Append an operator-uploaded chime clip to the end of every episode (so back-to-back
+    # episodes are distinguishable). Off unless enabled AND a clip has been uploaded.
+    CHIME_ENABLED: bool = False
     AUDIO_SILENCE_THRESHOLD: float = 0.003
     AUDIO_SILENCE_BUFFER_MS: int = 5
     LOUDNORM_TARGET_LUFS: float = -14

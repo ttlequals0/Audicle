@@ -1,6 +1,6 @@
 [project]
 name = "audicle-render"
-version = "0.39.5"
+version = "0.40.0"
 description = "Stealth headful-render sidecar for Audicle (Camoufox)."
 requires-python = ">=3.11,<3.13"
 # Camoufox/Playwright wheels track a conservative Python range; 3.12 is the safe

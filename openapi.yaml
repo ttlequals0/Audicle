@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.39.1
+  version: 0.40.0
 paths:
   /health/live:
     get:
@@ -688,6 +688,7 @@ paths:
             - processing
             - done
             - failed
+            - cancelled
             type: string
           - type: 'null'
           title: Status
@@ -744,6 +745,28 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SubmitResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/jobs/{job_id}/cancel:
+    post:
+      tags:
+      - jobs
+      summary: Cancel a queued or processing job
+      operationId: cancel_job_api_v1_jobs__job_id__cancel_post
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      responses:
+        '204':
+          description: Successful Response
         '422':
           description: Validation Error
           content:
@@ -1010,6 +1033,67 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/WebhookTestResult'
+  /api/v1/chime:
+    get:
+      tags:
+      - chime
+      summary: Whether an end-of-episode chime clip is uploaded
+      operationId: get_chime_api_v1_chime_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Get Chime Api V1 Chime Get
+    post:
+      tags:
+      - chime
+      summary: Upload the end-of-episode chime clip
+      operationId: upload_chime_api_v1_chime_post
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_upload_chime_api_v1_chime_post'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Upload Chime Api V1 Chime Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - chime
+      summary: Remove the end-of-episode chime clip
+      operationId: delete_chime_api_v1_chime_delete
+      responses:
+        '204':
+          description: Successful Response
+  /api/v1/chime/preview:
+    get:
+      tags:
+      - chime
+      summary: Play the uploaded chime clip
+      operationId: preview_chime_api_v1_chime_preview_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
   /rss/{slug}.xml:
     get:
       tags:
@@ -1359,6 +1443,17 @@ components:
       required:
       - file
       title: Body_upload_api_v1_upload_post
+    Body_upload_chime_api_v1_chime_post:
+      properties:
+        file:
+          type: string
+          contentMediaType: application/octet-stream
+          title: File
+          description: short audio clip (WAV/MP3/M4A/FLAC/OGG)
+      type: object
+      required:
+      - file
+      title: Body_upload_chime_api_v1_chime_post
     Body_upload_slot_api_v1_reference_slots__slot__post:
       properties:
         voice:

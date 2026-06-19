@@ -134,6 +134,23 @@ def test_prepare_reference_rejects_when_gpu_busy() -> None:
         engine._gpu_lock.release()
 
 
+async def test_select_voice_skips_reencode_for_same_clip(tmp_path: Path) -> None:
+    # The backend re-selects the job voice before every chunk; an idempotent select
+    # keeps that cheap by skipping prepare_conditionals when the clip is already active.
+    model = FakeChatterboxModel()
+    engine = _loaded_engine(model)
+    ref = tmp_path / "slot1.wav"
+    ref.write_bytes(b"x")  # existence is all _swap_reference checks before encoding
+    await engine.select_voice(ref)
+    assert model.prepare_calls == [(str(ref), 0.0)]  # encoded once
+    await engine.select_voice(ref)  # same clip -> no-op
+    assert model.prepare_calls == [(str(ref), 0.0)]
+    ref2 = tmp_path / "slot2.wav"
+    ref2.write_bytes(b"y")
+    await engine.select_voice(ref2)  # different clip -> re-encode
+    assert len(model.prepare_calls) == 2
+
+
 def test_boot_reference_path_picks_lowest_filled_slot(tmp_path: Path) -> None:
     engine = _loaded_engine()
     object.__setattr__(engine.config, "reference_path", str(tmp_path / "voice.wav"))

@@ -115,3 +115,34 @@ def test_seed_includes_merged_manual_corrections() -> None:
     assert entries["Opex"].replacement_text == "op eks"
     assert entries["OpenAI"].replacement_text == "open ay eye"  # fixes the prod "opemai" typo
     assert entries["retry"].replacement_text == "ree try"
+
+
+def _has_spaced_letter_run(text: str) -> bool:
+    """True if the text has two or more consecutive single-letter tokens (e.g. 'B S D').
+    A lone single letter (the pronoun 'I' in 'as far as I know') is not a run."""
+
+    run = 0
+    for token in text.split(" "):
+        if len(token) == 1 and token.isalpha():
+            run += 1
+            if run >= 2:
+                return True
+        else:
+            run = 0
+    return False
+
+
+def test_no_spaced_single_letter_runs() -> None:
+    # 0.40.0: every spelled-out abbreviation uses run-together phonetic letter-words
+    # ("bee ess dee"), never spaced single letters ("B S D"), for Chatterbox.
+    offenders = [
+        e.input_text
+        for e in seed_corrections.load_seed(seed_corrections.seed_path())
+        if _has_spaced_letter_run(e.replacement_text)
+    ]
+    assert offenders == [], f"de-space these abbreviations: {offenders}"
+
+
+def test_ebitda_reads_as_a_word() -> None:
+    entries = _by_input(seed_corrections.load_seed(seed_corrections.seed_path()))
+    assert entries["EBITDA"].replacement_text == "ee bit dah"

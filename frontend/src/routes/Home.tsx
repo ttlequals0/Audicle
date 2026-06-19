@@ -136,6 +136,26 @@ export default function Home() {
     },
   });
 
+  // Cancel a queued or processing job from the queue. A processing job stops at the
+  // worker's next checkpoint; a queued job is never started.
+  const [cancelMsg, setCancelMsg] = useState<string | null>(null);
+  const cancelM = useMutation({
+    mutationFn: (jobId: string) => api(`/api/v1/jobs/${jobId}/cancel`, { method: "POST" }),
+    onSuccess: () => {
+      setCancelMsg(null);
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+    },
+    onError: (e) => {
+      const status = e instanceof ApiError ? e.status : undefined;
+      setCancelMsg(
+        status === 409
+          ? "can't cancel: the job already finished"
+          : `cancel failed${status ? ` (HTTP ${status})` : ""}`
+      );
+      setTimeout(() => setCancelMsg(null), 5000);
+    },
+  });
+
   const clearFile = () => {
     setFile(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -342,6 +362,7 @@ export default function Home() {
       {active.length > 0 && (
         <section className="mt-8">
           <div className="mono-xs text-accent mb-3">// QUEUE ({active.length})</div>
+          {cancelMsg && <p className="mono-xs text-danger mb-2">{cancelMsg}</p>}
           <ul className="space-y-2">
             {active.map((j, i) => (
               <li
@@ -356,7 +377,17 @@ export default function Home() {
                     {progressSuffix(j)}
                   </p>
                 </div>
-                <span className={`tag ${statusTag(j.status)}`}>{j.status}</span>
+                <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                  <span className={`tag ${statusTag(j.status)}`}>{j.status}</span>
+                  <button
+                    className="btn-ghost text-xs"
+                    disabled={cancelM.isPending}
+                    onClick={() => cancelM.mutate(j.id)}
+                    aria-label="Cancel this job"
+                  >
+                    &times; cancel
+                  </button>
+                </div>
               </li>
             ))}
           </ul>
@@ -458,6 +489,8 @@ function statusTag(status: JobStatus): string {
       return "tag-done";
     case "failed":
       return "tag-failed";
+    case "cancelled":
+      return "tag-cancelled";
     case "processing":
       return "tag-processing";
     default:
