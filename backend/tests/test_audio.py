@@ -202,3 +202,79 @@ def test_transcode_to_wav_decodes_mp3(tmp_path: Path) -> None:
 def test_transcode_to_wav_rejects_garbage() -> None:
     with pytest.raises(audio.FfmpegError):
         audio.transcode_to_wav(b"this is not audio")
+
+
+def test_append_clip_lengthens_by_gap_plus_clip(tmp_path: Path) -> None:
+    rate = 24000
+    body = tmp_path / "body.wav"
+    clip = tmp_path / "clip.wav"
+    _write_tone_wav(body, duration_secs=1.0, sample_rate=rate)
+    _write_tone_wav(clip, duration_secs=0.5, sample_rate=rate)
+    lead_ms = 700
+    audio.append_clip(body, clip, lead_silence_ms=lead_ms)
+    wave, got_rate = _load_for_test(body)
+    assert got_rate == rate
+    expected = round(1.0 * rate) + round(lead_ms * rate / 1000) + round(0.5 * rate)
+    assert wave.size(1) == expected
+
+
+def test_append_clip_rejects_rate_mismatch(tmp_path: Path) -> None:
+    body = tmp_path / "body.wav"
+    clip = tmp_path / "clip.wav"
+    _write_tone_wav(body, duration_secs=0.5, sample_rate=24000)
+    _write_tone_wav(clip, duration_secs=0.5, sample_rate=16000)
+    with pytest.raises(audio.AudioError):
+        audio.append_clip(body, clip)
+
+
+# --- embed_cover -----------------------------------------------------------
+
+
+def _real_mp3(tmp_path: Path, env: Path) -> Path:
+    src = tmp_path / "in.wav"
+    out = tmp_path / "ep.mp3"
+    _write_tone_wav(src, duration_secs=0.5)
+    audio.normalize_and_encode(src, out, get_settings())
+    return out
+
+
+def _jpeg_bytes(color: tuple[int, int, int] = (200, 60, 60)) -> bytes:
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 64), color).save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+def test_embed_cover_adds_apic_frame(tmp_path: Path, env: Path) -> None:
+    from mutagen.id3 import ID3
+
+    mp3 = _real_mp3(tmp_path, env)
+    cover = _jpeg_bytes()
+    audio.embed_cover(mp3, cover)
+
+    tag = ID3(mp3)
+    # ID3v2.3, not mutagen's v2.4 default -- v2.4 APIC is read inconsistently by players.
+    assert tag.version[:2] == (2, 3)
+    frames = tag.getall("APIC")
+    assert len(frames) == 1
+    assert frames[0].mime == "image/jpeg"
+    assert frames[0].type == 3  # front cover
+    assert frames[0].data == cover
+
+
+def test_embed_cover_is_idempotent_on_reprocess(tmp_path: Path, env: Path) -> None:
+    """A reprocess re-embeds; delall('APIC') keeps a single, current cover instead
+    of stacking frames."""
+
+    from mutagen.id3 import ID3
+
+    mp3 = _real_mp3(tmp_path, env)
+    audio.embed_cover(mp3, _jpeg_bytes((10, 20, 30)))
+    second = _jpeg_bytes((90, 90, 90))
+    audio.embed_cover(mp3, second)
+
+    frames = ID3(mp3).getall("APIC")
+    assert len(frames) == 1
+    assert frames[0].data == second
+    assert not mp3.with_name(f".cover-{mp3.name}").exists()

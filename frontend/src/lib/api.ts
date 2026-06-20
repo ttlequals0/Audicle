@@ -145,7 +145,7 @@ export interface Episode {
   voice_label: string | null;
 }
 
-export type JobStatus = "queued" | "processing" | "done" | "failed";
+export type JobStatus = "queued" | "processing" | "done" | "failed" | "cancelled";
 
 export interface JobRow {
   id: string;

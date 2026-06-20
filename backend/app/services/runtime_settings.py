@@ -57,6 +57,11 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         # FlareSolverr endpoint for the flaresolverr paywall strategy; operator-
         # tunable so they can point at their own solver without an env edit.
         "FLARESOLVERR_URL",
+        # Reader-proxy ("reader" strategy) endpoint + optional API key. Live-tunable so an
+        # operator can paste a Jina key (to clear the keyless rate limit) or point at a
+        # self-hosted reader without an env edit. The key is masked on read (MASKED_KEYS).
+        "READER_PROXY_TEMPLATE",
+        "READER_API_KEY",
         # Render sidecar endpoint (empty disables); tunable live so an operator can point
         # at their own sidecar without an env edit. Which hosts use render is a per-host
         # Site-override rule now, not a setting. RENDER_TIMEOUT_SECONDS stays env-only
@@ -67,6 +72,7 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "TTS_CHUNK_TARGET_WORDS",
         "TTS_CHUNK_MAX_WORDS",
         "TTS_CHUNK_SILENCE_MS",
+        "CHIME_ENABLED",
         # Audio-QA thresholds: tunable live since they need empirical tuning
         # against real failures. The frame/hop sizes stay env-only (structural).
         "AUDIO_ANALYSIS_ENABLED",
@@ -109,7 +115,13 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
 # Secret-bearing keys: their stored value is never returned by GET (masked to a
 # sentinel) so the Settings UI can show "set" without leaking the credential.
 MASKED_KEYS: frozenset[str] = frozenset(
-    {"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "FIRECRAWL_API_KEY"}
+    {
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENROUTER_API_KEY",
+        "FIRECRAWL_API_KEY",
+        "READER_API_KEY",
+    }
 )
 
 # Sentinel returned by GET for a masked key that has a stored override, and

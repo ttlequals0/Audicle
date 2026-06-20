@@ -28,7 +28,7 @@ from app.services.atomic_write import write_bytes_atomic
 router = APIRouter(tags=["jobs"])
 
 
-async def _read_upload_capped(upload: UploadFile, cap: int) -> bytes:
+async def read_upload_capped(upload: UploadFile, cap: int) -> bytes:
     """Stream the upload into memory, aborting with 400 once it crosses ``cap``
     so a hostile payload can't fully buffer first."""
 
@@ -70,7 +70,7 @@ async def upload(
 
     # UPLOAD_MAX_MB is operator-tunable (megabytes); resolve the runtime overlay.
     cap = runtime_settings.overlay(settings).UPLOAD_MAX_MB * 1024 * 1024
-    data = await _read_upload_capped(file, cap)
+    data = await read_upload_capped(file, cap)
     if not data:
         raise HTTPException(status_code=400, detail="uploaded file is empty")
 

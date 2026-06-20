@@ -147,9 +147,9 @@ def sweep_orphan_media(settings: Settings) -> int:
         if stem in live_ids:
             continue
         # Skip the operator's reference voice clip, the bundled default podcast
-        # artwork (seeded at startup, served as /media/default.jpg), and other
-        # non-episode artifacts.
-        if child.name in ("voice.wav", "source.png", "default.jpg"):
+        # artwork (seeded at startup, served as /media/default.jpg), the optional
+        # end-of-episode chime, and other non-episode artifacts.
+        if child.name in ("voice.wav", "source.png", "default.jpg", "chime.wav"):
             continue
         if _remove_path(child, root_guard=out_root):
             removed += 1

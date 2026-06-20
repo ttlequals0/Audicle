@@ -1,6 +1,14 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError, readCsrf, LlmModelsResponse, SettingsPayload, VoiceSlot } from "../lib/api";
+import {
+  api,
+  ApiError,
+  postForm,
+  readCsrf,
+  LlmModelsResponse,
+  SettingsPayload,
+  VoiceSlot,
+} from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useHealthLive } from "../lib/useHealthLive";
 import CollapsibleSection from "../components/CollapsibleSection";
@@ -37,7 +45,15 @@ const GROUPS: Record<string, string[]> = {
     "FEED_EXPLICIT",
     "FEED_ARTWORK_URL",
   ],
-  Connections: ["FIRECRAWL_URL", "FIRECRAWL_API_KEY", "TTS_URL", "FLARESOLVERR_URL", "RENDER_URL"],
+  Connections: [
+    "FIRECRAWL_URL",
+    "FIRECRAWL_API_KEY",
+    "TTS_URL",
+    "FLARESOLVERR_URL",
+    "RENDER_URL",
+    "READER_PROXY_TEMPLATE",
+    "READER_API_KEY",
+  ],
   Extraction: [
     "EXTRACTION_ENGINE",
     "EXTRACTION_DIRECT_TIMEOUT_SECONDS",
@@ -45,7 +61,7 @@ const GROUPS: Record<string, string[]> = {
     "ARCHIVE_FALLBACK_ENABLED",
   ],
   Webhooks: ["WEBHOOK_URL"],
-  TTS: ["TTS_CHUNK_TARGET_WORDS", "TTS_CHUNK_MAX_WORDS", "TTS_CHUNK_SILENCE_MS"],
+  TTS: ["TTS_CHUNK_TARGET_WORDS", "TTS_CHUNK_MAX_WORDS", "TTS_CHUNK_SILENCE_MS", "CHIME_ENABLED"],
   Verification: [
     "WHISPER_VERIFY_ENABLED",
     "WHISPER_DIVERGENCE_THRESHOLD",
@@ -65,6 +81,7 @@ const MASKED_KEYS = new Set([
   "ANTHROPIC_API_KEY",
   "OPENROUTER_API_KEY",
   "FIRECRAWL_API_KEY",
+  "READER_API_KEY",
 ]);
 const PROVIDER_OPTIONS = ["openai-compatible", "anthropic", "openrouter", "ollama"];
 // Keep in sync with the EXTRACTION_ENGINE Literal in backend/app/config.py. The
@@ -268,7 +285,8 @@ export default function SettingsRoute() {
             )}
             {group === "Connections" && (
               <p className="mono-xs text-mute mb-3">
-                // firecrawl api key optional -- blank for self-hosted
+                // firecrawl key optional (blank for self-hosted). reader_api_key = jina key,
+                free at jina.ai/reader -- the keyless endpoint is rate limited
               </p>
             )}
             {group === "Webhooks" && (
@@ -383,6 +401,10 @@ export default function SettingsRoute() {
       )}
       <CollapsibleSection title="voices">
         <VoicesWidget />
+      </CollapsibleSection>
+
+      <CollapsibleSection title="end chime">
+        <ChimeWidget />
       </CollapsibleSection>
 
       {authStatus && (
@@ -1384,6 +1406,87 @@ function VoicesWidget() {
           onClear={s.filled && filledCount > 1 ? () => clearSlot(s.slot) : undefined}
         />
       ))}
+    </div>
+  );
+}
+
+// End-of-episode chime: a single uploaded clip appended to every episode when enabled
+// (toggle lives in TTS settings). Mirrors the voices upload pattern with one slot.
+function ChimeWidget() {
+  const qc = useQueryClient();
+  const chimeQ = useQuery({
+    queryKey: ["chime"],
+    queryFn: () => api<{ present: boolean; duration_secs: number | null }>("/api/v1/chime"),
+    staleTime: 60_000,
+  });
+  const [msg, setMsg] = useState<string | null>(null);
+  const [bust, setBust] = useState(0);
+
+  const invalidate = () => {
+    setBust((b) => b + 1);
+    qc.invalidateQueries({ queryKey: ["chime"] });
+  };
+
+  const upload = async (f: File) => {
+    setMsg("uploading...");
+    const fd = new FormData();
+    fd.append("file", f);
+    try {
+      await postForm("/api/v1/chime", fd);
+      setMsg("chime saved");
+      invalidate();
+    } catch (e) {
+      const status = e instanceof ApiError ? e.status : 0;
+      setMsg(`upload failed${status ? ` (${status})` : ""}`);
+    }
+  };
+
+  const clear = async () => {
+    if (!confirm("Remove the end-of-episode chime?")) return;
+    try {
+      await api("/api/v1/chime", { method: "DELETE" });
+      setMsg("chime removed");
+      invalidate();
+    } catch (e) {
+      const status = e instanceof ApiError ? e.status : 0;
+      setMsg(`remove failed${status ? ` (${status})` : ""}`);
+    }
+  };
+
+  const data = chimeQ.data;
+  return (
+    <div className="space-y-3">
+      <p className="mono-xs text-mute">
+        // plays at the end of every episode. enable with CHIME_ENABLED in TTS settings.
+        wav/mp3/m4a/flac/ogg, trimmed to 15s
+      </p>
+      {msg && <p className="mono-xs text-accent">{msg}</p>}
+      {data?.present && (
+        <audio src={`/api/v1/chime/preview?v=${bust}`} controls className="w-full" />
+      )}
+      <div className="flex items-center gap-3">
+        <label className="btn-ghost cursor-pointer">
+          {data?.present ? "Replace clip" : "Upload clip"}
+          <input
+            type="file"
+            accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg"
+            className="sr-only"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) upload(f);
+              e.target.value = "";
+            }}
+          />
+        </label>
+        {data?.present && (
+          <>
+            <span className="mono-xs text-mute">chime: {data.duration_secs}s</span>
+            <button className="btn-ghost" onClick={clear}>
+              Clear
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 }

@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends
 
 from app.api.deps import require_admin
 from app.api.v1 import auth as auth_routes
+from app.api.v1 import chime as chime_routes
 from app.api.v1 import corrections as corrections_routes
 from app.api.v1 import episodes as episodes_routes
 from app.api.v1 import feed as feed_routes
@@ -52,4 +53,5 @@ admin.include_router(jobs_routes.router)
 admin.include_router(reference_routes.router)
 admin.include_router(llm_routes.router)
 admin.include_router(webhooks_routes.router)
+admin.include_router(chime_routes.router)
 router.include_router(admin)

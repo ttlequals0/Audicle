@@ -23,7 +23,10 @@ Per-chunk WAVs and the concatenated WAV are removed by the caller in a
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import os
+import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -32,6 +35,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 import torch
+from mutagen.id3 import APIC, ID3
 from mutagen.mp3 import MP3
 
 from app.config import Settings
@@ -102,6 +106,40 @@ def transcode_to_wav(data: bytes, *, max_seconds: int = 70) -> bytes:
         if completed.returncode != 0 or not dst.is_file():
             raise FfmpegError(completed.returncode, completed.stderr)
         return dst.read_bytes()
+
+
+def wav_duration_secs(path: Path) -> float:
+    """Duration of a WAV in seconds (via soundfile's header, no full decode)."""
+
+    info = sf.info(str(path))
+    return float(info.duration)
+
+
+def embed_cover(mp3_path: Path, cover_jpg_bytes: bytes) -> None:
+    """Embed ``cover_jpg_bytes`` into the MP3 as an ID3v2.3 front-cover (APIC) frame, so
+    players that read only embedded art (Pocket Casts) show per-episode artwork. Writes
+    ID3v2.3 with a latin-1 description -- the most broadly supported tag version, since v2.4
+    APIC is read inconsistently by podcast clients. Replaces any existing APIC so a reprocess
+    doesn't stack covers. Tags a temp copy and atomically replaces the original, so an
+    interrupted tag write can't corrupt the episode."""
+
+    tmp = mp3_path.with_name(f".cover-{mp3_path.name}")
+    try:
+        shutil.copyfile(mp3_path, tmp)
+        tagged = MP3(tmp, ID3=ID3)
+        if tagged.tags is None:
+            tagged.add_tags()
+        tagged.tags.delall("APIC")
+        tagged.tags.add(
+            APIC(encoding=0, mime="image/jpeg", type=3, desc="Cover", data=cover_jpg_bytes)
+        )
+        tagged.save(v2_version=3)
+        os.replace(tmp, mp3_path)
+    finally:
+        # missing_ok only swallows FileNotFoundError; suppress the rest so a cleanup
+        # error can't mask the real failure (the pipeline logs that one).
+        with contextlib.suppress(OSError):
+            tmp.unlink()
 
 
 # --- Stage 1: silence trim --------------------------------------------------
@@ -194,6 +232,29 @@ def concat_with_padding(
     combined = torch.cat(pieces, dim=1)
     _save_wav(output_path, combined, sample_rate)
     return output_path, sample_rate
+
+
+def append_clip(
+    combined_path: Path,
+    clip_path: Path,
+    *,
+    lead_silence_ms: int = 700,
+) -> None:
+    """Append ``clip_path`` (an end-of-episode chime) to the combined episode WAV,
+    in place, after a short lead silence. Both WAVs are written by our own pipeline at
+    the same rate/channels (``transcode_to_wav`` produces 24 kHz mono), so they
+    concatenate directly; a mismatch raises rather than producing garbage. The append
+    happens before normalization, so the chime is loudness-matched to the episode."""
+
+    body, body_rate = _load_wav(combined_path)
+    clip, clip_rate = _load_wav(clip_path)
+    if clip_rate != body_rate:
+        raise AudioError(f"chime sample rate {clip_rate} != episode {body_rate}")
+    if clip.size(0) != body.size(0):
+        raise AudioError(f"chime has {clip.size(0)} channels but episode has {body.size(0)}")
+    pad_n = round(lead_silence_ms * body_rate / 1000)
+    gap = torch.zeros((body.size(0), pad_n), dtype=body.dtype)
+    _save_wav(combined_path, torch.cat([body, gap, clip], dim=1), body_rate)
 
 
 def _load_wav(path: Path) -> tuple[torch.Tensor, int]:

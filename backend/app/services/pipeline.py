@@ -96,6 +96,33 @@ def effective_job_timeout(settings: Settings, chunk_count: int) -> float:
     )
 
 
+class JobCancelledError(Exception):
+    """Raised mid-run when the operator flips a job's status to 'cancelled'. The worker
+    catches it and leaves the row cancelled instead of finalizing a failure."""
+
+
+def _load_job(job_id: str, settings: Settings) -> jobs.Job | None:
+    """Read one job row on its own short-lived connection."""
+
+    conn = database.connect(database.db_path(settings.DATA_DIR))
+    try:
+        return jobs.get_job(conn, job_id)
+    finally:
+        conn.close()
+
+
+def _raise_if_cancelled(job_id: str, settings: Settings) -> None:
+    """Raise JobCancelledError if the operator cancelled this job. Best-effort: any read
+    error is swallowed so a transient DB hiccup never aborts a running job."""
+
+    try:
+        job = _load_job(job_id, settings)
+    except Exception:
+        return
+    if job is not None and job.status == "cancelled":
+        raise JobCancelledError
+
+
 async def process_job(job: jobs.Job, settings: Settings) -> None:
     """Run the configured pipeline stages against ``job``.
 
@@ -138,6 +165,11 @@ async def process_job(job: jobs.Job, settings: Settings) -> None:
 
             async with asyncio.timeout(base) as cm:
                 await _run_stages(job, settings, on_chunk_count=_rescale)
+        except JobCancelledError:
+            # Operator cancelled mid-run; jobs.mark_cancelled already set the status.
+            # Don't finalize a failure and don't fire a terminal webhook -- just stop.
+            logger.info("Pipeline cancelled", extra={"event": "pipeline_cancelled"})
+            return
         except TimeoutError:
             terminal_event = "episode.failed"
             eff = timeout_state["effective"]
@@ -315,6 +347,12 @@ async def _run_stages(
         job.id,
         settings,
     )
+    # Embed the episode cover into the MP3 so players that read only embedded art
+    # (Pocket Casts) show per-episode artwork -- they ignore the feed's itunes:image.
+    # Only for episodes with their OWN art; a None result means we fell back to feed art,
+    # which those players already display correctly, so embedding would just bloat the file.
+    if artwork_result is not None:
+        _embed_episode_cover(audio_result.mp3_path, artwork_result.embed_jpg_bytes)
     vtt = await _run_stage(
         "transcript",
         lambda: _stage_transcript(chunks, chunk_results, settings),
@@ -349,11 +387,16 @@ async def _run_stage(
     emitting stage_start / stage_end structured logs."""
 
     _set_stage(job_id, name, settings)
+    # Cancel checkpoint at every stage boundary: an operator cancel between stages aborts
+    # here before the stage runs, without logging it as a stage failure.
+    _raise_if_cancelled(job_id, settings)
     with _stage_context(name):
         started = time.perf_counter()
         logger.info("Stage start", extra={"event": "stage_start"})
         try:
             result = await body()
+        except JobCancelledError:
+            raise  # an operator cancel mid-stage is not a stage failure
         except BaseException:
             # BaseException covers asyncio.CancelledError (timeout) so the
             # stage_failed log fires for cancelled stages too.
@@ -979,28 +1022,32 @@ async def _stage_tts(
     transient failures. Returns the list of GenerateResult so the audio
     stage can read the per-chunk WAVs."""
 
-    # Select this job's reference voice once, before the first chunk, so every chunk
-    # conditions on the same voice. A job with no recorded slot (a pre-slots row or a
-    # reprocess/requeue carrying None), or one whose recorded slot was deleted after
-    # submit, falls back to the default (lowest filled) slot so it never inherits a
-    # slot left selected by an earlier job or an audition. Only when no slot exists at
-    # all is selection skipped -- the wrapper then 503s and the job fails loudly
-    # rather than silently using a stale voice.
-    selected = False
+    # Select this job's reference voice before the first chunk so it conditions on the
+    # right voice. A job with no recorded slot (a pre-slots row or a reprocess/requeue
+    # carrying None), or one whose recorded slot was deleted after submit, falls back to
+    # the default (lowest filled) slot so it never inherits a slot left selected by an
+    # earlier job or an audition. Only when no slot exists at all is selection skipped --
+    # the wrapper then 503s and the job fails loudly rather than using a stale voice.
+    # ``target_slot`` is the slot that selection actually settled on; it is re-asserted
+    # before every later chunk (see the loop) so a concurrent audition's /reload can't
+    # leave the rest of the episode in a different voice.
+    target_slot: int | None = None
     if job.voice_id:
         try:
-            await tts.select_voice(settings, int(job.voice_id))
-            selected = True
+            slot = int(job.voice_id)
+            await tts.select_voice(settings, slot)
+            target_slot = slot
         except (ValueError, tts.TTSError):
             logger.warning(
                 "Voice select failed; falling back to the default slot",
                 extra={"event": "tts_select_voice_failed", "voice_id": job.voice_id},
             )
-    if not selected:
+    if target_slot is None:
         default = voices.default_slot()
         if default is not None:
             try:
                 await tts.select_voice(settings, default)
+                target_slot = default
             except (ValueError, tts.TTSError):
                 logger.warning(
                     "Default voice select failed; using the wrapper's current voice",
@@ -1010,6 +1057,19 @@ async def _stage_tts(
     results: list[tts.GenerateResult] = []
     total = len(chunks)
     for index, text in enumerate(chunks):
+        _raise_if_cancelled(job.id, settings)
+        if index > 0 and target_slot is not None:
+            # Re-assert the voice before each later chunk so a concurrent slot audition's
+            # /reload can't leave the rest of the episode in a different voice (a single
+            # chunk can still race between this select and its generate). The wrapper
+            # skips the re-encode when the slot is already active, so this is cheap.
+            try:
+                await tts.select_voice(settings, target_slot)
+            except (ValueError, tts.TTSError):
+                logger.warning(
+                    "Voice re-select failed; continuing with the wrapper's current voice",
+                    extra={"event": "tts_reselect_failed", "slot": target_slot},
+                )
         result = await _generate_chunk_quality_checked(job, text, index, settings)
         results.append(result)
         _set_progress(job.id, index + 1, total, settings)
@@ -1051,6 +1111,20 @@ async def _stage_audio(
 
     try:
         audio.concat_with_padding(chunk_paths, combined_path, settings)
+        # Optional end-of-episode chime: appended before normalization so it is
+        # loudness-matched to the episode. Kept off unless enabled AND a clip exists.
+        # A chime is decorative -- a bad/mismatched clip must not fail the episode, so a
+        # failure here logs and ships the episode without the chime.
+        chime_path = out_root / "chime.wav"
+        if settings.CHIME_ENABLED and chime_path.is_file():
+            try:
+                audio.append_clip(combined_path, chime_path)
+            except audio.AudioError:
+                logger.warning(
+                    "Chime append failed; shipping episode without it",
+                    extra={"event": "chime_append_failed"},
+                    exc_info=True,
+                )
         result = audio.normalize_and_encode(combined_path, mp3_path, settings)
         logger.info(
             "Audio pipeline complete",
@@ -1064,6 +1138,20 @@ async def _stage_audio(
     finally:
         # Per-chunk WAVs + concatenated WAV are not persistent artifacts.
         audio.remove_quietly(combined_path, *chunk_paths)
+
+
+def _embed_episode_cover(mp3_path: Path, cover_jpg_bytes: bytes) -> None:
+    """Best-effort: embed the episode cover into the MP3. A tag-write failure leaves the
+    (playable) MP3 untouched and logs -- the episode still ships, just without embedded art."""
+
+    try:
+        audio.embed_cover(mp3_path, cover_jpg_bytes)
+    except Exception:
+        logger.warning(
+            "Episode cover embed failed; MP3 ships without embedded art",
+            extra={"event": "cover_embed_failed"},
+            exc_info=True,
+        )
 
 
 async def _stage_artwork(
@@ -1495,9 +1583,5 @@ def _persist_failure(job_id: str, *, stage: str, error: str, settings: Settings)
 
 
 def _last_stage(job_id: str, settings: Settings) -> str | None:
-    conn = database.connect(database.db_path(settings.DATA_DIR))
-    try:
-        job = jobs.get_job(conn, job_id)
-    finally:
-        conn.close()
+    job = _load_job(job_id, settings)
     return job.stage if job else None

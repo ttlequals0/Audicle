@@ -122,6 +122,15 @@ class Settings(BaseSettings):
     # comes back below that source's bar, retry via a reader-proxy rewrite (e.g.
     # Medium -> Freedium). False disables fallbacks (direct scrapes only).
     EXTRACTION_FALLBACKS_ENABLED: bool = True
+    # Reader-proxy ("reader" strategy) endpoint. Jina Reader returns clean markdown and
+    # bypasses DataDome/PerimeterX bot walls (e.g. wsj.com). Must contain {url} and resolve
+    # to a public address (the fetch is SSRF-guarded, like the direct engine).
+    READER_PROXY_TEMPLATE: str = "https://r.jina.ai/{url}"
+    # Optional Jina API key (sent as a Bearer token), free at https://jina.ai/reader. The
+    # keyless public endpoint is rate limited; a key raises the limit substantially -- the
+    # simplest fix if the reader strategy starts returning empty/truncated bodies. Settable
+    # live from the Settings UI (Connections) or PUT /api/v1/settings. Empty sends no auth.
+    READER_API_KEY: str = ""
     # FlareSolverr endpoint for the "flaresolverr" bypass strategy (a Cloudflare/
     # JS-challenge solver). Include the /v1 path (the client appends it if missing).
     # Empty disables the strategy (a matched host using it fails cleanly). Operators
@@ -230,6 +239,9 @@ class Settings(BaseSettings):
     TTS_CHUNK_SILENCE_MS: int = 250
 
     # Audio pipeline.
+    # Append an operator-uploaded chime clip to the end of every episode (so back-to-back
+    # episodes are distinguishable). Off unless enabled AND a clip has been uploaded.
+    CHIME_ENABLED: bool = False
     AUDIO_SILENCE_THRESHOLD: float = 0.003
     AUDIO_SILENCE_BUFFER_MS: int = 5
     LOUDNORM_TARGET_LUFS: float = -14
@@ -274,6 +286,10 @@ class Settings(BaseSettings):
 
     # Artwork.
     ARTWORK_SIZE_PX: int = 3000
+    # Size of the cover embedded in each MP3 (ID3 APIC) for players that read only
+    # embedded art (Pocket Casts). Smaller than the 3000px feed master to keep the
+    # per-episode file-size cost down; a 1400px JPEG is ~150-350 kB.
+    EMBED_ARTWORK_SIZE_PX: int = 1400
     ARTWORK_JPG_QUALITY: int = 85
     ARTWORK_FETCH_TIMEOUT_SECONDS: float = 15
     ARTWORK_MIN_SOURCE_PX: int = 600

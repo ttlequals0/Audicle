@@ -7,12 +7,12 @@ Tech Acronym,cron,kron,"Pronounced as word, hard c"
 Tech Acronym,nginx,engine-X,Pronounced 'engine-X'
 Tech Acronym,GIF,jif,Debated but often 'jif'
 Tech Acronym,MIME,mime,Pronounced as word
-Tech Acronym,IEEE,I triple E,Spell out: eye triple ee
+Tech Acronym,IEEE,eye triple ee,Spell out: eye triple ee
 Tech Brand,PostgreSQL,postgres,Pronounced post-gres
 Tech Brand,Nginx,engine-X,Pronounced 'engine-X'
-Tech Brand,FreeBSD,free B S D,Spell out BSD
-Tech Brand,macOS,mac O S,Spell out OS
-Tech Brand,iOS,eye O S,Spell out
+Tech Brand,FreeBSD,free bee ess dee,Spell out BSD
+Tech Brand,macOS,mac oh ess,Spell out OS
+Tech Brand,iOS,eye oh ess,Spell out
 General Acronym,TL;DR,too long didn't read,Expand abbreviation
 General Acronym,ICYMI,in case you missed it,Expand
 General Acronym,AFAIK,as far as I know,Expand
@@ -40,7 +40,7 @@ Mispronounced Word,meme,meem,Not 'meh-may'
 Mispronounced Word,clothes,klohz,Not 'kloh-thes'
 Mispronounced Word,coup,koo,"French loanword, silent P"
 Format,10:00,ten o'clock,Time normalization
-Format,10:00 AM,ten a m,Spell out AM
+Format,10:00 AM,ten ay em,Spell out AM
 Format,10kg,ten kilograms,Unit expansion
 Format,100%,one hundred percent,Symbol expansion
 Format,$100,one hundred dollars,Currency expansion
@@ -62,62 +62,62 @@ Format,i.e.,that is,Latin abbreviation
 Format,approx.,approximately,Abbreviation
 Format,v2.0,version two point oh,Version strings
 Format,v1.2.3,version one point two point three,Semantic version
-Tech Acronym,AVX-512,A V X 512,Advanced Vector Extensions 512-bit
+Tech Acronym,AVX-512,ay vee ex 512,Advanced Vector Extensions 512-bit
 Tech Acronym,ARM,arm,Pronounced as a word
 Tech Acronym,RISC-V,risk five,Pronounced 'risk five'
 Tech Acronym,NOP,nop,No Operation — pronounced as a word
 Tech Acronym,JMP,jump,Assembly jump instruction
-Symbol/Function,__pi___startup_64,P I startup 64,Position-independent thunk for startup 64
-Symbol/Function,cr4_init_shadow,C R 4 init shadow,CR4 control register shadow init
-Symbol/Function,clear_bss,clear B S S,Zeroes .bss section
-Symbol/Function,sme_early_init,S M E early init,Early Secure Memory Encryption setup
-Symbol/Function,kasan_init,K A S A N init,Kernel Address Sanitizer init
-Symbol/Function,idt_setup_early_handler,I D T setup early handler,Installs minimal interrupt handlers
+Symbol/Function,__pi___startup_64,pee eye startup 64,Position-independent thunk for startup 64
+Symbol/Function,cr4_init_shadow,see ar 4 init shadow,CR4 control register shadow init
+Symbol/Function,clear_bss,clear bee ess ess,Zeroes .bss section
+Symbol/Function,sme_early_init,ess em ee early init,Early Secure Memory Encryption setup
+Symbol/Function,kasan_init,kay ay ess ay en init,Kernel Address Sanitizer init
+Symbol/Function,idt_setup_early_handler,eye dee tee setup early handler,Installs minimal interrupt handlers
 Symbol/Function,copy_bootdata,copy boot data,Copies bootloader parameters
-Symbol/Function,load_ucode_bsp,load microcode B S P,Loads CPU microcode on boot strap processor
-Symbol/Function,early_cpu_init,early C P U init,Identifies CPU features via CPUID
-Symbol/Function,boot_cpu_data,boot C P U data,Struct holding CPU feature flags
-Symbol/Function,e820__memory_setup,E 8 2 0 memory setup,Parses firmware memory map
-Symbol/Function,e820__memblock_setup,E 8 2 0 memblock setup,Feeds memory map into memblock allocator
+Symbol/Function,load_ucode_bsp,load microcode bee ess pee,Loads CPU microcode on boot strap processor
+Symbol/Function,early_cpu_init,early see pee you init,Identifies CPU features via CPUID
+Symbol/Function,boot_cpu_data,boot see pee you data,Struct holding CPU feature flags
+Symbol/Function,e820__memory_setup,ee 8 2 0 memory setup,Parses firmware memory map
+Symbol/Function,e820__memblock_setup,ee 8 2 0 memblock setup,Feeds memory map into memblock allocator
 Symbol/Function,memblock,mem block,Primitive early memory allocator
-Symbol/Function,early_ioremap_init,early I O remap init,Sets up early I/O memory mapping
+Symbol/Function,early_ioremap_init,early eye oh remap init,Sets up early I/O memory mapping
 Symbol/Function,earlyprintk,early printk,Early kernel print before console
-Symbol/Function,efi_init,E F I init,Hooks up UEFI runtime services
-Symbol/Function,dmi_setup,D M I setup,Reads firmware DMI tables
-Symbol/Function,reserve_brk,reserve B R K,Reserves kernel scratch memory
+Symbol/Function,efi_init,ee eff eye init,Hooks up UEFI runtime services
+Symbol/Function,dmi_setup,dee em eye setup,Reads firmware DMI tables
+Symbol/Function,reserve_brk,reserve bee ar kay,Reserves kernel scratch memory
 Symbol/Function,init_mem_mapping,init memory mapping,Builds full kernel direct map
 Symbol/Function,arch_reserve_crashkernel,arch reserve crash kernel,Reserves memory for kdump
-Symbol/Function,boot_cpu_init,boot C P U init,Marks boot CPU as online
-Symbol/Function,mm_core_init,M M core init,Brings up full memory subsystem
-Symbol/Function,mm_core_init_early,M M core init early,Preliminary memory management state
-Symbol/Function,setup_per_cpu_areas,setup per C P U areas,Allocates per-CPU variable slots
-Symbol/Function,kmalloc,K malloc,Kernel slab memory allocator
-Symbol/Function,vmalloc,V malloc,Virtual contiguous memory allocator
-Symbol/Function,kmemleak_init,K mem leak init,Kernel memory leak detector init
-Symbol/Function,ftrace_init,F trace init,Function tracer infrastructure init
-Symbol/Function,softirq_init,soft I R Q init,Initializes software interrupts
-Symbol/Function,init_IRQ,init I R Q,IRQ subsystem initialization
-Symbol/Function,rcu_init,R C U init,Read-Copy-Update init
-Symbol/Function,inode,I node,Filesystem inode struct
-Symbol/Function,.bss,B S S section,Uninitialized data segment
+Symbol/Function,boot_cpu_init,boot see pee you init,Marks boot CPU as online
+Symbol/Function,mm_core_init,em em core init,Brings up full memory subsystem
+Symbol/Function,mm_core_init_early,em em core init early,Preliminary memory management state
+Symbol/Function,setup_per_cpu_areas,setup per see pee you areas,Allocates per-CPU variable slots
+Symbol/Function,kmalloc,kay malloc,Kernel slab memory allocator
+Symbol/Function,vmalloc,vee malloc,Virtual contiguous memory allocator
+Symbol/Function,kmemleak_init,kay mem leak init,Kernel memory leak detector init
+Symbol/Function,ftrace_init,eff trace init,Function tracer infrastructure init
+Symbol/Function,softirq_init,soft eye ar cue init,Initializes software interrupts
+Symbol/Function,init_IRQ,init eye ar cue,IRQ subsystem initialization
+Symbol/Function,rcu_init,ar see you init,Read-Copy-Update init
+Symbol/Function,inode,eye node,Filesystem inode struct
+Symbol/Function,.bss,bee ess ess section,Uninitialized data segment
 File Path,arch/x86/boot/compressed/,arch x86 boot compressed,Kernel decompressor source path
-File Path,arch/x86/kernel/head64.c,arch x86 kernel head 64 dot c,Early C kernel entry source file
-File Path,arch/x86/kernel/setup.c,arch x86 kernel setup dot c,Architecture setup source file
-File Path,init/main.c,init main dot c,Main kernel init source file
+File Path,arch/x86/kernel/head64.c,arch x86 kernel head 64 dot see,Early C kernel entry source file
+File Path,arch/x86/kernel/setup.c,arch x86 kernel setup dot see,Architecture setup source file
+File Path,init/main.c,init main dot see,Main kernel init source file
 File Path,/proc/cmdline,proc cmdline,Kernel command-line virtual file
 Tech Brand,Xen,zen,Hypervisor — pronounced 'zen'
-Tech Brand,Hyper-V,Hyper V,Microsoft hypervisor
-Tech Brand,VMware,V M ware,Virtualization platform
-Tech Brand,SELinux,S E Linux,Security-Enhanced Linux
+Tech Brand,Hyper-V,Hyper vee,Microsoft hypervisor
+Tech Brand,VMware,vee em ware,Virtualization platform
+Tech Brand,SELinux,ess ee Linux,Security-Enhanced Linux
 Tech Brand,AppArmor,App Armor,Linux security module
 Format,Jan.,January,Month abbreviation
 Format,Feb.,February,Month abbreviation
 Financial,REIT,reet,Real Estate Investment Trust — rhymes with 'feet'
 Financial,P/E,price to earnings,Price-to-earnings ratio — expand
 Financial,M&A,mergers and acquisitions,Expand: mergers and acquisitions
-Financial,401(k),four oh one K,Retirement account — say letters/numbers
-Financial,10-K,ten K,Annual SEC filing
-Financial,10-Q,ten Q,Quarterly SEC filing
+Financial,401(k),four oh one kay,Retirement account — say letters/numbers
+Financial,10-K,ten kay,Annual SEC filing
+Financial,10-Q,ten cue,Quarterly SEC filing
 Financial,YoY,year over year,Expand: year over year
 Financial,QoQ,quarter over quarter,Expand: quarter over quarter
 Financial,WACC,wak,Weighted Average Cost of Capital — rhymes with 'whack'
@@ -130,9 +130,9 @@ Financial,Fed,fed,Federal Reserve — pronounced as word
 Financial,Schwab,shwob,Charles Schwab — rhymes with 'swab'
 Financial,JPMorgan,jay pee morgan,Spell out JP
 Technology,Wyze,wyz,Smart home brand — rhymes with 'wise'
-Technology,MySQL,my S Q L,Spell out SQL part
-Technology,NoSQL,no S Q L,Spell out SQL
-Technology,SQLite,S Q L light,"Spell out SQL, then 'light'"
+Technology,MySQL,my ess cue ell,Spell out SQL part
+Technology,NoSQL,no ess cue ell,Spell out SQL
+Technology,SQLite,ess cue ell light,"Spell out SQL, then 'light'"
 Technology,PyPI,pie pee eye,Python Package Index — spell out PI
 Technology,NumPy,num pie,Numerical Python — like 'numb pie'
 Technology,SciPy,sy pie,Scientific Python — like 'sigh pie'
@@ -143,11 +143,11 @@ Technology,etcd,et see dee,Distributed key-value store — spell out
 Technology,systemd,system dee,Linux init system — spell out D
 Technology,dbus,dee bus,D-Bus IPC system — say 'dee bus'
 Technology,cgroups,see groups,Control groups — say 'see groups'
-Technology,eBPF,ee B P F,Extended Berkeley Packet Filter — spell out
-Technology,gRPC,gee R P C,Google Remote Procedure Call — spell out
+Technology,eBPF,ee bee pee eff,Extended Berkeley Packet Filter — spell out
+Technology,gRPC,gee ar pee see,Google Remote Procedure Call — spell out
 Technology,WebAssembly,web assembly,Not 'web-AH-sem-blee'
-Technology,WebGL,web G L,Spell out GL
-Technology,WebRTC,web R T C,Spell out RTC: ar tee see
+Technology,WebGL,web jee ell,Spell out GL
+Technology,WebRTC,web ar tee see,Spell out RTC: ar tee see
 Technology,RAG,rag,Retrieval-Augmented Generation — word
 Technology,Rust,rust,Systems language — like the corrosion
 Technology,Golang,go lang,Go programming language
@@ -157,18 +157,18 @@ Technology,Svelte,svelt,Web framework — like 'svelte' adjective
 Technology,Nuxt,nuxt,Vue framework — rhymes with 'next'
 Technology,zsh,zee shell,Z shell — spell out Z then 'shell'
 Technology,Nix,niks,Package manager — rhymes with 'kicks'
-Technology,NixOS,niks O S,Spell out OS
+Technology,NixOS,niks oh ess,Spell out OS
 Technology,winget,win get,Windows package manager — two words
 Technology,FOSS,foss,Free and Open Source Software — word
 Technology,Vim,vim,Text editor — like vigor
-Business,B2B,B to B,Business-to-Business — say 'B to B'
-Business,B2C,B to C,Business-to-Consumer — say 'B to C'
+Business,B2B,bee to bee,Business-to-Business — say 'B to B'
+Business,B2C,bee to see,Business-to-Consumer — say 'B to C'
 Business,OOO,out of office,Out of Office — expand
 Business,WFH,work from home,Expand: work from home
 Business,IRL,in real life,Expand: in real life
-Business,P&L,P and L,Profit and Loss — say 'P and L'
+Business,P&L,pee and ell,Profit and Loss — say 'P and L'
 Business,COGS,kogz,Cost of Goods Sold — word
-Business,G&A,G and A,General and Administrative — say 'G and A'
+Business,G&A,jee and ay,General and Administrative — say 'G and A'
 Business,SWOT,swot,Strengths Weaknesses Opportunities Threats — word
 Business,LMGTFY,let me Google that for you,Expand: let me Google that for you
 Business,SOC 2,sock two,Security compliance framework — like 'sock'
@@ -180,7 +180,7 @@ Internet Slang,LMAO,laughing my ass off,Expand
 Internet Slang,ROFL,rolling on the floor laughing,Expand
 Internet Slang,LMFAO,laughing my fucking ass off,Expand
 Internet Slang,OMG,oh my god,Expand
-Internet Slang,WTF,what the F,Expand — censor as needed
+Internet Slang,WTF,what the eff,Expand — censor as needed
 Internet Slang,BRB,be right back,Expand
 Internet Slang,AFK,away from keyboard,Expand
 Internet Slang,IDK,I don't know,Expand
@@ -195,8 +195,8 @@ Internet Slang,GOAT,greatest of all time,Expand — don't read as 'goat'
 Internet Slang,IYKYK,if you know you know,Expand
 Internet Slang,HMU,hit me up,Expand
 Internet Slang,LMK,let me know,Expand
-Internet Slang,GG EZ,G G easy,Good game easy — spell out GG
-Internet Slang,GGWP,G G well played,Expand: good game well played
+Internet Slang,GG EZ,jee jee easy,Good game easy — spell out GG
+Internet Slang,GGWP,jee jee well played,Expand: good game well played
 Internet Slang,AMA,ask me anything,Expand
 Internet Slang,ELI5,explain like I'm five,Expand: explain like I'm five
 Internet Slang,TIL,today I learned,Expand
@@ -292,7 +292,7 @@ Geographic,Thames,temz,River Thames
 Geographic,Łódź,woodge,Poland
 Geographic,Gdańsk,gdansk,Poland — nasal n
 Technology,cached,kasht,Past tense of cache
-Financial,401k,four oh one K,US retirement account
+Financial,401k,four oh one kay,US retirement account
 Financial,$1.5k,one point five thousand dollars,Dollar amount shorthand
 Financial,1.5k,one point five thousand,Numeric shorthand k = thousand
 Financial,$1k,one thousand dollars,Dollar 'k' shorthand
@@ -302,3 +302,5 @@ Tech Acronym,VMs,vee emz,"Virtual machines, plural; pulled from user dictionary"
 Financial,Opex,op eks,Operating expenses; pulled from user dictionary
 Tech Brand,OpenAI,open ay eye,Pulled from user dictionary (fixes 'opemai' typo)
 Mispronounced Word,retry,ree try,Not 'reh-tree'; pulled from user dictionary
+Financial,EBITDA,ee bit dah,Earnings Before Interest Taxes Depreciation Amortization -- said as a word
+Financial,EBIT,ee bit,Earnings Before Interest and Taxes -- said as a word

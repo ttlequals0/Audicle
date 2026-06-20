@@ -29,6 +29,7 @@ def test_get_defaults_with_available_proxies_and_builtin(client: TestClient) -> 
         "flaresolverr",
         "archive",
         "render",
+        "reader",
     }
     assert any(b["host"] == "medium.com" for b in body["builtin"])
     assert any(b["host"] == "inc.com" and b["proxy"] == "render" for b in body["builtin"])

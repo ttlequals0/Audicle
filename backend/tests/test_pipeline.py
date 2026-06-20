@@ -470,6 +470,72 @@ async def test_pipeline_succeeds_when_artwork_falls_back(
     assert not (env / "media" / f"{job.episode_id}.jpg").exists()
 
 
+async def test_pipeline_embeds_cover_when_artwork_present(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With per-episode art, the pipeline embeds the artwork's downsized copy into
+    the episode MP3 (Pocket Casts reads only embedded art)."""
+
+    database.run_migrations(env)
+
+    async def _fake_extract(_url, _settings, _registry=None):
+        return extraction.ExtractionResult(
+            markdown="raw " * 250,
+            metadata={"title": "Example", "ogImage": "https://example.test/cover.png"},
+        )
+
+    async def _fake_llm(_system, _user, _settings, **_kwargs):
+        return "A cleaned narration sentence. Another sentence here. " * 20
+
+    monkeypatch.setattr(extraction, "extract", _fake_extract)
+    monkeypatch.setattr(llm, "generate", _fake_llm)
+    _stub_tts_and_audio(monkeypatch)
+    _stub_artwork_download(monkeypatch, _png_bytes())
+
+    embedded: dict[str, object] = {}
+
+    def _spy_embed(mp3_path, cover_jpg_bytes):
+        embedded["mp3_path"] = mp3_path
+        embedded["bytes"] = cover_jpg_bytes
+
+    monkeypatch.setattr(pipeline.audio, "embed_cover", _spy_embed)
+
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+
+    assert _job_after(env, job.id).status == "done"
+    assert embedded["mp3_path"] == env / "media" / f"{job.episode_id}.mp3"
+    # The embed copy is a real JPEG at the configured embed size.
+    img = Image.open(io.BytesIO(embedded["bytes"]))
+    img.load()
+    assert img.format == "JPEG"
+    assert img.size == (get_settings().EMBED_ARTWORK_SIZE_PX,) * 2
+
+
+async def test_pipeline_skips_cover_embed_on_fallback_art(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No per-episode art -> nothing to embed; the MP3 ships untagged and players
+    fall back to feed art, so embed_cover must not be called."""
+
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)  # no ogImage -> artwork returns None
+
+    called = False
+
+    def _spy_embed(*_args, **_kwargs):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(pipeline.audio, "embed_cover", _spy_embed)
+
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+
+    assert _job_after(env, job.id).status == "done"
+    assert called is False
+
+
 async def test_pipeline_transcript_stage_builds_vtt_from_chunks(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1473,3 +1539,63 @@ async def test_chunk_asr_verify_skips_short_chunk(
     await pipeline._generate_chunk_quality_checked(job, "three short words", 0, get_settings())
     assert calls["n"] == 1
     assert verifies == [False]
+
+
+async def test_pipeline_cancelled_job_ends_cancelled_not_failed(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+    job = _seed_job(env)
+    # Operator cancels: the row is flipped while the worker holds the job.
+    conn = database.connect(database.db_path(env))
+    try:
+        jobs.mark_cancelled(conn, job.id)
+        conn.commit()
+    finally:
+        conn.close()
+
+    await pipeline.process_job(job, get_settings())
+
+    after = _job_after(env, job.id)
+    assert after.status == "cancelled"  # not 'failed' and not 'done'
+    assert after.error == "cancelled by user"
+
+
+async def test_stage_tts_reselects_job_voice_each_chunk(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every chunk re-asserts the job's voice so a concurrent audition can't switch it
+    mid-episode."""
+
+    database.run_migrations(env)
+    from app.services import tts as tts_mod
+
+    selected: list[int] = []
+
+    async def _fake_select(_settings, slot):
+        selected.append(slot)
+
+    async def _fake_gen(_job, _text, index, _settings):
+        return tts_mod.GenerateResult(
+            wav_path=f"/tmp/c{index}.wav", duration_secs=1.0, sample_rate=24000
+        )
+
+    monkeypatch.setattr(tts_mod, "select_voice", _fake_select)
+    monkeypatch.setattr(pipeline, "_generate_chunk_quality_checked", _fake_gen)
+    monkeypatch.setattr(pipeline, "_set_progress", lambda *a, **k: None)
+
+    job = jobs.Job(
+        id="vjob",
+        url="u",
+        episode_id="e",
+        status="processing",
+        stage="tts",
+        error=None,
+        created_at="t",
+        updated_at="t",
+        voice_id="2",
+    )
+    await pipeline._stage_tts(job, ["one.", "two.", "three."], get_settings())
+    # One initial select + one re-select per later chunk, always the job's slot.
+    assert selected == [2, 2, 2]

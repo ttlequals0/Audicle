@@ -1,9 +1,11 @@
 """``/api/v1/jobs`` -- admin job inspector + requeue.
 
 ``GET /jobs?status=...`` is paginated, with ``X-Total-Count`` for the UI footer;
-``status`` filters by ``queued``/``processing``/``done``/``failed`` (omit for all).
-``POST /jobs/{id}/requeue`` re-enqueues a terminal job (used by Recents to reprocess
-a failed run) -- it works for both URL and uploaded-document jobs.
+``status`` filters by ``queued``/``processing``/``done``/``failed``/``cancelled`` (omit
+for all). ``POST /jobs/{id}/requeue`` re-enqueues a terminal job (used by Recents to
+reprocess a failed run) -- it works for both URL and uploaded-document jobs.
+``POST /jobs/{id}/cancel`` cancels a queued or processing job (the worker aborts a
+running job at its next checkpoint).
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ from app.services import jobs as jobs_service
 
 router = APIRouter(tags=["jobs"])
 
-_StatusFilter = Literal["queued", "processing", "done", "failed"]
+_StatusFilter = Literal["queued", "processing", "done", "failed", "cancelled"]
 
 
 def _source_filename(url: str) -> str | None:
@@ -150,3 +152,25 @@ async def requeue_job(
         status=result.job.status,
         replaced_previous=result.replaced_previous,
     )
+
+
+@router.post(
+    "/jobs/{job_id}/cancel",
+    status_code=204,
+    summary="Cancel a queued or processing job",
+)
+async def cancel_job(
+    job_id: str,
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+) -> Response:
+    job = jobs_service.get_job(conn, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    if job.status not in ("queued", "processing"):
+        # done / failed / cancelled are terminal; nothing to stop.
+        raise HTTPException(
+            status_code=409,
+            detail=f"job is {job.status}; only a queued or processing job can be cancelled",
+        )
+    jobs_service.mark_cancelled(conn, job_id)
+    return Response(status_code=204)

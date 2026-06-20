@@ -17,7 +17,7 @@ from typing import Any
 
 logger = logging.getLogger("app.services.jobs")
 
-JobStatus = str  # queued | processing | done | failed
+JobStatus = str  # queued | processing | done | failed | cancelled
 JobStage = str  # extract | cleanup | normalize | chunk | tts | audio | artwork | transcript | finalize | done
 
 
@@ -262,10 +262,15 @@ def set_progress(conn: sqlite3.Connection, job_id: str, current: int, total: int
     )
 
 
+# The terminal writers guard each other so a cancel that lands in the same instant as
+# a worker finishing can't be clobbered, and vice versa: mark_done/mark_failed refuse to
+# overwrite a 'cancelled' row, and mark_cancelled only fires while the job is still
+# non-terminal. Whoever commits first while the job is non-terminal wins.
 def mark_done(conn: sqlite3.Connection, job_id: str, *, final_stage: JobStage) -> None:
     conn.execute(
         "UPDATE jobs SET status = 'done', stage = ?, error = NULL, "
-        "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
+        "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') "
+        "WHERE id = ? AND status != 'cancelled'",
         (final_stage, job_id),
     )
 
@@ -273,8 +278,23 @@ def mark_done(conn: sqlite3.Connection, job_id: str, *, final_stage: JobStage) -
 def mark_failed(conn: sqlite3.Connection, job_id: str, *, stage: JobStage, error: str) -> None:
     conn.execute(
         "UPDATE jobs SET status = 'failed', stage = ?, error = ?, "
-        "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
+        "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') "
+        "WHERE id = ? AND status != 'cancelled'",
         (stage, error, job_id),
+    )
+
+
+def mark_cancelled(conn: sqlite3.Connection, job_id: str) -> None:
+    """Flag a job as cancelled by the operator. A queued job is never claimed; a
+    processing job is aborted at the next pipeline checkpoint (the worker polls this
+    status). Keeps the current ``stage`` so Recents shows where it stopped. Only fires
+    while the job is non-terminal so a job that just finished isn't reopened."""
+
+    conn.execute(
+        "UPDATE jobs SET status = 'cancelled', error = 'cancelled by user', "
+        "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') "
+        "WHERE id = ? AND status IN ('queued', 'processing')",
+        (job_id,),
     )
 
 

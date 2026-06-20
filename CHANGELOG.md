@@ -6,7 +6,66 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
-## [0.39.5] - 2026-06-18
+## [0.42.1] - 2026-06-20
+
+### Added
+
+- The reader-proxy endpoint (`READER_PROXY_TEMPLATE`) and Jina API key (`READER_API_KEY`)
+  are now settable live from Settings -> Connections and `PUT /api/v1/settings`, no restart.
+  The key is stored masked, like the other API keys. Get a free Jina key at jina.ai/reader
+  if the keyless endpoint starts returning empty or truncated articles.
+
+## [0.42.0] - 2026-06-19
+
+### Fixed
+
+- Articles behind a DataDome bot wall (e.g. wsj.com) no longer fail instantly. Those sites
+  answer a scrape with HTTP 401, which the extractor treated as a dead end and failed the
+  job before any fallback ran -- so none of the per-host overrides ever got a chance. A 401
+  now routes into the fallback cascade like a 403/429 does.
+
+### Added
+
+- A "reader" per-host strategy under Site overrides. It fetches the article through the
+  Jina Reader proxy, which returns clean markdown and bypasses DataDome/PerimeterX bot walls
+  that FlareSolverr can't solve. The endpoint is configurable (`READER_PROXY_TEMPLATE`, must
+  contain `{url}`) with an optional `READER_API_KEY` -- the keyless public endpoint is rate
+  limited, so a free key raises the limit if it starts returning empty bodies.
+
+## [0.41.0] - 2026-06-19
+
+### Added
+
+- Episode cover art is embedded into each MP3 as an ID3v2.3 APIC frame, so players that read
+  only embedded art (Pocket Casts) show the per-episode cover instead of the feed icon. Only
+  episodes with their own artwork get an embedded cover; the rest still fall back to the feed
+  image. The embed is a 1400px copy (EMBED_ARTWORK_SIZE_PX); the 3000px master still drives
+  the feed. The feed's itunes:image tag is unchanged, so nothing regresses for players that
+  already use it.
+
+### Changed
+
+- pypdf upgraded to 6.13.3 (supersedes the dependabot bump).
+
+## [0.40.0] - 2026-06-19
+
+### Added
+
+- Cancel a queued or processing article. Each queue row has a Cancel button: a queued job
+  never starts, and a running one stops at the worker's next checkpoint (within a chunk) and
+  is marked cancelled, not failed.
+- An optional end-of-episode chime. Upload a short clip under Settings -> end chime, enable
+  CHIME_ENABLED, and every episode ends with it -- handy for telling back-to-back episodes
+  apart. The clip is transcoded and loudness-matched to the narration.
+
+### Fixed
+
+- The narrating voice no longer switches partway through an episode. A voice audition during
+  narration could reset the wrapper's voice between chunks, leaving the rest of the episode
+  in a different voice. The pipeline now re-asserts the job's voice before every chunk, and
+  the wrapper skips the re-encode when nothing changed, so it stays cheap.
+- Seed abbreviations are spelled phonetically ("bee ess dee") instead of as spaced letters
+  ("B S D"), which Chatterbox reads more cleanly, and EBITDA/EBIT are said as words.
 
 ### Fixed
 

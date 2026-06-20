@@ -11,6 +11,8 @@ Strategies (``proxy`` key on a rule):
   built-in "Ladder" technique (github.com/everywall/ladder), implemented natively here
   via the scrape ``headers`` rather than a separate proxy service.
 - ``freedium`` -- rewrite the URL to a Freedium reader proxy (best for Medium).
+- ``reader`` -- fetch through the Jina Reader proxy, which returns clean markdown and
+  bypasses DataDome/PerimeterX bot walls (e.g. wsj.com) that FlareSolverr can't solve.
 - ``custom`` -- rewrite to an operator-supplied template (must contain ``{url}``).
 - ``none`` -- no attempt; a sub-threshold teaser fails the job cleanly.
 - ``flaresolverr`` -- fetch the URL through FlareSolverr's real browser (see
@@ -69,7 +71,16 @@ class Attempt:
     is_host_rule: bool = False
 
 # Proxy strategy keys offered to operators.
-PROXY_KEYS = ("googlebot", "freedium", "custom", "none", "flaresolverr", "archive", "render")
+PROXY_KEYS = (
+    "googlebot",
+    "freedium",
+    "custom",
+    "none",
+    "flaresolverr",
+    "archive",
+    "render",
+    "reader",
+)
 
 _FREEDIUM_TEMPLATES = ("https://freedium.cfd/{url}", "https://freedium-mirror.cfd/{url}")
 
@@ -167,6 +178,10 @@ def candidate_attempts(rule: SourceFallback, url: str) -> list[Attempt]:
                 is_host_rule=True,
             )
         ]
+    if rule.proxy == "reader":
+        # The reader engine wraps ``url`` with the configured proxy template itself, so the
+        # attempt carries the original article URL (like flaresolverr/archive).
+        return [Attempt(f"{rule.name}#reader", "reader", url, is_host_rule=True)]
     if rule.proxy == "flaresolverr":
         # The solver fetches the original URL in a real browser, carrying the rule's cookies.
         return [
