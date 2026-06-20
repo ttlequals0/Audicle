@@ -6,6 +6,15 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.42.1] - 2026-06-20
+
+### Added
+
+- The reader-proxy endpoint (`READER_PROXY_TEMPLATE`) and Jina API key (`READER_API_KEY`)
+  are now settable live from Settings -> Connections and `PUT /api/v1/settings`, no restart.
+  The key is stored masked, like the other API keys. Get a free Jina key at jina.ai/reader
+  if the keyless endpoint starts returning empty or truncated articles.
+
 ## [0.42.0] - 2026-06-19
 
 ### Fixed

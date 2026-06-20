@@ -45,7 +45,15 @@ const GROUPS: Record<string, string[]> = {
     "FEED_EXPLICIT",
     "FEED_ARTWORK_URL",
   ],
-  Connections: ["FIRECRAWL_URL", "FIRECRAWL_API_KEY", "TTS_URL", "FLARESOLVERR_URL", "RENDER_URL"],
+  Connections: [
+    "FIRECRAWL_URL",
+    "FIRECRAWL_API_KEY",
+    "TTS_URL",
+    "FLARESOLVERR_URL",
+    "RENDER_URL",
+    "READER_PROXY_TEMPLATE",
+    "READER_API_KEY",
+  ],
   Extraction: [
     "EXTRACTION_ENGINE",
     "EXTRACTION_DIRECT_TIMEOUT_SECONDS",
@@ -73,6 +81,7 @@ const MASKED_KEYS = new Set([
   "ANTHROPIC_API_KEY",
   "OPENROUTER_API_KEY",
   "FIRECRAWL_API_KEY",
+  "READER_API_KEY",
 ]);
 const PROVIDER_OPTIONS = ["openai-compatible", "anthropic", "openrouter", "ollama"];
 // Keep in sync with the EXTRACTION_ENGINE Literal in backend/app/config.py. The
@@ -276,7 +285,8 @@ export default function SettingsRoute() {
             )}
             {group === "Connections" && (
               <p className="mono-xs text-mute mb-3">
-                // firecrawl api key optional -- blank for self-hosted
+                // firecrawl key optional (blank for self-hosted). reader_api_key = jina key,
+                free at jina.ai/reader -- the keyless endpoint is rate limited
               </p>
             )}
             {group === "Webhooks" && (

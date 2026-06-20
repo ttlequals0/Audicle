@@ -161,6 +161,36 @@ def test_firecrawl_api_key_is_allowlisted_and_masked(env: Path) -> None:
     assert stored["FIRECRAWL_API_KEY"] == "fc-secret-123"
 
 
+def test_reader_settings_are_allowlisted_and_key_masked(env: Path) -> None:
+    """READER_PROXY_TEMPLATE and READER_API_KEY are operator-settable (live UI/API). The
+    key is a secret: masked on read and survives a sentinel re-save; the template is plain."""
+
+    from app.services import runtime_settings
+
+    with _client(env) as client:
+        allowlist = client.get("/api/v1/settings").json()["allowlist"]
+        assert "READER_PROXY_TEMPLATE" in allowlist
+        assert "READER_API_KEY" in allowlist
+        client.put(
+            "/api/v1/settings",
+            json={
+                "READER_PROXY_TEMPLATE": "https://reader.example/{url}",
+                "READER_API_KEY": "jina_secret_123",
+            },
+        )
+        values = client.get("/api/v1/settings").json()["values"]
+        assert values["READER_API_KEY"] == runtime_settings.MASK_SENTINEL
+        assert values["READER_PROXY_TEMPLATE"] == "https://reader.example/{url}"
+        client.put("/api/v1/settings", json={"READER_API_KEY": runtime_settings.MASK_SENTINEL})
+
+    conn = database.connect(database.db_path(env))
+    try:
+        stored = runtime_settings.get_all(conn)
+    finally:
+        conn.close()
+    assert stored["READER_API_KEY"] == "jina_secret_123"
+
+
 def test_api_key_cleared_by_empty_value(env: Path) -> None:
     """Sending an empty string for a masked key removes the override."""
 
