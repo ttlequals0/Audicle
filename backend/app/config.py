@@ -122,6 +122,14 @@ class Settings(BaseSettings):
     # comes back below that source's bar, retry via a reader-proxy rewrite (e.g.
     # Medium -> Freedium). False disables fallbacks (direct scrapes only).
     EXTRACTION_FALLBACKS_ENABLED: bool = True
+    # Reader-proxy ("reader" strategy) endpoint. Jina Reader returns clean markdown and
+    # bypasses DataDome/PerimeterX bot walls (e.g. wsj.com). Must contain {url} and resolve
+    # to a public address (the fetch is SSRF-guarded, like the direct engine).
+    READER_PROXY_TEMPLATE: str = "https://r.jina.ai/{url}"
+    # Optional Jina API key (sent as a Bearer token). The keyless public endpoint is rate
+    # limited; a free key raises the limit substantially -- the simplest fix if the reader
+    # strategy starts returning empty bodies. Empty sends no auth header.
+    READER_API_KEY: str = ""
     # FlareSolverr endpoint for the "flaresolverr" bypass strategy (a Cloudflare/
     # JS-challenge solver). Include the /v1 path (the client appends it if missing).
     # Empty disables the strategy (a matched host using it fails cleanly). Operators

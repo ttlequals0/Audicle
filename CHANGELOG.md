@@ -6,6 +6,23 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-06-19
+
+### Fixed
+
+- Articles behind a DataDome bot wall (e.g. wsj.com) no longer fail instantly. Those sites
+  answer a scrape with HTTP 401, which the extractor treated as a dead end and failed the
+  job before any fallback ran -- so none of the per-host overrides ever got a chance. A 401
+  now routes into the fallback cascade like a 403/429 does.
+
+### Added
+
+- A "reader" per-host strategy under Site overrides. It fetches the article through the
+  Jina Reader proxy, which returns clean markdown and bypasses DataDome/PerimeterX bot walls
+  that FlareSolverr can't solve. The endpoint is configurable (`READER_PROXY_TEMPLATE`, must
+  contain `{url}`) with an optional `READER_API_KEY` -- the keyless public endpoint is rate
+  limited, so a free key raises the limit if it starts returning empty bodies.
+
 ## [0.41.0] - 2026-06-19
 
 ### Added

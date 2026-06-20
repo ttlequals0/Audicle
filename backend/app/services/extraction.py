@@ -25,7 +25,16 @@ from tenacity import (
 )
 
 from app.config import Settings
-from app.services import arc_extractor, archive, direct_fetch, flaresolverr, jsonld, render, ssrf
+from app.services import (
+    arc_extractor,
+    archive,
+    direct_fetch,
+    flaresolverr,
+    jsonld,
+    reader,
+    render,
+    ssrf,
+)
 
 # Re-exported so existing ``extraction.ExtractionResult`` / ``extraction.ExtractionTooShortError``
 # references (pipeline, tests) keep working now that the types live in extraction_types, which
@@ -236,6 +245,28 @@ async def extract(
                 alt = await archive.fetch(
                     attempt.url, settings, include_archive_today=attempt.is_host_rule
                 )
+            elif attempt.engine == "reader":
+                logger.info(
+                    "Routing below-floor scrape through the reader proxy",
+                    extra={
+                        "event": "extraction_reader_route",
+                        "host": host,
+                        "rule": rule.name if rule is not None else None,
+                        "primary_chars": len(result.markdown),
+                    },
+                )
+                try:
+                    alt = await reader.fetch(attempt.url, settings)
+                except ExtractionError as exc:
+                    logger.warning(
+                        "Reader proxy attempt failed",
+                        extra={
+                            "event": "extraction_reader_failed",
+                            "fallback": attempt.label,
+                            "error": str(exc),
+                        },
+                    )
+                    continue
             else:  # firecrawl re-scrape (googlebot/freedium/custom)
                 # These bypass attempts go through Firecrawl. On a direct-engine
                 # deploy with no real Firecrawl configured, skip them cleanly rather

@@ -76,6 +76,15 @@ def test_candidate_attempts_archive() -> None:
     ]
 
 
+def test_candidate_attempts_reader_passes_article_url_to_reader_engine() -> None:
+    # The reader engine applies the proxy template itself, so the attempt carries the
+    # original article URL (the engine tag routes it to reader.fetch).
+    rule = sf.SourceFallback("wsj", ("wsj.com",), "reader", "", 3000)
+    assert sf.candidate_attempts(rule, "https://www.wsj.com/a") == [
+        sf.Attempt("wsj#reader", "reader", "https://www.wsj.com/a", is_host_rule=True)
+    ]
+
+
 def test_build_registry_global_default_catch_all_applies_to_any_host() -> None:
     # With a global_floor and a real default_proxy, build_registry appends a
     # lowest-priority catch-all so the default proxy matches any host, at the hard

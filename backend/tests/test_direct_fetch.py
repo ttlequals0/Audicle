@@ -117,12 +117,13 @@ async def test_direct_fetch_4xx_is_permanent(env: Path, monkeypatch: pytest.Monk
         await direct_fetch.fetch("https://blog.test/post", get_settings())
 
 
-@pytest.mark.parametrize("status", [403, 429])
-async def test_direct_fetch_403_429_is_blocked(
+@pytest.mark.parametrize("status", [401, 403, 429])
+async def test_direct_fetch_401_403_429_is_blocked(
     env: Path, monkeypatch: pytest.MonkeyPatch, status: int
 ) -> None:
-    # A block (forbidden / rate-limited) raises ExtractionBlockedError so the
-    # orchestrator routes it into the bypass cascade rather than dead-ending. It still
+    # A block (DataDome 401 / forbidden 403 / rate-limited 429) raises ExtractionBlockedError
+    # so the orchestrator routes it into the bypass cascade rather than dead-ending. 401 is a
+    # bot wall (wsj.com), not a genuine auth requirement, so it gets a bypass too. It still
     # subclasses ExtractionPermanentError (not retried by the direct engine's loop).
     _patch_async_client(
         monkeypatch, httpx.MockTransport(lambda req: httpx.Response(status, text="blocked"))

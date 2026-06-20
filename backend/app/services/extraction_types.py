@@ -55,7 +55,10 @@ class ExtractionPermanentError(ExtractionError):
 # HTTP statuses that mean "the host blocked this request" rather than "no such page":
 # a same-client retry won't help, but a bypass (different IP / Wayback) might. Both
 # extraction engines map these to ExtractionBlockedError; add a code here to extend it.
-BLOCKED_STATUS_CODES = (403, 429)
+# 401 is here because DataDome-style bot walls (e.g. wsj.com) answer a blocked scrape
+# with 401, not 403 -- without it that 401 falls through to a permanent client error and
+# dead-ends the job before the fallback cascade (render/archive/custom) ever runs.
+BLOCKED_STATUS_CODES = (401, 403, 429)
 
 
 class ExtractionBlockedError(ExtractionPermanentError):

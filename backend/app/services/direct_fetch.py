@@ -14,25 +14,10 @@ model as the artwork downloader), and the body is size-capped before parsing.
 from __future__ import annotations
 
 import logging
-from urllib.parse import urlsplit
-
-import httpx
-from tenacity import (
-    AsyncRetrying,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from app.config import Settings
-from app.services import jsonld, ssrf
-from app.services.extraction_types import (
-    BLOCKED_STATUS_CODES,
-    ExtractionBlockedError,
-    ExtractionPermanentError,
-    ExtractionResult,
-    ExtractionTransientError,
-)
+from app.services import jsonld, pinned_fetch
+from app.services.extraction_types import ExtractionResult
 from app.services.html_markdown import MAX_HTML_CHARS, html_to_markdown
 
 logger = logging.getLogger("app.services.direct_fetch")
@@ -52,20 +37,18 @@ async def fetch(url: str, settings: Settings, *, detect_teaser: bool = False) ->
     retried with the same policy as the Firecrawl client; 4xx/SSRF blocks are permanent.
     """
 
-    retrying = AsyncRetrying(
-        stop=stop_after_attempt(settings.FIRECRAWL_RETRY_COUNT),
-        wait=wait_exponential(
-            multiplier=settings.FIRECRAWL_BACKOFF_BASE_SECONDS,
-            min=settings.FIRECRAWL_BACKOFF_BASE_SECONDS,
-        ),
-        retry=retry_if_exception_type(ExtractionTransientError),
-        reraise=True,
+    headers = {
+        "User-Agent": settings.EXTRACTION_DIRECT_USER_AGENT or _BROWSER_UA,
+        "Accept": _ACCEPT,
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    html = await pinned_fetch.get_text_retrying(
+        url,
+        settings,
+        headers=headers,
+        max_bytes=MAX_HTML_CHARS,
+        timeout_seconds=settings.EXTRACTION_DIRECT_TIMEOUT_SECONDS,
     )
-    html = ""
-    async for attempt in retrying:
-        with attempt:
-            html = await _fetch_html(url, settings)
-
     markdown, metadata = html_to_markdown(html)
     return ExtractionResult(
         markdown=markdown,
@@ -73,82 +56,3 @@ async def fetch(url: str, settings: Settings, *, detect_teaser: bool = False) ->
         article_chars=jsonld.article_body_chars(html) if detect_teaser else None,
         raw_html=html if detect_teaser else None,
     )
-
-
-async def _fetch_html(url: str, settings: Settings) -> str:
-    """One pinned GET of ``url`` -> decoded HTML (size-capped). Raises a typed
-    extraction error; the caller's retry loop handles the transient ones."""
-
-    host = urlsplit(url).hostname or ""
-    try:
-        pinned_ip = await ssrf.resolve_public_host(host)
-    except ssrf.BlockedHostError as exc:
-        # A confirmed non-public address is a real SSRF hit (permanent); a resolution
-        # failure (DNS blip, no records) is transient, so it gets retried.
-        if exc.blocked:
-            raise ExtractionPermanentError(
-                "The article URL resolves to a non-public address and was blocked."
-            ) from exc
-        raise ExtractionTransientError(f"Could not resolve the article host: {exc.reason}") from exc
-
-    pinned_url = ssrf.pin_url_to_ip(url, pinned_ip)
-    headers = {
-        "User-Agent": settings.EXTRACTION_DIRECT_USER_AGENT or _BROWSER_UA,
-        "Accept": _ACCEPT,
-        "Accept-Language": "en-US,en;q=0.9",
-        "Host": host,
-    }
-    timeout = httpx.Timeout(settings.EXTRACTION_DIRECT_TIMEOUT_SECONDS, connect=10.0)
-    try:
-        async with (
-            httpx.AsyncClient(
-                timeout=timeout,
-                follow_redirects=True,
-                event_hooks={"request": [ssrf.build_redirect_pin_hook(pinned_ip)]},
-            ) as client,
-            client.stream(
-                "GET", pinned_url, headers=headers, extensions={"sni_hostname": host}
-            ) as response,
-        ):
-            if response.is_server_error:
-                raise ExtractionTransientError(
-                    f"Direct fetch got {response.status_code} from the article host"
-                )
-            if response.status_code in BLOCKED_STATUS_CODES:
-                # A block (forbidden / rate-limited), not a missing page: the same
-                # client won't get further, but a bypass might (FlareSolverr from a
-                # different IP, or a Wayback capture). Signal the orchestrator to run
-                # the fallback cascade rather than failing the job here.
-                raise ExtractionBlockedError(
-                    f"Direct fetch got {response.status_code} from the article host"
-                )
-            if response.is_client_error:
-                raise ExtractionPermanentError(
-                    f"Direct fetch got {response.status_code} from the article host"
-                )
-            advertised = response.headers.get("Content-Length")
-            if advertised is not None:
-                try:
-                    if int(advertised) > MAX_HTML_CHARS:
-                        raise ExtractionPermanentError("The article page exceeds the size cap.")
-                except ValueError:
-                    pass  # malformed header; the streaming cap below still bounds memory
-            buffer = bytearray()
-            async for chunk in response.aiter_bytes():
-                buffer.extend(chunk)
-                if len(buffer) > MAX_HTML_CHARS:
-                    break  # html_to_markdown rejects oversize bodies; stop reading here
-            encoding = response.encoding or "utf-8"
-            return bytes(buffer).decode(encoding, errors="replace")
-    except ssrf.BlockedHostError as exc:
-        # The redirect-pin hook re-resolves each hop and raises here when a redirect
-        # (e.g. an open redirect) points at a non-public address -- httpx never connects
-        # to it. Convert to the same typed errors as the initial resolve so a blocked
-        # redirect fails cleanly instead of escaping as an unhandled RuntimeError.
-        if exc.blocked:
-            raise ExtractionPermanentError(
-                "A redirect from the article URL pointed to a non-public address and was blocked."
-            ) from exc
-        raise ExtractionTransientError(f"Could not resolve a redirect target: {exc.reason}") from exc
-    except (httpx.TimeoutException, httpx.NetworkError) as exc:
-        raise ExtractionTransientError(f"Direct fetch could not reach the article host: {exc}") from exc
