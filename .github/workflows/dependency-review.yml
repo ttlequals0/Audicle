@@ -26,12 +26,18 @@ jobs:
           # Block merges that introduce a high-severity CVE on a runtime dep.
           fail-on-severity: high
           # Accepted advisories (reviewed, not auto-fixable, not reachable here):
-          # both are diffusers `trust_remote_code` bypasses. diffusers is pinned to
-          # ==0.29.0 by chatterbox-tts (the GPU wrapper's TTS model), so it can't be
-          # bumped without forking the model. The vulnerable path (loading an
-          # attacker-supplied custom/remote pipeline) is never exercised: the wrapper
-          # only ever loads the fixed, pinned Chatterbox model via from_pretrained().
-          allow-ghsas: GHSA-98h9-4798-4q5v, GHSA-7wx4-6vff-v64p
+          #   * GHSA-98h9-4798-4q5v, GHSA-7wx4-6vff-v64p -- diffusers `trust_remote_code`
+          #     bypasses. diffusers is pinned ==0.29.0 by chatterbox-tts (the GPU wrapper's
+          #     TTS model), so it can't be bumped without forking the model. The vulnerable
+          #     path (an attacker-supplied custom/remote pipeline) is never exercised: the
+          #     wrapper only loads the fixed Chatterbox model via from_pretrained().
+          #   * GHSA-82w8-qh3p-5jfq, GHSA-wqp7-x3pw-xc5r, GHSA-jp82-jpqv-5vv3,
+          #     GHSA-x746-7m8f-x49c -- Starlette. chatterbox-tts pins gradio==6.8.0, which caps
+          #     starlette<1.0 (the fix is starlette 1.x), so it can't be bumped without forking
+          #     the model. None of the vulnerable paths exist in the wrapper: no form/multipart
+          #     endpoints (JSON + GET only), no StaticFiles, no HTTPEndpoint classes, runs on
+          #     Linux. Dismissed in the Dependabot tab with the same reasoning.
+          allow-ghsas: GHSA-98h9-4798-4q5v, GHSA-7wx4-6vff-v64p, GHSA-82w8-qh3p-5jfq, GHSA-wqp7-x3pw-xc5r, GHSA-jp82-jpqv-5vv3, GHSA-x746-7m8f-x49c
           # The MIT/BSD/Apache/PSF set covers what we already use. LGPL-2.1/3.0 and
           # ZPL-2.1 were added deliberately: the gruut phonemizer (used for IPA
           # derivation) pulls num2words (LGPL) and pytz (MIT AND ZPL-2.1). LGPL/ZPL
@@ -46,5 +52,10 @@ jobs:
           # GPU wrapper container; it is not linked into or distributed with Audicle's
           # own source, so it is accepted for self-hosted use (commercial
           # redistribution of the wrapper image is the operator's responsibility).
-          allow-dependencies-licenses: pkg:pypi/pysle, pkg:pypi/hf-xet, pkg:pypi/praatio, pkg:pypi/regex, pkg:pypi/trafilatura, pkg:pypi/pykakasi
+          # audioop-lts / standard-aifc / standard-chunk / standard-sunau are the PSF
+          # Python 3.13 stdlib backports (audioop-lts carries an extra 0BSD term; the
+          # standard-* trio publishes no SPDX metadata). They are pulled only on the
+          # python>=3.13 marker path, never installed in the 3.11 wrapper image, and are
+          # all permissive PSF/BSD-family code -- exempted by package.
+          allow-dependencies-licenses: pkg:pypi/pysle, pkg:pypi/hf-xet, pkg:pypi/praatio, pkg:pypi/regex, pkg:pypi/trafilatura, pkg:pypi/pykakasi, pkg:pypi/audioop-lts, pkg:pypi/standard-aifc, pkg:pypi/standard-chunk, pkg:pypi/standard-sunau
           comment-summary-in-pr: on-failure

@@ -6,6 +6,25 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.42.2] - 2026-06-24
+
+### Security
+
+- Patched two dependency CVEs: backend `pydantic-settings` 2.14.1 -> 2.14.2 and wrapper
+  `msgpack` 1.1.2 -> 1.2.1. Four wrapper `starlette` advisories are accepted as unreachable --
+  chatterbox-tts caps `starlette` below 1.0 via its `gradio==6.8.0` pin, and the wrapper has
+  no form/multipart, StaticFiles, or HTTPEndpoint paths for any of them to reach.
+
+### Added
+
+- A weekly GitHub Actions workflow watches PyPI for a `chatterbox-tts` release newer than the
+  wrapper's pin and opens an issue, so the TTS engine stays in sync with upstream.
+
+### Changed
+
+- Relaxed the wrapper's `requires-python` to `<3.14` and corrected the rationale in code and
+  the README: its Python is set by the `pytorch/pytorch:2.6.0` CUDA base image, not a numpy cap.
+
 ## [0.42.1] - 2026-06-20
 
 ### Added

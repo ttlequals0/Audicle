@@ -1,12 +1,16 @@
 [project]
 name = "audicle-tts-wrapper"
-version = "0.42.1"
+version = "0.42.2"
 description = "FastAPI TTS wrapper for Audicle (Chatterbox)."
-requires-python = ">=3.11,<3.13"
-# 3.11 lower bound: torch wheels for the TTS engine lag the latest Python.
-# 3.13 upper bound: chatterbox-tts caps numpy<2 below 3.13. (Backend pyproject
-# pins >=3.13; two Python versions in one repo is the pragmatic compromise. Each
-# package has its own venv.)
+requires-python = ">=3.11,<3.14"
+# The wrapper's real Python is set by the pytorch/pytorch:2.6.0 CUDA base image (3.11),
+# not by this range: chatterbox-tts pins torch==2.6.0 (for python<3.14) and the official
+# torch 2.6.0 CUDA image ships Python 3.11. So the bound tracks chatterbox's torch pin,
+# NOT numpy -- chatterbox already supports 3.13 (numpy>=2 there), but a newer Python would
+# need a torch>=2.9 image, which chatterbox won't allow until it moves off the 2.6.0 pin.
+# The <3.14 upper bound mirrors that torch boundary; it lifts when Chatterbox bumps torch
+# (the chatterbox-monitor workflow flags that). Backend is python:3.14-slim; the wrapper
+# trails it deliberately, and each package has its own venv.
 license = { text = "MPL-2.0" }
 authors = [{ name = "ttlequals0" }]
 
