@@ -17,7 +17,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check PyPI for a newer chatterbox-tts release
         env:
           GH_TOKEN: ${{ github.token }}
