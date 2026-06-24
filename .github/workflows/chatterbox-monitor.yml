@@ -1,0 +1,24 @@
+name: Monitor Chatterbox upstream
+
+# Weekly check: opens a GitHub issue when a chatterbox-tts release newer than the version
+# pinned in tts-wrapper/pyproject.toml lands on PyPI, so we know to re-check the CVE pins,
+# the supported Python range, and pull it. Schedules only run from the default branch, so
+# this takes effect once merged to main. Also runnable on demand via the Actions tab.
+on:
+  schedule:
+    - cron: "0 9 * * 1" # Mondays 09:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check PyPI for a newer chatterbox-tts release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/check_chatterbox.py
