@@ -1,6 +1,6 @@
 [project]
 name = "audicle-tts-wrapper"
-version = "0.42.1"
+version = "0.42.2"
 description = "FastAPI TTS wrapper for Audicle (Chatterbox)."
 requires-python = ">=3.11,<3.14"
 # The wrapper's real Python is set by the pytorch/pytorch:2.6.0 CUDA base image (3.11),
