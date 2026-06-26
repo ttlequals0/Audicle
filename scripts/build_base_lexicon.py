@@ -2,23 +2,25 @@
 # ruff: noqa: RUF001  (ARPAbet/IPA symbols are intentional)
 """Build the base-lexicon artifact from all external sources (offline).
 
-Clones the source repos into a cache dir, runs every entry through the shared
-``pronounce_convert.convert_entry`` (the kaldi-helpers-style workflow: load ->
-classify -> derive), dedupes across sources by precedence, and writes a JSONL
+Clones the source repos into a cache dir, derives a plain-text respelling from each
+source's IPA, runs every entry through the shared ``pronounce_convert.convert_entry``
+to classify mode/case, dedupes across sources by precedence, and writes a JSONL
 artifact the backend imports into the read-only ``base`` rows
 (``lexicon.sync_base_artifact``).
 
-This is NOT in the request path. It is heavy (hundreds of thousands of entries,
-network + gruut), so it runs in CI / the operator's environment, not at runtime.
+This is NOT in the request path. It is heavy (hundreds of thousands of entries plus
+source clones), so it runs in CI / the operator's environment, not at runtime. IPA is
+used here only to derive a respelling -- Chatterbox is text-only, so the artifact stores
+plain ``spoken`` text, never IPA.
 
 Usage:
     uv run python scripts/build_base_lexicon.py --out backend/app/data/base_lexicon.jsonl
     uv run python scripts/build_base_lexicon.py --only cmudict,journalism --limit 200   # smoke
 
 Sources and licenses (see the plan's source inventory):
-    cmudict        ISC      ARPAbet  -> IPA + respelling, mode=word
+    cmudict        ISC      ARPAbet  -> respelling, mode=word
     wiktionary     MIT      IPA      -> respelling, mode=word
-    usa_cities     CC0      names    -> gruut IPA + respelling, mode=override
+    usa_cities     CC0      names    -> respelling, mode=override
     world_cities   ODbL     names    (attribution required; opt in with --odbl)
     balacoon       (safe)   abbrev   -> spell/word
     journalism     curated  acronyms -> mode=word
@@ -109,6 +111,61 @@ def _arpabet_to_ipa(arpa: str) -> str:
     return "".join(out)
 
 
+# --- IPA -> respelling (offline build only) ---------------------------------
+# The runtime is text-only (no IPA), but the dictionary sources (CMUdict/Wiktionary/
+# ISLEX) carry only IPA, so the build derives a plain-text respelling from it here and
+# feeds that to pronounce_convert as ordinary ``spoken`` text. The derivation is lossy,
+# so these entries are marked below MIN_CONFIDENCE and the runtime's aggressive base
+# apply skips the weak ones.
+_CONF_SPOKEN_FROM_IPA = 0.55
+
+# Minimal IPA -> pseudo-phonetic respelling map (digraphs first so they win). Lossy on
+# purpose: a readable approximation for the engine. Stress/length marks are dropped.
+_IPA_RESPELL = {
+    "tʃ": "ch", "dʒ": "j", "ʃ": "sh", "ʒ": "zh", "θ": "th", "ð": "th",
+    "ŋ": "ng", "j": "y", "ɹ": "r", "r": "r", "ɫ": "l", "l": "l",
+    "aɪ": "eye", "aʊ": "ow", "ɔɪ": "oy", "eɪ": "ay", "oʊ": "oh", "oː": "oh",
+    "iː": "ee", "i": "ee", "ɪ": "ih", "ɛ": "eh", "æ": "a", "ʌ": "uh",
+    "ə": "uh", "ɚ": "er", "ɝ": "er", "ɑ": "ah", "ɑː": "ah", "ɒ": "o",
+    "ɔ": "aw", "ɔː": "aw", "ʊ": "oo", "uː": "oo", "u": "oo",
+    "b": "b", "d": "d", "f": "f", "ɡ": "g", "g": "g", "h": "h", "k": "k",
+    "m": "m", "n": "n", "p": "p", "s": "s", "t": "t", "v": "v", "w": "w",
+    "z": "z", "ks": "ks",
+}
+_IPA_KEYS = sorted(_IPA_RESPELL, key=len, reverse=True)
+_STRESS_CHARS = "ˈˌ.ːˑ"
+_IPA_HINT_RE = re.compile(r"[^\x00-\x7f]|[ˈˌːˑ]")
+
+
+def _validate_ipa(ipa: str) -> bool:
+    """True if ``ipa`` looks phonemized (a non-ASCII symbol or a stress/length mark)."""
+
+    if not ipa or not ipa.strip():
+        return False
+    return bool(_IPA_HINT_RE.search(ipa))
+
+
+def _ipa_to_respelling(ipa: str) -> str:
+    """Lossy IPA -> pseudo-phonetic respelling. Stress marks dropped."""
+
+    out: list[str] = []
+    for token in ipa.split():
+        cleaned = "".join(ch for ch in token if ch not in _STRESS_CHARS)
+        syll: list[str] = []
+        i = 0
+        while i < len(cleaned):
+            for key in _IPA_KEYS:
+                if cleaned.startswith(key, i):
+                    syll.append(_IPA_RESPELL[key])
+                    i += len(key)
+                    break
+            else:
+                i += 1  # skip an unmapped symbol rather than emit noise
+        if syll:
+            out.append("".join(syll))
+    return "-".join(out)
+
+
 def _find_json(root: Path, *names: str) -> Path | None:
     for name in names:
         hits = list(root.rglob(name))
@@ -167,7 +224,7 @@ def source_usa_cities(cache: Path, limit: int | None) -> Iterator[tuple[str, dic
             if not city or city in seen or not city[0].isupper():
                 continue
             seen.add(city)
-            yield city, {}  # gruut derives IPA + respelling in convert
+            yield city, {}  # name only; spoken falls back to the surface form
 
 
 def source_journalism(_cache: Path, limit: int | None) -> Iterator[tuple[str, dict]]:
@@ -335,7 +392,7 @@ def source_world_cities(cache: Path, limit: int | None) -> Iterator[tuple[str, d
         if not name or name in seen or not name[0].isalpha():
             continue
         seen.add(name)
-        yield name, {}  # name only; no IPA derived (PLS export falls back to the spoken alias)
+        yield name, {}  # name only; spoken falls back to the surface form
 
 
 _SOURCES = {
@@ -361,26 +418,24 @@ def build(out_path: Path, only: list[str], limit: int | None, cache: Path) -> di
         for surface, hint in _SOURCES[name](cache, limit):
             if surface in merged:  # earlier (higher-precedence) source wins
                 continue
-            # derive_ipa=False: skip per-entry gruut so a full build stays fast.
-            # IPA-native sources (CMUdict/Wiktionary/ISLEX) still carry their IPA;
-            # the rest are phonemized by the engine at synth time.
-            converted = pc.convert_entry(
-                surface,
-                spoken=hint.get("spoken"),
-                ipa=hint.get("ipa"),
-                notes=hint.get("notes"),
-                derive_ipa=False,
-            )
+            # IPA-native sources (CMUdict/Wiktionary/ISLEX) carry only IPA, so derive a
+            # plain-text respelling here and mark it low-confidence (lossy); the rest
+            # already supply ``spoken`` (or fall back to the surface form).
+            spoken = hint.get("spoken")
+            ipa = hint.get("ipa")
+            confidence = hint.get("confidence")
+            if not spoken and ipa and _validate_ipa(ipa):
+                spoken = _ipa_to_respelling(ipa) or None
+                if confidence is None:
+                    confidence = _CONF_SPOKEN_FROM_IPA
+            converted = pc.convert_entry(surface, spoken=spoken, notes=hint.get("notes"))
             merged[surface] = {
                 "origin": "base",
                 "input_text": surface,
                 "mode": converted.mode,
                 "spoken": converted.spoken,
-                "ipa": converted.ipa,
                 "case_sensitive": converted.case_sensitive,
-                # A source may pin a confidence (e.g. noisy abbreviation data below
-                # the base-lexicon apply gate); otherwise use the converter's score.
-                "confidence": hint.get("confidence", converted.confidence),
+                "confidence": confidence if confidence is not None else converted.confidence,
                 "source": name,
                 "notes": hint.get("notes"),
             }

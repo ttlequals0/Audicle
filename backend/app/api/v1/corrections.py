@@ -2,7 +2,7 @@
 
 The ``lexicon`` table is the single source of truth. These endpoints read and
 edit the operator's ``user`` rows in the object schema
-``{input: {mode, spoken, ipa?, case_sensitive?}}``; the read-only seed/base rows
+``{input: {mode, spoken, case_sensitive?}}``; the read-only seed/base rows
 are inspectable (``/seed``, ``/lookup``) and exportable (``/export``) but not
 editable here.
 """
@@ -13,7 +13,6 @@ import json
 import sqlite3
 from dataclasses import asdict
 from typing import Annotated, Any
-from xml.sax.saxutils import escape as xml_escape
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -49,22 +48,18 @@ def write_corrections(
             },
         )
     # Normalize each entry through the shared converter so user rows get the
-    # spoken respelling the engine consumes (the ipa column is still stored but
-    # unused now that Chatterbox is the only, text-only, engine).
+    # spoken respelling the (text-only Chatterbox) engine consumes.
     entries: dict[str, dict] = {}
     for key, value in body.items():
         if isinstance(value, str):
-            spoken, ipa, mode, cs = value, None, None, None
+            spoken, mode, cs = value, None, None
         else:
-            spoken, ipa = value.get("spoken"), value.get("ipa")
+            spoken = value.get("spoken")
             mode, cs = value.get("mode"), value.get("case_sensitive")
-        converted = pronounce_convert.convert_entry(
-            key, spoken=spoken, ipa=ipa, case_sensitive=cs
-        )
+        converted = pronounce_convert.convert_entry(key, spoken=spoken, case_sensitive=cs)
         entries[key] = {
             "mode": mode or converted.mode,
             "spoken": converted.spoken,
-            "ipa": converted.ipa,
             "case_sensitive": converted.case_sensitive,
             "confidence": converted.confidence,
             "source": "user",
@@ -94,10 +89,9 @@ def lookup_correction(
     return {"query": q, "entry": asdict(entry) if entry else None}
 
 
-@router.get("/corrections/export", summary="Export corrections as JSON or PLS")
+@router.get("/corrections/export", summary="Export corrections as JSON")
 def export_corrections(
     conn: Annotated[sqlite3.Connection, Depends(get_conn)],
-    format: Annotated[str, Query(pattern="^(json|pls)$")] = "json",
     scope: Annotated[str, Query(pattern="^(user|all)$")] = "user",
 ) -> StreamingResponse:
     def json_stream():
@@ -106,26 +100,8 @@ def export_corrections(
         for e in lexicon.iter_entries(conn, scope):
             prefix = "" if first else ",\n"
             first = False
-            obj = {"mode": e.mode, "spoken": e.spoken, "ipa": e.ipa,
-                   "case_sensitive": e.case_sensitive}
+            obj = {"mode": e.mode, "spoken": e.spoken, "case_sensitive": e.case_sensitive}
             yield f"{prefix}  {json.dumps(e.input_text)}: {json.dumps(obj)}"
         yield "\n}\n"
 
-    def pls_stream():
-        yield (
-            '<?xml version="1.0" encoding="UTF-8"?>\n'
-            '<lexicon version="1.0" xmlns="http://www.w3.org/2005/01/pronunciation-lexicon" '
-            'alphabet="ipa" xml:lang="en">\n'
-        )
-        for e in lexicon.iter_entries(conn, scope):
-            grapheme = xml_escape(e.input_text)
-            if e.ipa:
-                body = f"<phoneme>{xml_escape(e.ipa)}</phoneme>"
-            else:
-                body = f"<alias>{xml_escape(e.spoken)}</alias>"
-            yield f"  <lexeme><grapheme>{grapheme}</grapheme>{body}</lexeme>\n"
-        yield "</lexicon>\n"
-
-    if format == "pls":
-        return StreamingResponse(pls_stream(), media_type="application/pls+xml")
     return StreamingResponse(json_stream(), media_type="application/json")

@@ -425,10 +425,9 @@ def _m012_lexicon_table(conn: sqlite3.Connection) -> None:
 
     All pronunciation data moves into one table: the curated seed CSV as read-only
     ``origin='seed'`` rows, and the legacy flat ``settings.pronunciation_dict`` as
-    editable ``origin='user'`` rows. IPA is NOT derived here (gruut would make every
-    test's migration slow); it is left NULL and populated by the offline base-lexicon
-    build. The legacy settings row is preserved (never lose data). Runs via raw
-    ``conn.execute`` (no commit) inside the migration's atomic transaction.
+    editable ``origin='user'`` rows. The legacy settings row is preserved (never lose
+    data). Runs via raw ``conn.execute`` (no commit) inside the migration's atomic
+    transaction.
     """
 
     import json
@@ -584,6 +583,32 @@ def _m020_reimport_seed_lexicon(conn: sqlite3.Connection) -> None:
     _reimport_seed_lexicon(conn)
 
 
+def _m021_drop_lexicon_ipa_column(conn: sqlite3.Connection) -> None:
+    """0.43.0: drop the unused ``lexicon.ipa`` column. Chatterbox is text-only, so IPA
+    never reached narration -- it only fed the (now-removed) PLS export. Rebuild rather
+    than ``ALTER TABLE ... DROP COLUMN`` so the migration is portable to any SQLite build.
+
+    Every user/seed/base row is copied verbatim; only the always-derived ``ipa`` column
+    is dropped (no data loss). Idempotent: a no-op on a fresh DB whose ``lexicon`` was
+    created by the current ipa-less schema. Runs inside the migration's atomic transaction.
+    """
+
+    from app.services import lexicon
+
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(lexicon)")}
+    if "ipa" not in cols:
+        return
+    conn.execute("ALTER TABLE lexicon RENAME TO lexicon_old")
+    lexicon.create_schema(conn)
+    conn.execute(
+        "INSERT INTO lexicon (origin, input_text, input_fold, mode, spoken, "
+        "case_sensitive, confidence, source, notes, read_only) "
+        "SELECT origin, input_text, input_fold, mode, spoken, case_sensitive, "
+        "confidence, source, notes, read_only FROM lexicon_old"
+    )
+    conn.execute("DROP TABLE lexicon_old")
+
+
 def _m018_voice_wav_to_slot1(conn: sqlite3.Connection) -> None:
     """Migrate the legacy committed ``voice.wav`` into voice slot 1 (0.35.0).
 
@@ -643,6 +668,7 @@ MIGRATIONS: list[tuple[str, Migration]] = [
     ("018_voice_wav_to_slot1", _m018_voice_wav_to_slot1),
     ("019_reimport_seed_lexicon", _m019_reimport_seed_lexicon),
     ("020_reimport_seed_lexicon", _m020_reimport_seed_lexicon),
+    ("021_drop_lexicon_ipa_column", _m021_drop_lexicon_ipa_column),
 ]
 
 

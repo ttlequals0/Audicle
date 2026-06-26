@@ -91,7 +91,6 @@ CREATE TABLE IF NOT EXISTS lexicon (
     input_fold TEXT NOT NULL,
     mode TEXT NOT NULL,
     spoken TEXT NOT NULL,
-    ipa TEXT,
     case_sensitive INTEGER NOT NULL DEFAULT 0,
     confidence REAL NOT NULL DEFAULT 1.0,
     source TEXT,
@@ -109,7 +108,6 @@ class LexEntry:
     input_text: str
     mode: str
     spoken: str
-    ipa: str | None
     case_sensitive: bool
     confidence: float
     source: str | None
@@ -128,7 +126,6 @@ def _row_to_entry(row: sqlite3.Row) -> LexEntry:
         input_text=row["input_text"],
         mode=row["mode"],
         spoken=row["spoken"],
-        ipa=row["ipa"],
         case_sensitive=bool(row["case_sensitive"]),
         confidence=row["confidence"],
         source=row["source"],
@@ -209,7 +206,7 @@ def reference_text(conn: sqlite3.Connection) -> str:
 
 
 def get_user_entries(conn: sqlite3.Connection) -> dict[str, dict]:
-    """User rows as ``{input_text: {mode, spoken, ipa, case_sensitive}}``."""
+    """User rows as ``{input_text: {mode, spoken, case_sensitive}}``."""
 
     out: dict[str, dict] = {}
     for row in conn.execute(
@@ -218,7 +215,6 @@ def get_user_entries(conn: sqlite3.Connection) -> dict[str, dict]:
         out[row["input_text"]] = {
             "mode": row["mode"],
             "spoken": row["spoken"],
-            "ipa": row["ipa"],
             "case_sensitive": bool(row["case_sensitive"]),
         }
     return out
@@ -251,9 +247,9 @@ def insert_entries(
     conn.executemany(
         """
         INSERT OR REPLACE INTO lexicon
-            (origin, input_text, input_fold, mode, spoken, ipa,
+            (origin, input_text, input_fold, mode, spoken,
              case_sensitive, confidence, source, notes, read_only)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             (
@@ -262,7 +258,6 @@ def insert_entries(
                 key.casefold(),
                 entry.get("mode", "override"),
                 entry["spoken"],
-                entry.get("ipa"),
                 1 if entry.get("case_sensitive") else 0,
                 float(entry.get("confidence", 1.0)),
                 entry.get("source"),
