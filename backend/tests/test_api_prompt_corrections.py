@@ -196,12 +196,10 @@ def test_lookup_finds_seed_entry(client: TestClient) -> None:
     assert body["entry"]["origin"] == "seed"
 
 
-def test_export_json_and_pls(client: TestClient) -> None:
+def test_export_json(client: TestClient) -> None:
     with client:
         client.put("/api/v1/corrections", json={"Acme": "ACK-mee"})
-        js = client.get("/api/v1/corrections/export", params={"format": "json", "scope": "user"})
-        pls = client.get("/api/v1/corrections/export", params={"format": "pls", "scope": "user"})
+        js = client.get("/api/v1/corrections/export", params={"scope": "user"})
     assert js.status_code == 200
     assert '"Acme"' in js.text and "ACK-mee" in js.text
-    assert pls.status_code == 200
-    assert "<lexicon" in pls.text and "<grapheme>Acme</grapheme>" in pls.text
+    assert "ipa" not in js.text

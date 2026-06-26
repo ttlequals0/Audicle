@@ -75,7 +75,6 @@ def lexicon_row(input_text: str, spoken: str, notes: str | None, source: str) ->
     return {
         "mode": mode,
         "spoken": spoken,
-        "ipa": None,
         "case_sensitive": pronounce_convert.default_case_sensitive(input_text, mode),
         "confidence": pronounce_convert.CONF_CURATED,
         "source": source,

@@ -1,4 +1,3 @@
-# ruff: noqa: RUF001  (IPA symbols in test fixtures are intentional)
 from __future__ import annotations
 
 from app.services import pronounce_convert as pc
@@ -17,29 +16,15 @@ def test_default_case_sensitive() -> None:
     assert pc.default_case_sensitive("Kubernetes", "override") is False
 
 
-def test_convert_entry_derives_ipa_from_spoken() -> None:
+def test_convert_entry_keeps_spoken_and_classifies() -> None:
     entry = pc.convert_entry("Kubernetes", spoken="koo-BER-neh-tees")
     assert entry.mode == "override"
     assert entry.spoken == "koo-BER-neh-tees"
-    # gruut is installed in the dev env, so IPA is derived.
-    assert entry.ipa and pc.validate_ipa(entry.ipa)
+    assert entry.case_sensitive is False
+    assert entry.confidence == pc.CONF_CURATED
 
 
-def test_convert_entry_derives_spoken_from_ipa() -> None:
-    # IPA-only input must still yield a (lossy) spoken form, at lower confidence.
-    entry = pc.convert_entry("Worcester", ipa="wˈʊstɚ")
-    assert entry.spoken  # derived, non-empty
-    assert entry.confidence <= pc.CONF_SPOKEN_FROM_IPA
-    assert entry.ipa == "wˈʊstɚ"
-
-
-def test_validate_ipa_rejects_ascii() -> None:
-    assert pc.validate_ipa("wˈʊstɚ") is True
-    assert pc.validate_ipa("worcester") is False  # ASCII letters => not phonemized
-    assert pc.validate_ipa("") is False
-
-
-def test_ipa_to_respelling_maps_phonemes() -> None:
-    out = pc.ipa_to_respelling("kˈæt")  # "cat"
-    assert "a" in out  # æ -> "a"
-    assert out  # non-empty
+def test_convert_entry_falls_back_to_input_text() -> None:
+    entry = pc.convert_entry("NASA")
+    assert entry.spoken == "NASA"
+    assert entry.case_sensitive is True  # all-caps stays exact-case

@@ -6,6 +6,28 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-06-26
+
+### Fixed
+
+- The end-of-episode chime now has its own enable toggle in Settings -> end chime. Uploading a
+  clip and turning the chime on used to be two separate steps (the enable flag lived in the TTS
+  settings group), so an uploaded clip could silently never play. The widget now shows the
+  enabled state and warns when a clip is uploaded but the chime is still off.
+
+### Removed
+
+- The pronunciation-correction IPA field, its gruut-derived phonemes, and the W3C PLS export.
+  Chatterbox is text-only and never consumed IPA -- it only fed the PLS export. Plain-text
+  respelling corrections are unchanged and still applied to every episode. Migration 021 drops
+  the now-unused `lexicon.ipa` column (every correction row is preserved). The `gruut` dependency
+  is removed from the backend.
+
+### Changed
+
+- `GET /api/v1/corrections/export` is JSON-only now; the `format` query parameter (which selected
+  JSON or PLS) is gone.
+
 ## [0.42.2] - 2026-06-24
 
 ### Security

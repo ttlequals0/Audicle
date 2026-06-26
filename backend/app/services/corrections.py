@@ -108,10 +108,9 @@ def validate_lexicon(dictionary: Any, *, max_entries: int) -> ValidationResult:
     """Validate the object-schema correction payload.
 
     Each value is either a plain string (shorthand for ``{spoken: value}``) or an
-    object ``{mode?, spoken, ipa?, case_sensitive?}``. ``spoken`` is required and
+    object ``{mode?, spoken, case_sensitive?}``. ``spoken`` is required and
     follows the same length/control-char rules as the flat schema; ``mode`` must
-    be one of spell/word/override; ``ipa`` is an optional string; ``case_sensitive``
-    an optional bool.
+    be one of spell/word/override; ``case_sensitive`` an optional bool.
     """
 
     from app.services import pronounce_convert  # local import avoids a cycle
@@ -138,9 +137,6 @@ def validate_lexicon(dictionary: Any, *, max_entries: int) -> ValidationResult:
             mode = raw_value.get("mode")
             if mode is not None and mode not in pronounce_convert.MODES:
                 failures.append(ValidationFailure(key=str(raw_key), reason=f"invalid mode {mode!r}"))
-            ipa = raw_value.get("ipa")
-            if ipa is not None and not isinstance(ipa, str):
-                failures.append(ValidationFailure(key=str(raw_key), reason="ipa must be a string"))
             cs = raw_value.get("case_sensitive")
             if cs is not None and not isinstance(cs, bool):
                 failures.append(

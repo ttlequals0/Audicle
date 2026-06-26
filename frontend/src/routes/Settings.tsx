@@ -21,6 +21,10 @@ import CollapsibleSection from "../components/CollapsibleSection";
  * read-only block.
  */
 
+// Allowlisted runtime keys rendered as the generic settings form, grouped. Most
+// booleans render here as a Toggle (see the render loop below). The exception is
+// CHIME_ENABLED: it lives in the dedicated ChimeWidget so its toggle sits next to
+// the clip upload/preview and the enabled/disabled status -- keep it OUT of this map.
 const GROUPS: Record<string, string[]> = {
   LLM: [
     "LLM_PROVIDER",
@@ -61,7 +65,7 @@ const GROUPS: Record<string, string[]> = {
     "ARCHIVE_FALLBACK_ENABLED",
   ],
   Webhooks: ["WEBHOOK_URL"],
-  TTS: ["TTS_CHUNK_TARGET_WORDS", "TTS_CHUNK_MAX_WORDS", "TTS_CHUNK_SILENCE_MS", "CHIME_ENABLED"],
+  TTS: ["TTS_CHUNK_TARGET_WORDS", "TTS_CHUNK_MAX_WORDS", "TTS_CHUNK_SILENCE_MS"],
   Verification: [
     "WHISPER_VERIFY_ENABLED",
     "WHISPER_DIVERGENCE_THRESHOLD",
@@ -740,7 +744,6 @@ type Mode = "spell" | "word" | "override";
 interface CorrectionEntry {
   mode: Mode;
   spoken: string;
-  ipa: string | null;
   case_sensitive: boolean;
 }
 
@@ -749,7 +752,6 @@ interface Row {
   k: string;
   v: string; // spoken
   mode: Mode;
-  ipa: string;
   caseSensitive: boolean;
 }
 
@@ -759,7 +761,6 @@ const newRow = (k = "", entry?: Partial<CorrectionEntry>): Row => ({
   k,
   v: entry?.spoken ?? "",
   mode: entry?.mode ?? "override",
-  ipa: entry?.ipa ?? "",
   caseSensitive: entry?.case_sensitive ?? false,
 });
 
@@ -781,7 +782,6 @@ function CorrectionsTable({ initial }: { initial: Record<string, CorrectionEntry
         obj[row.k.trim()] = {
           mode: row.mode,
           spoken: row.v,
-          ipa: row.ipa.trim() || null,
           case_sensitive: row.caseSensitive,
         };
       }
@@ -818,9 +818,6 @@ function CorrectionsTable({ initial }: { initial: Record<string, CorrectionEntry
           <code className="builtin-note-path">GET /api/v1/corrections/seed</code>.
         </p>
       </div>
-      <p className="text-mute text-xs">
-        ipa is optional and only feeds the PLS export, not narration.
-      </p>
       <LexiconLookup />
       <div className="space-y-2">
         {rows.map((row) => {
@@ -849,12 +846,6 @@ function CorrectionsTable({ initial }: { initial: Record<string, CorrectionEntry
                 <option value="word">word</option>
                 <option value="spell">spell</option>
               </select>
-              <input
-                className="field w-28"
-                placeholder="ipa (opt)"
-                value={row.ipa}
-                onChange={(e) => patch({ ipa: e.target.value })}
-              />
               <label className="mono-xs text-mute flex items-center gap-1" title="case-sensitive">
                 <input
                   type="checkbox"
@@ -878,13 +869,10 @@ function CorrectionsTable({ initial }: { initial: Record<string, CorrectionEntry
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <span className="mono-xs text-mute">export:</span>
-        <a className="btn-ghost" href="/api/v1/corrections/export?format=json&scope=user">
+        <a className="btn-ghost" href="/api/v1/corrections/export?scope=user">
           JSON
         </a>
-        <a className="btn-ghost" href="/api/v1/corrections/export?format=pls&scope=user">
-          PLS
-        </a>
-        <a className="btn-ghost" href="/api/v1/corrections/export?format=json&scope=all">
+        <a className="btn-ghost" href="/api/v1/corrections/export?scope=all">
           full lexicon (JSON)
         </a>
       </div>
@@ -1165,8 +1153,7 @@ function LexiconLookup() {
     );
     setResult(
       body.entry
-        ? `${body.entry.origin}: "${body.entry.spoken}" (${body.entry.mode})` +
-            (body.entry.ipa ? ` /${body.entry.ipa}/` : "")
+        ? `${body.entry.origin}: "${body.entry.spoken}" (${body.entry.mode})`
         : "no match in the built-in lexicon"
     );
   };
@@ -1410,8 +1397,9 @@ function VoicesWidget() {
   );
 }
 
-// End-of-episode chime: a single uploaded clip appended to every episode when enabled
-// (toggle lives in TTS settings). Mirrors the voices upload pattern with one slot.
+// End-of-episode chime: a single uploaded clip appended to every episode when the
+// CHIME_ENABLED toggle below is on. Uploading a clip and enabling it are separate --
+// the toggle and status line make the active state explicit. One slot, like voices.
 function ChimeWidget() {
   const qc = useQueryClient();
   const chimeQ = useQuery({
@@ -1419,8 +1407,23 @@ function ChimeWidget() {
     queryFn: () => api<{ present: boolean; duration_secs: number | null }>("/api/v1/chime"),
     staleTime: 60_000,
   });
+  // Reuses the shared ["settings"] query (deduped by React Query) so the CHIME_ENABLED
+  // toggle reflects the same effective value as the generic settings form.
+  const settingsQ = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => api<SettingsPayload>("/api/v1/settings"),
+  });
   const [msg, setMsg] = useState<string | null>(null);
   const [bust, setBust] = useState(0);
+
+  const enabled = Boolean(
+    settingsQ.data?.values.CHIME_ENABLED ?? settingsQ.data?.defaults.CHIME_ENABLED
+  );
+  const toggleM = useMutation({
+    mutationFn: (v: boolean) =>
+      api("/api/v1/settings", { method: "PUT", body: JSON.stringify({ CHIME_ENABLED: v }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["settings"] }),
+  });
 
   const invalidate = () => {
     setBust((b) => b + 1);
@@ -1457,9 +1460,24 @@ function ChimeWidget() {
   return (
     <div className="space-y-3">
       <p className="mono-xs text-mute">
-        // plays at the end of every episode. enable with CHIME_ENABLED in TTS settings.
-        wav/mp3/m4a/flac/ogg, trimmed to 15s
+        // plays at the end of every episode. wav/mp3/m4a/flac/ogg, trimmed to 15s
       </p>
+      <div className="flex items-center justify-between gap-3 py-1">
+        <label className="label mb-0" htmlFor="CHIME_ENABLED">
+          enabled
+        </label>
+        <Toggle id="CHIME_ENABLED" checked={enabled} onChange={(v) => toggleM.mutate(v)} />
+      </div>
+      {data?.present && !enabled && (
+        <p className="mono-xs text-danger">
+          // a clip is uploaded but the chime is OFF -- enable it above or it will not play
+        </p>
+      )}
+      {!data?.present && enabled && (
+        <p className="mono-xs text-mute">
+          // enabled, but no clip uploaded yet -- nothing plays until you upload one
+        </p>
+      )}
       {msg && <p className="mono-xs text-accent">{msg}</p>}
       {data?.present && (
         <audio src={`/api/v1/chime/preview?v=${bust}`} controls className="w-full" />
