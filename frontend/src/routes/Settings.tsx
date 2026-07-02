@@ -65,7 +65,20 @@ const GROUPS: Record<string, string[]> = {
     "ARCHIVE_FALLBACK_ENABLED",
   ],
   Webhooks: ["WEBHOOK_URL"],
-  TTS: ["TTS_CHUNK_TARGET_WORDS", "TTS_CHUNK_MAX_WORDS", "TTS_CHUNK_SILENCE_MS"],
+  TTS: [
+    "TTS_CHUNK_TARGET_WORDS",
+    "TTS_CHUNK_MAX_WORDS",
+    "TTS_CHUNK_MAX_CHARS",
+    "TTS_CHUNK_SILENCE_MS",
+  ],
+  "TTS generation": [
+    "CHATTERBOX_TEMPERATURE",
+    "CHATTERBOX_REPETITION_PENALTY",
+    "CHATTERBOX_TOP_P",
+    "CHATTERBOX_TOP_K",
+    "CHATTERBOX_SEED",
+    "CHATTERBOX_MAX_CHARS",
+  ],
   Verification: [
     "WHISPER_VERIFY_ENABLED",
     "WHISPER_DIVERGENCE_THRESHOLD",
@@ -76,6 +89,31 @@ const GROUPS: Record<string, string[]> = {
   Pipeline: ["JOB_TIMEOUT_SECONDS", "JOB_TIMEOUT_PER_CHUNK_SECONDS"],
   Retention: ["RETENTION_DAYS"],
   RSS: ["RSS_CACHE_MAX_AGE_SECONDS"],
+};
+
+// One terse help line per group, rendered above the group's fields.
+const GROUP_NOTES: Record<string, string> = {
+  Feed: "applies on the next podcast-app refresh",
+  Connections:
+    "firecrawl key optional (blank for self-hosted). reader_api_key = jina key, " +
+    "free at jina.ai/reader -- the keyless endpoint is rate limited",
+  Webhooks:
+    "POSTs episode.processed / episode.failed to this URL on every finished or " +
+    "failed job. blank disables. the test sends a sample to the saved URL -- save first",
+  TTS: "chunking: target/max words per chunk, max chars hard ceiling, silence between chunks in ms",
+  "TTS generation":
+    "chatterbox sampling knobs -- apply to the next job (auditions: immediately), " +
+    "no restart. temperature: lower = steadier pronunciation, flatter read. " +
+    "repetition_penalty: raise if words repeat or loop. top_p/top_k: sampling " +
+    "variety caps, lower = safer. seed: fixed = reproducible takes, 0 = random. " +
+    "max_chars: text per model call, larger = fewer splice points",
+  Verification:
+    "regenerates chunks when audio drifts from the text. needs WHISPER_ENABLED " +
+    "on the wrapper. threshold 0-1, higher = stricter",
+  Uploads: "max direct-upload size in MB -- applies immediately, no restart",
+  Pipeline:
+    "per-job time = max(JOB_TIMEOUT_SECONDS, chunks x per-chunk). raise per-chunk " +
+    "on slower hardware. applies to the next job",
 };
 
 // Secret fields: rendered as password inputs. The backend masks them on read
@@ -282,39 +320,8 @@ export default function SettingsRoute() {
         if (visible.length === 0) return null;
         return (
           <CollapsibleSection key={group} title={group} defaultOpen={group === "LLM"}>
-            {group === "Feed" && (
-              <p className="mono-xs text-mute mb-3">
-                // applies on the next podcast-app refresh
-              </p>
-            )}
-            {group === "Connections" && (
-              <p className="mono-xs text-mute mb-3">
-                // firecrawl key optional (blank for self-hosted). reader_api_key = jina key,
-                free at jina.ai/reader -- the keyless endpoint is rate limited
-              </p>
-            )}
-            {group === "Webhooks" && (
-              <p className="mono-xs text-mute mb-3">
-                // POSTs episode.processed / episode.failed to this URL on every finished or
-                failed job. blank disables. the test sends a sample to the saved URL -- save first
-              </p>
-            )}
-            {group === "Verification" && (
-              <p className="mono-xs text-mute mb-3">
-                // regenerates chunks when audio drifts from the text. needs
-                WHISPER_ENABLED on the wrapper. threshold 0-1, higher = stricter
-              </p>
-            )}
-            {group === "Uploads" && (
-              <p className="mono-xs text-mute mb-3">
-                // max direct-upload size in MB -- applies immediately, no restart
-              </p>
-            )}
-            {group === "Pipeline" && (
-              <p className="mono-xs text-mute mb-3">
-                // per-job time = max(JOB_TIMEOUT_SECONDS, chunks x per-chunk). raise per-chunk on
-                slower hardware. applies to the next job
-              </p>
+            {GROUP_NOTES[group] && (
+              <p className="mono-xs text-mute mb-3">// {GROUP_NOTES[group]}</p>
             )}
             {visible.map((key) => {
               const isBool = boolKeys.has(key);

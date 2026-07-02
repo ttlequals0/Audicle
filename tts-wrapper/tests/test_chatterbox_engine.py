@@ -17,12 +17,12 @@ import pytest
 
 from chatterbox_engine import ChatterboxEngine
 from config import Config
-from engine import InferenceBusyError
+from engine import GenerationParams, InferenceBusyError
 
 
 def _config() -> Config:
-    # The chatterbox knobs and sample_rate come from from_env defaults
-    # (exaggeration 0.0, cfg_weight 0.0, temperature 0.5, sample_rate 24000).
+    # Structural settings only (device, paths, sample_rate 24000); generation
+    # knobs arrive per request as GenerationParams.
     return Config.from_env()
 
 
@@ -54,6 +54,7 @@ class FakeChatterboxModel:
         self.conds = None
         self.prepare_calls: list[tuple[str, float]] = []
         self.generate_calls: list[str] = []
+        self.generate_kwargs: list[dict[str, float]] = []
         self._piece_len = int(self.sr * piece_secs)
         self._prepare_raises = prepare_raises
 
@@ -63,10 +64,19 @@ class FakeChatterboxModel:
         self.prepare_calls.append((wav_fpath, exaggeration))
         self.conds = object()
 
-    def generate(self, text, exaggeration=0.0, cfg_weight=0.0, temperature=0.8):
-        # No audio_prompt_path parameter: if the engine ever passed one this would
-        # TypeError, which is the contract we want (reuse cached conditionals).
+    def generate(self, text, repetition_penalty=1.2, top_p=0.95, temperature=0.8, top_k=1000):
+        # No audio_prompt_path/exaggeration/cfg_weight parameters: if the engine
+        # ever passed one this would TypeError, which is the contract we want
+        # (reuse cached conditionals; Turbo ignores CFG/exaggeration).
         self.generate_calls.append(text)
+        self.generate_kwargs.append(
+            {
+                "temperature": temperature,
+                "repetition_penalty": repetition_penalty,
+                "top_p": top_p,
+                "top_k": top_k,
+            }
+        )
         return _FakeTensor(np.full(self._piece_len, 0.5, dtype=np.float32))
 
 
@@ -100,16 +110,19 @@ def test_factory_returns_chatterbox_engine() -> None:
     assert isinstance(_default_engine_factory(), ChatterboxEngine)
 
 
-def test_from_env_chatterbox_seed_and_temperature_defaults(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("CHATTERBOX_SEED", raising=False)
-    monkeypatch.delenv("CHATTERBOX_TEMPERATURE", raising=False)
-    cfg = Config.from_env()
+def test_generation_params_defaults() -> None:
     # Determinism on by default; temperature below Turbo's 0.8 to cut sampling
-    # variance (the "right dozens of times then wrong once" failure).
-    assert cfg.chatterbox_seed == 1234
-    assert cfg.chatterbox_temperature == 0.5
+    # variance (the "right dozens of times then wrong once" failure); the other
+    # sampling knobs at the library defaults. These are the fallbacks for a
+    # request that omits a knob; the backend normally sends every field from
+    # its runtime settings.
+    params = GenerationParams()
+    assert params.seed == 1234
+    assert params.temperature == 0.5
+    assert params.repetition_penalty == 1.2
+    assert params.top_p == 0.95
+    assert params.top_k == 1000
+    assert params.max_chars == 300
 
 
 # --- reference lifecycle ---------------------------------------------------
@@ -190,7 +203,7 @@ async def test_reload_reference_rolls_back_on_failure(tmp_path: Path) -> None:
 def test_run_inference_single_piece_calls_generate_once() -> None:
     model = FakeChatterboxModel()
     engine = _loaded_engine(model)
-    out = engine._run_inference("Hello world.")
+    out = engine._run_inference("Hello world.", GenerationParams())
     assert isinstance(out, np.ndarray)
     assert model.generate_calls == ["Hello world."]
     assert len(out) == int(model.sr * 0.1)
@@ -199,7 +212,7 @@ def test_run_inference_single_piece_calls_generate_once() -> None:
 def test_run_inference_joins_pieces_with_silence_gap() -> None:
     model = FakeChatterboxModel(piece_secs=0.1)
     engine = _loaded_engine(model)
-    out = engine._run_inference("One. Two.")
+    out = engine._run_inference("One. Two.", GenerationParams())
     assert model.generate_calls == ["One.", "Two."]
     piece = int(model.sr * 0.1)
     gap = int(model.sr * 0.12)
@@ -209,7 +222,7 @@ def test_run_inference_joins_pieces_with_silence_gap() -> None:
 def test_run_inference_empty_text_returns_short_silence() -> None:
     model = FakeChatterboxModel()
     engine = _loaded_engine(model)
-    out = engine._run_inference("   ")
+    out = engine._run_inference("   ", GenerationParams())
     assert model.generate_calls == []
     assert len(out) == int(model.sr * 0.05)
 
@@ -219,7 +232,7 @@ def test_run_inference_rejects_when_gpu_busy() -> None:
     engine._gpu_lock.acquire()
     try:
         with pytest.raises(InferenceBusyError):
-            engine._run_inference("Hello.")
+            engine._run_inference("Hello.", GenerationParams())
     finally:
         engine._gpu_lock.release()
 
@@ -227,43 +240,59 @@ def test_run_inference_rejects_when_gpu_busy() -> None:
 def test_run_inference_seeds_before_generate_when_seed_nonzero() -> None:
     model = FakeChatterboxModel()
     engine = _loaded_engine(model)
-    object.__setattr__(engine.config, "chatterbox_seed", 1234)
     seeded: list[int] = []
     engine._torch = types.SimpleNamespace(
         manual_seed=lambda s: seeded.append(s),
         cuda=types.SimpleNamespace(is_available=lambda: False, manual_seed_all=lambda s: None),
     )
-    engine._run_inference("Hello world.")
-    assert seeded == [1234]
+    engine._run_inference("Hello world.", GenerationParams())
+    assert seeded == [1234]  # the GenerationParams default seed
     assert model.generate_calls == ["Hello world."]
 
 
 def test_run_inference_skips_seed_when_zero() -> None:
     model = FakeChatterboxModel()
     engine = _loaded_engine(model)
-    object.__setattr__(engine.config, "chatterbox_seed", 0)
     seeded: list[int] = []
     engine._torch = types.SimpleNamespace(
         manual_seed=lambda s: seeded.append(s),
         cuda=types.SimpleNamespace(is_available=lambda: False, manual_seed_all=lambda s: None),
     )
-    engine._run_inference("Hello world.")
+    engine._run_inference("Hello world.", GenerationParams(seed=0))
     assert seeded == []
 
 
-def test_run_inference_seed_override_beats_config_seed() -> None:
-    # A per-request seed (sent on a quality regeneration) must win over the
-    # configured seed so the re-gen produces different audio.
+def test_run_inference_uses_request_seed() -> None:
+    # The backend sends a distinct seed on a quality regeneration so the re-gen
+    # produces different audio; whatever the request carries must be applied.
     model = FakeChatterboxModel()
     engine = _loaded_engine(model)
-    object.__setattr__(engine.config, "chatterbox_seed", 1234)
     seeded: list[int] = []
     engine._torch = types.SimpleNamespace(
         manual_seed=lambda s: seeded.append(s),
         cuda=types.SimpleNamespace(is_available=lambda: False, manual_seed_all=lambda s: None),
     )
-    engine._run_inference("Hello world.", seed=999)
+    engine._run_inference("Hello world.", GenerationParams(seed=999))
     assert seeded == [999]
+
+
+def test_infer_piece_passes_request_knobs_to_generate() -> None:
+    model = FakeChatterboxModel()
+    engine = _loaded_engine(model)
+    params = GenerationParams(temperature=0.9, repetition_penalty=1.5, top_p=0.8, top_k=50)
+    engine._run_inference("Hello world.", params)
+    assert model.generate_kwargs == [
+        {"temperature": 0.9, "repetition_penalty": 1.5, "top_p": 0.8, "top_k": 50}
+    ]
+
+
+def test_run_inference_respects_request_max_chars() -> None:
+    model = FakeChatterboxModel()
+    engine = _loaded_engine(model)
+    text = ("word " * 60).strip()  # ~300 chars; must split under a 100-char cap
+    engine._run_inference(text, GenerationParams(max_chars=100))
+    assert len(model.generate_calls) > 1
+    assert all(len(piece) <= 100 for piece in model.generate_calls)
 
 
 def test_set_seed_masks_out_of_range_for_numpy() -> None:
@@ -271,12 +300,12 @@ def test_set_seed_masks_out_of_range_for_numpy() -> None:
     # operator seed must be masked rather than crash inference.
     model = FakeChatterboxModel()
     engine = _loaded_engine(model)
-    object.__setattr__(engine.config, "chatterbox_seed", 2**40 + 7)
     engine._torch = types.SimpleNamespace(
         manual_seed=lambda _s: None,
         cuda=types.SimpleNamespace(is_available=lambda: False, manual_seed_all=lambda _s: None),
     )
-    engine._run_inference("Hello world.")  # must not raise ValueError from numpy
+    # must not raise ValueError from numpy
+    engine._run_inference("Hello world.", GenerationParams(seed=2**40 + 7))
 
 
 async def test_synthesize_encodes_mono_pcm16_wav() -> None:
@@ -294,7 +323,7 @@ async def test_synthesize_encodes_mono_pcm16_wav() -> None:
             manual_seed_all=lambda _s: None,
         ),
     )
-    wav_bytes = await engine.synthesize("Hello world.")
+    wav_bytes = await engine.synthesize("Hello world.", GenerationParams())
     with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
         assert wf.getnchannels() == 1
         assert wf.getsampwidth() == 2

@@ -14,9 +14,13 @@ consistent 503/500/504 + ``/reload`` behavior.
 Imports of ``torch`` and ``chatterbox`` are deferred to :meth:`load` so this
 module is importable in test environments without the GPU runtime.
 
-NOTE: Chatterbox Turbo defaults (exaggeration 0.0, cfg_weight 0.0) are a neutral
-straight read; the CHATTERBOX_* env knobs tune them. Every output carries
-Resemble's inaudible PerTh watermark (no disable flag in the library).
+NOTE: the backend sends the sampling knobs (temperature, repetition_penalty,
+top_p, top_k, seed, max_chars) on every /generate call
+(``engine.GenerationParams`` -- the env knobs were removed in 0.44.0). Turbo's
+``generate()`` ignores CFG and exaggeration, so those are not exposed;
+exaggeration is baked into the reference conditionals at 0.0 (neutral read).
+Every output carries Resemble's inaudible PerTh watermark (no disable flag in
+the library).
 """
 
 from __future__ import annotations
@@ -28,6 +32,7 @@ from pathlib import Path
 
 from config import NUM_SLOTS, Config
 from engine import (
+    GenerationParams,
     GPUOutOfMemoryError,
     InferenceBusyError,
     _split_into_pieces,
@@ -122,11 +127,12 @@ class ChatterboxEngine:
                 "Encoding reference conditionals",
                 extra={"event": "tts_embeddings_compute", "reference": str(ref_path)},
             )
-            # exaggeration is baked into the conditionals on the cached-conds path,
-            # so set it here (not just in generate). 0.0 == neutral straight read.
-            self._model.prepare_conditionals(
-                str(ref_path), exaggeration=self.config.chatterbox_exaggeration
-            )
+            # exaggeration exists only here: it is baked into the conditionals'
+            # emotion tensor at prepare time, and Turbo's generate() ignores a
+            # per-call value ("CFG, min_p and exaggeration are not supported by
+            # Turbo version"). Pin the neutral 0.0 (the library default is 0.5)
+            # rather than expose a knob the model would ignore.
+            self._model.prepare_conditionals(str(ref_path), exaggeration=0.0)
             self.reference_loaded = True
             self._current_ref = ref_path
         finally:
@@ -180,19 +186,19 @@ class ChatterboxEngine:
             return
         await self._swap_reference(ref_path)
 
-    async def synthesize(self, text: str, seed: int | None = None) -> bytes:
+    async def synthesize(self, text: str, params: GenerationParams) -> bytes:
         import asyncio  # noqa: PLC0415
 
         assert self._model is not None
         assert self._torch is not None
         try:
-            wav_array = await asyncio.to_thread(self._run_inference, text, seed)
+            wav_array = await asyncio.to_thread(self._run_inference, text, params)
         except self._torch.cuda.OutOfMemoryError as exc:
             self._torch.cuda.empty_cache()
             raise GPUOutOfMemoryError(str(exc)) from exc
         return pcm16_wav_bytes(wav_array, self.sample_rate)
 
-    def _run_inference(self, text: str, seed: int | None = None):
+    def _run_inference(self, text: str, params: GenerationParams):
         import numpy as np  # noqa: PLC0415  (lazy: numpy comes from torch's wheel)
 
         assert self._model is not None
@@ -202,17 +208,19 @@ class ChatterboxEngine:
         try:
             # Chatterbox truncates long input rather than chunking, so split into
             # speakable pieces under the cap and concatenate.
-            pieces = _split_into_pieces(text, self.config.max_chars)
+            pieces = _split_into_pieces(text, params.max_chars)
             if not pieces:
                 return np.zeros(int(self.sample_rate * 0.05), dtype=np.float32)
             # Seed before generating so a chunk is reproducible run-to-run; this
-            # plus the lower temperature is what steadies pronunciation. A
-            # per-request seed override (sent on a quality regeneration) wins over
-            # the configured seed so the re-gen produces *different* audio.
-            effective_seed = self.config.chatterbox_seed if seed is None else seed
-            if effective_seed != 0:
-                self._set_seed(effective_seed)
-            wavs = [np.asarray(self._infer_piece(piece), dtype=np.float32) for piece in pieces]
+            # plus the lower temperature is what steadies pronunciation. The
+            # backend sends its baseline seed on attempt 0 and a distinct seed on
+            # a quality regeneration so the re-gen produces *different* audio.
+            if params.seed != 0:
+                self._set_seed(params.seed)
+            wavs = [
+                np.asarray(self._infer_piece(piece, params), dtype=np.float32)
+                for piece in pieces
+            ]
             return join_with_silence(wavs, self.sample_rate)
         finally:
             self._gpu_lock.release()
@@ -226,19 +234,22 @@ class ChatterboxEngine:
         if self._torch.cuda.is_available():
             self._torch.cuda.manual_seed_all(seed)
         # np.random.seed rejects values outside [0, 2**32-1]; mask so an
-        # operator-set CHATTERBOX_SEED can't crash inference.
+        # operator-set seed can't crash inference.
         np.random.seed(seed & 0xFFFFFFFF)
         random.seed(seed)
 
-    def _infer_piece(self, text: str):
+    def _infer_piece(self, text: str, params: GenerationParams):
         assert self._model is not None
         # No audio_prompt_path -> reuse the conditionals cached by
-        # prepare_conditionals (the per-chunk performance win).
+        # prepare_conditionals (the per-chunk performance win). Only knobs
+        # Turbo honors are passed; exaggeration/cfg_weight would be ignored
+        # with a per-piece library warning.
         wav = self._model.generate(
             text,
-            exaggeration=self.config.chatterbox_exaggeration,
-            cfg_weight=self.config.chatterbox_cfg_weight,
-            temperature=self.config.chatterbox_temperature,
+            temperature=params.temperature,
+            repetition_penalty=params.repetition_penalty,
+            top_p=params.top_p,
+            top_k=params.top_k,
         )
         # generate returns a torch.Tensor (1, N) float32 in [-1, 1].
         return wav.squeeze(0).detach().cpu().numpy()

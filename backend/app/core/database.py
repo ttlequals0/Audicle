@@ -609,6 +609,14 @@ def _m021_drop_lexicon_ipa_column(conn: sqlite3.Connection) -> None:
     conn.execute("DROP TABLE lexicon_old")
 
 
+def _m022_reimport_seed_lexicon(conn: sqlite3.Connection) -> None:
+    """0.44.0: re-sync the seed after the letter-word 'ay' respellings were rewritten as
+    bare capital A ('open ay eye' -> 'open A eye' -- Chatterbox voiced 'ay' as 'aye'),
+    Claude changed to 'clawed', and a bare 'AI' entry was added."""
+
+    _reimport_seed_lexicon(conn)
+
+
 def _m018_voice_wav_to_slot1(conn: sqlite3.Connection) -> None:
     """Migrate the legacy committed ``voice.wav`` into voice slot 1 (0.35.0).
 
@@ -669,6 +677,7 @@ MIGRATIONS: list[tuple[str, Migration]] = [
     ("019_reimport_seed_lexicon", _m019_reimport_seed_lexicon),
     ("020_reimport_seed_lexicon", _m020_reimport_seed_lexicon),
     ("021_drop_lexicon_ipa_column", _m021_drop_lexicon_ipa_column),
+    ("022_reimport_seed_lexicon", _m022_reimport_seed_lexicon),
 ]
 
 

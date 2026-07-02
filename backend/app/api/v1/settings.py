@@ -9,6 +9,7 @@ type-coerced against the ``Settings`` field annotations so a stored string
 from __future__ import annotations
 
 import json
+import operator
 import sqlite3
 from typing import Annotated, Any, Literal, get_args, get_origin
 
@@ -16,7 +17,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
 
 from app.api.deps import get_conn
-from app.config import Settings, get_settings
+from app.config import RUNTIME_SETTING_BOUNDS, Settings, get_settings
 from app.services import runtime_settings, settings_store, slug
 
 router = APIRouter(tags=["settings"])
@@ -147,9 +148,11 @@ def _validate_value(key: str, value: Any, settings: Settings) -> None:
     """Reject a value that doesn't fit its ``Settings`` field, with a 400.
 
     Enum (``Literal``) fields must be one of their allowed members; int/float fields
-    must be coercible. Unknown fields and string/bool fields pass through (bool
-    coercion is intentionally lenient). Runs before anything is stored, so a bad
-    value never reaches the DB to crash or mis-route at overlay time.
+    must be coercible and inside any ``RUNTIME_SETTING_BOUNDS`` range. Unknown
+    fields and string/bool fields pass through (bool coercion is intentionally
+    lenient). Runs before anything is stored, so a bad value never reaches the DB
+    to crash or mis-route at overlay time -- or, for a bounded knob like
+    CHATTERBOX_TEMPERATURE, to fail far away on every TTS call.
     """
 
     field = settings.__class__.model_fields.get(key)
@@ -163,11 +166,32 @@ def _validate_value(key: str, value: Any, settings: Settings) -> None:
                 status_code=400, detail=f"{key} must be one of {allowed}, got {value!r}"
             )
         return
-    if annotation in (int, float) and not isinstance(
-        _coerce(key, value if isinstance(value, str) else json.dumps(value), settings),
-        annotation,
-    ):
-        raise HTTPException(status_code=400, detail=f"{key} must be a {annotation.__name__}")
+    if annotation in (int, float):
+        coerced = _coerce(key, value if isinstance(value, str) else json.dumps(value), settings)
+        if not isinstance(coerced, annotation):
+            raise HTTPException(status_code=400, detail=f"{key} must be a {annotation.__name__}")
+        _enforce_bounds(key, coerced)
+
+
+# Bound name -> (comparison, symbol for the error message).
+_BOUND_OPS: dict[str, tuple[Any, str]] = {
+    "gt": (operator.gt, ">"),
+    "ge": (operator.ge, ">="),
+    "lt": (operator.lt, "<"),
+    "le": (operator.le, "<="),
+}
+
+
+def _enforce_bounds(key: str, value: float) -> None:
+    """Enforce the ``RUNTIME_SETTING_BOUNDS`` range declared for ``key``, if any."""
+
+    for name, bound in RUNTIME_SETTING_BOUNDS.get(key, {}).items():
+        compare, symbol = _BOUND_OPS[name]
+        if not compare(value, bound):
+            raise HTTPException(
+                status_code=400,
+                detail=f"{key} must be {symbol} {bound}, got {value}",
+            )
 
 
 def _coerce(key: str, value: str, settings: Settings) -> Any:

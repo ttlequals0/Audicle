@@ -71,7 +71,18 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "ARCHIVE_FALLBACK_ENABLED",
         "TTS_CHUNK_TARGET_WORDS",
         "TTS_CHUNK_MAX_WORDS",
+        "TTS_CHUNK_MAX_CHARS",
         "TTS_CHUNK_SILENCE_MS",
+        # Chatterbox generation knobs, forwarded to the wrapper per /generate
+        # call. The worker snapshots the overlay once per job, so a Settings
+        # change applies to the next job (auditions pick it up immediately);
+        # no restart either way.
+        "CHATTERBOX_TEMPERATURE",
+        "CHATTERBOX_REPETITION_PENALTY",
+        "CHATTERBOX_TOP_P",
+        "CHATTERBOX_TOP_K",
+        "CHATTERBOX_SEED",
+        "CHATTERBOX_MAX_CHARS",
         "CHIME_ENABLED",
         # Audio-QA thresholds: tunable live since they need empirical tuning
         # against real failures. The frame/hop sizes stay env-only (structural).

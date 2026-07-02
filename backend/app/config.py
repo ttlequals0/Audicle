@@ -227,6 +227,25 @@ class Settings(BaseSettings):
     TTS_REACHABILITY_GRACE_SECONDS: float = 60
     TTS_REACHABILITY_PROBE_TIMEOUT: float = 10
 
+    # Chatterbox generation knobs, sent to the wrapper on every /generate call
+    # (the wrapper no longer reads them from its own env, 0.44.0). All are
+    # runtime-tunable via Settings; a change applies to the next job with no
+    # restart. Only knobs the Turbo model honors are exposed (it ignores CFG
+    # and exaggeration): temperature 0.5 (below Turbo's 0.8) trims sampling
+    # variance; repetition_penalty/top_p/top_k are Turbo's other sampling
+    # knobs at their library defaults; seed makes a chunk reproducible (0
+    # disables seeding). CHATTERBOX_MAX_CHARS caps the sentence pieces the
+    # wrapper feeds the model per inference call; larger = fewer context
+    # boundaries per chunk. Value ranges live in RUNTIME_SETTING_BOUNDS below
+    # (as data, not Field constraints, so a stale wrapper-era env var with an
+    # out-of-range value can't fail backend startup).
+    CHATTERBOX_TEMPERATURE: float = 0.5
+    CHATTERBOX_REPETITION_PENALTY: float = 1.2
+    CHATTERBOX_TOP_P: float = 0.95
+    CHATTERBOX_TOP_K: int = 1000
+    CHATTERBOX_SEED: int = 1234
+    CHATTERBOX_MAX_CHARS: int = 300
+
     # Chunking.
     # Chunk size = transcript-cue granularity + per-chunk TTS round-trips. The
     # tts-wrapper splits each chunk into engine-safe sentence pieces internally, so
@@ -338,6 +357,24 @@ class Settings(BaseSettings):
 
         url = self.FIRECRAWL_URL.strip()
         return bool(url) and url != "http://firecrawl:3002"
+
+
+# Value ranges for the numeric runtime knobs, enforced by PUT /api/v1/settings
+# (api/v1/settings.py) so a bad value is rejected at save time instead of
+# failing every TTS call or chunker run later. Declared as data rather than
+# Field constraints so a stale env var can't fail Settings() at startup. The
+# CHATTERBOX_* entries mirror the wrapper's request bounds
+# (tts-wrapper/engine.py GENERATION_BOUNDS); a test pins the two together.
+RUNTIME_SETTING_BOUNDS: dict[str, dict[str, float]] = {
+    "CHATTERBOX_TEMPERATURE": {"gt": 0, "le": 2.0},
+    "CHATTERBOX_REPETITION_PENALTY": {"ge": 1.0, "le": 2.0},
+    "CHATTERBOX_TOP_P": {"gt": 0, "le": 1.0},
+    "CHATTERBOX_TOP_K": {"ge": 1, "le": 10000},
+    "CHATTERBOX_SEED": {"ge": 0},
+    "CHATTERBOX_MAX_CHARS": {"ge": 100, "le": 2000},
+    # Backend chunker ceiling; the wrapper's request text cap is 4000 chars.
+    "TTS_CHUNK_MAX_CHARS": {"ge": 200, "le": 4000},
+}
 
 
 @lru_cache(maxsize=1)

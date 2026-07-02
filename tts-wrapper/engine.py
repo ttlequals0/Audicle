@@ -14,6 +14,7 @@ import io
 import logging
 import re
 import wave
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -22,9 +23,45 @@ logger = logging.getLogger("tts.engine")
 # Most TTS models cap how much they synthesize per call (Chatterbox truncates long
 # input). We split incoming text into pieces under a char budget and concatenate
 # the audio, so the wrapper never 500s/truncates on a long chunk regardless of how
-# the backend chunked it. The runtime cap comes from Config.max_chars; this
-# constant is the fallback default.
+# the backend chunked it. The runtime cap comes from GenerationParams.max_chars;
+# this constant is the fallback default.
 _DEFAULT_MAX_CHARS = 300
+
+
+@dataclass(frozen=True)
+class GenerationParams:
+    """Chatterbox generate knobs for one ``/generate`` call.
+
+    The backend sends every field on each request -- its runtime settings are
+    the single source since 0.44.0 (the wrapper's ``CHATTERBOX_*`` /
+    ``TTS_MAX_CHARS`` env vars are gone). The defaults below only cover a
+    request that omits a field (hand-curated curl). Only knobs the Turbo model
+    honors are here -- it ignores CFG and exaggeration. temperature 0.5 (below
+    Turbo's 0.8) trims sampling variance; repetition_penalty/top_p/top_k sit
+    at the library defaults; seed makes a chunk reproducible (0 disables
+    seeding); max_chars caps the sentence pieces fed to one inference call.
+    """
+
+    temperature: float = 0.5
+    repetition_penalty: float = 1.2
+    top_p: float = 0.95
+    top_k: int = 1000
+    seed: int = 1234
+    max_chars: int = _DEFAULT_MAX_CHARS
+
+
+# Per-knob request bounds. main.py applies them to GenerateRequest so a bad
+# value 422s instead of degrading audio silently; the backend mirrors them for
+# PUT /settings validation (config.RUNTIME_SETTING_BOUNDS -- its drift test
+# imports this module and pins the two tables together).
+GENERATION_BOUNDS: dict[str, dict[str, float]] = {
+    "temperature": {"gt": 0, "le": 2.0},
+    "repetition_penalty": {"ge": 1.0, "le": 2.0},
+    "top_p": {"gt": 0, "le": 1.0},
+    "top_k": {"ge": 1, "le": 10000},
+    "seed": {"ge": 0},
+    "max_chars": {"ge": 100, "le": 2000},
+}
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 _WHITESPACE = re.compile(r"\s+")
 # Clause breaks to cut an oversize sentence on, so a join-gap lands on a natural pause
@@ -145,10 +182,12 @@ class Engine(Protocol):
         restart loop surfaces the misconfig instead of serving 500s).
         """
 
-    async def synthesize(self, text: str, seed: int | None = None) -> bytes:
+    async def synthesize(self, text: str, params: GenerationParams) -> bytes:
         """Return a WAV byte string for ``text``.
 
-        Raises :class:`GPUOutOfMemoryError` on CUDA OOM and
+        ``params`` carries the per-request generation knobs (the /generate
+        route builds it, filling omitted fields with the defaults). Raises
+        :class:`GPUOutOfMemoryError` on CUDA OOM and
         :class:`InferenceBusyError` when another inference is already running
         (mapped to 503). Any other exception propagates as a 500 to the client.
         """

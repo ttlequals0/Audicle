@@ -34,7 +34,7 @@ from pydantic import BaseModel
 from app.api.deps import get_conn
 from app.config import Settings, get_settings
 from app.core import database
-from app.services import voices
+from app.services import runtime_settings, tts, voices
 from app.services.atomic_write import write_bytes_atomic
 
 logger = logging.getLogger("app.api.reference")
@@ -320,6 +320,10 @@ async def audition_slot(
 
     if not _safe_slot_path(slot).is_file():
         raise HTTPException(status_code=404, detail=f"voice slot {slot} is empty")
+    # Overlay so the sample uses the operator's TTS_URL and the same generation
+    # knobs (and seed) as episode synthesis -- an audition then previews exactly
+    # what an episode would sound like, reproducibly.
+    settings = runtime_settings.overlay(settings)
     base = settings.TTS_URL.rstrip("/")
     async with _serialized_reference_access(settings.DATA_DIR), httpx.AsyncClient(
         timeout=settings.TTS_HTTP_TIMEOUT_SECONDS
@@ -328,7 +332,12 @@ async def audition_slot(
             await client.post(f"{base}/select-voice", json={"slot": slot})
             response = await client.post(
                 f"{base}/generate",
-                json={"text": sample_text, "episode_id": "slotaudition", "chunk_index": 0},
+                json={
+                    "text": sample_text,
+                    "episode_id": "slotaudition",
+                    "chunk_index": 0,
+                    **tts.generation_params(settings),
+                },
             )
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=f"tts wrapper call failed: {exc}") from exc

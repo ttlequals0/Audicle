@@ -63,14 +63,26 @@ Throwaway compile caches (`NUMBA_CACHE_DIR`, `MPLCONFIGDIR`, `XDG_CACHE_HOME`,
 
 ## Tunable generation params
 
-| Env var | Default | Effect |
+Since 0.44.0 the generation knobs are not env vars. The backend sends them on
+every `/generate` request, sourced from its runtime settings, so they are tuned
+live in the app's Settings page (or `PUT /api/v1/settings`) with no wrapper
+restart. A request that omits a field falls back to these defaults:
+
+| Request field | Default | Effect |
 |---|---|---|
-| `CHATTERBOX_EXAGGERATION` | 0.0 | Expressiveness; baked into the reference conditionals at load. 0.0 is a neutral read. |
-| `CHATTERBOX_CFG_WEIGHT` | 0.0 | Classifier-free guidance weight, applied per call. |
-| `CHATTERBOX_TEMPERATURE` | 0.5 | Sampling temperature (down from Turbo's 0.8 to steady pronunciation). |
-| `CHATTERBOX_SEED` | 1234 | Makes a chunk reproducible. Set 0 to disable seeding. |
-| `TTS_MAX_CHARS` | 200 | Per-piece char cap; the wrapper splits each chunk into pieces under this and concatenates the audio. |
-| `TTS_SAMPLE_RATE` | 24000 | Provisional output rate; replaced by the model's own rate at load. |
+| `temperature` | 0.5 | Sampling temperature (down from Turbo's 0.8 to steady pronunciation). |
+| `repetition_penalty` | 1.2 | Raise if words repeat or loop. |
+| `top_p` | 0.95 | Nucleus sampling cap; lower = safer, less varied. |
+| `top_k` | 1000 | Top-k sampling cap; lower = safer, less varied. |
+| `seed` | 1234 | Makes a chunk reproducible. 0 disables seeding. |
+| `max_chars` | 300 | Per-piece char cap; the wrapper splits each chunk into pieces under this and concatenates the audio. |
+
+Exaggeration and CFG weight are not exposed: the Turbo model ignores both
+("CFG, min_p and exaggeration are not supported by Turbo version").
+Exaggeration is pinned to 0.0 (neutral read) when the reference voice is
+encoded. The only related env var left is structural: `TTS_SAMPLE_RATE`
+(default 24000) is a provisional output rate, replaced by the model's own rate
+at load.
 
 ## GPU pinning
 

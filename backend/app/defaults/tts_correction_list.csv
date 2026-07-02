@@ -40,7 +40,7 @@ Mispronounced Word,meme,meem,Not 'meh-may'
 Mispronounced Word,clothes,klohz,Not 'kloh-thes'
 Mispronounced Word,coup,koo,"French loanword, silent P"
 Format,10:00,ten o'clock,Time normalization
-Format,10:00 AM,ten ay em,Spell out AM
+Format,10:00 AM,ten A em,Spell out AM
 Format,10kg,ten kilograms,Unit expansion
 Format,100%,one hundred percent,Symbol expansion
 Format,$100,one hundred dollars,Currency expansion
@@ -62,7 +62,7 @@ Format,i.e.,that is,Latin abbreviation
 Format,approx.,approximately,Abbreviation
 Format,v2.0,version two point oh,Version strings
 Format,v1.2.3,version one point two point three,Semantic version
-Tech Acronym,AVX-512,ay vee ex 512,Advanced Vector Extensions 512-bit
+Tech Acronym,AVX-512,A vee ex 512,Advanced Vector Extensions 512-bit
 Tech Acronym,ARM,arm,Pronounced as a word
 Tech Acronym,RISC-V,risk five,Pronounced 'risk five'
 Tech Acronym,NOP,nop,No Operation — pronounced as a word
@@ -71,7 +71,7 @@ Symbol/Function,__pi___startup_64,pee eye startup 64,Position-independent thunk 
 Symbol/Function,cr4_init_shadow,see ar 4 init shadow,CR4 control register shadow init
 Symbol/Function,clear_bss,clear bee ess ess,Zeroes .bss section
 Symbol/Function,sme_early_init,ess em ee early init,Early Secure Memory Encryption setup
-Symbol/Function,kasan_init,kay ay ess ay en init,Kernel Address Sanitizer init
+Symbol/Function,kasan_init,kay A ess A en init,Kernel Address Sanitizer init
 Symbol/Function,idt_setup_early_handler,eye dee tee setup early handler,Installs minimal interrupt handlers
 Symbol/Function,copy_bootdata,copy boot data,Copies bootloader parameters
 Symbol/Function,load_ucode_bsp,load microcode bee ess pee,Loads CPU microcode on boot strap processor
@@ -136,7 +136,7 @@ Technology,SQLite,ess cue ell light,"Spell out SQL, then 'light'"
 Technology,PyPI,pie pee eye,Python Package Index — spell out PI
 Technology,NumPy,num pie,Numerical Python — like 'numb pie'
 Technology,SciPy,sy pie,Scientific Python — like 'sigh pie'
-Technology,Claude,klowd,"Anthropic AI — French name, rhymes with 'cloud'"
+Technology,Claude,clawed,Anthropic AI -- rhymes with 'flawed'; 'klowd' was voiced as 'klewed'
 Technology,Groq,grok,AI chip company — rhymes with 'rock'
 Technology,Grok,grok,xAI model — rhymes with 'rock'
 Technology,etcd,et see dee,Distributed key-value store — spell out
@@ -168,7 +168,7 @@ Business,WFH,work from home,Expand: work from home
 Business,IRL,in real life,Expand: in real life
 Business,P&L,pee and ell,Profit and Loss — say 'P and L'
 Business,COGS,kogz,Cost of Goods Sold — word
-Business,G&A,jee and ay,General and Administrative — say 'G and A'
+Business,G&A,jee and A,General and Administrative -- say 'G and A'
 Business,SWOT,swot,Strengths Weaknesses Opportunities Threats — word
 Business,LMGTFY,let me Google that for you,Expand: let me Google that for you
 Business,SOC 2,sock two,Security compliance framework — like 'sock'
@@ -300,7 +300,8 @@ Financial,1k,one thousand,k suffix as thousand
 Tech Acronym,OS,oh ess,Operating system; pulled from user dictionary
 Tech Acronym,VMs,vee emz,"Virtual machines, plural; pulled from user dictionary"
 Financial,Opex,op eks,Operating expenses; pulled from user dictionary
-Tech Brand,OpenAI,open ay eye,Pulled from user dictionary (fixes 'opemai' typo)
+Tech Brand,OpenAI,open A eye,Pulled from user dictionary; letter-word 'ay' was voiced as 'eye'
+Tech Acronym,AI,A eye,Artificial Intelligence -- bare capital A voices the letter reliably
 Mispronounced Word,retry,ree try,Not 'reh-tree'; pulled from user dictionary
 Financial,EBITDA,ee bit dah,Earnings Before Interest Taxes Depreciation Amortization -- said as a word
 Financial,EBIT,ee bit,Earnings Before Interest and Taxes -- said as a word
