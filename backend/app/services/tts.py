@@ -51,6 +51,24 @@ class TTSRequestError(TTSError):
     """4xx response, malformed JSON, or any non-retryable failure."""
 
 
+def generation_params(settings: Settings, seed: int | None = None) -> dict[str, Any]:
+    """Chatterbox knobs attached to every ``/generate`` call (0.44.0: the
+    wrapper's env knobs are gone; these runtime settings are the single
+    source). Shared by the per-chunk client below and the slot-audition
+    endpoint so samples always match episode synthesis. ``seed`` is the
+    configured baseline unless a caller passes an override (a quality
+    regeneration, so the re-gen produces different audio)."""
+
+    return {
+        "temperature": settings.CHATTERBOX_TEMPERATURE,
+        "repetition_penalty": settings.CHATTERBOX_REPETITION_PENALTY,
+        "top_p": settings.CHATTERBOX_TOP_P,
+        "top_k": settings.CHATTERBOX_TOP_K,
+        "max_chars": settings.CHATTERBOX_MAX_CHARS,
+        "seed": settings.CHATTERBOX_SEED if seed is None else seed,
+    }
+
+
 @dataclass(frozen=True)
 class GenerateResult:
     wav_path: str
@@ -77,13 +95,11 @@ async def generate_chunk(
         "text": text,
         "episode_id": episode_id,
         "chunk_index": chunk_index,
+        "verify": verify,
+        # The worker snapshots settings once per job, so a Settings change
+        # applies to the next job; no restart.
+        **generation_params(settings, seed),
     }
-    # Only attach the seed / verify flag when set, so an older wrapper
-    # (extra="forbid") never receives an unexpected field.
-    if seed is not None:
-        payload["seed"] = seed
-    if verify:
-        payload["verify"] = True
     timeout = httpx.Timeout(settings.TTS_HTTP_TIMEOUT_SECONDS)
 
     async with httpx.AsyncClient(timeout=timeout) as client:

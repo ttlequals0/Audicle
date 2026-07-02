@@ -96,6 +96,35 @@ def test_put_settings_rejects_unknown_keys(env: Path) -> None:
     assert "DATA_DIR" in response.json()["error"]
 
 
+def test_put_settings_rejects_out_of_range_bounds(env: Path) -> None:
+    # RUNTIME_SETTING_BOUNDS is enforced at PUT time, so an out-of-range knob
+    # fails here instead of 422ing every TTS call (or failing every chunker
+    # run) later.
+    bad = [
+        {"CHATTERBOX_TEMPERATURE": 3.0},
+        {"CHATTERBOX_TEMPERATURE": 0},
+        {"CHATTERBOX_REPETITION_PENALTY": 0.5},
+        {"CHATTERBOX_TOP_P": 1.5},
+        {"CHATTERBOX_TOP_K": 0},
+        {"CHATTERBOX_SEED": -1},
+        {"CHATTERBOX_MAX_CHARS": 50},
+        {"TTS_CHUNK_MAX_CHARS": 110},
+    ]
+    with _client(env) as client:
+        for payload in bad:
+            response = client.put("/api/v1/settings", json=payload)
+            assert response.status_code == 400, f"accepted: {payload}"
+        # In-range values still save.
+        response = client.put(
+            "/api/v1/settings",
+            json={"CHATTERBOX_TEMPERATURE": 0.4, "CHATTERBOX_MAX_CHARS": 500},
+        )
+    assert response.status_code == 200
+    values = response.json()["values"]
+    assert values["CHATTERBOX_TEMPERATURE"] == 0.4
+    assert values["CHATTERBOX_MAX_CHARS"] == 500
+
+
 def test_put_then_get_round_trips(env: Path) -> None:
     with _client(env) as client:
         client.put("/api/v1/settings", json={"FEED_AUTHOR": "New Owner"})

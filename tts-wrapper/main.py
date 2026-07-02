@@ -28,12 +28,21 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from config import NUM_SLOTS, Config
-from engine import Engine, GPUOutOfMemoryError, InferenceBusyError
+from engine import (
+    GENERATION_BOUNDS,
+    Engine,
+    GenerationParams,
+    GPUOutOfMemoryError,
+    InferenceBusyError,
+)
 from log_setup import setup_logging
 from whisper_verify import WhisperVerifier
 
 setup_logging()
 logger = logging.getLogger("tts.main")
+
+# The knob subset of GenerateRequest, forwarded to GenerationParams verbatim.
+_KNOB_FIELDS = frozenset(GenerationParams.__dataclass_fields__)
 
 # Wrapper's own version, surfaced in /health so the main app's
 # /health/ready can aggregate it into components.tts_wrapper.version. The repo
@@ -85,10 +94,22 @@ class GenerateRequest(BaseModel):
     # accept a slightly broader alphabet for hand-curated cases.
     episode_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.-]+$")
     chunk_index: int = Field(ge=0, le=100000)
-    # Optional per-request seed override (Chatterbox only). The backend sends it on
-    # a quality regeneration so the re-gen uses a different seed than the bad take;
-    # omitted on the first attempt so the wrapper's configured seed applies.
-    seed: int | None = None
+    # Per-request generation knobs (0.44.0: the wrapper's CHATTERBOX_* /
+    # TTS_MAX_CHARS env vars are gone; the backend's runtime settings are the
+    # single source and ride on every call). An omitted field falls back to the
+    # GenerationParams default so a hand-curated curl still works. The backend
+    # sends its baseline seed on attempt 0 and a distinct seed on a quality
+    # regeneration so the re-gen produces different audio; seed 0 disables
+    # seeding. GENERATION_BOUNDS rejects a bad value loudly here instead of
+    # letting it degrade audio silently.
+    seed: int | None = Field(default=None, **GENERATION_BOUNDS["seed"])
+    temperature: float | None = Field(default=None, **GENERATION_BOUNDS["temperature"])
+    repetition_penalty: float | None = Field(
+        default=None, **GENERATION_BOUNDS["repetition_penalty"]
+    )
+    top_p: float | None = Field(default=None, **GENERATION_BOUNDS["top_p"])
+    top_k: int | None = Field(default=None, **GENERATION_BOUNDS["top_k"])
+    max_chars: int | None = Field(default=None, **GENERATION_BOUNDS["max_chars"])
     # When true and the wrapper has Whisper enabled, transcribe the produced
     # audio with faster-whisper and return it as `transcript`. Backward-compatible:
     # the backend only sends it when WHISPER_VERIFY_ENABLED is on.
@@ -264,13 +285,15 @@ def create_app(
                 "text_chars": len(body.text),
             },
         )
+        # Fields the request omitted fall back to the GenerationParams defaults.
+        params = GenerationParams(**body.model_dump(include=_KNOB_FIELDS, exclude_none=True))
         # The lock serializes GPU inference; /health never takes it, and
         # synthesize offloads the blocking call, so /health stays responsive.
         async with lock:
             inference_started = time.perf_counter()
             try:
                 wav_bytes = await asyncio.wait_for(
-                    engine.synthesize(body.text, seed=body.seed),
+                    engine.synthesize(body.text, params),
                     timeout=_REQUEST_INFERENCE_TIMEOUT_SECONDS,
                 )
             except TimeoutError as exc:

@@ -1414,8 +1414,9 @@ async def test_chunk_quality_check_regenerates_bad_chunk(
     )
     assert calls["n"] == 2  # one bad read, one regeneration that recovered
     assert result.wav_path == str(wav)
-    # The baseline uses the wrapper's configured seed (no override); the regen
-    # sends a distinct seed so Chatterbox produces different audio.
+    # Attempt 0 passes no override (tts.generation_params applies the configured
+    # CHATTERBOX_SEED baseline); the regen sends a distinct seed so Chatterbox
+    # produces different audio.
     assert seeds[0] is None
     assert isinstance(seeds[1], int) and seeds[1] != 0
 

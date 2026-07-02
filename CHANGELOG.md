@@ -6,6 +6,40 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-07-02
+
+### Fixed
+
+- "OpenAI" no longer reads as "open eye eye": the seed correction respelled it as
+  "open ay eye", and Chatterbox voices the letter-word "ay" as "aye". Every seed entry
+  that used "ay" for the letter A now uses a bare capital `A` instead ("open A eye"),
+  which the engine voices as the letter: OpenAI, 10:00 AM, AVX-512, kasan_init, G&A.
+- "Claude" no longer reads as "klewed": its respelling changed from `klowd` to `clawed`.
+- New seed entry: bare `AI` -> "A eye" (case-sensitive, so prose "ai" is untouched).
+
+### Changed
+
+- Chatterbox generation knobs (temperature, repetition penalty, top_p, top_k, seed,
+  and the per-piece max-chars cap) are now runtime settings, editable in Settings ->
+  TTS generation and `PUT /api/v1/settings`, with value ranges enforced at save time.
+  The backend sends them on every `/generate` call; a change applies to the next job
+  (auditions pick it up immediately), no restart. The wrapper's `CHATTERBOX_*` and
+  `TTS_MAX_CHARS` env vars are removed; if a deployment overrode them, re-enter those
+  values in Settings once after upgrading (stale lines in `.env` are harmless -- the
+  backend reads them as its defaults). Voice auditions use the same knobs (and seed)
+  as episode synthesis, so a sample previews exactly what an episode will sound like.
+- The old `CHATTERBOX_EXAGGERATION` and `CHATTERBOX_CFG_WEIGHT` env vars are gone
+  without replacement: the Turbo model ignores both ("CFG, min_p and exaggeration are
+  not supported by Turbo version"), so they were silent no-ops even as env vars. The
+  wrapper also stops passing them to the model, which silences a per-piece library
+  warning. The newly exposed repetition penalty / top_p / top_k are knobs Turbo
+  actually honors.
+- `TTS_CHUNK_MAX_CHARS` joins the other chunker knobs as a runtime setting
+  (Settings -> TTS), with the same save-time range check.
+- Upgrade note: deploy the app and tts images together (the compose stack pins one
+  `BUILD_VERSION` for both). A 0.43 wrapper rejects the new per-request fields, so a
+  mixed pair fails every TTS call until both are on 0.44.0.
+
 ## [0.43.0] - 2026-06-26
 
 ### Fixed

@@ -92,18 +92,10 @@ services:
       # to this path (its lowest filled slot at boot). The voice.wav file itself is
       # no longer required (slots-only since 0.35.0).
       - TTS_REFERENCE_PATH=/app/reference/voice.wav
-      # Chatterbox generate knobs; defaults are a neutral straight read.
-      # TEMPERATURE 0.5 (down from 0.8) trims sampling variance; SEED makes a
-      # chunk reproducible (audio-QA regens override it per attempt), 0 disables.
-      - CHATTERBOX_EXAGGERATION=${CHATTERBOX_EXAGGERATION:-0.0}
-      - CHATTERBOX_CFG_WEIGHT=${CHATTERBOX_CFG_WEIGHT:-0.0}
-      - CHATTERBOX_TEMPERATURE=${CHATTERBOX_TEMPERATURE:-0.5}
-      - CHATTERBOX_SEED=${CHATTERBOX_SEED:-1234}
-      # Per-piece char cap fed to the model; the wrapper splits a chunk into pieces
-      # under this at sentence/clause boundaries (300 keeps most whole sentences
-      # intact, avoiding mid-sentence pauses). SAMPLE_RATE is provisional (the
-      # model's own rate replaces it at load).
-      - TTS_MAX_CHARS=${TTS_MAX_CHARS:-300}
+      # Generation knobs (temperature, repetition penalty, top_p, top_k, seed,
+      # max chars) are NOT env vars (0.44.0): the backend sends them on every
+      # /generate call, tunable live in Settings. SAMPLE_RATE is provisional
+      # (the model's own rate replaces it at load).
       - TTS_SAMPLE_RATE=${TTS_SAMPLE_RATE:-24000}
       # Post-TTS ASR verification (off by default). WHISPER_ENABLED loads the
       # faster-whisper model here; the backend's WHISPER_VERIFY_ENABLED (via .env)

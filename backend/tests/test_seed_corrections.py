@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import re
 from pathlib import Path
 
 import pytest
@@ -113,7 +114,7 @@ def test_seed_includes_merged_manual_corrections() -> None:
     assert entries["OS"].replacement_text == "oh ess"
     assert entries["VMs"].replacement_text == "vee emz"
     assert entries["Opex"].replacement_text == "op eks"
-    assert entries["OpenAI"].replacement_text == "open ay eye"  # fixes the prod "opemai" typo
+    assert entries["OpenAI"].replacement_text == "open A eye"  # fixes the prod "opemai" typo
     assert entries["retry"].replacement_text == "ree try"
 
 
@@ -146,3 +147,18 @@ def test_no_spaced_single_letter_runs() -> None:
 def test_ebitda_reads_as_a_word() -> None:
     entries = _by_input(seed_corrections.load_seed(seed_corrections.seed_path()))
     assert entries["EBITDA"].replacement_text == "ee bit dah"
+
+
+def test_letter_a_is_bare_capital_not_ay() -> None:
+    # 0.44.0: Chatterbox voices the letter-word "ay" as "aye" (= "eye"), so the
+    # letter A is written as a bare capital A, which it voices as the letter.
+    rows = seed_corrections.load_seed(seed_corrections.seed_path())
+    entries = _by_input(rows)
+    assert entries["AI"].replacement_text == "A eye"
+    assert entries["Claude"].replacement_text == "clawed"
+    offenders = [
+        e.input_text
+        for e in rows
+        if re.search(r"(?<![\w'])ay(?![\w'])", e.replacement_text)
+    ]
+    assert offenders == [], f"replace letter-word 'ay' with bare capital A: {offenders}"

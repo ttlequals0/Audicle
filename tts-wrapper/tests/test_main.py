@@ -14,7 +14,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from engine import Engine, GPUOutOfMemoryError, InferenceBusyError
+from engine import Engine, GenerationParams, GPUOutOfMemoryError, InferenceBusyError
 from main import create_app
 
 
@@ -63,9 +63,9 @@ class FakeEngine:
         self.model_loaded = True
         self.reference_loaded = True
 
-    async def synthesize(self, text: str, seed: int | None = None) -> bytes:
+    async def synthesize(self, text: str, params: GenerationParams) -> bytes:
         self.synthesize_calls.append(text)
-        self.last_seed = seed
+        self.last_params = params
         if self.oom_synthesize:
             raise GPUOutOfMemoryError("simulated OOM")
         if self.busy_synthesize:
@@ -255,6 +255,66 @@ def test_generate_verify_failure_does_not_fail_chunk(tmp_path: Path) -> None:
     # ASR failure degrades to no transcript; the chunk still succeeds.
     assert response.status_code == 200
     assert response.json()["transcript"] is None
+
+
+def test_generate_forwards_request_knobs_to_engine(tmp_path: Path) -> None:
+    # 0.44.0: the backend's runtime settings ride on every call; the wrapper
+    # must hand them to the engine verbatim.
+    engine = FakeEngine()
+    with _client(engine, tmp_path) as client:
+        response = client.post(
+            "/generate",
+            json={
+                "text": "hi",
+                "episode_id": "ep",
+                "chunk_index": 0,
+                "seed": 7,
+                "temperature": 0.9,
+                "repetition_penalty": 1.5,
+                "top_p": 0.8,
+                "top_k": 50,
+                "max_chars": 500,
+            },
+        )
+    assert response.status_code == 200
+    assert engine.last_params == GenerationParams(
+        seed=7, temperature=0.9, repetition_penalty=1.5, top_p=0.8, top_k=50, max_chars=500
+    )
+
+
+def test_generate_omitted_knobs_fall_back_to_defaults(tmp_path: Path) -> None:
+    # A hand-curated request (or an older backend) that omits the knobs must
+    # get the GenerationParams defaults, not None.
+    engine = FakeEngine()
+    with _client(engine, tmp_path) as client:
+        response = client.post(
+            "/generate",
+            json={"text": "hi", "episode_id": "ep", "chunk_index": 0},
+        )
+    assert response.status_code == 200
+    assert engine.last_params == GenerationParams()
+
+
+def test_generate_rejects_out_of_range_knobs(tmp_path: Path) -> None:
+    # Bounds fail loudly (422) instead of degrading audio silently.
+    engine = FakeEngine()
+    bad_payloads = [
+        {"temperature": 0},
+        {"temperature": 2.5},
+        {"repetition_penalty": 0.5},
+        {"top_p": 1.5},
+        {"top_k": 0},
+        {"max_chars": 50},
+        {"max_chars": 5000},
+        {"seed": -1},
+    ]
+    with _client(engine, tmp_path) as client:
+        for bad in bad_payloads:
+            response = client.post(
+                "/generate",
+                json={"text": "hi", "episode_id": "ep", "chunk_index": 0, **bad},
+            )
+            assert response.status_code == 422, f"accepted: {bad}"
 
 
 def test_generate_rejects_blank_text(tmp_path: Path) -> None:

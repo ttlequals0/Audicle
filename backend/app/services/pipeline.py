@@ -897,8 +897,8 @@ async def _stage_chunk(corrected: str, settings: Settings) -> list[str]:
 
 # A fixed wrapper seed would reproduce the *same* bad audio on every regeneration,
 # defeating the quality loop. So a regen attempt sends a distinct, deterministic
-# seed override (per chunk + attempt); attempt 0 sends none, keeping the wrapper's
-# configured seed for the reproducible baseline.
+# seed override (per chunk + attempt); attempt 0 sends no override, so the
+# configured CHATTERBOX_SEED baseline applies (tts.generation_params).
 _REGEN_SEED_BASE = 0x9E3779B1
 
 

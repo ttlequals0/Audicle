@@ -1,8 +1,10 @@
 """Wrapper-side configuration.
 
-Loaded from environment variables so the operator can tune generation params
-without rebuilding the image. The Chatterbox generate knobs live under the
-``CHATTERBOX_*`` env vars (exaggeration, cfg_weight, temperature, seed).
+Structural container settings only (device, paths, whisper capability), loaded
+from environment variables. Generation tuning (temperature, repetition_penalty,
+top_p, top_k, seed, max_chars) is NOT configured here: the backend sends those
+knobs on every ``/generate`` request (``engine.GenerationParams``), sourced
+from its operator-tunable runtime settings.
 """
 
 from __future__ import annotations
@@ -12,11 +14,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 NUM_SLOTS = 5  # reference-voice slots; matches the backend's voices.NUM_SLOTS
-
-
-def _float_env(name: str, default: float) -> float:
-    raw = os.environ.get(name)
-    return default if raw is None or raw == "" else float(raw)
 
 
 def _int_env(name: str, default: int) -> int:
@@ -46,18 +43,7 @@ class Config:
     reference_path: str  # absolute path inside the container
     data_dir: str  # writes WAVs under {data_dir}/media
 
-    # Chatterbox generate knobs. exaggeration is baked into the reference
-    # conditionals at load; cfg_weight/temperature apply per call. temperature is
-    # below Turbo's 0.8 to cut sampling variance (the "right dozens of times then
-    # wrong once" mispronunciation). seed makes a generation reproducible; 0
-    # disables seeding (prior random behavior).
-    chatterbox_exaggeration: float
-    chatterbox_cfg_weight: float
-    chatterbox_temperature: float
-    chatterbox_seed: int
-
     sample_rate: int  # provisional rate; replaced with the model's own sr at load
-    max_chars: int  # per-piece cap fed to the model before concatenation
 
     # Post-TTS ASR verification (off by default). When enabled, /generate
     # transcribes the produced audio with faster-whisper when the request asks
@@ -79,15 +65,7 @@ class Config:
             language=os.environ.get("TTS_LANGUAGE", "en"),
             reference_path=os.environ.get("TTS_REFERENCE_PATH", "/app/reference/voice.wav"),
             data_dir=os.environ.get("DATA_DIR", "/data"),
-            # exaggeration 0.0 + cfg_weight 0.0 == neutral read; temperature 0.5
-            # (down from Turbo's 0.8) trims sampling variance; seed 1234 makes a
-            # chunk reproducible (set 0 to disable).
-            chatterbox_exaggeration=_float_env("CHATTERBOX_EXAGGERATION", 0.0),
-            chatterbox_cfg_weight=_float_env("CHATTERBOX_CFG_WEIGHT", 0.0),
-            chatterbox_temperature=_float_env("CHATTERBOX_TEMPERATURE", 0.5),
-            chatterbox_seed=_int_env("CHATTERBOX_SEED", 1234),
             sample_rate=_int_env("TTS_SAMPLE_RATE", 24000),
-            max_chars=_int_env("TTS_MAX_CHARS", 300),
             whisper_enabled=_bool_env("WHISPER_ENABLED", False),
             whisper_model=_str_env("WHISPER_MODEL", "base"),
             whisper_device=whisper_device,
