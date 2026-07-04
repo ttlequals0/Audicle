@@ -94,3 +94,52 @@ def test_strip_inline_markdown_removes_images() -> None:
 def test_strip_inline_markdown_leaves_plain_prose_untouched() -> None:
     text = "A sentence with a * star and an under_score, no links."
     assert article_prep.strip_inline_markdown(text) == text
+
+
+def test_strip_boilerplate_removes_ad_markers() -> None:
+    assert "REG AD" not in article_prep.strip_boilerplate("REG AD\n\nThe real article body here.")
+
+
+def test_strip_boilerplate_removes_skip_and_jump_nav() -> None:
+    out = article_prep.strip_boilerplate("Jump to main content\n\nThe body of the story.")
+    assert "Jump to main content" not in out and "The body of the story." in out
+
+
+def test_strip_boilerplate_removes_dateline_but_keeps_body() -> None:
+    out = article_prep.strip_boilerplate("Published Thu 2 Jul 2026 // 08:00 UTC\n\nThe article body.")
+    assert "UTC" not in out and "The article body." in out
+
+
+def test_strip_boilerplate_removes_tipline_with_email() -> None:
+    text = (
+        "Have a story? Share it with us at pwned@sitpub.com. Anonymity is available upon request."
+        "\n\nThe real article body about the incident."
+    )
+    out = article_prep.strip_boilerplate(text)
+    assert "pwned@sitpub.com" not in out
+    assert "Share it with us" not in out
+    assert "The real article body about the incident." in out
+
+
+def test_strip_boilerplate_removes_subscribe_line() -> None:
+    assert "newsletter" not in article_prep.strip_boilerplate("Sign up for our newsletter\n\nBody text.")
+
+
+def test_strip_boilerplate_keeps_long_paragraph_with_incidental_cue() -> None:
+    # A long real paragraph containing a dateline-ish cue ("published ... EST") is NOT
+    # deleted -- only short, chrome-sized lines are stripped.
+    para = (
+        "The committee published its findings at 9am EST after a long inquiry, and the "
+        "report went on to describe in considerable detail how the winter budget would be "
+        "allocated across the various departments over the coming fiscal year and beyond."
+    )
+    assert "winter budget would be allocated" in article_prep.strip_boilerplate(para)
+
+
+def test_strip_boilerplate_leaves_plain_prose_untouched() -> None:
+    # "published", "share", "by" appear but not as cruft cues -> nothing is cut.
+    prose = (
+        "The mayor published the budget on Tuesday. Residents can share their views at the hearing."
+        "\n\nA second paragraph written by the council with no cruft at all."
+    )
+    assert article_prep.strip_boilerplate(prose) == prose

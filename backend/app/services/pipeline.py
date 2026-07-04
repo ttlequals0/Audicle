@@ -810,7 +810,6 @@ async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
     # output well under the cap so article length is never the bottleneck.
     windows = chunker.pack_paragraphs(markdown, settings.LLM_CLEANUP_WINDOW_CHARS) or [markdown]
     cleaned_parts: list[str] = []
-    empty_section_windows = 0  # windows the model reported as genuine no-article
     for index, window in enumerate(windows):
         # Repeat the directive in the user turn (many models weight it higher
         # than the system prompt) and delimit the article so the model cleans it
@@ -834,10 +833,11 @@ async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
         # Drop boilerplate-only windows and any refusal the model still leaked, so
         # a "there is no article" line never reaches narration; the empty string
         # is filtered out of the join below.
-        no_article = cleanup_output.is_empty_section(part)
-        if no_article:
-            empty_section_windows += 1
-        empty = not part or no_article or cleanup_output.is_refusal_output(part)
+        empty = (
+            not part
+            or cleanup_output.is_empty_section(part)
+            or cleanup_output.is_refusal_output(part)
+        )
         output_chars = len(part)  # the model's real output, before we drop it
         if empty:
             part = ""
@@ -857,25 +857,24 @@ async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
     # the full text, so cleanup just joins the surviving windows here.
     cleaned = "\n\n".join(p for p in cleaned_parts if p)
     if len(cleaned) < settings.MIN_CLEANUP_CHARS:
-        # Two ways to land here. If the model reliably reported the page as all
-        # boilerplate (NO_ARTICLE_CONTENT for every window), there is no article --
-        # fail rather than narrate the chrome. But if it BALKED on real content (a
-        # refusal or a chat deflection -- some models won't reproduce e.g. a
-        # detailed security-incident write-up), fall back to the de-chromed
-        # extraction so a stuck article still ships (un-LLM-cleaned; inline
-        # markdown links/images are stripped so URLs aren't read aloud) rather
-        # than retry-looping. A genuinely thin page (raw also below the floor) fails.
-        model_saw_no_article = empty_section_windows == len(windows)
-        if not model_saw_no_article and len(markdown) >= settings.MIN_CLEANUP_CHARS:
-            cleaned = article_prep.strip_inline_markdown(markdown)
+        # The LLM produced too little -- it balked: a refusal, a chat deflection, or the
+        # NO_ARTICLE_CONTENT sentinel (which some models emit to refuse real content, so
+        # it is not trusted as authoritative). Deterministically bin the obvious
+        # boilerplate from the extraction and narrate that instead of failing. This
+        # doubles as the article detector: a real article survives the strip
+        # (>= floor -> ship); a genuinely cruft-only page strips to near-nothing
+        # (< floor -> fail).
+        fallback = article_prep.strip_boilerplate(markdown)
+        if len(fallback) >= settings.MIN_CLEANUP_CHARS:
             logger.warning(
-                "Cleanup output too short; falling back to raw extraction",
+                "Cleanup output too short; using deterministic boilerplate strip",
                 extra={
-                    "event": "cleanup_fallback_raw",
+                    "event": "cleanup_fallback_deterministic",
                     "cleaned_chars": len(cleaned),
-                    "markdown_chars": len(markdown),
+                    "fallback_chars": len(fallback),
                 },
             )
+            cleaned = fallback
         else:
             raise CleanupTooShortError(
                 f"Cleanup output is {len(cleaned)} chars, below "

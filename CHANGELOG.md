@@ -6,6 +6,27 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.45.2] - 2026-07-04
+
+### Fixed
+
+- Articles on sites where the extractor grabbed the wrong block now process. On
+  some layouts (e.g. The Register) trafilatura scored a dense "most popular"
+  sidebar rail as the main content and returned a list of other articles'
+  headlines; the real body never reached cleanup, so the job failed with "no
+  article". Extraction now falls back to the page's `<article>` element when
+  trafilatura's output isn't inside it and that element holds more text -- an
+  in-process recall net using lxml (already a dependency), no external service.
+  The size guard keeps a good long extraction from being replaced by a small
+  decoy `<article>` (a comment or promo card) on pages with no `<article>` wrapper.
+- The cleanup fallback (used when the model won't clean an article) now runs a
+  deterministic boilerplate strip -- ad markers, skip/jump nav, datelines,
+  editorial tip-lines, subscribe prompts, inline links/images -- so a fallback
+  episode narrates the article body, not the surrounding chrome. It replaces the
+  0.45.1 raw-text fallback and the `NO_ARTICLE_CONTENT` gate: the strip doubles
+  as the article detector, so a real article the model refuses still ships while
+  a page that strips down to nothing still fails.
+
 ## [0.45.1] - 2026-07-04
 
 ### Fixed

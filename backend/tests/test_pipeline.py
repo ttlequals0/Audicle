@@ -1043,11 +1043,11 @@ async def test_cleanup_drops_boilerplate_only_windows(
     assert "mayor announced the budget" in cleaned
 
 
-async def test_cleanup_falls_back_to_raw_when_llm_deflects(
+async def test_cleanup_falls_back_to_deterministic_cleaner_when_llm_deflects(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When the model deflects into chat (no markers) but the extraction had a
-    real article, cleanup narrates the raw text rather than failing the episode."""
+    """When the model deflects into chat (no markers) but the extraction had a real
+    article, cleanup ships the deterministically-cleaned body rather than failing."""
 
     database.run_migrations(env)
     article = "The council met on Tuesday to discuss the new budget proposal. " * 8
@@ -1058,19 +1058,43 @@ async def test_cleanup_falls_back_to_raw_when_llm_deflects(
 
     monkeypatch.setattr(pipeline, "_llm_with_retry", _deflect)
     cleaned = await pipeline._stage_cleanup("job", article, get_settings())
-    assert "council met on Tuesday" in cleaned  # raw extraction fell through
+    assert "council met on Tuesday" in cleaned  # body fell through the fallback
 
 
-async def test_cleanup_fails_on_long_boilerplate_the_model_flags_as_no_article(
+async def test_cleanup_ships_real_article_when_model_refuses_via_no_article(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A LONG page the model reports as NO_ARTICLE_CONTENT for every window has no
-    article -- it must fail, not fall back and narrate the chrome. The raw-length
-    gate alone would wrongly rescue it; the no-article-window count prevents that."""
+    """The Register scenario: the model refuses a real article by emitting
+    NO_ARTICLE_CONTENT. Cleanup no longer trusts that sentinel -- it bins the obvious
+    boilerplate (ad marker / dateline / tip-line) and ships the surviving body."""
 
     database.run_migrations(env)
-    boilerplate = "Subscribe to our newsletter. Cookie consent notice. Navigation menu. " * 12
-    assert len(boilerplate) >= get_settings().MIN_CLEANUP_CHARS  # long enough to trip the raw gate
+    article = (
+        "REG AD\n\nPublished Thu 2 Jul 2026 // 08:00 UTC\n\n"
+        "Share it with us at tips@example.com. Anonymity is available upon request.\n\n"
+        + "The red teamers shoveled snow to gain physical access to the building. " * 8
+    )
+    monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _md, _n: [article])
+
+    async def _no_article(_system, _user, _settings, **_kwargs):
+        return "NO_ARTICLE_CONTENT"
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _no_article)
+    cleaned = await pipeline._stage_cleanup("job", article, get_settings())
+    assert "shoveled snow" in cleaned  # body shipped
+    assert "REG AD" not in cleaned  # cruft binned
+    assert "tips@example.com" not in cleaned
+    assert "UTC" not in cleaned
+
+
+async def test_cleanup_fails_when_page_is_only_boilerplate(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cruft-only page: the deterministic strip removes the subscribe/nav lines,
+    leaving nothing above the floor -- so it still fails rather than narrate chrome."""
+
+    database.run_migrations(env)
+    boilerplate = "Sign up for our newsletter to get the latest updates delivered weekly.\n\n" * 6
     monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _md, _n: [boilerplate])
 
     async def _no_article(_system, _user, _settings, **_kwargs):
@@ -1084,8 +1108,8 @@ async def test_cleanup_fails_on_long_boilerplate_the_model_flags_as_no_article(
 async def test_cleanup_fallback_strips_markdown_links(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The raw-extraction fallback strips inline links/images so the narrator reads
-    the link label, not the URL."""
+    """The deterministic fallback strips inline links/images so the narrator reads the
+    link label, not the URL."""
 
     database.run_migrations(env)
     article = "See the [official report](https://example.com/report.pdf) for details. " * 6
@@ -1104,8 +1128,8 @@ async def test_cleanup_fallback_strips_markdown_links(
 async def test_cleanup_still_fails_when_extraction_also_thin(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A genuinely empty/boilerplate page (raw also below the floor) still fails
-    -- the fallback must not resurrect a page that had no article to begin with."""
+    """A genuinely empty/boilerplate page (extraction itself below the floor) still
+    fails -- the fallback must not resurrect a page that had no article to begin with."""
 
     database.run_migrations(env)
     thin = "cookie consent banner"
