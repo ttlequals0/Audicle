@@ -121,10 +121,17 @@ def require_feed_key(
     hot media path -- per request, so a rotation applies with no restart. HEAD
     is covered (Starlette serves it through the GET view). Router-level on the
     rss + media routers only; the admin API, /health, and the SPA are not gated.
+
+    An authenticated admin is exempt: the Feed/Settings UI links to ``/media/...``
+    relatively, so the browser sends the session cookie, and the logged-in operator
+    should not have to carry the feed key to play audio or open a transcript in their
+    own dashboard. Public podcast clients have no session and still need the key.
     """
 
     enabled, expected = feed_auth.effective_auth(conn, settings)
     if not enabled:
+        return
+    if request.session.get(SESSION_KEY_USER):
         return
     _, cover_key = feed_auth.split_cover_token(request.path_params.get("episode_id"))
     supplied = request.query_params.get("key") or cover_key
