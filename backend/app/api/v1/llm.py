@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from typing import Annotated
 
 import httpx
@@ -27,14 +28,50 @@ logger = logging.getLogger("app.api.v1.llm")
 
 router = APIRouter(prefix="/llm", tags=["llm"])
 
-# Anthropic exposes no cheap list-models endpoint; offer the current known
-# model IDs as a convenience. The UI keeps a free-text fallback for anything
-# newer than this list.
+ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models"
+
+# Errors tolerated when listing models: a provider failure degrades to a fallback
+# / empty list rather than surfacing as a 500.
+_MODEL_LIST_ERRORS = (httpx.HTTPError, ValueError, KeyError, TypeError)
+
+# Static fallback when the live Anthropic /v1/models list can't be fetched
+# (no key, network error). The UI also keeps a free-text field for anything
+# newer than whatever the list returns.
 _ANTHROPIC_MODELS: tuple[str, ...] = (
     "claude-opus-4-8",
     "claude-sonnet-4-6",
     "claude-haiku-4-5-20251001",
 )
+
+
+async def _list_anthropic_models(api_key: str | None) -> list[dict[str, str]]:
+    """GET Anthropic's live /v1/models, falling back to the static IDs.
+
+    Anthropic does expose a models list (paginated; ``data[].id`` +
+    ``display_name``); request a large page so the dropdown isn't truncated.
+    """
+
+    static = [{"id": m, "name": m} for m in _ANTHROPIC_MODELS]
+    if not api_key:
+        return static
+    headers = {"x-api-key": api_key, "anthropic-version": llm.ANTHROPIC_VERSION}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(ANTHROPIC_MODELS_URL, params={"limit": 1000}, headers=headers)
+            response.raise_for_status()
+            data = response.json().get("data", [])
+        models = [
+            {"id": m["id"], "name": m.get("display_name") or m["id"]}
+            for m in data
+            if isinstance(m, dict) and m.get("id")
+        ]
+        return models or static
+    except _MODEL_LIST_ERRORS as exc:
+        logger.warning(
+            "anthropic /models list failed; using static list",
+            extra={"event": "llm_anthropic_models_failed", "detail": str(exc)},
+        )
+        return static
 
 # Per-process TTL cache keyed by "provider:base_url".
 _CACHE_TTL_SECONDS = 300.0
@@ -90,7 +127,7 @@ async def _list_openai_models(
             ids = [m["id"] for m in data.get("data", []) if isinstance(m, dict) and m.get("id")]
             if ids:
                 return [{"id": i, "name": i} for i in ids]
-        except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+        except _MODEL_LIST_ERRORS as exc:
             logger.info(
                 "openai-compatible /models list failed; trying Ollama fallback",
                 extra={"event": "llm_models_list_failed", "detail": str(exc)},
@@ -109,7 +146,7 @@ async def _list_ollama_models(client: httpx.AsyncClient, base: str) -> list[dict
             m["name"] for m in response.json().get("models", []) if isinstance(m, dict) and m.get("name")
         ]
         return [{"id": n, "name": n} for n in names]
-    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+    except _MODEL_LIST_ERRORS as exc:
         logger.info(
             "Ollama /api/tags fallback failed",
             extra={"event": "llm_models_ollama_failed", "detail": str(exc)},
@@ -121,21 +158,33 @@ def _cache_key(provider: str, base: str) -> str:
     return f"{provider}:{base}"
 
 
+_ANTHROPIC_CACHE_KEY = "anthropic:api"
+
+
+async def _cached(key: str, fetch: Callable[[], Awaitable[list[dict[str, str]]]]) -> list[dict[str, str]]:
+    """Return the cached model list for ``key``, else fetch, cache, and return."""
+
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+    models = await fetch()
+    _cache_set(key, models)
+    return models
+
+
 async def _resolve_models(settings: Settings, provider: str) -> list[dict[str, str]]:
     if provider == "anthropic":
-        return [{"id": m, "name": m} for m in _ANTHROPIC_MODELS]
+        return await _cached(
+            _ANTHROPIC_CACHE_KEY, lambda: _list_anthropic_models(settings.ANTHROPIC_API_KEY)
+        )
     # openai-compatible / openrouter / ollama all list via {base}/models.
     base, api_key, extra_headers = llm.openai_compatible_connection(settings, provider)
     base = base.rstrip("/")
     if not base:
         return []
-    key = _cache_key(provider, base)
-    cached = _cache_get(key)
-    if cached is not None:
-        return cached
-    models = await _list_openai_models(base, api_key, extra_headers)
-    _cache_set(key, models)
-    return models
+    return await _cached(
+        _cache_key(provider, base), lambda: _list_openai_models(base, api_key, extra_headers)
+    )
 
 
 async def _models_response(overlaid: Settings, provider: str | None) -> ModelsResponse:
@@ -160,7 +209,9 @@ async def refresh_models(
     overlaid = runtime_settings.overlay(settings)
     # Drop only the entry being refreshed so other providers stay cached.
     selected = provider or overlaid.LLM_PROVIDER
-    if llm.is_openai_compatible_provider(selected):
+    if selected == "anthropic":
+        _model_cache.pop(_ANTHROPIC_CACHE_KEY, None)
+    elif llm.is_openai_compatible_provider(selected):
         base, _, _ = llm.openai_compatible_connection(overlaid, selected)
         _model_cache.pop(_cache_key(selected, base.rstrip("/")), None)
     return await _models_response(overlaid, provider)

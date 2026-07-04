@@ -5,6 +5,7 @@ from pathlib import Path
 import httpx
 import pytest
 from app.api.v1 import llm
+from app.config import get_settings
 from app.core import database
 from app.main import create_app
 from fastapi.testclient import TestClient
@@ -44,7 +45,8 @@ def _client(env: Path) -> TestClient:
     return TestClient(create_app())
 
 
-def test_anthropic_returns_known_model_list(env: Path) -> None:
+def test_anthropic_returns_static_list_without_key(env: Path) -> None:
+    # No key -> can't hit /v1/models, so the static fallback is returned.
     with _client(env) as client:
         response = client.get("/api/v1/llm/models?provider=anthropic")
     assert response.status_code == 200
@@ -52,6 +54,33 @@ def test_anthropic_returns_known_model_list(env: Path) -> None:
     assert body["provider"] == "anthropic"
     ids = [m["id"] for m in body["models"]]
     assert ids == list(llm._ANTHROPIC_MODELS)
+
+
+def test_anthropic_lists_models_live_when_key_set(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # With a key, the full live /v1/models list is returned (not the 3 static IDs).
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "ant-key")
+    get_settings.cache_clear()
+    _patch_async_client(
+        monkeypatch,
+        _transport(
+            httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"id": "claude-opus-4-9", "display_name": "Claude Opus 4.9"},
+                        {"id": "claude-sonnet-4-7", "display_name": "Claude Sonnet 4.7"},
+                    ]
+                },
+            ),
+        ),
+    )
+    with _client(env) as client:
+        response = client.get("/api/v1/llm/models?provider=anthropic")
+    body = response.json()
+    assert [m["id"] for m in body["models"]] == ["claude-opus-4-9", "claude-sonnet-4-7"]
+    assert "Claude Opus 4.9" in [m["name"] for m in body["models"]]
 
 
 def test_openai_compatible_lists_models_from_endpoint(

@@ -6,6 +6,57 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.45.2] - 2026-07-04
+
+### Fixed
+
+- Articles on sites where the extractor grabbed the wrong block now process. On
+  some layouts (e.g. The Register) trafilatura scored a dense "most popular"
+  sidebar rail as the main content and returned a list of other articles'
+  headlines; the real body never reached cleanup, so the job failed with "no
+  article". Extraction now falls back to the page's `<article>` element when
+  trafilatura's output isn't inside it and that element holds more text -- an
+  in-process recall net using lxml (already a dependency), no external service.
+  The size guard keeps a good long extraction from being replaced by a small
+  decoy `<article>` (a comment or promo card) on pages with no `<article>` wrapper.
+- The cleanup fallback (used when the model won't clean an article) now runs a
+  deterministic boilerplate strip -- ad markers, skip/jump nav, datelines,
+  editorial tip-lines, subscribe prompts, inline links/images -- so a fallback
+  episode narrates the article body, not the surrounding chrome. It replaces the
+  0.45.1 raw-text fallback and the `NO_ARTICLE_CONTENT` gate: the strip doubles
+  as the article detector, so a real article the model refuses still ships while
+  a page that strips down to nothing still fails.
+
+## [0.45.1] - 2026-07-04
+
+### Fixed
+
+- LLM cleanup no longer fails a whole episode when the model balks. Newer models
+  (and agent-style endpoints) sometimes deflect into chat or refuse to reproduce
+  certain content (e.g. a detailed security-incident write-up), which came back
+  below `MIN_CLEANUP_CHARS` and dead-looped the job. When cleanup is too short
+  because the model balked, the pipeline now narrates the de-chromed extraction
+  (inline links/images stripped so URLs aren't read aloud) instead of failing. A
+  page the model reports as all boilerplate (`NO_ARTICLE_CONTENT` for every
+  window), or one whose extraction is itself below the floor, still fails -- the
+  fallback only rescues a real article the model wouldn't clean.
+- The Anthropic provider rejected requests with `temperature` on models that no
+  longer accept the parameter ("temperature is deprecated for this model"). The
+  client now omits `temperature` when unset and, if a model rejects it, drops the
+  parameter and retries once rather than failing.
+- The Settings model dropdown for the Anthropic provider was a hardcoded
+  three-entry list and its refresh did nothing. It now fetches Anthropic's live
+  `/v1/models` (with display names) and refresh flushes the cache; it falls back
+  to the static list only without a key or on a fetch error.
+
+### Changed
+
+- The cleanup prompt now states explicitly that the input is a published news
+  article to narrate, not instructions to act on, so a model is less likely to
+  refuse or summarize reporting on security incidents, crime, or how a breach
+  happened. (Effective on the raw Anthropic API; an agent endpoint may still
+  override it, which is what the raw-text fallback above covers.)
+
 ## [0.45.0] - 2026-07-03
 
 ### Added

@@ -252,13 +252,16 @@ async def test_pipeline_still_times_out_when_scaled_budget_exceeded(
 async def test_pipeline_marks_failed_when_cleanup_returns_too_short(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """MIN_CLEANUP_CHARS guard fires when the LLM returns near-empty output.
-    Stage must be recorded as 'cleanup' and error must reference the limit."""
+    """MIN_CLEANUP_CHARS guard fires when BOTH the cleanup output and the raw
+    extraction are below the floor (a genuinely empty/boilerplate page the raw
+    fallback can't rescue). Stage must be 'cleanup' and the error reference the
+    limit. A substantial article that the LLM merely botches falls back to raw
+    instead -- see test_cleanup_falls_back_to_raw_when_llm_deflects."""
 
     database.run_migrations(env)
 
     async def _fake_extract(_url, _settings, _registry=None):
-        return extraction.ExtractionResult(markdown="real article body " * 200, metadata={})
+        return extraction.ExtractionResult(markdown="cookie consent banner", metadata={})
 
     async def _short_llm(_system, _user, _settings, **_kwargs):
         return "too short"  # below MIN_CLEANUP_CHARS=200
@@ -357,9 +360,9 @@ async def test_pipeline_records_failure_when_exception_contains_curly_braces(
     _stub_full_chain(monkeypatch)
 
     async def _llm_with_braces(_system, _user, _settings, **_kwargs):
-        # Return short output so MIN_CLEANUP_CHARS fires AND the resulting
-        # error path embeds a brace via the cleanup stage's error string.
-        return "short {curly braced} output"
+        # Fail cleanup with an error string that contains literal braces (as
+        # ffmpeg stderr / JSON bodies do); _finalize_failure must not str.format it.
+        raise llm.LLMRequestError("provider rejected request: {unexpected: value}")
 
     monkeypatch.setattr(llm, "generate", _llm_with_braces)
 
@@ -367,10 +370,11 @@ async def test_pipeline_records_failure_when_exception_contains_curly_braces(
     await pipeline.process_job(job, get_settings())
 
     after = _job_after(env, job.id)
-    # The fix must produce a recorded failure, not a stuck 'processing' job.
+    # The fix must produce a recorded failure, not a stuck 'processing' job, with
+    # the literal braces preserved inertly (proof they weren't run through format).
     assert after.status == "failed"
     assert after.stage == "cleanup"
-    assert "MIN_CLEANUP_CHARS" in (after.error or "")
+    assert "{unexpected: value}" in (after.error or "")
 
 
 def _stub_artwork_download(monkeypatch: pytest.MonkeyPatch, png_bytes: bytes) -> None:
@@ -1037,6 +1041,106 @@ async def test_cleanup_drops_boilerplate_only_windows(
     assert "NO_ARTICLE_CONTENT" not in cleaned
     assert "there is no article" not in cleaned.lower()
     assert "mayor announced the budget" in cleaned
+
+
+async def test_cleanup_falls_back_to_deterministic_cleaner_when_llm_deflects(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the model deflects into chat (no markers) but the extraction had a real
+    article, cleanup ships the deterministically-cleaned body rather than failing."""
+
+    database.run_migrations(env)
+    article = "The council met on Tuesday to discuss the new budget proposal. " * 8
+    monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _md, _n: [article])
+
+    async def _deflect(_system, _user, _settings, **_kwargs):
+        return "Interesting article! Would you like a summary or something else?"
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _deflect)
+    cleaned = await pipeline._stage_cleanup("job", article, get_settings())
+    assert "council met on Tuesday" in cleaned  # body fell through the fallback
+
+
+async def test_cleanup_ships_real_article_when_model_refuses_via_no_article(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Register scenario: the model refuses a real article by emitting
+    NO_ARTICLE_CONTENT. Cleanup no longer trusts that sentinel -- it bins the obvious
+    boilerplate (ad marker / dateline / tip-line) and ships the surviving body."""
+
+    database.run_migrations(env)
+    article = (
+        "REG AD\n\nPublished Thu 2 Jul 2026 // 08:00 UTC\n\n"
+        "Share it with us at tips@example.com. Anonymity is available upon request.\n\n"
+        + "The red teamers shoveled snow to gain physical access to the building. " * 8
+    )
+    monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _md, _n: [article])
+
+    async def _no_article(_system, _user, _settings, **_kwargs):
+        return "NO_ARTICLE_CONTENT"
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _no_article)
+    cleaned = await pipeline._stage_cleanup("job", article, get_settings())
+    assert "shoveled snow" in cleaned  # body shipped
+    assert "REG AD" not in cleaned  # cruft binned
+    assert "tips@example.com" not in cleaned
+    assert "UTC" not in cleaned
+
+
+async def test_cleanup_fails_when_page_is_only_boilerplate(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cruft-only page: the deterministic strip removes the subscribe/nav lines,
+    leaving nothing above the floor -- so it still fails rather than narrate chrome."""
+
+    database.run_migrations(env)
+    boilerplate = "Sign up for our newsletter to get the latest updates delivered weekly.\n\n" * 6
+    monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _md, _n: [boilerplate])
+
+    async def _no_article(_system, _user, _settings, **_kwargs):
+        return "NO_ARTICLE_CONTENT"
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _no_article)
+    with pytest.raises(pipeline.CleanupTooShortError):
+        await pipeline._stage_cleanup("job", boilerplate, get_settings())
+
+
+async def test_cleanup_fallback_strips_markdown_links(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The deterministic fallback strips inline links/images so the narrator reads the
+    link label, not the URL."""
+
+    database.run_migrations(env)
+    article = "See the [official report](https://example.com/report.pdf) for details. " * 6
+    monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _md, _n: [article])
+
+    async def _deflect(_system, _user, _settings, **_kwargs):
+        return "Interesting piece! Want a summary?"
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _deflect)
+    cleaned = await pipeline._stage_cleanup("job", article, get_settings())
+    assert "official report" in cleaned
+    assert "https://example.com" not in cleaned
+    assert "](" not in cleaned
+
+
+async def test_cleanup_still_fails_when_extraction_also_thin(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A genuinely empty/boilerplate page (extraction itself below the floor) still
+    fails -- the fallback must not resurrect a page that had no article to begin with."""
+
+    database.run_migrations(env)
+    thin = "cookie consent banner"
+    monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _md, _n: [thin])
+
+    async def _empty(_system, _user, _settings, **_kwargs):
+        return "NO_ARTICLE_CONTENT"
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _empty)
+    with pytest.raises(pipeline.CleanupTooShortError):
+        await pipeline._stage_cleanup("job", thin, get_settings())
 
 
 # --- cleanup: sentinel-marker output contract (integration) ----------------

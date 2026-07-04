@@ -857,10 +857,29 @@ async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
     # the full text, so cleanup just joins the surviving windows here.
     cleaned = "\n\n".join(p for p in cleaned_parts if p)
     if len(cleaned) < settings.MIN_CLEANUP_CHARS:
-        raise CleanupTooShortError(
-            f"Cleanup output is {len(cleaned)} chars, below "
-            f"MIN_CLEANUP_CHARS={settings.MIN_CLEANUP_CHARS}"
-        )
+        # The LLM produced too little -- it balked: a refusal, a chat deflection, or the
+        # NO_ARTICLE_CONTENT sentinel (which some models emit to refuse real content, so
+        # it is not trusted as authoritative). Deterministically bin the obvious
+        # boilerplate from the extraction and narrate that instead of failing. This
+        # doubles as the article detector: a real article survives the strip
+        # (>= floor -> ship); a genuinely cruft-only page strips to near-nothing
+        # (< floor -> fail).
+        fallback = article_prep.strip_boilerplate(markdown)
+        if len(fallback) >= settings.MIN_CLEANUP_CHARS:
+            logger.warning(
+                "Cleanup output too short; using deterministic boilerplate strip",
+                extra={
+                    "event": "cleanup_fallback_deterministic",
+                    "cleaned_chars": len(cleaned),
+                    "fallback_chars": len(fallback),
+                },
+            )
+            cleaned = fallback
+        else:
+            raise CleanupTooShortError(
+                f"Cleanup output is {len(cleaned)} chars, below "
+                f"MIN_CLEANUP_CHARS={settings.MIN_CLEANUP_CHARS}"
+            )
     logger.info(
         "Cleanup succeeded",
         extra={
