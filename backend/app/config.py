@@ -79,6 +79,14 @@ class Settings(BaseSettings):
     FEED_CATEGORY: str = "News"
     FEED_EXPLICIT: bool = False
 
+    # Authenticated feeds (optional, off by default). When enabled, every public
+    # feed/media URL requires FEED_AUTH_KEY (a 64-hex key generated on enable);
+    # requests without it get 401. The key is not masked in the settings API --
+    # the operator must read it to build the subscribe URL. Managed via the
+    # /api/v1/feed-auth endpoints and the Settings widget, not the generic form.
+    FEED_AUTH_ENABLED: bool = False
+    FEED_AUTH_KEY: str = ""
+
     # LLM tunables.
     LLM_TEMPERATURE: float = 0.7
     # Per-call output cap. The cleanup stage processes the article in windows of

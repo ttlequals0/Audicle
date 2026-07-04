@@ -5,6 +5,7 @@ import {
   ApiError,
   postForm,
   readCsrf,
+  FeedAuthStatus,
   LlmModelsResponse,
   SettingsPayload,
   VoiceSlot,
@@ -125,6 +126,10 @@ const MASKED_KEYS = new Set([
   "FIRECRAWL_API_KEY",
   "READER_API_KEY",
 ]);
+// Allowlisted so the backend overlay reads them, but written only through the
+// dedicated AuthenticatedFeedsWidget -- keep them out of the generic form's
+// draft so "save all" never PUTs them (the backend rejects that path).
+const ENDPOINT_MANAGED_KEYS = new Set(["FEED_AUTH_ENABLED", "FEED_AUTH_KEY"]);
 const PROVIDER_OPTIONS = ["openai-compatible", "anthropic", "openrouter", "ollama"];
 // Keep in sync with the EXTRACTION_ENGINE Literal in backend/app/config.py. The
 // backend rejects any other value on PUT, so this list only drives the dropdown.
@@ -248,6 +253,7 @@ export default function SettingsRoute() {
     if (!seeded.current && settingsQ.data) {
       const next: Record<string, string> = {};
       for (const key of settingsQ.data.allowlist) {
+        if (ENDPOINT_MANAGED_KEYS.has(key)) continue; // owned by their own widget
         // Stored override if present, else the effective default, so fields
         // show editable values instead of blank.
         const v = settingsQ.data.values[key] ?? settingsQ.data.defaults[key];
@@ -416,6 +422,10 @@ export default function SettingsRoute() {
 
       <CollapsibleSection title="end chime">
         <ChimeWidget />
+      </CollapsibleSection>
+
+      <CollapsibleSection title="authenticated feeds">
+        <AuthenticatedFeedsWidget />
       </CollapsibleSection>
 
       {authStatus && (
@@ -1512,6 +1522,145 @@ function ChimeWidget() {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+// A read-only value with a copy-to-clipboard button. Selects on focus so the
+// keyboard path works when the clipboard API is blocked (non-HTTPS origin).
+function CopyRow({
+  label,
+  value,
+  copied,
+  onCopy,
+}: {
+  label: string;
+  value: string;
+  copied: boolean;
+  onCopy: () => void;
+}) {
+  return (
+    <div className="space-y-1">
+      <label className="label mb-0">{label}</label>
+      <div className="flex items-center gap-2">
+        <input
+          className="field flex-1 font-mono text-xs"
+          readOnly
+          value={value}
+          onFocus={(e) => e.target.select()}
+        />
+        <button className="btn-ghost shrink-0" onClick={onCopy}>
+          {copied ? "copied" : "copy"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Authenticated feeds: an optional global key required on every feed/media URL.
+// The key is server-generated on enable; the operator copies the keyed feed URL
+// to re-subscribe apps. Enabling or regenerating breaks existing subscriptions.
+function AuthenticatedFeedsWidget() {
+  const qc = useQueryClient();
+  const authQ = useQuery({
+    queryKey: ["feed-auth"],
+    queryFn: () => api<FeedAuthStatus>("/api/v1/feed-auth"),
+  });
+  const [copied, setCopied] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  // Both mutations also invalidate ["settings"] so the Feed page's copy button
+  // (which reads settings.feed_url) picks up the newly keyed/keyless URL.
+  const toggleM = useMutation({
+    mutationFn: (enabled: boolean) =>
+      api<FeedAuthStatus>("/api/v1/feed-auth", {
+        method: "POST",
+        body: JSON.stringify({ enabled }),
+      }),
+    onSuccess: (d) => {
+      qc.setQueryData(["feed-auth"], d);
+      qc.invalidateQueries({ queryKey: ["settings"] });
+    },
+    onError: (e) => setMsg(`failed${e instanceof ApiError ? ` (${e.status})` : ""}`),
+  });
+
+  const regenM = useMutation({
+    mutationFn: () =>
+      api<FeedAuthStatus>("/api/v1/feed-auth/regenerate", { method: "POST" }),
+    onSuccess: (d) => {
+      qc.setQueryData(["feed-auth"], d);
+      qc.invalidateQueries({ queryKey: ["settings"] });
+      setMsg("key rotated -- re-subscribe every app with the new url");
+    },
+    onError: (e) => setMsg(`rotate failed${e instanceof ApiError ? ` (${e.status})` : ""}`),
+  });
+
+  const copy = async (field: string, value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(field);
+      setTimeout(() => setCopied((c) => (c === field ? null : c)), 1500);
+    } catch {
+      setMsg("copy failed -- select the field and copy manually");
+    }
+  };
+
+  const regenerate = () => {
+    if (!confirm("Rotate the feed key? Every subscribed app must re-subscribe with the new URL.")) {
+      return;
+    }
+    setMsg(null);
+    regenM.mutate();
+  };
+
+  const data = authQ.data;
+  const enabled = Boolean(data?.enabled);
+
+  return (
+    <div className="space-y-3">
+      <p className="mono-xs text-mute">
+        // requires a key on every feed and media url. off = anyone with the url can subscribe
+      </p>
+      <div className="flex items-center justify-between gap-3 py-1">
+        <label className="label mb-0" htmlFor="FEED_AUTH_ENABLED">
+          enabled
+        </label>
+        <Toggle
+          id="FEED_AUTH_ENABLED"
+          checked={enabled}
+          onChange={(v) => {
+            setMsg(null);
+            toggleM.mutate(v);
+          }}
+        />
+      </div>
+      {enabled && (
+        <p className="mono-xs text-danger">
+          // subscribed apps get 401 until re-subscribed with the keyed url below
+        </p>
+      )}
+      {enabled && data?.keyed_feed_url && (
+        <CopyRow
+          label="feed url"
+          value={data.keyed_feed_url}
+          copied={copied === "url"}
+          onCopy={() => copy("url", data.keyed_feed_url!)}
+        />
+      )}
+      {enabled && data?.key && (
+        <CopyRow
+          label="key"
+          value={data.key}
+          copied={copied === "key"}
+          onCopy={() => copy("key", data.key!)}
+        />
+      )}
+      {msg && <p className="mono-xs text-accent">{msg}</p>}
+      {enabled && (
+        <button className="btn-ghost" onClick={regenerate} disabled={regenM.isPending}>
+          {regenM.isPending ? "rotating..." : "Regenerate key"}
+        </button>
+      )}
     </div>
   );
 }

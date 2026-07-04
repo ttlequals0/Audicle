@@ -19,6 +19,7 @@ from app.api.v1 import chime as chime_routes
 from app.api.v1 import corrections as corrections_routes
 from app.api.v1 import episodes as episodes_routes
 from app.api.v1 import feed as feed_routes
+from app.api.v1 import feed_auth as feed_auth_routes
 from app.api.v1 import jobs as jobs_routes
 from app.api.v1 import llm as llm_routes
 from app.api.v1 import prompt as prompt_routes
@@ -47,6 +48,7 @@ admin.include_router(corrections_routes.router)
 admin.include_router(source_fallbacks_routes.router)
 admin.include_router(purge_routes.router)
 admin.include_router(feed_routes.router)
+admin.include_router(feed_auth_routes.router)
 admin.include_router(settings_routes.router)
 admin.include_router(episodes_routes.router)
 admin.include_router(jobs_routes.router)

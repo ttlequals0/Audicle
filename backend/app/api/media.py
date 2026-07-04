@@ -18,12 +18,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import FileResponse
 
-from app.api.deps import get_conn
+from app.api.deps import get_conn, require_feed_key
 from app.config import Settings, get_settings
 from app.core.paths import media_dir
-from app.services import episodes
+from app.services import episodes, feed_auth
 
-router = APIRouter(prefix="/media", tags=["media"])
+# require_feed_key gates every asset when FEED_AUTH_ENABLED (no-op otherwise).
+router = APIRouter(prefix="/media", tags=["media"], dependencies=[Depends(require_feed_key)])
 
 # jobs.py generates episode_ids as short hex tokens. This pattern enforces
 # the contract at the route boundary so a malformed id 404s before any
@@ -71,6 +72,9 @@ async def get_jpg(
     episode_id: str,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> FileResponse:
+    # A keyed cover URL is /media/<episode_id>-<key>.jpg; require_feed_key has
+    # already validated the key, so take the id half for the file lookup.
+    episode_id, _ = feed_auth.split_cover_token(episode_id)
     _validate_episode_id(episode_id)
     path = _safe_path(media_dir(settings), f"{episode_id}.jpg")
     if not path.is_file():

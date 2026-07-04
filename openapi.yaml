@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.42.2
+  version: 0.45.0
 paths:
   /health/live:
     get:
@@ -558,6 +558,77 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/feed-auth:
+    get:
+      tags:
+      - feed-auth
+      summary: Get Feed Auth
+      operationId: get_feed_auth_api_v1_feed_auth_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedAuthStatus'
+    post:
+      tags:
+      - feed-auth
+      summary: Set Feed Auth Enabled
+      description: 'Enable or disable authenticated feeds.
+
+
+        Enabling with no stored key mints one (retained across a later disable, so
+
+        re-enabling reuses the same key rather than breaking every already-updated
+
+        app again). ``set_if_absent`` is atomic, so two concurrent enables agree on
+
+        one key instead of racing to different values -- the status then returns the
+
+        key the operator can actually subscribe with. ``body.enabled`` is a real bool
+
+        via Pydantic, so a stringly-typed ``"false"`` can''t slip through as True.'
+      operationId: set_feed_auth_enabled_api_v1_feed_auth_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeedAuthToggle'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedAuthStatus'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/feed-auth/regenerate:
+    post:
+      tags:
+      - feed-auth
+      summary: Regenerate Feed Auth Key
+      description: 'Rotate the key. 409 while disabled -- rotating a dormant key is
+        invisible
+
+        and surprising on re-enable. The old key stops working the moment the new
+        one
+
+        is stored, so every subscribed app must re-subscribe with the new URL.'
+      operationId: regenerate_feed_auth_key_api_v1_feed_auth_regenerate_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedAuthStatus'
   /api/v1/settings:
     get:
       tags:
@@ -1087,11 +1158,11 @@ paths:
             application/json:
               schema: {}
   /rss/{slug}.xml:
-    head:
+    get:
       tags:
       - rss
       summary: Get Rss
-      operationId: get_rss_rss__slug__xml_head
+      operationId: get_rss_rss__slug__xml_get
       parameters:
       - name: slug
         in: path
@@ -1127,11 +1198,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    get:
+    head:
       tags:
       - rss
       summary: Get Rss
-      operationId: get_rss_rss__slug__xml_head
+      operationId: get_rss_rss__slug__xml_get
       parameters:
       - name: slug
         in: path
@@ -1168,11 +1239,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.mp3:
-    head:
+    get:
       tags:
       - media
       summary: Get Mp3
-      operationId: get_mp3_media__episode_id__mp3_head
+      operationId: get_mp3_media__episode_id__mp3_get
       parameters:
       - name: episode_id
         in: path
@@ -1192,11 +1263,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    get:
+    head:
       tags:
       - media
       summary: Get Mp3
-      operationId: get_mp3_media__episode_id__mp3_head
+      operationId: get_mp3_media__episode_id__mp3_get
       parameters:
       - name: episode_id
         in: path
@@ -1217,11 +1288,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.jpg:
-    head:
+    get:
       tags:
       - media
       summary: Get Jpg
-      operationId: get_jpg_media__episode_id__jpg_head
+      operationId: get_jpg_media__episode_id__jpg_get
       parameters:
       - name: episode_id
         in: path
@@ -1241,11 +1312,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    get:
+    head:
       tags:
       - media
       summary: Get Jpg
-      operationId: get_jpg_media__episode_id__jpg_head
+      operationId: get_jpg_media__episode_id__jpg_get
       parameters:
       - name: episode_id
         in: path
@@ -1266,11 +1337,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.vtt:
-    head:
+    get:
       tags:
       - media
       summary: Get Vtt
-      operationId: get_vtt_media__episode_id__vtt_head
+      operationId: get_vtt_media__episode_id__vtt_get
       parameters:
       - name: episode_id
         in: path
@@ -1290,11 +1361,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    get:
+    head:
       tags:
       - media
       summary: Get Vtt
-      operationId: get_vtt_media__episode_id__vtt_head
+      operationId: get_vtt_media__episode_id__vtt_get
       parameters:
       - name: episode_id
         in: path
@@ -1315,7 +1386,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.txt:
-    head:
+    get:
       tags:
       - media
       summary: Get Cleaned Text
@@ -1323,7 +1394,7 @@ paths:
         the
 
         ``cleaned_text`` column. 404 for episodes processed before 0.6.0 (NULL).'
-      operationId: get_cleaned_text_media__episode_id__txt_head
+      operationId: get_cleaned_text_media__episode_id__txt_get
       parameters:
       - name: episode_id
         in: path
@@ -1343,7 +1414,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    get:
+    head:
       tags:
       - media
       summary: Get Cleaned Text
@@ -1351,7 +1422,7 @@ paths:
         the
 
         ``cleaned_text`` column. 404 for episodes processed before 0.6.0 (NULL).'
-      operationId: get_cleaned_text_media__episode_id__txt_head
+      operationId: get_cleaned_text_media__episode_id__txt_get
       parameters:
       - name: episode_id
         in: path
@@ -1555,6 +1626,38 @@ components:
       - source_filename
       - voice_label
       title: EpisodeListItem
+    FeedAuthStatus:
+      properties:
+        enabled:
+          type: boolean
+          title: Enabled
+        key:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Key
+        keyed_feed_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Keyed Feed Url
+      additionalProperties: false
+      type: object
+      required:
+      - enabled
+      - key
+      - keyed_feed_url
+      title: FeedAuthStatus
+    FeedAuthToggle:
+      properties:
+        enabled:
+          type: boolean
+          title: Enabled
+      additionalProperties: false
+      type: object
+      required:
+      - enabled
+      title: FeedAuthToggle
     FeedRecreateResponse:
       properties:
         podcast_guid:
