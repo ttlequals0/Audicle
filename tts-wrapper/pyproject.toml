@@ -1,6 +1,6 @@
 [project]
 name = "audicle-tts-wrapper"
-version = "0.44.0"
+version = "0.45.0"
 description = "FastAPI TTS wrapper for Audicle (Chatterbox)."
 requires-python = ">=3.11,<3.14"
 # The wrapper's real Python is set by the pytorch/pytorch:2.6.0 CUDA base image (3.11),
@@ -32,20 +32,24 @@ chatterbox = ["chatterbox-tts>=0.1.7"]
 # every image but import-gated at runtime by WHISPER_ENABLED -- the model only
 # loads when an operator turns verification on.
 whisper = ["faster-whisper>=1.0"]
-# NOTE: chatterbox-tts 0.1.7 hard-pins two transitive deps that each carry HIGH
-# advisories, neither reachable in this wrapper:
+# NOTE: chatterbox-tts 0.1.7 hard-pins several transitive deps that each carry
+# HIGH advisories, none reachable in this wrapper:
 #   * ``diffusers==0.29.0`` -- CVE-2026-44513 / CVE-2026-45804, ``trust_remote_code``
 #     / TOCTOU remote-code-load bypasses (fixed in 0.38.0). Chatterbox imports
 #     diffusers only for its flow-matching decoder, never sets ``trust_remote_code``,
 #     and the wrapper loads only trusted Chatterbox weights.
-#   * ``gradio==6.8.0`` -> ``starlette<1.0`` -- CVE-2026-48818 / CVE-2026-54283,
-#     ``request.form()`` DoS (fixed in starlette 1.1.0 / 1.3.1). The wrapper exposes
-#     only JSON and GET endpoints (no form/multipart parsing) and never imports gradio.
-# Both are blocked by chatterbox's exact pins; clearing them means overriding those
-# pins, which risks the TTS engine for zero real exposure reduction. No upstream
-# relief is available -- 0.1.7 (latest) and master keep both pins, and the relax-pins
-# PR (resemble-ai/chatterbox#486) is stale with conflicts. Revisit when chatterbox-tts
-# ships a release that moves off these pins.
+#   * ``gradio==6.8.0`` -- GHSA-7hp7-4p35-3cx2 cookie injection (fixed in 6.15.0)
+#     and, via ``starlette<1.0``, CVE-2026-48818 / CVE-2026-54283 ``request.form()``
+#     DoS (fixed in starlette 1.1.0 / 1.3.1). The wrapper never starts a gradio
+#     server or imports gradio, and exposes only JSON/GET endpoints (no form parsing).
+#   * ``transformers==5.2.0`` -- GHSA-29pf-2h5f-8g72 remote code execution (fixed in
+#     5.3.0). The RCE is reached through loading an untrusted model/config; the wrapper
+#     only loads the fixed, trusted Chatterbox model (never ``trust_remote_code``).
+# All are blocked by chatterbox's exact pins under the torch==2.6.0 constraint
+# (``uv lock --upgrade-package gradio --upgrade-package transformers`` is a no-op);
+# overriding them risks the TTS engine for zero real exposure reduction. No upstream
+# relief -- 0.1.7 (latest) and master keep the pins, and the relax-pins PR
+# (resemble-ai/chatterbox#486) is stale. Revisit when chatterbox-tts moves off them.
 
 [build-system]
 requires = ["setuptools>=68"]

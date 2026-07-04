@@ -10,6 +10,7 @@ stay unauthenticated so podcast clients can subscribe.
 from __future__ import annotations
 
 import ipaddress
+import logging
 import sqlite3
 from collections.abc import Iterator
 from typing import Annotated
@@ -18,7 +19,9 @@ from fastapi import Depends, HTTPException, Request
 
 from app.config import Settings, get_settings
 from app.core import database
-from app.services import auth, csrf, voices
+from app.services import auth, csrf, feed_auth, runtime_settings, voices
+
+logger = logging.getLogger("app.api.deps")
 
 SESSION_KEY_USER = "audicle_user"
 
@@ -89,6 +92,50 @@ def require_admin(
         request.cookies.get(csrf.CSRF_COOKIE_NAME),
     ):
         raise HTTPException(status_code=403, detail="csrf token mismatch")
+
+
+def get_effective_settings(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> Settings:
+    """The env/code ``Settings`` with the ``runtime_settings`` overlay applied,
+    resolved once per request. FastAPI caches the dependency, so multiple
+    consumers -- the feed-key guard and the route handler -- share one overlay
+    read instead of each calling ``runtime_settings.overlay()`` itself (what the
+    ``overlay`` docstring prescribes)."""
+
+    return runtime_settings.overlay(settings)
+
+
+def require_feed_key(
+    request: Request,
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> None:
+    """Gate the public feed/media surface on the global feed key.
+
+    No-op while ``FEED_AUTH_ENABLED`` is off; when on, 401 unless the request
+    carries the active key. The key comes from ``?key=`` (RSS, mp3, vtt, txt)
+    or, for cover art, the ``<episode_id>-<key>`` path token. Fails closed if
+    enabled with no stored key. Reads only the two feed-auth rows off the
+    request connection (``feed_auth.effective_auth``) -- no full overlay on the
+    hot media path -- per request, so a rotation applies with no restart. HEAD
+    is covered (Starlette serves it through the GET view). Router-level on the
+    rss + media routers only; the admin API, /health, and the SPA are not gated.
+    """
+
+    enabled, expected = feed_auth.effective_auth(conn, settings)
+    if not enabled:
+        return
+    _, cover_key = feed_auth.split_cover_token(request.path_params.get("episode_id"))
+    supplied = request.query_params.get("key") or cover_key
+    if not feed_auth.verify(supplied, expected):
+        logger.warning(
+            "feed key rejected: %s %s [%s]",
+            request.method,
+            request.url.path,
+            client_ip(request, settings),
+        )
+        raise HTTPException(status_code=401, detail="feed key required")
 
 
 def require_voice_loaded() -> None:

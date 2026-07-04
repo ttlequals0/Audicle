@@ -172,6 +172,14 @@ export interface SettingsPayload {
   feed_url: string;
 }
 
+export interface FeedAuthStatus {
+  enabled: boolean;
+  // Returned in the clear; null until a key is generated on first enable.
+  key: string | null;
+  // Ready-to-copy keyed feed URL; null when disabled or no key yet.
+  keyed_feed_url: string | null;
+}
+
 export interface HealthLive {
   ok: boolean;
   version: string;

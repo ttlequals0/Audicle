@@ -18,9 +18,13 @@ from pydantic import BaseModel, ConfigDict
 
 from app.api.deps import get_conn
 from app.config import RUNTIME_SETTING_BOUNDS, Settings, get_settings
-from app.services import runtime_settings, settings_store, slug
+from app.services import feed, feed_auth, runtime_settings, settings_store, slug
 
 router = APIRouter(tags=["settings"])
+
+# In ALLOWED_KEYS (so the overlay reads them) but write-only through their own
+# endpoint; the generic form must not set them. See put_settings_overrides.
+_ENDPOINT_MANAGED_KEYS = frozenset({"FEED_AUTH_ENABLED", "FEED_AUTH_KEY"})
 
 
 class SettingsResponse(BaseModel):
@@ -46,7 +50,7 @@ async def get_settings_overrides(
     conn: Annotated[sqlite3.Connection, Depends(get_conn)],
 ) -> SettingsResponse:
     stored = runtime_settings.get_all(conn)
-    return _masked_response(stored, settings)
+    return _masked_response(stored, settings, _effective_feed_key(conn, settings))
 
 
 @router.put(
@@ -65,6 +69,16 @@ async def put_settings_overrides(
             detail=(
                 f"unknown setting keys: {unknown}; allowed: {sorted(runtime_settings.ALLOWED_KEYS)}"
             ),
+        )
+    # FEED_AUTH_ENABLED/FEED_AUTH_KEY are in ALLOWED_KEYS so the overlay reads
+    # them, but they must only be written through /api/v1/feed-auth: that path
+    # lazily mints a valid 64-hex key on enable. Writing them here would let a
+    # caller enable auth with no/invalid key and fail-closed 401 the whole feed.
+    managed = sorted(_ENDPOINT_MANAGED_KEYS.intersection(payload))
+    if managed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{managed} are managed via /api/v1/feed-auth, not the settings form",
         )
     # The current feed slug, before applying, so a FEED_TITLE rename can be
     # detected below. Derived live from the effective title (no stored copy
@@ -99,12 +113,23 @@ async def put_settings_overrides(
     # FEED_TITLE in the payload can't reach slugify.
     if "FEED_TITLE" in payload and slug.feed_slug(_effective_title(stored, settings)) != old_slug:
         settings_store.rotate_feed_guids(conn, settings.BASE_URL)
-    return _masked_response(stored, settings)
+    return _masked_response(stored, settings, _effective_feed_key(conn, settings))
 
 
-def _masked_response(stored: dict[str, str], settings: Settings) -> SettingsResponse:
+def _effective_feed_key(conn: sqlite3.Connection, settings: Settings) -> str | None:
+    """The feed key to advertise in ``feed_url``: the active key when auth is on,
+    else None so the URL stays keyless."""
+
+    enabled, key = feed_auth.effective_auth(conn, settings)
+    return key if enabled else None
+
+
+def _masked_response(
+    stored: dict[str, str], settings: Settings, feed_key: str | None = None
+) -> SettingsResponse:
     """Build the GET/PUT response, masking secret-bearing keys so their stored
-    value is never echoed to the client."""
+    value is never echoed to the client. ``feed_url`` carries the auth key when
+    authenticated feeds are on, so the Feed page's copy button matches."""
 
     values = {
         key: (
@@ -118,7 +143,9 @@ def _masked_response(stored: dict[str, str], settings: Settings) -> SettingsResp
         allowlist=sorted(runtime_settings.ALLOWED_KEYS),
         values=values,
         defaults=_defaults_map(settings),
-        feed_url=slug.feed_url(settings.BASE_URL, _effective_title(stored, settings)),
+        feed_url=feed.feed_url_with_key(
+            settings.BASE_URL, _effective_title(stored, settings), feed_key
+        ),
     )
 
 

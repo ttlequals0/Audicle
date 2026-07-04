@@ -17,18 +17,20 @@ clients don't refetch the full body on every poll.
 from __future__ import annotations
 
 import sqlite3
+import zlib
 from datetime import UTC, datetime
 from email.utils import format_datetime, parsedate_to_datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 
-from app.api.deps import get_conn
-from app.config import Settings, get_settings
-from app.services import episodes, feed, runtime_settings, settings_store
+from app.api.deps import get_conn, get_effective_settings, require_feed_key
+from app.config import Settings
+from app.services import episodes, feed, feed_auth, settings_store
 from app.services import slug as slug_module
 
-router = APIRouter(prefix="/rss", tags=["rss"])
+# require_feed_key gates the whole feed when FEED_AUTH_ENABLED (no-op otherwise).
+router = APIRouter(prefix="/rss", tags=["rss"], dependencies=[Depends(require_feed_key)])
 
 
 # GET + HEAD: Apple Podcasts and other platforms issue a HEAD before GET and
@@ -38,15 +40,14 @@ router = APIRouter(prefix="/rss", tags=["rss"])
 async def get_rss(
     slug: str,
     request: Request,
-    base_settings: Annotated[Settings, Depends(get_settings)],
+    settings: Annotated[Settings, Depends(get_effective_settings)],
     conn: Annotated[sqlite3.Connection, Depends(get_conn)],
     if_modified_since: Annotated[str | None, Header()] = None,
     if_none_match: Annotated[str | None, Header()] = None,
 ) -> Response:
-    # Apply the runtime_settings overlay so an operator PUT to
-    # /api/v1/settings (FEED_TITLE, FEED_DESCRIPTION, FEED_LANGUAGE, etc.)
-    # is reflected on the next RSS render without a process restart.
-    settings = runtime_settings.overlay(base_settings)
+    # ``settings`` is the runtime_settings overlay (shared with the feed-key
+    # guard via get_effective_settings), so an operator PUT to /api/v1/settings
+    # (FEED_TITLE, FEED_DESCRIPTION, etc.) reflects on the next render, no restart.
     # The feed lives at exactly one slug -- the current FEED_TITLE's. Any other
     # slug (the old /rss/rss.xml, or a pre-rename name) is a different feed and
     # 404s, per the "rename = new feed" contract.
@@ -58,14 +59,26 @@ async def get_rss(
     guid_epoch = settings_store.get_feed_guid_epoch(conn)
 
     last_build = _last_build_datetime(latest)
-    etag = _feed_etag(last_build, guid_epoch, len(rows))
+    # Fold feed-key state into the ETag so enabling, disabling, or rotating the
+    # key changes the validator -- a client holding a cached keyless feed then
+    # gets a 200 with keyed URLs instead of a 304 with stale ones.
+    key = feed_auth.active_key(settings)
+    etag = _feed_etag(last_build, guid_epoch, len(rows), key)
     media_type = "application/rss+xml; charset=utf-8"
     headers = {
         "Last-Modified": format_datetime(last_build, usegmt=True),
         "Cache-Control": f"public, max-age={settings.RSS_CACHE_MAX_AGE_SECONDS}",
         "ETag": etag,
     }
-    if _is_not_modified(if_modified_since, last_build) or _etag_matches(if_none_match, etag):
+    # RFC 7232: when the request carries If-None-Match, ignore If-Modified-Since
+    # and validate on the ETag alone. This is also what makes the feed-key ETag
+    # self-heal work -- enabling/rotating changes the ETag but not last_build, so
+    # an IMS-only comparison would 304 and leave a client on its keyless feed.
+    if if_none_match is not None:
+        not_modified = _etag_matches(if_none_match, etag)
+    else:
+        not_modified = _is_not_modified(if_modified_since, last_build)
+    if not_modified:
         return Response(status_code=304, headers=headers)
     # HEAD: headers only, and skip the (gzip-able) render entirely.
     if request.method == "HEAD":
@@ -77,16 +90,24 @@ async def get_rss(
         podcast_guid=guid,
         last_build=last_build,
         feed_guid_epoch=guid_epoch,
+        feed_auth_key=key,
     )
     return Response(content=body, media_type=media_type, headers=headers)
 
 
-def _feed_etag(last_build: datetime, guid_epoch: int, episode_count: int) -> str:
+def _feed_etag(
+    last_build: datetime, guid_epoch: int, episode_count: int, feed_auth_key: str | None
+) -> str:
     """Weak validator: changes when an episode updates (last_build), the feed is
-    recreated (guid_epoch), or the episode count changes -- the same inputs that
-    drive Last-Modified, so it never goes stale relative to it."""
+    recreated (guid_epoch), the episode count changes, or the feed-key state
+    changes -- the same inputs that drive Last-Modified plus the key state, so a
+    client re-fetches after an enable/disable/rotate. The key itself is never in
+    the ETag; a CRC32 discriminator stands in for it -- a cache validator, not a
+    security check (auth uses hmac.compare_digest on the raw key), so a plain
+    non-cryptographic checksum is the right primitive and cannot leak the key."""
 
-    return f'W/"{int(last_build.timestamp())}-{guid_epoch}-{episode_count}"'
+    key_token = f"{zlib.crc32(feed_auth_key.encode()):08x}" if feed_auth_key else "0"
+    return f'W/"{int(last_build.timestamp())}-{guid_epoch}-{episode_count}-{key_token}"'
 
 
 def _etag_matches(if_none_match: str | None, etag: str) -> bool:

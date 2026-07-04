@@ -6,6 +6,37 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-07-03
+
+### Added
+
+- Authenticated feeds (optional, off by default). Enable it in Settings ->
+  authenticated feeds and every public feed and media URL requires a global
+  64-hex key; requests without it get 401. RSS, mp3, vtt, and txt carry the key
+  as `?key=`; cover art embeds it in the path token
+  (`/media/<episode-id>-<key>.jpg`), so the URL still ends in `.jpg` for Apple
+  and the Cloudflare edge. The key is generated on enable, shown in the widget
+  to build the subscribe URL, and rotatable via `POST /api/v1/feed-auth/regenerate`.
+  Disabling retains the key so re-enabling reuses it. `podcast:guid` stays keyless,
+  so enabling or rotating never changes feed identity. Enabling or rotating breaks
+  currently-subscribed apps until they re-subscribe with the keyed URL. No
+  Cloudflare rule change is needed.
+
+### Security
+
+- Dismissed two unfixable HIGH Dependabot alerts in the tts-wrapper as not-reachable:
+  `transformers` (GHSA-29pf-2h5f-8g72, RCE via untrusted model load) and `gradio`
+  (GHSA-7hp7-4p35-3cx2, cookie injection). Both are transitive pins of
+  chatterbox-tts 0.1.7 under the torch 2.6.0 constraint and are not bumpable
+  (`uv lock --upgrade` is a no-op); the wrapper never runs a gradio server and
+  loads only the trusted Chatterbox model, so neither path is reachable. Rationale
+  is documented in `tts-wrapper/pyproject.toml`.
+
+### Changed
+
+- Bumped `actions/checkout` to v7 and the `astral-sh/uv` build image to 0.11.25
+  (supersedes Dependabot PRs #83 and #86).
+
 ## [0.44.0] - 2026-07-02
 
 ### Fixed

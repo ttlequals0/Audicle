@@ -34,6 +34,12 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "FEED_CATEGORY",
         "FEED_EXPLICIT",
         "FEED_ARTWORK_URL",
+        # Authenticated feeds. Stored here so the renderer/guard read them via the
+        # overlay; managed through /api/v1/feed-auth, not the generic PUT form.
+        # FEED_AUTH_KEY is deliberately NOT in MASKED_KEYS -- the operator must
+        # read it to build the subscribe URL.
+        "FEED_AUTH_ENABLED",
+        "FEED_AUTH_KEY",
         "RETENTION_DAYS",
         # Per-file upload size ceiling in MB; tunable live for image-heavy PDFs.
         "UPLOAD_MAX_MB",
@@ -161,6 +167,26 @@ def set_value(conn: sqlite3.Connection, key: str, value: Any) -> None:
         (key, serialized),
     )
     conn.commit()
+
+
+def set_if_absent(conn: sqlite3.Connection, key: str, value: Any) -> str:
+    """Store ``value`` only if ``key`` has no row yet (atomic ``INSERT OR
+    IGNORE``), then return the stored serialized value. The first writer wins a
+    race, so a generated secret stays stable once minted even under concurrent
+    enables -- unlike ``set_value``'s last-writer-wins UPSERT."""
+
+    if key not in ALLOWED_KEYS:
+        raise KeyError(f"{key} is not an operator-tunable setting")
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO runtime_settings (key, value, updated_at)
+        VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        """,
+        (key, _serialize(value)),
+    )
+    conn.commit()
+    row = conn.execute("SELECT value FROM runtime_settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else _serialize(value)
 
 
 def delete(conn: sqlite3.Connection, key: str) -> None:

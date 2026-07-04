@@ -68,6 +68,7 @@ def render(
     podcast_guid: str,
     last_build: datetime,
     feed_guid_epoch: int = 0,
+    feed_auth_key: str | None = None,
 ) -> bytes:
     """Render the full RSS document (channel + items + PC2 tags) as bytes.
 
@@ -103,7 +104,8 @@ def render(
     # element ends up pointing at BASE_URL (the website) rather than at the
     # feed URL itself, which is the conventional rendering for podcast
     # players.
-    fg.link(href=slug.feed_url(settings.BASE_URL, settings.FEED_TITLE), rel="self")
+    # The self-link is the URL the client re-fetches, so it carries the key too.
+    fg.link(href=self_feed_url(settings, feed_auth_key), rel="self")
     fg.link(href=settings.BASE_URL, rel="alternate")
     # Channel artwork precedence: operator FEED_ARTWORK_URL when set, then the
     # branded DEFAULT_ARTWORK_URL (raw-GitHub .jpg), then the server-local
@@ -111,10 +113,13 @@ def render(
     # env-overridable and may be set to "", which would make feedgen reject an
     # empty cover ("Image file must be png or jpg"); the local seed guarantees a
     # non-empty .jpg so the feed always renders.
+    # Only the server-local /media/default.jpg fallback is gated, so it is the
+    # one that gets keyed (in the path -- it is an image URL). The operator/
+    # branded URLs point off-origin at public images we don't serve or gate.
     artwork_url = _raw_github_url(
         settings.FEED_ARTWORK_URL
         or settings.DEFAULT_ARTWORK_URL
-        or f"{settings.BASE_URL.rstrip('/')}/media/default.jpg"
+        or _media_url(settings.BASE_URL, "default", "jpg", key=feed_auth_key)
     )
     # Artwork URLs stay extension-clean (no ?v=): Apple requires the cover URL to
     # end in .jpg/.png, and apps that validate this drop a query-string URL.
@@ -165,7 +170,7 @@ def render(
         item.podcast.itunes_summary(_episode_summary(ep))
         item.pubDate(_parse_iso(ep.pub_date) or last_build)
         if ep.audio_path:
-            audio_url = _media_url(settings.BASE_URL, ep.id, "mp3", bust)
+            audio_url = _media_url(settings.BASE_URL, ep.id, "mp3", bust, key=feed_auth_key)
             item.enclosure(
                 url=audio_url,
                 length=str(audio_size(ep) or 0),
@@ -179,7 +184,7 @@ def render(
         # png or jpg", crashing the whole feed render with a 500. The URL is
         # extension-clean (no ?v=) so Apple/podcast apps accept the cover.
         item.podcast.itunes_image(
-            _media_url(settings.BASE_URL, ep.id, "jpg")
+            _media_url(settings.BASE_URL, ep.id, "jpg", key=feed_auth_key)
             if ep.artwork_path
             else artwork_url
         )
@@ -191,6 +196,7 @@ def render(
         podcast_guid=podcast_guid,
         episodes=episodes,
         settings=settings,
+        feed_auth_key=feed_auth_key,
     )
 
 
@@ -259,6 +265,7 @@ def _inject_pc2_tags(
     podcast_guid: str,
     episodes: list[Episode],
     settings: Settings,
+    feed_auth_key: str | None = None,
 ) -> bytes:
     """Append the PC2 namespace + channel-level + per-item PC2 elements.
 
@@ -324,7 +331,9 @@ def _inject_pc2_tags(
     for item_el, ep in zip(items, episodes, strict=True):
         if not ep.transcript_vtt:
             continue
-        transcript_url = _media_url(settings.BASE_URL, ep.id, "vtt", _cache_bust(ep.updated_at))
+        transcript_url = _media_url(
+            settings.BASE_URL, ep.id, "vtt", _cache_bust(ep.updated_at), key=feed_auth_key
+        )
         ET.SubElement(
             item_el,
             f"{{{_PODCAST_NS}}}transcript",
@@ -351,9 +360,50 @@ def _first_item_index(channel: ET.Element) -> int:
     return len(channel)
 
 
-def _media_url(base_url: str, episode_id: str, ext: str, version: int | None = None) -> str:
-    url = f"{base_url.rstrip('/')}/media/{episode_id}.{ext}"
-    return _append_version(url, version) or url
+def _media_url(
+    base_url: str,
+    episode_id: str,
+    ext: str,
+    version: int | None = None,
+    key: str | None = None,
+) -> str:
+    base = base_url.rstrip("/")
+    if ext == "jpg":
+        # Cover art: the key rides the path token, never a query string (Apple
+        # and CDNs reject query-string image URLs -- the same reason there is no
+        # ?v= here). Both id and key are hyphen-free hex, so the serving side
+        # splits the token on the last hyphen.
+        stem = f"{episode_id}-{key}" if key else episode_id
+        return f"{base}/media/{stem}.jpg"
+    url = f"{base}/media/{episode_id}.{ext}"
+    url = _append_version(url, version) or url
+    return _append_key(url, key)
+
+
+def _append_param(url: str, name: str, value: object) -> str:
+    """Append ``name=value`` as a query parameter, choosing ``?`` or ``&``."""
+
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}{name}={value}"
+
+
+def _append_key(url: str, key: str | None) -> str:
+    return _append_param(url, "key", key) if key else url
+
+
+def feed_url_with_key(base_url: str, title: str | None, feed_auth_key: str | None) -> str:
+    """The feed subscribe URL for ``title``, with the auth key appended when set.
+    The single place the keyed-URL format lives -- reused by the RSS self-link,
+    the /feed-auth status endpoint, and the settings response (so the Feed page's
+    copy button matches)."""
+
+    return _append_key(slug.feed_url(base_url, title), feed_auth_key)
+
+
+def self_feed_url(settings: Settings, feed_auth_key: str | None) -> str:
+    """The feed's own subscribe URL (RSS ``rel=self``), keyed when auth is on."""
+
+    return feed_url_with_key(settings.BASE_URL, settings.FEED_TITLE, feed_auth_key)
 
 
 def _cache_bust(updated_at: str | None) -> int | None:
@@ -368,8 +418,7 @@ def _cache_bust(updated_at: str | None) -> int | None:
 def _append_version(url: str | None, version: int | None) -> str | None:
     if not url or version is None:
         return url
-    sep = "&" if "?" in url else "?"
-    return f"{url}{sep}v={version}"
+    return _append_param(url, "v", version)
 
 
 def _hms(seconds: int) -> str:
