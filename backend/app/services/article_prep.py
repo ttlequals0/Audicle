@@ -40,6 +40,8 @@ _DROP_SECTIONS: frozenset[str] = frozenset(
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
 _LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+# An image: ``![alt](url)`` -- dropped entirely (the alt text is rarely narratable).
+_IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 _EDIT_LINK_RE = re.compile(r"\[\s*edit\s*\]\([^)]*\)", re.IGNORECASE)
 _EDIT_BARE_RE = re.compile(r"\[\s*edit\s*\]", re.IGNORECASE)
 # Wikipedia renders a ref marker as a link whose visible text is a bracketed
@@ -103,3 +105,17 @@ def strip_chrome(markdown: str) -> str:
     text = _EDIT_BARE_RE.sub("", text)
     text = _CITE_BARE_RE.sub("", text)
     return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def strip_inline_markdown(text: str) -> str:
+    """Reduce inline markdown to spoken text: drop images, keep link labels.
+
+    Used on the raw-extraction fallback in the cleanup stage (when the LLM won't
+    produce narration) so the narrator reads the link text, not the raw URL.
+    Deliberately conservative -- only the two constructs that read badly aloud
+    (``![alt](url)`` and ``[label](url)``); emphasis/code punctuation is left to
+    the normalize stage, which already handles it, to avoid mangling prose that
+    legitimately contains ``*`` or ``_``."""
+
+    text = _IMAGE_RE.sub("", text)
+    return _LINK_RE.sub(r"\1", text)

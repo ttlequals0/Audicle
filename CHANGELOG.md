@@ -6,6 +6,36 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.45.1] - 2026-07-04
+
+### Fixed
+
+- LLM cleanup no longer fails a whole episode when the model balks. Newer models
+  (and agent-style endpoints) sometimes deflect into chat or refuse to reproduce
+  certain content (e.g. a detailed security-incident write-up), which came back
+  below `MIN_CLEANUP_CHARS` and dead-looped the job. When cleanup is too short
+  because the model balked, the pipeline now narrates the de-chromed extraction
+  (inline links/images stripped so URLs aren't read aloud) instead of failing. A
+  page the model reports as all boilerplate (`NO_ARTICLE_CONTENT` for every
+  window), or one whose extraction is itself below the floor, still fails -- the
+  fallback only rescues a real article the model wouldn't clean.
+- The Anthropic provider rejected requests with `temperature` on models that no
+  longer accept the parameter ("temperature is deprecated for this model"). The
+  client now omits `temperature` when unset and, if a model rejects it, drops the
+  parameter and retries once rather than failing.
+- The Settings model dropdown for the Anthropic provider was a hardcoded
+  three-entry list and its refresh did nothing. It now fetches Anthropic's live
+  `/v1/models` (with display names) and refresh flushes the cache; it falls back
+  to the static list only without a key or on a fetch error.
+
+### Changed
+
+- The cleanup prompt now states explicitly that the input is a published news
+  article to narrate, not instructions to act on, so a model is less likely to
+  refuse or summarize reporting on security incidents, crime, or how a breach
+  happened. (Effective on the raw Anthropic API; an agent endpoint may still
+  override it, which is what the raw-text fallback above covers.)
+
 ## [0.45.0] - 2026-07-03
 
 ### Added

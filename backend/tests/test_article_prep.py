@@ -79,3 +79,18 @@ def test_strip_chrome_keeps_real_link_with_numeric_label() -> None:
 
 def test_strip_chrome_empty_input() -> None:
     assert article_prep.strip_chrome("") == ""
+
+
+def test_strip_inline_markdown_keeps_link_label_drops_url() -> None:
+    text = "Read the [full report](https://example.com/r.pdf) now."
+    assert article_prep.strip_inline_markdown(text) == "Read the full report now."
+
+
+def test_strip_inline_markdown_removes_images() -> None:
+    text = "Before ![a chart](https://example.com/c.png) after."
+    assert article_prep.strip_inline_markdown(text) == "Before  after."
+
+
+def test_strip_inline_markdown_leaves_plain_prose_untouched() -> None:
+    text = "A sentence with a * star and an under_score, no links."
+    assert article_prep.strip_inline_markdown(text) == text

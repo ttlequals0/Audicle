@@ -76,29 +76,51 @@ async def generate(
     effective_max = max_tokens if max_tokens is not None else settings.LLM_MAX_TOKENS
     timeout = httpx.Timeout(settings.LLM_TIMEOUT_SECONDS)
 
-    if settings.LLM_PROVIDER == "anthropic":
-        return await _call_anthropic(
-            system_prompt,
-            user_message,
-            settings,
-            temperature=effective_temp,
-            max_tokens=effective_max,
-            timeout=timeout,
+    async def _run(temp: float | None) -> str:
+        if settings.LLM_PROVIDER == "anthropic":
+            return await _call_anthropic(
+                system_prompt,
+                user_message,
+                settings,
+                temperature=temp,
+                max_tokens=effective_max,
+                timeout=timeout,
+            )
+        if is_openai_compatible_provider(settings.LLM_PROVIDER):
+            base, api_key, extra_headers = openai_compatible_connection(settings)
+            return await _call_openai_compatible(
+                system_prompt,
+                user_message,
+                base=base,
+                api_key=api_key,
+                model=settings.LLM_MODEL,
+                extra_headers=extra_headers,
+                temperature=temp,
+                max_tokens=effective_max,
+                timeout=timeout,
+            )
+        raise LLMRequestError(f"Unknown LLM_PROVIDER={settings.LLM_PROVIDER!r}")
+
+    try:
+        return await _run(effective_temp)
+    except LLMRequestError as exc:
+        # Some models reject the temperature parameter outright (newer Anthropic
+        # models return "temperature is deprecated for this model"). Drop it and
+        # retry once so a job doesn't fail over an unsupported sampling knob.
+        # Retry on any temperature-mentioning 400 EXCEPT a value-range complaint
+        # ("temperature must be between 0 and 1") -- that means the operator's
+        # configured value is bad and should surface, not be silently dropped.
+        message = str(exc).lower()
+        value_complaint = any(
+            p in message for p in ("must be", "between", "greater than", "less than", "out of range")
         )
-    if is_openai_compatible_provider(settings.LLM_PROVIDER):
-        base, api_key, extra_headers = openai_compatible_connection(settings)
-        return await _call_openai_compatible(
-            system_prompt,
-            user_message,
-            base=base,
-            api_key=api_key,
-            model=settings.LLM_MODEL,
-            extra_headers=extra_headers,
-            temperature=effective_temp,
-            max_tokens=effective_max,
-            timeout=timeout,
-        )
-    raise LLMRequestError(f"Unknown LLM_PROVIDER={settings.LLM_PROVIDER!r}")
+        if effective_temp is not None and "temperature" in message and not value_complaint:
+            logger.warning(
+                "LLM rejected temperature; retrying without it",
+                extra={"event": "llm_temperature_dropped", "model": settings.LLM_MODEL},
+            )
+            return await _run(None)
+        raise
 
 
 def openai_compatible_connection(
@@ -132,7 +154,7 @@ async def _call_openai_compatible(
     api_key: str | None,
     model: str,
     extra_headers: dict[str, str] | None = None,
-    temperature: float,
+    temperature: float | None,
     max_tokens: int,
     timeout: httpx.Timeout,
 ) -> str:
@@ -151,9 +173,10 @@ async def _call_openai_compatible(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ],
-        "temperature": temperature,
         "max_tokens": max_tokens,
     }
+    if temperature is not None:
+        payload["temperature"] = temperature
 
     body = await _post(endpoint, headers, payload, timeout)
     try:
@@ -177,7 +200,7 @@ async def _call_anthropic(
     user_message: str,
     settings: Settings,
     *,
-    temperature: float,
+    temperature: float | None,
     max_tokens: int,
     timeout: httpx.Timeout,
 ) -> str:
@@ -192,9 +215,11 @@ async def _call_anthropic(
         "model": settings.LLM_MODEL,
         "system": system_prompt,
         "messages": [{"role": "user", "content": user_message}],
-        "temperature": temperature,
         "max_tokens": max_tokens,
     }
+    # Omit temperature when unset -- newer models reject the parameter entirely.
+    if temperature is not None:
+        payload["temperature"] = temperature
 
     body = await _post(ANTHROPIC_API_URL, headers, payload, timeout)
     try:

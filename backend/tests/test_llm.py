@@ -189,6 +189,88 @@ async def test_anthropic_sends_messages_payload(env: Path, monkeypatch: pytest.M
     assert body["messages"] == [{"role": "user", "content": "article"}]
 
 
+async def test_anthropic_includes_temperature_by_default(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "ant-key")
+    get_settings.cache_clear()
+    transport, captured = _capture_transport(response=_anthropic_ok("clean"))
+    _patch_async_client(monkeypatch, transport)
+
+    await llm.generate("s", "u", get_settings())
+    body = json.loads(captured["request"].content)
+    assert body["temperature"] == get_settings().LLM_TEMPERATURE
+
+
+async def test_temperature_dropped_and_retried_when_model_rejects_it(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Newer models 400 on the temperature param; the client drops it and retries
+    # once rather than failing the job.
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "ant-key")
+    get_settings.cache_clear()
+
+    requests: list[httpx.Request] = []
+    responses = iter(
+        [
+            httpx.Response(
+                400,
+                json={"error": {"message": "`temperature` is deprecated for this model."}},
+            ),
+            _anthropic_ok("clean"),
+        ]
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return next(responses)
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+
+    result = await llm.generate("s", "u", get_settings())
+    assert result == "clean"
+    assert len(requests) == 2
+    assert "temperature" in json.loads(requests[0].content)  # first attempt carried it
+    assert "temperature" not in json.loads(requests[1].content)  # retry dropped it
+
+
+async def test_non_temperature_400_is_not_retried(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A 400 unrelated to temperature must propagate, not silently retry.
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "ant-key")
+    get_settings.cache_clear()
+    _patch_async_client(
+        monkeypatch,
+        httpx.MockTransport(lambda _r: httpx.Response(400, json={"error": {"message": "bad model"}})),
+    )
+    with pytest.raises(llm.LLMRequestError, match="400"):
+        await llm.generate("s", "u", get_settings())
+
+
+async def test_temperature_value_range_400_is_not_retried(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A value-range rejection is the operator's bad config -- it must surface, not
+    # be silently retried with temperature dropped.
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "ant-key")
+    get_settings.cache_clear()
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(400, json={"error": {"message": "temperature must be between 0 and 1"}})
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    with pytest.raises(llm.LLMRequestError, match="400"):
+        await llm.generate("s", "u", get_settings())
+    assert len(requests) == 1  # no retry
+
+
 async def test_anthropic_requires_api_key(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "ant-key")
