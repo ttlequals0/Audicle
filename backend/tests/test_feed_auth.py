@@ -11,7 +11,7 @@ from app.config import get_settings
 from app.core import database
 from app.core.paths import media_dir
 from app.main import create_app
-from app.services import episodes, feed_auth, runtime_settings
+from app.services import auth, episodes, feed_auth, runtime_settings
 from fastapi.testclient import TestClient
 
 _KEY = "a" * 64  # a valid 64-hex key
@@ -101,6 +101,25 @@ def test_disabled_feed_serves_without_key(env: Path) -> None:
     _seed_episode(env)
     with _client(env) as client:
         assert client.get("/rss/test_feed.xml").status_code == 200
+        assert client.get("/media/ep.mp3").status_code == 200
+        assert client.get("/media/ep.jpg").status_code == 200
+        assert client.get("/media/ep.vtt").status_code == 200
+
+
+def test_authenticated_admin_reads_media_without_key(env: Path) -> None:
+    # The logged-in operator's dashboard links to /media/... relatively; the session
+    # cookie exempts them from the feed key. Public clients (no session) still need it.
+    _seed_episode(env)
+    _enable(env)
+    conn = database.connect(database.db_path(env))
+    try:
+        auth.set_password(conn, "s3cret-pass")
+    finally:
+        conn.close()
+    with _client(env) as client:
+        assert client.get("/media/ep.vtt").status_code == 401  # no session, no key
+        assert client.post("/api/v1/auth/login", json={"password": "s3cret-pass"}).status_code == 200
+        # Same keyless requests now succeed via the session cookie.
         assert client.get("/media/ep.mp3").status_code == 200
         assert client.get("/media/ep.jpg").status_code == 200
         assert client.get("/media/ep.vtt").status_code == 200

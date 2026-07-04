@@ -6,6 +6,17 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.45.3] - 2026-07-04
+
+### Fixed
+
+- With authenticated feeds enabled, the Feed page's own transcript (`.vtt`),
+  cleaned-text (`.txt`), and artwork links returned 401 for the logged-in
+  operator -- they point at `/media/...` without the feed key. The media/RSS key
+  gate now exempts an authenticated admin session (same-origin, so the browser
+  sends the session cookie); public podcast clients have no session and still
+  require the key.
+
 ## [0.45.2] - 2026-07-04
 
 ### Fixed
