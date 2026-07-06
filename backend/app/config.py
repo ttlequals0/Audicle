@@ -271,6 +271,12 @@ class Settings(BaseSettings):
     CHIME_ENABLED: bool = False
     AUDIO_SILENCE_THRESHOLD: float = 0.003
     AUDIO_SILENCE_BUFFER_MS: int = 5
+    # Mid-chunk dead air: Chatterbox sometimes generates multi-second silence
+    # inside a piece, which lands mid-chunk where the edge trim can't reach.
+    # Internal silence runs longer than MAX are cut down to KEEP (half kept at
+    # each end of the run). MAX = 0 disables the pass.
+    AUDIO_MAX_INTERNAL_SILENCE_MS: int = 1000
+    AUDIO_INTERNAL_SILENCE_KEEP_MS: int = 500
     LOUDNORM_TARGET_LUFS: float = -14
     LOUDNORM_TRUE_PEAK_DB: float = -3
     LOUDNORM_LRA: float = 7

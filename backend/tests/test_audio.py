@@ -68,6 +68,65 @@ def test_trim_silence_keeps_fully_silent_input(env: Path) -> None:
     assert trimmed.size() == waveform.size()
 
 
+# --- compress_internal_silence ----------------------------------------------
+
+
+def test_compress_internal_silence_shortens_long_gap(env: Path) -> None:
+    sample_rate = 24000
+    tone = 0.5 * torch.ones((1, sample_rate))  # 1s
+    gap = torch.zeros((1, 3 * sample_rate))  # 3s of internal dead air
+    waveform = torch.cat([tone, gap, tone], dim=1)
+
+    out = audio.compress_internal_silence(waveform, sample_rate, get_settings())
+    # 1s tone + 0.5s kept gap + 1s tone = 2.5s; margin for boundary rounding.
+    expected = int(2.5 * sample_rate)
+    assert abs(out.size(1) - expected) < int(0.05 * sample_rate)
+
+
+def test_compress_internal_silence_shortens_every_long_gap(env: Path) -> None:
+    sample_rate = 24000
+    tone = 0.5 * torch.ones((1, sample_rate))
+    gap_a = torch.zeros((1, 2 * sample_rate))
+    gap_b = torch.zeros((1, 5 * sample_rate))
+    waveform = torch.cat([tone, gap_a, tone, gap_b, tone], dim=1)
+
+    out = audio.compress_internal_silence(waveform, sample_rate, get_settings())
+    # 3x 1s tone + 2x 0.5s kept gap = 4.0s.
+    expected = int(4.0 * sample_rate)
+    assert abs(out.size(1) - expected) < int(0.1 * sample_rate)
+
+
+def test_compress_internal_silence_keeps_natural_pause(env: Path) -> None:
+    sample_rate = 24000
+    tone = 0.5 * torch.ones((1, sample_rate))
+    pause = torch.zeros((1, int(0.8 * sample_rate)))  # under the 1s cap
+    waveform = torch.cat([tone, pause, tone], dim=1)
+
+    out = audio.compress_internal_silence(waveform, sample_rate, get_settings())
+    assert out.size(1) == waveform.size(1)
+
+
+def test_compress_internal_silence_keeps_fully_silent_input(env: Path) -> None:
+    sample_rate = 24000
+    waveform = torch.zeros((1, 5 * sample_rate))
+    out = audio.compress_internal_silence(waveform, sample_rate, get_settings())
+    assert out.size() == waveform.size()
+
+
+def test_compress_internal_silence_disabled_by_zero_cap(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AUDIO_MAX_INTERNAL_SILENCE_MS", "0")
+    get_settings.cache_clear()
+    sample_rate = 24000
+    tone = 0.5 * torch.ones((1, sample_rate))
+    gap = torch.zeros((1, 3 * sample_rate))
+    waveform = torch.cat([tone, gap, tone], dim=1)
+
+    out = audio.compress_internal_silence(waveform, sample_rate, get_settings())
+    assert out.size(1) == waveform.size(1)
+
+
 # --- concat_with_padding ---------------------------------------------------
 
 

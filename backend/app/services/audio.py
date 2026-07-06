@@ -179,6 +179,66 @@ def trim_silence(
     return waveform[:, start:end]
 
 
+def compress_internal_silence(
+    waveform: torch.Tensor,
+    sample_rate: int,
+    settings: Settings,
+) -> torch.Tensor:
+    """Shorten internal silence runs that exceed ``AUDIO_MAX_INTERNAL_SILENCE_MS``.
+
+    Chatterbox occasionally generates multi-second dead air inside a piece; the
+    wrapper joins pieces into one chunk WAV, so that silence lands mid-chunk
+    where :func:`trim_silence` (edges only) can't reach it. Any run of
+    below-threshold samples longer than the cap is cut down to
+    ``AUDIO_INTERNAL_SILENCE_KEEP_MS``, half kept at each end of the run so the
+    speech decay/attack around it survives. A cap of 0 disables the pass; an
+    all-silent waveform is returned unchanged (mirrors trim_silence: a chunk is
+    never erased).
+    """
+
+    max_ms = settings.AUDIO_MAX_INTERNAL_SILENCE_MS
+    if max_ms <= 0:
+        return waveform
+    if waveform.dim() != 2:
+        raise AudioError(
+            f"compress_internal_silence expects a 2-D (channels, samples) tensor, "
+            f"got {waveform.shape}"
+        )
+
+    silent = waveform.abs().mean(dim=0) <= settings.AUDIO_SILENCE_THRESHOLD
+    if silent.all():
+        return waveform
+
+    max_run = round(max_ms * sample_rate / 1000)
+    # Half the kept duration goes to each end of a shortened run; capped at half
+    # the trigger length so a KEEP >= MAX misconfig can't duplicate samples.
+    keep_half = min(
+        round(settings.AUDIO_INTERNAL_SILENCE_KEEP_MS * sample_rate / 2000),
+        max_run // 2,
+    )
+
+    flags = silent.to(torch.int8)
+    edges = flags[1:] - flags[:-1]
+    starts = (torch.nonzero(edges == 1, as_tuple=False).squeeze(1) + 1).tolist()
+    ends = (torch.nonzero(edges == -1, as_tuple=False).squeeze(1) + 1).tolist()
+    if bool(flags[0]):
+        starts.insert(0, 0)
+    if bool(flags[-1]):
+        ends.append(waveform.size(1))
+
+    pieces: list[torch.Tensor] = []
+    cursor = 0
+    for start, end in zip(starts, ends, strict=True):
+        if end - start <= max_run:
+            continue
+        pieces.append(waveform[:, cursor : start + keep_half])
+        cursor = end - keep_half
+    if cursor == 0:
+        return waveform
+    pieces.append(waveform[:, cursor:])
+    return torch.cat(pieces, dim=1)
+
+
 # --- Stage 2 + 3: concat with silence padding -------------------------------
 
 
