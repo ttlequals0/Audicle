@@ -196,14 +196,14 @@ def compress_internal_silence(
     never erased).
     """
 
-    max_ms = settings.AUDIO_MAX_INTERNAL_SILENCE_MS
-    if max_ms <= 0:
-        return waveform
     if waveform.dim() != 2:
         raise AudioError(
             f"compress_internal_silence expects a 2-D (channels, samples) tensor, "
             f"got {waveform.shape}"
         )
+    max_ms = settings.AUDIO_MAX_INTERNAL_SILENCE_MS
+    if max_ms <= 0:
+        return waveform
 
     silent = waveform.abs().mean(dim=0) <= settings.AUDIO_SILENCE_THRESHOLD
     if silent.all():

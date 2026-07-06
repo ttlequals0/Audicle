@@ -127,6 +127,11 @@ def test_compress_internal_silence_disabled_by_zero_cap(
     assert out.size(1) == waveform.size(1)
 
 
+def test_compress_internal_silence_rejects_non_2d_tensor(env: Path) -> None:
+    with pytest.raises(audio.AudioError):
+        audio.compress_internal_silence(torch.zeros(1000), 24000, get_settings())
+
+
 # --- concat_with_padding ---------------------------------------------------
 
 
