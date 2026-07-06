@@ -219,13 +219,12 @@ def compress_internal_silence(
         max_run // 2,
     )
 
-    flags = silent.to(torch.int8)
-    edges = flags[1:] - flags[:-1]
+    edges = torch.diff(silent.to(torch.int8))
     starts = (torch.nonzero(edges == 1, as_tuple=False).squeeze(1) + 1).tolist()
     ends = (torch.nonzero(edges == -1, as_tuple=False).squeeze(1) + 1).tolist()
-    if bool(flags[0]):
+    if bool(silent[0]):
         starts.insert(0, 0)
-    if bool(flags[-1]):
+    if bool(silent[-1]):
         ends.append(waveform.size(1))
 
     pieces: list[torch.Tensor] = []
@@ -235,7 +234,7 @@ def compress_internal_silence(
             continue
         pieces.append(waveform[:, cursor : start + keep_half])
         cursor = end - keep_half
-    if cursor == 0:
+    if not pieces:  # no run exceeded the cap
         return waveform
     pieces.append(waveform[:, cursor:])
     return torch.cat(pieces, dim=1)

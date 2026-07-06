@@ -46,7 +46,7 @@ def _stub_full_chain(monkeypatch: pytest.MonkeyPatch) -> None:
     def _fake_concat(_paths, output_path, _settings):
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"FAKE_WAV")
-        return output_path, 24000, [1.0 for _ in _paths]
+        return output_path, 24000, [1.0] * len(_paths)
 
     def _fake_encode(_input_wav, output_mp3, _settings):
         output_mp3.parent.mkdir(parents=True, exist_ok=True)
@@ -78,7 +78,7 @@ def _stub_tts_and_audio(monkeypatch: pytest.MonkeyPatch) -> None:
     def _fake_concat(_paths, output_path, _settings):
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"FAKE_WAV")
-        return output_path, 24000, [1.0 for _ in _paths]
+        return output_path, 24000, [1.0] * len(_paths)
 
     def _fake_encode(_input_wav, output_mp3, _settings):
         output_mp3.parent.mkdir(parents=True, exist_ok=True)
