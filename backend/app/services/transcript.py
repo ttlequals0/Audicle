@@ -1,9 +1,10 @@
 """WebVTT transcript generation.
 
 Inputs are chunks of cleaned narration text paired with the per-chunk
-duration the TTS wrapper reported, plus the silence padding the audio
-pipeline inserts between chunks. Output is a single VTT string suitable
-for the ``transcript_vtt`` column on episodes.
+duration the audio stage measured after silence trim and compression
+(wrapper-reported durations are pre-trim and drift), plus the silence
+padding the audio pipeline inserts between chunks. Output is a single VTT
+string suitable for the ``transcript_vtt`` column on episodes.
 
 The cumulative timeline mirrors the produced audio:
 

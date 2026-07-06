@@ -6,6 +6,26 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-07-05
+
+### Added
+
+- Internal-silence compression in the audio pipeline: mid-chunk dead-air runs
+  longer than `AUDIO_MAX_INTERNAL_SILENCE_MS` (default 1000) are cut down to
+  `AUDIO_INTERNAL_SILENCE_KEEP_MS` (default 500). Chatterbox occasionally
+  generates multi-second silence inside a piece; the edge trim could never
+  reach it. Set the max to 0 to disable.
+- Seed homograph rows for "live": `live (verb) -> liv` and
+  `live (adjective) -> lyve`, plus an explicit sense-key rule in the
+  pronunciation prompt (migration 023 re-syncs the seed).
+
+### Fixed
+
+- WebVTT transcript timestamps now come from the true post-trim chunk
+  durations measured in the audio stage instead of the wrapper-reported
+  pre-trim durations, which accumulated tens of seconds of drift on long
+  episodes.
+
 ## [0.45.3] - 2026-07-04
 
 ### Fixed

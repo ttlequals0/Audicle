@@ -74,7 +74,7 @@ async def test_pickup_runs_pipeline_against_a_queued_job(
     def _fake_concat(_paths, output_path, _settings):
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"FAKE_WAV")
-        return output_path, 24000
+        return output_path, 24000, [1.0] * len(_paths)
 
     def _fake_encode(_input_wav, output_mp3, _settings):
         output_mp3.parent.mkdir(parents=True, exist_ok=True)

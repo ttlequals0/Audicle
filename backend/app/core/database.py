@@ -617,6 +617,14 @@ def _m022_reimport_seed_lexicon(conn: sqlite3.Connection) -> None:
     _reimport_seed_lexicon(conn)
 
 
+def _m023_reimport_seed_lexicon(conn: sqlite3.Connection) -> None:
+    """0.46.0: re-sync the seed after the live (verb)/live (adjective) homograph rows
+    were added -- Chatterbox guesses the wrong reading of bare 'live' in both
+    directions, and the seed's homograph family had every common pair except it."""
+
+    _reimport_seed_lexicon(conn)
+
+
 def _m018_voice_wav_to_slot1(conn: sqlite3.Connection) -> None:
     """Migrate the legacy committed ``voice.wav`` into voice slot 1 (0.35.0).
 
@@ -678,6 +686,7 @@ MIGRATIONS: list[tuple[str, Migration]] = [
     ("020_reimport_seed_lexicon", _m020_reimport_seed_lexicon),
     ("021_drop_lexicon_ipa_column", _m021_drop_lexicon_ipa_column),
     ("022_reimport_seed_lexicon", _m022_reimport_seed_lexicon),
+    ("023_reimport_seed_lexicon", _m023_reimport_seed_lexicon),
 ]
 
 

@@ -68,6 +68,87 @@ def test_trim_silence_keeps_fully_silent_input(env: Path) -> None:
     assert trimmed.size() == waveform.size()
 
 
+# --- compress_internal_silence ----------------------------------------------
+
+
+def test_compress_internal_silence_shortens_long_gap(env: Path) -> None:
+    sample_rate = 24000
+    tone = 0.5 * torch.ones((1, sample_rate))  # 1s
+    gap = torch.zeros((1, 3 * sample_rate))  # 3s of internal dead air
+    waveform = torch.cat([tone, gap, tone], dim=1)
+
+    out = audio.compress_internal_silence(waveform, sample_rate, get_settings())
+    # 1s tone + 0.5s kept gap + 1s tone = 2.5s; margin for boundary rounding.
+    expected = int(2.5 * sample_rate)
+    assert abs(out.size(1) - expected) < int(0.05 * sample_rate)
+
+
+def test_compress_internal_silence_shortens_every_long_gap(env: Path) -> None:
+    sample_rate = 24000
+    tone = 0.5 * torch.ones((1, sample_rate))
+    gap_a = torch.zeros((1, 2 * sample_rate))
+    gap_b = torch.zeros((1, 5 * sample_rate))
+    waveform = torch.cat([tone, gap_a, tone, gap_b, tone], dim=1)
+
+    out = audio.compress_internal_silence(waveform, sample_rate, get_settings())
+    # 3x 1s tone + 2x 0.5s kept gap = 4.0s.
+    expected = int(4.0 * sample_rate)
+    assert abs(out.size(1) - expected) < int(0.1 * sample_rate)
+
+
+def test_compress_internal_silence_keeps_natural_pause(env: Path) -> None:
+    sample_rate = 24000
+    tone = 0.5 * torch.ones((1, sample_rate))
+    pause = torch.zeros((1, int(0.8 * sample_rate)))  # under the 1s cap
+    waveform = torch.cat([tone, pause, tone], dim=1)
+
+    out = audio.compress_internal_silence(waveform, sample_rate, get_settings())
+    assert out.size(1) == waveform.size(1)
+
+
+def test_compress_internal_silence_keeps_fully_silent_input(env: Path) -> None:
+    sample_rate = 24000
+    waveform = torch.zeros((1, 5 * sample_rate))
+    out = audio.compress_internal_silence(waveform, sample_rate, get_settings())
+    assert out.size() == waveform.size()
+
+
+def test_compress_internal_silence_disabled_by_zero_cap(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AUDIO_MAX_INTERNAL_SILENCE_MS", "0")
+    get_settings.cache_clear()
+    sample_rate = 24000
+    tone = 0.5 * torch.ones((1, sample_rate))
+    gap = torch.zeros((1, 3 * sample_rate))
+    waveform = torch.cat([tone, gap, tone], dim=1)
+
+    out = audio.compress_internal_silence(waveform, sample_rate, get_settings())
+    assert out.size(1) == waveform.size(1)
+
+
+def test_compress_internal_silence_rejects_non_2d_tensor(env: Path) -> None:
+    with pytest.raises(audio.AudioError):
+        audio.compress_internal_silence(torch.zeros(1000), 24000, get_settings())
+
+
+def test_compress_internal_silence_negative_keep_never_cuts_speech(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AUDIO_INTERNAL_SILENCE_KEEP_MS", "-500")
+    get_settings.cache_clear()
+    sample_rate = 24000
+    tone = 0.5 * torch.ones((1, sample_rate))
+    gap = torch.zeros((1, 3 * sample_rate))
+    waveform = torch.cat([tone, gap, tone], dim=1)
+
+    out = audio.compress_internal_silence(waveform, sample_rate, get_settings())
+    # A misconfigured negative keep clamps to zero kept silence; both 1s tones
+    # must survive untouched (a negative keep_half would slice into them).
+    assert out.size(1) == 2 * sample_rate
+    assert bool((out.abs() > 0.4).all())
+
+
 # --- concat_with_padding ---------------------------------------------------
 
 
@@ -84,7 +165,9 @@ def test_concat_with_padding_appends_inter_chunk_silence(
     _write_tone_wav(chunk_b, duration_secs=0.2)
 
     out = tmp_path / "combined.wav"
-    result_path, result_rate = audio.concat_with_padding([chunk_a, chunk_b], out, get_settings())
+    result_path, result_rate, durations = audio.concat_with_padding(
+        [chunk_a, chunk_b], out, get_settings()
+    )
     assert result_path == out
     assert result_rate == sample_rate
     waveform, rate = _load_for_test(out)
@@ -93,6 +176,11 @@ def test_concat_with_padding_appends_inter_chunk_silence(
     # silence-trim margin (~5ms each side).
     expected_samples = int(0.6 * sample_rate)
     assert abs(waveform.size(1) - expected_samples) < int(0.05 * sample_rate)
+    # Reported durations are the post-trim chunk lengths (0.3s and 0.2s tones,
+    # ~5ms trim buffer each side).
+    assert len(durations) == 2
+    assert abs(durations[0] - 0.3) < 0.05
+    assert abs(durations[1] - 0.2) < 0.05
 
 
 def test_concat_with_padding_rejects_zero_chunks(tmp_path: Path, env: Path) -> None:
@@ -108,6 +196,34 @@ def test_concat_with_padding_rejects_rate_mismatch(tmp_path: Path, env: Path) ->
 
     with pytest.raises(audio.AudioError, match="sample rate"):
         audio.concat_with_padding([a, b], tmp_path / "out.wav", get_settings())
+
+
+def test_concat_with_padding_compresses_internal_silence(
+    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TTS_CHUNK_SILENCE_MS", "100")
+    get_settings.cache_clear()
+    sample_rate = 24000
+
+    tone = 0.5 * torch.ones((1, sample_rate))
+    gap = torch.zeros((1, 3 * sample_rate))
+    chunk_a = tmp_path / "a.wav"
+    _save_for_test(chunk_a, torch.cat([tone, gap, tone], dim=1), sample_rate)
+    chunk_b = tmp_path / "b.wav"
+    _write_tone_wav(chunk_b, duration_secs=0.2)
+
+    out = tmp_path / "combined.wav"
+    _, _, durations = audio.concat_with_padding([chunk_a, chunk_b], out, get_settings())
+
+    # Chunk a: 1s + 0.5s kept gap (AUDIO_INTERNAL_SILENCE_KEEP_MS) + 1s = 2.5s
+    # after compression.
+    assert abs(durations[0] - 2.5) < 0.05
+    assert abs(durations[1] - 0.2) < 0.05
+    # The written WAV matches the reported durations + the 0.1s inter-chunk pad,
+    # which is what keeps VTT timestamps aligned with the audio.
+    waveform, _ = _load_for_test(out)
+    total = durations[0] + 0.1 + durations[1]
+    assert abs(waveform.size(1) / sample_rate - total) < 0.01
 
 
 # --- normalize_and_encode (real ffmpeg) ------------------------------------

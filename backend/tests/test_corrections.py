@@ -70,6 +70,16 @@ def test_apply_no_match_returns_original() -> None:
     assert corrections.apply("hello world", {"xyz": "abc"}) == "hello world"
 
 
+def test_sense_keyed_homograph_never_matches_bare_word() -> None:
+    # The seed's homograph convention keys entries as "word (sense)"; that
+    # literal never occurs in article text, so the deterministic pass must
+    # leave the bare word alone (only the LLM pass applies these, by context).
+    text = "Watch the live event. I live in Florida."
+    pairs = {"live (adjective)": "lyve", "live (verb)": "liv"}
+    assert corrections.apply(text, pairs) == text
+    assert corrections.apply(text, pairs, case_sensitive=False) == text
+
+
 # --- validate() ------------------------------------------------------------
 
 
