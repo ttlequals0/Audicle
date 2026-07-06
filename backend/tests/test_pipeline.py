@@ -46,7 +46,7 @@ def _stub_full_chain(monkeypatch: pytest.MonkeyPatch) -> None:
     def _fake_concat(_paths, output_path, _settings):
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"FAKE_WAV")
-        return output_path, 24000
+        return output_path, 24000, [1.0 for _ in _paths]
 
     def _fake_encode(_input_wav, output_mp3, _settings):
         output_mp3.parent.mkdir(parents=True, exist_ok=True)
@@ -78,7 +78,7 @@ def _stub_tts_and_audio(monkeypatch: pytest.MonkeyPatch) -> None:
     def _fake_concat(_paths, output_path, _settings):
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"FAKE_WAV")
-        return output_path, 24000
+        return output_path, 24000, [1.0 for _ in _paths]
 
     def _fake_encode(_input_wav, output_mp3, _settings):
         output_mp3.parent.mkdir(parents=True, exist_ok=True)
@@ -570,7 +570,7 @@ async def test_pipeline_transcript_stage_builds_vtt_from_chunks(
     chunks = captured["chunks"]
     assert isinstance(chunks, list) and chunks
     assert all(isinstance(c, transcript.TranscriptChunk) for c in chunks)
-    # Stubbed TTS reports 1s per chunk; transcript stage receives those.
+    # Stubbed concat reports 1s per chunk; transcript stage receives those.
     assert all(c.duration_secs == 1.0 for c in chunks)
     # silence_ms must match the configured chunk silence so VTT timestamps
     # align with the produced MP3.

@@ -335,7 +335,7 @@ async def _run_stages(
         job.id,
         settings,
     )
-    audio_result = await _run_stage(
+    audio_result, chunk_durations = await _run_stage(
         "audio",
         lambda: _stage_audio(job, chunk_results, settings),
         job.id,
@@ -355,7 +355,7 @@ async def _run_stages(
         _embed_episode_cover(audio_result.mp3_path, artwork_result.embed_jpg_bytes)
     vtt = await _run_stage(
         "transcript",
-        lambda: _stage_transcript(chunks, chunk_results, settings),
+        lambda: _stage_transcript(chunks, chunk_durations, settings),
         job.id,
         settings,
     )
@@ -1116,11 +1116,13 @@ async def _stage_audio(
     job: jobs.Job,
     chunk_results: list[tts.GenerateResult],
     settings: Settings,
-) -> audio.EncodeResult:
+) -> tuple[audio.EncodeResult, list[float]]:
     """Trim / concat / normalize / encode the per-chunk WAVs into an MP3.
 
-    Removes per-chunk WAVs and the concatenated WAV on both success and
-    failure -- no persistent debug artifacts.
+    Returns the encode result plus each chunk's final post-trim duration so the
+    transcript stage can build cues that match the produced audio. Removes
+    per-chunk WAVs and the concatenated WAV on both success and failure -- no
+    persistent debug artifacts.
     """
 
     out_root = media_dir(settings)
@@ -1129,7 +1131,9 @@ async def _stage_audio(
     mp3_path = out_root / f"{job.episode_id}.mp3"
 
     try:
-        audio.concat_with_padding(chunk_paths, combined_path, settings)
+        _, _, chunk_durations = audio.concat_with_padding(
+            chunk_paths, combined_path, settings
+        )
         # Optional end-of-episode chime: appended before normalization so it is
         # loudness-matched to the episode. Kept off unless enabled AND a clip exists.
         # A chime is decorative -- a bad/mismatched clip must not fail the episode, so a
@@ -1153,7 +1157,7 @@ async def _stage_audio(
                 "duration_secs": result.duration_secs,
             },
         )
-        return result
+        return result, chunk_durations
     finally:
         # Per-chunk WAVs + concatenated WAV are not persistent artifacts.
         audio.remove_quietly(combined_path, *chunk_paths)
@@ -1196,22 +1200,26 @@ async def _stage_artwork(
 
 async def _stage_transcript(
     chunks: list[str],
-    chunk_results: list[tts.GenerateResult],
+    chunk_durations: list[float],
     settings: Settings,
 ) -> str:
-    """Render the WebVTT transcript from chunk text + per-chunk durations."""
+    """Render the WebVTT transcript from chunk text + per-chunk durations.
 
-    if len(chunks) != len(chunk_results):
+    Durations come from the audio stage, measured after edge trim and
+    internal-silence compression, so cue timestamps match the produced MP3
+    (wrapper-reported durations are pre-trim and accumulate drift)."""
+
+    if len(chunks) != len(chunk_durations):
         # Explicit so the failure message in jobs.error names both sides --
         # zip(strict=True) would surface a stdlib "argument 2 is shorter"
         # which is harder to triage from an ops dashboard.
         raise ValueError(
-            f"transcript stage: {len(chunks)} chunks but {len(chunk_results)} "
-            f"TTS results -- pipeline state corrupted"
+            f"transcript stage: {len(chunks)} chunks but {len(chunk_durations)} "
+            f"audio durations -- pipeline state corrupted"
         )
     transcript_chunks = [
-        transcript.TranscriptChunk(text=text, duration_secs=res.duration_secs)
-        for text, res in zip(chunks, chunk_results, strict=False)
+        transcript.TranscriptChunk(text=text, duration_secs=duration)
+        for text, duration in zip(chunks, chunk_durations, strict=False)
     ]
     vtt = transcript.build_vtt(transcript_chunks, settings.TTS_CHUNK_SILENCE_MS)
     logger.info(

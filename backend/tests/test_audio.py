@@ -148,7 +148,9 @@ def test_concat_with_padding_appends_inter_chunk_silence(
     _write_tone_wav(chunk_b, duration_secs=0.2)
 
     out = tmp_path / "combined.wav"
-    result_path, result_rate = audio.concat_with_padding([chunk_a, chunk_b], out, get_settings())
+    result_path, result_rate, durations = audio.concat_with_padding(
+        [chunk_a, chunk_b], out, get_settings()
+    )
     assert result_path == out
     assert result_rate == sample_rate
     waveform, rate = _load_for_test(out)
@@ -157,6 +159,11 @@ def test_concat_with_padding_appends_inter_chunk_silence(
     # silence-trim margin (~5ms each side).
     expected_samples = int(0.6 * sample_rate)
     assert abs(waveform.size(1) - expected_samples) < int(0.05 * sample_rate)
+    # Reported durations are the post-trim chunk lengths (0.3s and 0.2s tones,
+    # ~5ms trim buffer each side).
+    assert len(durations) == 2
+    assert abs(durations[0] - 0.3) < 0.05
+    assert abs(durations[1] - 0.2) < 0.05
 
 
 def test_concat_with_padding_rejects_zero_chunks(tmp_path: Path, env: Path) -> None:
@@ -172,6 +179,33 @@ def test_concat_with_padding_rejects_rate_mismatch(tmp_path: Path, env: Path) ->
 
     with pytest.raises(audio.AudioError, match="sample rate"):
         audio.concat_with_padding([a, b], tmp_path / "out.wav", get_settings())
+
+
+def test_concat_with_padding_compresses_internal_silence(
+    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TTS_CHUNK_SILENCE_MS", "100")
+    get_settings.cache_clear()
+    sample_rate = 24000
+
+    tone = 0.5 * torch.ones((1, sample_rate))
+    gap = torch.zeros((1, 3 * sample_rate))
+    chunk_a = tmp_path / "a.wav"
+    _save_for_test(chunk_a, torch.cat([tone, gap, tone], dim=1), sample_rate)
+    chunk_b = tmp_path / "b.wav"
+    _write_tone_wav(chunk_b, duration_secs=0.2)
+
+    out = tmp_path / "combined.wav"
+    _, _, durations = audio.concat_with_padding([chunk_a, chunk_b], out, get_settings())
+
+    # Chunk a: 1s + 0.5s kept gap + 1s = 2.5s after compression.
+    assert abs(durations[0] - 2.5) < 0.05
+    assert abs(durations[1] - 0.2) < 0.05
+    # The written WAV matches the reported durations + the 0.1s inter-chunk pad,
+    # which is what keeps VTT timestamps aligned with the audio.
+    waveform, _ = _load_for_test(out)
+    total = durations[0] + 0.1 + durations[1]
+    assert abs(waveform.size(1) / sample_rate - total) < 0.01
 
 
 # --- normalize_and_encode (real ffmpeg) ------------------------------------

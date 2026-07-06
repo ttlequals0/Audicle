@@ -246,13 +246,16 @@ def concat_with_padding(
     chunk_paths: list[Path],
     output_path: Path,
     settings: Settings,
-) -> tuple[Path, int]:
-    """Load each chunk WAV, trim silence, append silence padding between
-    chunks, write the concatenated WAV.
+) -> tuple[Path, int, list[float]]:
+    """Load each chunk WAV, trim edge silence, compress internal silence,
+    append silence padding between chunks, write the concatenated WAV.
 
-    Returns ``(output_path, sample_rate)`` so subsequent ffmpeg invocations
-    can pin the sample rate explicitly. Padding is inserted *between* chunks
-    only -- there's no leading or trailing pad.
+    Returns ``(output_path, sample_rate, chunk_durations)``: the sample rate so
+    subsequent ffmpeg invocations can pin it explicitly, and each chunk's final
+    post-trim duration in seconds so the transcript stage can build VTT cues
+    that match the produced audio (the wrapper-reported durations are pre-trim
+    and drift). Padding is inserted *between* chunks only -- there's no leading
+    or trailing pad.
     """
 
     if not chunk_paths:
@@ -261,6 +264,7 @@ def concat_with_padding(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     pieces: list[torch.Tensor] = []
+    durations: list[float] = []
     sample_rate: int | None = None
     channels: int | None = None
     pad_tensor: torch.Tensor | None = None
@@ -279,6 +283,8 @@ def concat_with_padding(
                 f"chunk {index} has {wave.size(0)} channels but earlier chunk had {channels}"
             )
         wave = trim_silence(wave, rate, settings)
+        wave = compress_internal_silence(wave, rate, settings)
+        durations.append(wave.size(1) / rate)
         if index > 0:
             if pad_tensor is None:
                 pad_n = round(settings.TTS_CHUNK_SILENCE_MS * sample_rate / 1000)
@@ -291,7 +297,7 @@ def concat_with_padding(
     assert sample_rate is not None
     combined = torch.cat(pieces, dim=1)
     _save_wav(output_path, combined, sample_rate)
-    return output_path, sample_rate
+    return output_path, sample_rate, durations
 
 
 def append_clip(
