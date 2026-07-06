@@ -198,7 +198,8 @@ def test_concat_with_padding_compresses_internal_silence(
     out = tmp_path / "combined.wav"
     _, _, durations = audio.concat_with_padding([chunk_a, chunk_b], out, get_settings())
 
-    # Chunk a: 1s + 0.5s kept gap + 1s = 2.5s after compression.
+    # Chunk a: 1s + 0.5s kept gap (AUDIO_INTERNAL_SILENCE_KEEP_MS) + 1s = 2.5s
+    # after compression.
     assert abs(durations[0] - 2.5) < 0.05
     assert abs(durations[1] - 0.2) < 0.05
     # The written WAV matches the reported durations + the 0.1s inter-chunk pad,

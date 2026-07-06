@@ -580,9 +580,10 @@ async def test_pipeline_transcript_stage_builds_vtt_from_chunks(
 async def test_pipeline_transcript_stage_rejects_length_mismatch(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """If anything between chunk and tts corrupts the in-memory state so the
-    two lists desync, the transcript stage must fail loudly with a clear
-    message (not a stdlib zip error) and stop at stage='transcript'."""
+    """If anything between chunking and the audio stage corrupts the in-memory
+    state so the chunk texts and audio-stage durations desync, the transcript
+    stage must fail loudly with a clear message (not a stdlib zip error) and
+    stop at stage='transcript'."""
 
     database.run_migrations(env)
     _stub_full_chain(monkeypatch)

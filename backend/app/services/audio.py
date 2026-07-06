@@ -193,7 +193,9 @@ def compress_internal_silence(
     ``AUDIO_INTERNAL_SILENCE_KEEP_MS``, half kept at each end of the run so the
     speech decay/attack around it survives. A cap of 0 disables the pass; an
     all-silent waveform is returned unchanged (mirrors trim_silence: a chunk is
-    never erased).
+    never erased). Oversized runs touching the waveform's edges are compressed
+    too (keep_half retained at the boundary); in the pipeline trim_silence has
+    already removed those, so this only matters to other callers.
     """
 
     if waveform.dim() != 2:
