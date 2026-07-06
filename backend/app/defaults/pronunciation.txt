@@ -28,6 +28,11 @@ respelling on the right. Rules for applying it:
   versus to rip ("tair"); "bow", "wind", "close", "object", "present", "record".
   A reference entry may carry a parenthesized note saying when it applies; use
   it, and never output the note.
+- A reference term keyed with a parenthesized sense, like "read (present)" or
+  "live (adjective)", refers to the bare word used in that sense. When the
+  text uses the bare word in that sense, replace it with that entry's
+  respelling. The parenthetical sense label never appears in the text and
+  must never appear in your output.
 - Replace only whole words or phrases that genuinely match a reference term. Do
   not respell a term that merely appears inside a larger unrelated word.
 - The respelling is a spoken form; keep it exactly as given in the reference.

@@ -51,6 +51,15 @@ def test_load_seed_keeps_real_word_swaps() -> None:
     assert entries["SOC 2"].replacement_text == "sock two"
 
 
+def test_live_homograph_rows_present() -> None:
+    # "live" is the one common homograph the seed was missing; both senses ship
+    # so the LLM pass can pick by context (bare "live" is never respelled
+    # deterministically -- the sense-keyed input never matches article text).
+    entries = _by_input(seed_corrections.load_seed(seed_corrections.seed_path()))
+    assert entries["live (verb)"].replacement_text == "liv"
+    assert entries["live (adjective)"].replacement_text == "lyve"
+
+
 # --- format_reference() / load_reference() ---------------------------------
 
 
