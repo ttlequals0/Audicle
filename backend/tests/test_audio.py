@@ -132,6 +132,23 @@ def test_compress_internal_silence_rejects_non_2d_tensor(env: Path) -> None:
         audio.compress_internal_silence(torch.zeros(1000), 24000, get_settings())
 
 
+def test_compress_internal_silence_negative_keep_never_cuts_speech(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AUDIO_INTERNAL_SILENCE_KEEP_MS", "-500")
+    get_settings.cache_clear()
+    sample_rate = 24000
+    tone = 0.5 * torch.ones((1, sample_rate))
+    gap = torch.zeros((1, 3 * sample_rate))
+    waveform = torch.cat([tone, gap, tone], dim=1)
+
+    out = audio.compress_internal_silence(waveform, sample_rate, get_settings())
+    # A misconfigured negative keep clamps to zero kept silence; both 1s tones
+    # must survive untouched (a negative keep_half would slice into them).
+    assert out.size(1) == 2 * sample_rate
+    assert bool((out.abs() > 0.4).all())
+
+
 # --- concat_with_padding ---------------------------------------------------
 
 

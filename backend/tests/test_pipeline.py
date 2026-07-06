@@ -544,8 +544,8 @@ async def test_pipeline_transcript_stage_builds_vtt_from_chunks(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Capture the (chunks, silence_ms) call into transcript.build_vtt to
-    confirm the pipeline threads the live chunk texts + TTS durations into
-    the VTT builder."""
+    confirm the pipeline threads the live chunk texts + audio-stage durations
+    into the VTT builder."""
 
     database.run_migrations(env)
     _stub_full_chain(monkeypatch)

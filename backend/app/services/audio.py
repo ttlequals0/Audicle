@@ -212,11 +212,15 @@ def compress_internal_silence(
         return waveform
 
     max_run = round(max_ms * sample_rate / 1000)
-    # Half the kept duration goes to each end of a shortened run; capped at half
-    # the trigger length so a KEEP >= MAX misconfig can't duplicate samples.
-    keep_half = min(
-        round(settings.AUDIO_INTERNAL_SILENCE_KEEP_MS * sample_rate / 2000),
-        max_run // 2,
+    # Half the kept duration goes to each end of a shortened run. Clamp both
+    # misconfig directions: KEEP >= MAX can't duplicate samples, and a negative
+    # KEEP can't eat speech on either side of the run.
+    keep_half = max(
+        0,
+        min(
+            round(settings.AUDIO_INTERNAL_SILENCE_KEEP_MS * sample_rate / 2000),
+            max_run // 2,
+        ),
     )
 
     edges = torch.diff(silent.to(torch.int8))
