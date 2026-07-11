@@ -3,9 +3,9 @@
 # security patch upgrades, shared by Dockerfile and Dockerfile.cpu so the install
 # logic lives in one place.
 #
-# chatterbox-tts pins transformers==5.2.0 itself, so no pre-pin is needed. torch is
-# provided by the image (CUDA base or CPU pre-install); chatterbox-tts pins
-# torch==2.6.0, satisfied by that build.
+# chatterbox-tts pins transformers==5.2.0 itself, so no pre-pin is needed. torch
+# 2.6.0 is preinstalled by both Dockerfiles (CUDA wheels in Dockerfile, CPU wheels
+# in Dockerfile.cpu); chatterbox-tts pins torch==2.6.0, satisfied by that build.
 set -eu
 
 pip install --no-cache-dir ".[chatterbox]"
@@ -22,4 +22,5 @@ pip install --no-cache-dir ".[whisper]"
 # at load time -- without the cap the wrapper crash-loops on model load.
 pip install --no-cache-dir -U \
   "urllib3>=2.7.0" "cryptography>=46.0.5" "pillow>=12.2.0" \
-  "Brotli>=1.2.0" "setuptools>=78.1.1,<81" "wheel>=0.46.2"
+  "Brotli>=1.2.0" "setuptools>=78.1.1,<81" "wheel>=0.46.2" \
+  "soupsieve>=2.8.4"
