@@ -28,7 +28,8 @@ ADD --checksum=sha256:8a3a9d2919b687602dfed430e0397779405589357e7108950e506a3291
 RUN apt-get update && apt-get install -y --no-install-recommends xz-utils \
     && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp \
     && mv /tmp/ffmpeg-*/bin/ffmpeg /ffmpeg \
-    && /ffmpeg -version
+    && /ffmpeg -version \
+    && rm -rf /tmp/ffmpeg.tar.xz /tmp/ffmpeg-* /var/lib/apt/lists/*
 
 # ---- Stage 3: Python runtime ----
 FROM python:3.14-slim AS runtime
