@@ -15,6 +15,21 @@ RUN npm run build
 # Pin uv to a single tag for reproducibility; bump deliberately.
 FROM ghcr.io/astral-sh/uv:0.11.26 AS uv
 
+# ---- Stage 2b: static ffmpeg ----
+# Pinned BtbN GPL static build, sha256-verified. Audicle only subprocesses the
+# ffmpeg binary (normalize/encode in audio.py, -version probe in health.py), so
+# a static binary is a drop-in -- and it removes apt ffmpeg's mesa/GL/SDL/pango/
+# mbedcrypto dependency tree, the bulk of this image's CVE surface. ffprobe and
+# ffplay are not shipped (nothing uses them). Bump the tag/asset/sha256 together.
+FROM debian:trixie-slim AS ffmpeg
+ADD --checksum=sha256:8a3a9d2919b687602dfed430e0397779405589357e7108950e506a3291af9371 \
+    https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-10-13-44/ffmpeg-n8.1.2-22-g94138f6973-linux64-gpl-8.1.tar.xz \
+    /tmp/ffmpeg.tar.xz
+RUN apt-get update && apt-get install -y --no-install-recommends xz-utils \
+    && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp \
+    && mv /tmp/ffmpeg-*/bin/ffmpeg /ffmpeg \
+    && /ffmpeg -version
+
 # ---- Stage 3: Python runtime ----
 FROM python:3.14-slim AS runtime
 
@@ -29,11 +44,11 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
          curl \
          ca-certificates \
-         ffmpeg \
          libsndfile1 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 1000 audicle
 
+COPY --from=ffmpeg /ffmpeg /usr/local/bin/ffmpeg
 COPY --from=uv /uv /usr/local/bin/uv
 
 WORKDIR /app
