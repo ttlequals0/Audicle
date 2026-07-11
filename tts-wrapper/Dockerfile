@@ -15,14 +15,11 @@ FROM python:3.11-slim AS runtime
 # root-owned and crash uid 1000 -- Numba "no locator available" and a
 # "Permission denied: '/root/.cache'" both trace back to that.
 #
-# NVIDIA_* replaces what the CUDA base image used to declare: the container
-# runtime exposes all GPUs with compute capability, and NVIDIA_REQUIRE_CUDA
-# fails the container start on drivers older than the cu124 wheels' floor
-# (driver 525+) instead of surfacing a torch runtime error mid-job.
-# LD_LIBRARY_PATH points at the pip nvidia wheels for ctranslate2
-# (faster-whisper): it statically links the CUDA runtime but dlopens
-# cuDNN/cuBLAS; torch itself finds its nvidia libs without help. The paths
-# embed python3.11 -- update them together with the FROM line's Python.
+# NVIDIA_* replaces what the CUDA base image declared. NVIDIA_REQUIRE_CUDA
+# fails the container start on drivers below the cu124 floor (525+) instead of
+# erroring mid-job. LD_LIBRARY_PATH: ctranslate2 (faster-whisper) dlopens
+# cuDNN/cuBLAS from the pip nvidia wheels; torch finds its own libs without
+# help. The paths embed python3.11 -- update with the FROM line's Python.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \

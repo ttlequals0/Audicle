@@ -17,15 +17,11 @@ FROM ghcr.io/astral-sh/uv:0.11.26 AS uv
 
 # ---- Stage 2b: static ffmpeg ----
 # Pinned BtbN GPL static build, sha256-verified. Audicle only subprocesses the
-# ffmpeg binary (normalize/encode in audio.py, -version probe in health.py), so
-# a static binary is a drop-in -- and it removes apt ffmpeg's mesa/GL/SDL/pango/
-# mbedcrypto dependency tree, the bulk of this image's CVE surface. ffprobe and
-# ffplay are not shipped (nothing uses them). Bump the tag/asset/sha256 together.
-#
-# The tarball is a BtbN build (autobuild-2026-07-10-13-44) mirrored to this
-# repo's releases: BtbN deletes daily autobuilds after ~14 days, which would
-# break clean rebuilds. To bump: mirror the new BtbN asset to a new release
-# tag here, then update URL + sha256 together.
+# ffmpeg binary, so a static binary is a drop-in -- and it removes apt ffmpeg's
+# mesa/GL/SDL/pango/mbedcrypto dependency tree. ffprobe/ffplay are not shipped
+# (nothing uses them). The tarball (BtbN autobuild-2026-07-10-13-44) is mirrored
+# to this repo's releases: BtbN deletes daily autobuilds after ~14 days. To
+# bump: mirror the new BtbN asset to a new release tag, update URL + sha256 together.
 FROM debian:trixie-slim AS ffmpeg
 ADD --checksum=sha256:8a3a9d2919b687602dfed430e0397779405589357e7108950e506a3291af9371 \
     https://github.com/ttlequals0/Audicle/releases/download/ffmpeg-static-n8.1.2-22-g94138f6973/ffmpeg-n8.1.2-22-g94138f6973-linux64-gpl-8.1.tar.xz \
