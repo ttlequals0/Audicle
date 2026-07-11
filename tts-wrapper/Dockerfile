@@ -21,7 +21,8 @@ FROM python:3.11-slim AS runtime
 # (driver 525+) instead of surfacing a torch runtime error mid-job.
 # LD_LIBRARY_PATH points at the pip nvidia wheels for ctranslate2
 # (faster-whisper): it statically links the CUDA runtime but dlopens
-# cuDNN/cuBLAS; torch itself finds its nvidia libs without help.
+# cuDNN/cuBLAS; torch itself finds its nvidia libs without help. The paths
+# embed python3.11 -- update them together with the FROM line's Python.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \

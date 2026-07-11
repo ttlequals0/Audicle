@@ -14,8 +14,9 @@ work lives under `[Unreleased]`.
   (Ubuntu 22.04) to python:3.11-slim with pip-installed torch 2.6.0. The
   PyPI torch wheel bundles the full cu124 nvidia runtime (CUDA, cuDNN,
   cuBLAS), so the CUDA base contributed only its ~180 unfixable OS CVEs.
-  Same Python, same torch, same GPU driver floor (525+); the container now
-  fails fast on incompatible drivers via NVIDIA_REQUIRE_CUDA.
+  Same Python, same torch, same GPU driver floor (525+); the
+  NVIDIA_REQUIRE_CUDA fail-fast gate the CUDA base provided is preserved
+  by declaring it explicitly.
 - App image ships a pinned, sha256-verified static ffmpeg 8.1 (BtbN build)
   instead of apt ffmpeg, removing the mesa/GL/SDL/pango dependency tree
   that carried most of the image's CVE findings.
