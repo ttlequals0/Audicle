@@ -1,0 +1,112 @@
+# Accepted residual CVEs. Every entry documents why it is accepted and when to
+# remove it. The Trivy gate in the release flow must pass with ONLY these
+# suppressions -- a new finding means a new decision, not a new entry by reflex.
+
+# -- Debian trixie base (python:*-slim): no fixed package released yet.
+# Remove each when `apt-get upgrade` in a rebuild clears it from the scan.
+
+# perl / perl-base / libperl5.40 / perl-modules-5.40 (CRITICAL x2, HIGH x3):
+# interpreter ships in the slim base; nothing in Audicle invokes perl.
+CVE-2026-42496
+CVE-2026-42497
+CVE-2026-8376
+CVE-2026-48962
+CVE-2026-9538
+
+# curl / libcurl4t64 / libcurl3t64-gnutls (HIGH x9):
+# system curl ships in base; backend Python httpx does not use system libcurl.
+CVE-2026-12064
+CVE-2026-5773
+CVE-2026-6276
+CVE-2026-8286
+CVE-2026-8927
+CVE-2026-8932
+CVE-2026-9079
+CVE-2026-9080
+CVE-2026-9545
+CVE-2026-9547
+
+# libexpat1 (HIGH x6): XML parser in base; Audicle does not parse untrusted XML.
+CVE-2025-59375
+CVE-2026-25210
+CVE-2026-45186
+CVE-2026-56131
+CVE-2026-56407
+CVE-2026-56408
+
+# ncurses (libncursesw6, libtinfo6, ncurses-base, ncurses-bin) (HIGH x1):
+# terminal handling in base; Audicle runs headless in a container.
+CVE-2025-69720
+
+# gzip (HIGH x1): compression utility in base; not invoked by application code.
+CVE-2026-41992
+
+# libsndfile1 (HIGH x1): audio file library in the Debian base;
+# Audicle uses soundfile (Python binding) for read/write only, no untrusted files.
+CVE-2026-37555
+
+# util-linux family (bsdutils, libblkid1, liblastlog2-2, libmount1, libsmartcols1,
+# libuuid1, login, mount, util-linux) (HIGH x1):
+# standard system utilities in the slim base; not exposed to untrusted input.
+CVE-2026-53615
+
+# libacl1 (HIGH x1): POSIX ACL library in base; no ACL operations in Audicle.
+CVE-2026-54369
+
+# -- render image only (python:3.12-slim + xvfb + mesa for Camoufox browser):
+
+# xserver-common / xvfb (HIGH x3): Xvfb is required by Camoufox (headful browser
+# in a virtual display). CVE-2023-5574 fix_deferred; 2026-55999/56000 affected.
+# Remove when Debian ships a fix or the render image drops Xvfb.
+CVE-2023-5574
+CVE-2026-55999
+CVE-2026-56000
+
+# libxfont2 (HIGH x3): X font library pulled in by xvfb; no direct Audicle use.
+# Remove when Debian ships fixes.
+CVE-2026-56001
+CVE-2026-56002
+CVE-2026-56003
+
+# mesa / libgbm1 / libgl1-mesa-dri / libglx-mesa0 / mesa-libgallium (CRITICAL x1
+# will_not_fix): GPU/display drivers pulled in by Camoufox browser dependencies.
+# Upstream will not fix; render container has no GPU access and no network exposure
+# beyond the internal Docker network. Remove if mesa ships a fix or render drops GL.
+CVE-2026-40393
+
+# libglib2.0-0t64 (CRITICAL x1, HIGH x6): GLib pulled in by mesa/Camoufox deps.
+# No fix released. Remove when Debian trixie ships a patched glib package.
+CVE-2026-58010
+CVE-2026-58011
+CVE-2026-58012
+CVE-2026-58013
+CVE-2026-58014
+CVE-2026-58015
+CVE-2026-58016
+
+# libtiff6 (HIGH x1): TIFF library pulled in by the render image's browser/mesa
+# dependency chain. No fix released. Remove when Debian ships a patched libtiff6.
+CVE-2026-12912
+
+# libcups2t64 (HIGH x1): CUPS printing library in the render image (browser dep).
+# No fix released. Remove when Debian ships a patch.
+CVE-2026-34980
+
+# -- chatterbox-tts exact pins (tts image only): documented unreachable in
+# tts-wrapper/pyproject.toml (no gradio server, no trust_remote_code, no
+# untrusted models, no form parsing). Remove when chatterbox-tts lifts its
+# pins (tracked by the chatterbox-monitor workflow).
+
+# diffusers 0.29.0 (fixed 0.38.0):
+CVE-2026-44513
+CVE-2026-45804
+
+# gradio 6.8.0 (fixed 6.15.0):
+CVE-2026-48545
+
+# starlette 0.52.1 via gradio (fixed 1.1.0 / 1.3.1):
+CVE-2026-48818
+CVE-2026-54283
+
+# transformers 5.2.0 (fixed 5.3.0):
+CVE-2026-4372
