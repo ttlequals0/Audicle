@@ -21,9 +21,14 @@ FROM ghcr.io/astral-sh/uv:0.11.26 AS uv
 # a static binary is a drop-in -- and it removes apt ffmpeg's mesa/GL/SDL/pango/
 # mbedcrypto dependency tree, the bulk of this image's CVE surface. ffprobe and
 # ffplay are not shipped (nothing uses them). Bump the tag/asset/sha256 together.
+#
+# The tarball is a BtbN build (autobuild-2026-07-10-13-44) mirrored to this
+# repo's releases: BtbN deletes daily autobuilds after ~14 days, which would
+# break clean rebuilds. To bump: mirror the new BtbN asset to a new release
+# tag here, then update URL + sha256 together.
 FROM debian:trixie-slim AS ffmpeg
 ADD --checksum=sha256:8a3a9d2919b687602dfed430e0397779405589357e7108950e506a3291af9371 \
-    https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-10-13-44/ffmpeg-n8.1.2-22-g94138f6973-linux64-gpl-8.1.tar.xz \
+    https://github.com/ttlequals0/Audicle/releases/download/ffmpeg-static-n8.1.2-22-g94138f6973/ffmpeg-n8.1.2-22-g94138f6973-linux64-gpl-8.1.tar.xz \
     /tmp/ffmpeg.tar.xz
 RUN apt-get update && apt-get install -y --no-install-recommends xz-utils \
     && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp \
