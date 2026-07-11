@@ -1,6 +1,15 @@
 # Accepted residual CVEs. Every entry documents why it is accepted and when to
 # remove it. The Trivy gate in the release flow must pass with ONLY these
 # suppressions -- a new finding means a new decision, not a new entry by reflex.
+#
+# SCOPE LIMITATION: trivy's ignorefile matches CVE IDs globally, with no
+# per-image scoping -- the per-image section labels below are documentation,
+# not enforcement. An entry accepted for one image also suppresses that CVE in
+# the other two scans. Latent masks to watch: the mesa/glib render entries
+# would also hide those CVEs if the GL tree ever re-enters the app image, and
+# the starlette entries would hide a real finding if the app's starlette ever
+# resolves below its fixed version (1.3.1 today). If either happens, split
+# this into per-image ignore files passed via --ignorefile.
 
 # -- Debian trixie base (python:*-slim): no fixed package released yet.
 # Remove each when `apt-get upgrade` in a rebuild clears it from the scan.
@@ -15,7 +24,7 @@ CVE-2026-8376
 CVE-2026-48962
 CVE-2026-9538
 
-# curl / libcurl4t64 / libcurl3t64-gnutls (HIGH x9):
+# curl / libcurl4t64 / libcurl3t64-gnutls (HIGH x10):
 # system curl ships in base; backend Python httpx does not use system libcurl.
 CVE-2026-12064
 CVE-2026-5773

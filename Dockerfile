@@ -23,6 +23,14 @@ FROM ghcr.io/astral-sh/uv:0.11.26 AS uv
 # to this repo's releases: BtbN deletes daily autobuilds after ~14 days. To
 # bump: mirror the new BtbN asset to a new release tag, update URL + sha256 together.
 FROM debian:trixie-slim AS ffmpeg
+# The mirrored tarball is amd64-only (apt ffmpeg was arch-native). Fail fast
+# with a clear message on other arches instead of an exec-format error later
+# or a silently mixed-arch image under qemu emulation.
+ARG TARGETARCH
+RUN [ "$TARGETARCH" = "amd64" ] || { \
+      echo "ERROR: the pinned static ffmpeg is amd64-only; build with --platform linux/amd64" >&2; \
+      exit 1; \
+    }
 ADD --checksum=sha256:8a3a9d2919b687602dfed430e0397779405589357e7108950e506a3291af9371 \
     https://github.com/ttlequals0/Audicle/releases/download/ffmpeg-static-n8.1.2-22-g94138f6973/ffmpeg-n8.1.2-22-g94138f6973-linux64-gpl-8.1.tar.xz \
     /tmp/ffmpeg.tar.xz

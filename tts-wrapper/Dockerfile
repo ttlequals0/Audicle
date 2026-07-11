@@ -4,7 +4,9 @@
 # 22.04 + conda) added ~180 unfixable OS CVEs while providing nothing the pip
 # install does not: torch 2.6.0's PyPI linux wheel is the cu124 build and pulls
 # the full nvidia-* wheel set (CUDA runtime, cuDNN 9.1, cuBLAS). Same Python
-# (3.11), same torch (2.6.0, chatterbox's hard pin), same driver floor (525+).
+# (3.11), same torch (2.6.0, chatterbox's hard pin); the cu124 wheels' driver
+# requirement (525+) is unchanged, and NVIDIA_REQUIRE_CUDA below now enforces
+# it at container start (the old base declared no such gate).
 # Operators on CPU-only hosts should use ``Dockerfile.cpu`` and TTS_DEVICE=cpu.
 FROM python:3.11-slim AS runtime
 
@@ -15,7 +17,8 @@ FROM python:3.11-slim AS runtime
 # root-owned and crash uid 1000 -- Numba "no locator available" and a
 # "Permission denied: '/root/.cache'" both trace back to that.
 #
-# NVIDIA_* replaces what the CUDA base image declared. NVIDIA_REQUIRE_CUDA
+# NVIDIA_VISIBLE_DEVICES / NVIDIA_DRIVER_CAPABILITIES replace what the CUDA
+# base image declared. NVIDIA_REQUIRE_CUDA is NEW (the base had none): it
 # fails the container start on drivers below the cu124 floor (525+) instead of
 # erroring mid-job. LD_LIBRARY_PATH: ctranslate2 (faster-whisper) dlopens
 # cuDNN/cuBLAS from the pip nvidia wheels; torch finds its own libs without

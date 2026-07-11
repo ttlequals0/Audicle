@@ -14,21 +14,31 @@ work lives under `[Unreleased]`.
   (Ubuntu 22.04) to python:3.11-slim with pip-installed torch 2.6.0. The
   PyPI torch wheel bundles the full cu124 nvidia runtime (CUDA, cuDNN,
   cuBLAS), so the CUDA base contributed only its ~180 unfixable OS CVEs.
-  Same Python, same torch, same GPU driver floor (525+); the
-  NVIDIA_REQUIRE_CUDA fail-fast gate the CUDA base provided is preserved
-  by declaring it explicitly.
-- App image ships a pinned, sha256-verified static ffmpeg 8.1 (BtbN build)
-  instead of apt ffmpeg, removing the mesa/GL/SDL/pango dependency tree
-  that carried most of the image's CVE findings.
-- Render image is rebuilt this release (not retagged), refreshing stale
-  base-image security patches; releases now rebuild all three images.
+  Same Python, same torch, and the cu124 wheels' driver requirement (525+)
+  is unchanged. New in this image: an NVIDIA_REQUIRE_CUDA gate now refuses
+  container start on drivers older than CUDA 12, where the old image
+  surfaced a torch runtime error mid-job instead.
+- App image ships a pinned, sha256-verified static ffmpeg 8.1 (BtbN build,
+  mirrored to this repo's releases) instead of apt ffmpeg, removing the
+  mesa/GL/SDL/pango dependency tree that carried most of the image's CVE
+  findings. The static binary is amd64-only; the Dockerfile now fails fast
+  with a clear message on non-amd64 builds (build with
+  --platform linux/amd64).
+- All three images are rebuilt and pushed this release; the render image
+  in particular had been retagged since 0.43.x, leaving its base-image
+  security patches stale.
 
 ### Security
 
-- Added a commented .trivyignore baseline for the accepted residual CVEs:
-  Debian trixie perl-base advisories (no fix released) and the
-  chatterbox-pinned python packages documented in tts-wrapper/pyproject.toml
-  (unreachable code paths). Each entry names its revisit condition.
+- Added a commented .trivyignore baseline for the accepted residual CVEs
+  (48 entries). The bulk are Debian trixie OS packages with no fix released:
+  perl (2 CRITICAL), curl (10 HIGH), expat, glib (1 CRITICAL in the render
+  display stack), plus render's xvfb/mesa/libxfont/tiff/cups tree including
+  a will_not_fix mesa CRITICAL. The remaining six are the chatterbox-pinned
+  python packages documented in tts-wrapper/pyproject.toml (unreachable
+  code paths). Each entry names its revisit condition; the file header
+  documents that trivy ignore entries apply globally across all three image
+  scans, not per image.
 - soupsieve patched to >=2.8.4 in the wrapper (CVE-2026-49476/49477).
 
 ## [0.46.0] - 2026-07-05
