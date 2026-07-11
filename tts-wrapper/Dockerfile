@@ -1,10 +1,29 @@
 # syntax=docker/dockerfile:1.7
 
-# CUDA + cuDNN runtime image with PyTorch preinstalled.
-# Operators on CPU-only hosts should use ``Dockerfile.cpu`` (which builds on a
-# plain Python base, since there is no ``pytorch/pytorch:*-cpu`` tag) and set
-# ``TTS_DEVICE=cpu``.
-FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime AS runtime
+# Plain slim base + pip torch. The old pytorch/pytorch:2.6.0 CUDA base (Ubuntu
+# 22.04 + conda) added ~180 unfixable OS CVEs while providing nothing the pip
+# install does not: torch 2.6.0's PyPI linux wheel is the cu124 build and pulls
+# the full nvidia-* wheel set (CUDA runtime, cuDNN 9.1, cuBLAS). Same Python
+# (3.11), same torch (2.6.0, chatterbox's hard pin); the cu124 wheels' driver
+# requirement (525+) is unchanged, and NVIDIA_REQUIRE_CUDA below now enforces
+# it at container start (the old base declared no such gate).
+# Operators on CPU-only hosts should use ``Dockerfile.cpu`` and TTS_DEVICE=cpu.
+#
+# PYVER single-sources the Python version for the FROM line AND the nvidia
+# wheel paths in LD_LIBRARY_PATH below -- bump it in one place.
+ARG PYVER=3.11
+FROM python:${PYVER}-slim AS runtime
+ARG PYVER
+
+# The GPU image is amd64-only by construction: on arm64, pip resolves the
+# CPU-only aarch64 torch wheel (no nvidia-* deps) and the build would silently
+# produce a CUDA-less "GPU" image. The old pytorch base failed at FROM on
+# arm64; keep that fail-fast, with a clearer message.
+ARG TARGETARCH
+RUN [ "$TARGETARCH" = "amd64" ] || { \
+      echo "ERROR: the GPU wrapper image is amd64-only (arm64 pip torch has no CUDA); build with --platform linux/amd64 or use Dockerfile.cpu" >&2; \
+      exit 1; \
+    }
 
 # Cache locations target writable paths so the image runs as a non-root user
 # (the compose ``user: 1000:1000``). The model caches live on the persistent
@@ -12,6 +31,15 @@ FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime AS runtime
 # go to image-local ``/tmp``. The old ``/root/.cache`` defaults are mode-700
 # root-owned and crash uid 1000 -- Numba "no locator available" and a
 # "Permission denied: '/root/.cache'" both trace back to that.
+#
+# NVIDIA_VISIBLE_DEVICES / NVIDIA_DRIVER_CAPABILITIES replace what the CUDA
+# base image declared. NVIDIA_REQUIRE_CUDA is NEW (the base had none): it
+# fails the container start on drivers below the cu124 floor (525+) instead of
+# erroring mid-job. LD_LIBRARY_PATH: ctranslate2 (faster-whisper) dlopens
+# cuDNN/cuBLAS from the pip nvidia wheels; torch finds its own libs without
+# help. The wheel paths derive from PYVER (single-sourced with FROM); the
+# trailing /usr/local/nvidia entries preserve the old base's legacy
+# nvidia-docker driver-mount paths.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -20,27 +48,33 @@ ENV PYTHONUNBUFFERED=1 \
     HOME=/tmp \
     XDG_CACHE_HOME=/tmp/.cache \
     NUMBA_CACHE_DIR=/tmp/numba_cache \
-    MPLCONFIGDIR=/tmp/mpl
+    MPLCONFIGDIR=/tmp/mpl \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    NVIDIA_REQUIRE_CUDA="cuda>=12.0" \
+    LD_LIBRARY_PATH=/usr/local/lib/python${PYVER}/site-packages/nvidia/cudnn/lib:/usr/local/lib/python${PYVER}/site-packages/nvidia/cublas/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 
 # OS deps: curl for healthchecks; libsndfile for soundfile WAV IO; git so the
 # chatterbox backend can install resemble-perth (a git+https dependency).
-# ``apt-get upgrade`` pulls every available base-image security patch in one shot
-# (openssl/libssl3 CVE-2026-45447, the linux-libc-dev kernel-header CVEs, and the
-# gpgv CVE-2025-68973 the old --only-upgrade line targeted by hand). Same-release
-# Jammy point updates are ABI-stable; the torch/CUDA stack is pip-installed, not apt.
+# ``apt-get upgrade`` pulls every available base-image security patch.
 RUN apt-get update \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends curl ca-certificates libsndfile1 git \
     && rm -rf /var/lib/apt/lists/*
 
+# torch first, as its own layer: the ~2.5GB cu124 wheel set only re-downloads
+# when the torch pin changes, not on every wrapper source edit. The plain PyPI
+# wheel IS the CUDA build on linux/x86_64 (nvidia-* wheels come as deps);
+# chatterbox's torch==2.6.0 pin is then already satisfied at engine install.
+RUN pip install --no-cache-dir torch==2.6.0
+
 WORKDIR /app
 
 # Install Python deps from pyproject.toml so this image stays in lockstep with
 # the declared dependency set; no parallel hand-written list to drift. The
-# trailing -U in install_engine.sh upgrades patch transitive deps the base image
-# / resolver pin to vulnerable versions (urllib3, cryptography, pillow, Brotli,
-# setuptools, wheel). torch is the base image's 2.6.0, which clears
-# CVE-2025-32434 (torch.load RCE), reused as-is.
+# trailing -U in install_engine.sh upgrades patch transitive deps the resolver
+# pins to vulnerable versions (urllib3, cryptography, pillow, Brotli,
+# setuptools, wheel). torch 2.6.0 is preinstalled above; chatterbox reuses it.
 COPY pyproject.toml ./
 COPY config.py engine.py log_setup.py main.py chatterbox_engine.py whisper_verify.py install_engine.sh ./
 # install_engine.sh (shared with Dockerfile.cpu) installs the Chatterbox engine

@@ -1,0 +1,26 @@
+name: Monitor ffmpeg upstream
+
+# Weekly check: opens a GitHub issue when BtbN/FFmpeg-Builds has a newer
+# linux64-gpl-8.x asset than the version token pinned in the root Dockerfile's
+# ADD URL. The static ffmpeg binary is invisible to trivy (no package DB), so
+# this workflow is the only update signal for a binary that parses untrusted audio.
+# Schedules only run from the default branch, so this takes effect once merged to main.
+# Also runnable on demand via the Actions tab.
+on:
+  schedule:
+    - cron: "0 11 * * 1" # Mondays 11:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check BtbN for a newer static ffmpeg release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/check_ffmpeg.py

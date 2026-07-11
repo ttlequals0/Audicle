@@ -28,9 +28,9 @@ ENV PYTHONUNBUFFERED=1 \
 # extensions. libsndfile for soundfile WAV IO; curl for healthchecks; git so the
 # chatterbox backend can install resemble-perth (a git+https dependency).
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
          curl ca-certificates libsndfile1 build-essential git \
-    && apt-get install -y --only-upgrade gpgv \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

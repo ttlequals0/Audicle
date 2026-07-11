@@ -1,13 +1,12 @@
 [project]
 name = "audicle-tts-wrapper"
-version = "0.46.0"
+version = "0.47.0"
 description = "FastAPI TTS wrapper for Audicle (Chatterbox)."
 requires-python = ">=3.11,<3.14"
-# The wrapper's real Python is set by the pytorch/pytorch:2.6.0 CUDA base image (3.11),
-# not by this range: chatterbox-tts pins torch==2.6.0 (for python<3.14) and the official
-# torch 2.6.0 CUDA image ships Python 3.11. So the bound tracks chatterbox's torch pin,
-# NOT numpy -- chatterbox already supports 3.13 (numpy>=2 there), but a newer Python would
-# need a torch>=2.9 image, which chatterbox won't allow until it moves off the 2.6.0 pin.
+# The wrapper's Python is set by the Dockerfiles' python:3.11-slim base. The bound
+# tracks chatterbox-tts's torch==2.6.0 pin (torch 2.6.0 ships no cp314 wheels), not by
+# numpy -- chatterbox already supports 3.13 (numpy>=2 there), but a newer Python would
+# need a newer torch pin, which chatterbox will not allow until it moves off 2.6.0.
 # The <3.14 upper bound mirrors that torch boundary; it lifts when Chatterbox bumps torch
 # (the chatterbox-monitor workflow flags that). Backend is python:3.14-slim; the wrapper
 # trails it deliberately, and each package has its own venv.

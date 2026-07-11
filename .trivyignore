@@ -1,0 +1,56 @@
+# Accepted residual CVEs. Every entry documents why it is accepted and when to
+# remove it. The Trivy gate in the release flow must pass with ONLY these
+# suppressions -- a new finding means a new decision, not a new entry by reflex.
+#
+# SCOPE: this file holds Debian trixie base CVEs that appear in ALL THREE images
+# (app, tts, render). Image-specific acceptances live in .trivyignore.tts and
+# .trivyignore.render; scripts/trivy_gate.sh concatenates the appropriate pair
+# before passing --ignorefile to each trivy invocation. This eliminates the
+# global-masking problem where a single ignorefile silently suppresses CVEs
+# across images that do not trigger them.
+
+# -- Debian trixie base (python:*-slim): no fixed package released yet.
+# Remove each when `apt-get upgrade` in a rebuild clears it from the scan.
+
+# perl / perl-base / libperl5.40 / perl-modules-5.40 (CRITICAL x2, HIGH x3):
+# interpreter ships in the slim base; nothing in Audicle invokes perl.
+# Statuses: CVE-2026-8376 and CVE-2026-48962 are "affected"; the other three
+# are "fix_deferred". All five are equally not-yet-fixed in trixie.
+CVE-2026-42496
+CVE-2026-42497
+CVE-2026-8376
+CVE-2026-48962
+CVE-2026-9538
+
+# curl / libcurl4t64 / libcurl3t64-gnutls (HIGH x10):
+# system curl ships in base; backend Python httpx does not use system libcurl.
+CVE-2026-12064
+CVE-2026-5773
+CVE-2026-6276
+CVE-2026-8286
+CVE-2026-8927
+CVE-2026-8932
+CVE-2026-9079
+CVE-2026-9080
+CVE-2026-9545
+CVE-2026-9547
+
+# ncurses (libncursesw6, libtinfo6, ncurses-base, ncurses-bin) (HIGH x1):
+# terminal handling in base; Audicle runs headless in a container.
+CVE-2025-69720
+
+# gzip (HIGH x1): compression utility in base; not invoked by application code.
+CVE-2026-41992
+
+# util-linux family (bsdutils, libblkid1, liblastlog2-2, libmount1, libsmartcols1,
+# libuuid1, login, mount, util-linux) (HIGH x1):
+# standard system utilities in the slim base; not exposed to untrusted input.
+CVE-2026-53615
+
+# libacl1 (HIGH x1): POSIX ACL library in base; no ACL operations in Audicle.
+CVE-2026-54369
+
+# libsndfile1 (HIGH x1): audio file library in the Debian base;
+# Audicle uses soundfile (Python binding) for read/write only, no untrusted files.
+# Present in app and tts images; included here so the app scan (shared-only) passes.
+CVE-2026-37555

@@ -1,0 +1,31 @@
+# Accepted residual CVEs for the tts image (ttlequals0/audicle-tts).
+# Concatenated with .trivyignore by scripts/trivy_gate.sh for the tts scan.
+# Do not pass this file to the app or render scans.
+
+# libexpat1 (HIGH x6): XML parser in base; Audicle does not parse untrusted XML.
+# Present in tts and render images (not app). Duplicated in .trivyignore.render.
+CVE-2025-59375
+CVE-2026-25210
+CVE-2026-45186
+CVE-2026-56131
+CVE-2026-56407
+CVE-2026-56408
+
+# -- chatterbox-tts exact pins (tts image only): documented unreachable in
+# tts-wrapper/pyproject.toml (no gradio server, no trust_remote_code, no
+# untrusted models, no form parsing). Remove when chatterbox-tts lifts its
+# pins (tracked by the chatterbox-monitor workflow).
+
+# diffusers 0.29.0 (fixed 0.38.0):
+CVE-2026-44513
+CVE-2026-45804
+
+# gradio 6.8.0 (fixed 6.15.0):
+CVE-2026-48545
+
+# starlette 0.52.1 via gradio (fixed 1.1.0 / 1.3.1):
+CVE-2026-48818
+CVE-2026-54283
+
+# transformers 5.2.0 (fixed 5.3.0):
+CVE-2026-4372
