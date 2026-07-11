@@ -135,7 +135,7 @@ def main() -> None:
 
     try:
         l_series = latest_btbn_series()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"Could not fetch BtbN latest release: {exc}", file=sys.stderr)
         sys.exit(1)
     print(f"Latest BtbN series   : {l_series}")
