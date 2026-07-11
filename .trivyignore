@@ -7,6 +7,7 @@
 
 # perl / perl-base / libperl5.40 / perl-modules-5.40 (CRITICAL x2, HIGH x3):
 # interpreter ships in the slim base; nothing in Audicle invokes perl.
+# CVE-2026-8376 status: affected (not fix_deferred like the other four).
 CVE-2026-42496
 CVE-2026-42497
 CVE-2026-8376
