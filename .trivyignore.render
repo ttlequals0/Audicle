@@ -1,0 +1,51 @@
+# Accepted residual CVEs for the render image (ttlequals0/audicle-render).
+# Concatenated with .trivyignore by scripts/trivy_gate.sh for the render scan.
+# Do not pass this file to the app or tts scans.
+
+# libexpat1 (HIGH x6): XML parser in base; Audicle does not parse untrusted XML.
+# Present in tts and render images (not app). Duplicated in .trivyignore.tts.
+CVE-2025-59375
+CVE-2026-25210
+CVE-2026-45186
+CVE-2026-56131
+CVE-2026-56407
+CVE-2026-56408
+
+# -- render image only (python:3.12-slim + xvfb + mesa for Camoufox browser):
+
+# xserver-common / xvfb (HIGH x3): Xvfb is required by Camoufox (headful browser
+# in a virtual display). CVE-2023-5574 fix_deferred; 2026-55999/56000 affected.
+# Remove when Debian ships a fix or the render image drops Xvfb.
+CVE-2023-5574
+CVE-2026-55999
+CVE-2026-56000
+
+# libxfont2 (HIGH x3): X font library pulled in by xvfb; no direct Audicle use.
+# Remove when Debian ships fixes.
+CVE-2026-56001
+CVE-2026-56002
+CVE-2026-56003
+
+# mesa / libgbm1 / libgl1-mesa-dri / libglx-mesa0 / mesa-libgallium (CRITICAL x1
+# will_not_fix): GPU/display drivers pulled in by Camoufox browser dependencies.
+# Upstream will not fix; render container has no GPU access and no network exposure
+# beyond the internal Docker network. Remove if mesa ships a fix or render drops GL.
+CVE-2026-40393
+
+# libglib2.0-0t64 (CRITICAL x1, HIGH x6): GLib pulled in by mesa/Camoufox deps.
+# No fix released. Remove when Debian trixie ships a patched glib package.
+CVE-2026-58010
+CVE-2026-58011
+CVE-2026-58012
+CVE-2026-58013
+CVE-2026-58014
+CVE-2026-58015
+CVE-2026-58016
+
+# libtiff6 (HIGH x1): TIFF library pulled in by the render image's browser/mesa
+# dependency chain. No fix released. Remove when Debian ships a patched libtiff6.
+CVE-2026-12912
+
+# libcups2t64 (HIGH x1): CUPS printing library in the render image (browser dep).
+# No fix released. Remove when Debian ships a patch.
+CVE-2026-34980
