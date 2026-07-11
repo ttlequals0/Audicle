@@ -8,7 +8,22 @@
 # requirement (525+) is unchanged, and NVIDIA_REQUIRE_CUDA below now enforces
 # it at container start (the old base declared no such gate).
 # Operators on CPU-only hosts should use ``Dockerfile.cpu`` and TTS_DEVICE=cpu.
-FROM python:3.11-slim AS runtime
+#
+# PYVER single-sources the Python version for the FROM line AND the nvidia
+# wheel paths in LD_LIBRARY_PATH below -- bump it in one place.
+ARG PYVER=3.11
+FROM python:${PYVER}-slim AS runtime
+ARG PYVER
+
+# The GPU image is amd64-only by construction: on arm64, pip resolves the
+# CPU-only aarch64 torch wheel (no nvidia-* deps) and the build would silently
+# produce a CUDA-less "GPU" image. The old pytorch base failed at FROM on
+# arm64; keep that fail-fast, with a clearer message.
+ARG TARGETARCH
+RUN [ "$TARGETARCH" = "amd64" ] || { \
+      echo "ERROR: the GPU wrapper image is amd64-only (arm64 pip torch has no CUDA); build with --platform linux/amd64 or use Dockerfile.cpu" >&2; \
+      exit 1; \
+    }
 
 # Cache locations target writable paths so the image runs as a non-root user
 # (the compose ``user: 1000:1000``). The model caches live on the persistent
@@ -22,7 +37,9 @@ FROM python:3.11-slim AS runtime
 # fails the container start on drivers below the cu124 floor (525+) instead of
 # erroring mid-job. LD_LIBRARY_PATH: ctranslate2 (faster-whisper) dlopens
 # cuDNN/cuBLAS from the pip nvidia wheels; torch finds its own libs without
-# help. The paths embed python3.11 -- update with the FROM line's Python.
+# help. The wheel paths derive from PYVER (single-sourced with FROM); the
+# trailing /usr/local/nvidia entries preserve the old base's legacy
+# nvidia-docker driver-mount paths.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -35,7 +52,7 @@ ENV PYTHONUNBUFFERED=1 \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility \
     NVIDIA_REQUIRE_CUDA="cuda>=12.0" \
-    LD_LIBRARY_PATH=/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib:/usr/local/lib/python3.11/site-packages/nvidia/cublas/lib
+    LD_LIBRARY_PATH=/usr/local/lib/python${PYVER}/site-packages/nvidia/cudnn/lib:/usr/local/lib/python${PYVER}/site-packages/nvidia/cublas/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 
 # OS deps: curl for healthchecks; libsndfile for soundfile WAV IO; git so the
 # chatterbox backend can install resemble-perth (a git+https dependency).

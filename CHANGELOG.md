@@ -17,7 +17,15 @@ work lives under `[Unreleased]`.
   Same Python, same torch, and the cu124 wheels' driver requirement (525+)
   is unchanged. New in this image: an NVIDIA_REQUIRE_CUDA gate now refuses
   container start on drivers older than CUDA 12, where the old image
-  surfaced a torch runtime error mid-job instead.
+  surfaced a torch runtime error mid-job instead. Note: the gate applies
+  whenever the NVIDIA runtime processes the container (i.e. a GPU device
+  reservation is present), including TTS_DEVICE=cpu -- on a pre-CUDA-12
+  driver, remove the GPU reservation or use the -cpu image. The GPU image
+  is also amd64-only by construction (arm64 pip torch has no CUDA) and now
+  fails fast on non-amd64 builds with a clear message.
+- CPU wrapper image (Dockerfile.cpu) now runs a full `apt-get upgrade`
+  during build instead of the previous single targeted gpgv upgrade,
+  matching the GPU image's patching policy.
 - App image ships a pinned, sha256-verified static ffmpeg 8.1 (BtbN build,
   mirrored to this repo's releases) instead of apt ffmpeg, removing the
   mesa/GL/SDL/pango dependency tree that carried most of the image's CVE
