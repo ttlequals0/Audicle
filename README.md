@@ -279,7 +279,7 @@ A session cookie is full account access, so use a dedicated login where the site
 The application code is MIT. A few things downstream of it have their own terms:
 
 - **Chatterbox** is the TTS engine. The `chatterbox-tts` library and its model weights are MIT, so there's no non-commercial restriction on the model itself. Every output carries Resemble's inaudible PerTh watermark for provenance, with no flag to turn it off.
-- **Wrapper Python pin**: the wrapper runs Python 3.11 from its `pytorch/pytorch:2.6.0` CUDA base image -- `chatterbox-tts` pins `torch==2.6.0`, and the official torch 2.6.0 CUDA image is built on 3.11. It moves forward once Chatterbox moves off that torch pin. The backend is separate: Python `>=3.13`, shipped on `python:3.14-slim`.
+- **Wrapper Python pin**: the wrapper runs Python 3.11 from its `python:3.11-slim` base with torch 2.6.0 installed from PyPI (the CUDA-enabled cu124 wheel). The Python ceiling tracks `chatterbox-tts`'s `torch==2.6.0` pin (torch 2.6.0 wheels stop at Python 3.13; a newer Python would need a newer torch pin, which chatterbox does not yet allow). The backend is separate: Python `>=3.13`, shipped on `python:3.14-slim`.
 
 The Audicle name and logo are reserved; see `branding/README.md`.
 
