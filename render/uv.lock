@@ -44,7 +44,7 @@ wheels = [
 
 [[package]]
 name = "audicle-render"
-version = "0.45.3"
+version = "0.47.0"
 source = { virtual = "." }
 dependencies = [
     { name = "fastapi" },

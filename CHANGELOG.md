@@ -6,6 +6,30 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.47.0] - 2026-07-11
+
+### Changed
+
+- TTS wrapper GPU image rebased from the pytorch/pytorch CUDA base image
+  (Ubuntu 22.04) to python:3.11-slim with pip-installed torch 2.6.0. The
+  PyPI torch wheel bundles the full cu124 nvidia runtime (CUDA, cuDNN,
+  cuBLAS), so the CUDA base contributed only its ~180 unfixable OS CVEs.
+  Same Python, same torch, same GPU driver floor (525+); the container now
+  fails fast on incompatible drivers via NVIDIA_REQUIRE_CUDA.
+- App image ships a pinned, sha256-verified static ffmpeg 8.1 (BtbN build)
+  instead of apt ffmpeg, removing the mesa/GL/SDL/pango dependency tree
+  that carried most of the image's CVE findings.
+- Render image is rebuilt this release (not retagged), refreshing stale
+  base-image security patches; releases now rebuild all three images.
+
+### Security
+
+- Added a commented .trivyignore baseline for the accepted residual CVEs:
+  Debian trixie perl-base advisories (no fix released) and the
+  chatterbox-pinned python packages documented in tts-wrapper/pyproject.toml
+  (unreachable code paths). Each entry names its revisit condition.
+- soupsieve patched to >=2.8.4 in the wrapper (CVE-2026-49476/49477).
+
 ## [0.46.0] - 2026-07-05
 
 ### Added
