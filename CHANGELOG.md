@@ -6,6 +6,8 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.48.1] - 2026-07-13
+
 ### Added
 
 - Settings UI: new "Audio analysis" group exposing the AUDIO_ANALYSIS_*
