@@ -108,7 +108,9 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         # separate-container startup capability, not a per-job policy.
         "WHISPER_VERIFY_ENABLED",
         "WHISPER_DIVERGENCE_THRESHOLD",
+        "WHISPER_MAX_DIVERGENT_RUN",
         "WHISPER_VERIFY_MIN_WORDS",
+        "WHISPER_SHORT_CHUNK_DIVERGENCE",
         "RSS_CACHE_MAX_AGE_SECONDS",
         "MIN_CLEANUP_CHARS",
         "MAX_PROMPT_LENGTH_BYTES",

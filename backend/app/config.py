@@ -315,7 +315,20 @@ class Settings(BaseSettings):
     # inflates divergence even when the audio is fine; this catches gross dropout
     # and hallucination without over-regenerating. Tune live via Settings.
     WHISPER_DIVERGENCE_THRESHOLD: float = 0.35
-    WHISPER_VERIFY_MIN_WORDS: int = 8  # skip tiny chunks where ASR noise dominates
+    # A contiguous run of this many-or-more diverging words (dropout or babble)
+    # regenerates the chunk. The global ratio above dilutes localized garbage --
+    # 15 bad words inside a 120-word chunk score ~0.15 and pass, yet are plainly
+    # audible. 8 clears real mangles (observed runs are 11-30+ words) while
+    # staying above ASR proper-noun mishears (2-4 words). Tune live via Settings.
+    WHISPER_MAX_DIVERGENT_RUN: int = 8
+    # Below this comparison word count the tuned thresholds are skipped and only
+    # WHISPER_SHORT_CHUNK_DIVERGENCE applies: ASR noise dominates tiny chunks.
+    WHISPER_VERIFY_MIN_WORDS: int = 8
+    # Gross-mismatch bar for short chunks. 0.8 tolerates whisper's deterministic
+    # proper-noun mishears on tiny word lists (2 of 3 name words misheard scores
+    # ~0.67) while still catching fully garbled audio (an unrelated or empty
+    # transcript scores ~1.0).
+    WHISPER_SHORT_CHUNK_DIVERGENCE: float = 0.8
 
     # Artwork.
     ARTWORK_SIZE_PX: int = 3000
@@ -388,6 +401,9 @@ RUNTIME_SETTING_BOUNDS: dict[str, dict[str, float]] = {
     "CHATTERBOX_MAX_CHARS": {"ge": 100, "le": 2000},
     # Backend chunker ceiling; the wrapper's request text cap is 4000 chars.
     "TTS_CHUNK_MAX_CHARS": {"ge": 200, "le": 4000},
+    # 0 would flag every chunk (asr_run >= 0 always holds).
+    "WHISPER_MAX_DIVERGENT_RUN": {"ge": 1},
+    "WHISPER_SHORT_CHUNK_DIVERGENCE": {"gt": 0, "le": 1.0},
 }
 
 

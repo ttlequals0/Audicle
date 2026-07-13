@@ -6,6 +6,43 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.48.0] - 2026-07-13
+
+### Fixed
+
+- ASR verification now catches localized garbage audio. The check compared a
+  whole-chunk word-similarity ratio against WHISPER_DIVERGENCE_THRESHOLD, so a
+  10-25 second babble or dropout stretch inside a 100+ word chunk scored only
+  0.09-0.27 and passed (confirmed against a production episode where five
+  audibly mangled chunks all cleared the 0.35 threshold). A new
+  worst-divergent-run check flags any contiguous stretch of
+  WHISPER_MAX_DIVERGENT_RUN or more diverging words (default 8; runtime
+  tunable in Settings -> Verification, minimum 1). Accidental 1-2 word
+  matches inside a garbage stretch do not split the run; isolated single-word
+  mishears (whisper tripping over names or jargon on fine audio) do not chain
+  into one; matched words never count toward the run length.
+- Chunks shorter than WHISPER_VERIFY_MIN_WORDS were skipped by ASR
+  verification entirely; they are now transcribed too and regenerate on gross
+  mismatch (divergence above WHISPER_SHORT_CHUNK_DIVERGENCE, a new runtime
+  setting, default 0.8 so deterministic proper-noun mishears on tiny word
+  lists do not burn the regen budget). Note the semantics change if you
+  overlaid WHISPER_VERIFY_MIN_WORDS: below it, chunks previously skipped ASR
+  entirely; now they get the gross-mismatch check, and the run check applies
+  only at or above it. The gate also counts comparison words (spaced acronyms
+  collapse to one), not raw words.
+- Spaced acronyms produced by TTS normalization ("F O R T R A N") no longer
+  count as divergence against the ASR transcript ("FORTRAN"): runs of 3+
+  single-letter words are joined before comparison.
+
+### Added
+
+- WARNING log (event=asr_transcript_missing) when ASR verification is enabled
+  but the wrapper returns no transcript -- previously this skipped the check
+  silently and was indistinguishable from a pass.
+- chunk_quality_bad log events now include the divergent-run length (asr_run)
+  alongside asr_divergence; passing ASR checks emit a DEBUG chunk_asr_ok event
+  with both values.
+
 ## [0.47.0] - 2026-07-11
 
 ### Changed

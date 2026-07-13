@@ -109,6 +109,10 @@ def test_put_settings_rejects_out_of_range_bounds(env: Path) -> None:
         {"CHATTERBOX_SEED": -1},
         {"CHATTERBOX_MAX_CHARS": 50},
         {"TTS_CHUNK_MAX_CHARS": 110},
+        # 0 would flag every chunk (asr_run >= 0 always holds).
+        {"WHISPER_MAX_DIVERGENT_RUN": 0},
+        {"WHISPER_SHORT_CHUNK_DIVERGENCE": 0},
+        {"WHISPER_SHORT_CHUNK_DIVERGENCE": 1.5},
     ]
     with _client(env) as client:
         for payload in bad:
