@@ -83,7 +83,9 @@ const GROUPS: Record<string, string[]> = {
   Verification: [
     "WHISPER_VERIFY_ENABLED",
     "WHISPER_DIVERGENCE_THRESHOLD",
+    "WHISPER_MAX_DIVERGENT_RUN",
     "WHISPER_VERIFY_MIN_WORDS",
+    "WHISPER_SHORT_CHUNK_DIVERGENCE",
   ],
   Cleanup: ["MIN_CLEANUP_CHARS", "MAX_PROMPT_LENGTH_BYTES"],
   Uploads: ["UPLOAD_MAX_MB"],
@@ -110,7 +112,10 @@ const GROUP_NOTES: Record<string, string> = {
     "max_chars: text per model call, larger = fewer splice points",
   Verification:
     "regenerates chunks when audio drifts from the text. needs WHISPER_ENABLED " +
-    "on the wrapper. threshold 0-1, higher = stricter",
+    "on the wrapper. threshold 0-1, lower = stricter. max_divergent_run: a " +
+    "wrong-word stretch this long or longer regenerates (catches short garbage " +
+    "inside a long chunk). short_chunk_divergence: gross-mismatch bar for " +
+    "chunks under min_words",
   Uploads: "max direct-upload size in MB -- applies immediately, no restart",
   Pipeline:
     "per-job time = max(JOB_TIMEOUT_SECONDS, chunks x per-chunk). raise per-chunk " +

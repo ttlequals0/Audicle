@@ -88,7 +88,13 @@ def test_whisper_verify_settings_are_runtime_tunable(env: Path) -> None:
     """The ASR-verify policy can be toggled/tuned live via the Settings API,
     so an operator never has to redeploy to turn the gate on or adjust it."""
 
-    for key in ("WHISPER_VERIFY_ENABLED", "WHISPER_DIVERGENCE_THRESHOLD", "WHISPER_VERIFY_MIN_WORDS"):
+    for key in (
+        "WHISPER_VERIFY_ENABLED",
+        "WHISPER_DIVERGENCE_THRESHOLD",
+        "WHISPER_VERIFY_MIN_WORDS",
+        "WHISPER_MAX_DIVERGENT_RUN",
+        "WHISPER_SHORT_CHUNK_DIVERGENCE",
+    ):
         assert key in runtime_settings.ALLOWED_KEYS
 
     database.run_migrations(env)
@@ -96,6 +102,8 @@ def test_whisper_verify_settings_are_runtime_tunable(env: Path) -> None:
         runtime_settings.set_value(conn, "WHISPER_VERIFY_ENABLED", True)
         runtime_settings.set_value(conn, "WHISPER_DIVERGENCE_THRESHOLD", 0.35)
         runtime_settings.set_value(conn, "WHISPER_VERIFY_MIN_WORDS", 12)
+        runtime_settings.set_value(conn, "WHISPER_MAX_DIVERGENT_RUN", 10)
+        runtime_settings.set_value(conn, "WHISPER_SHORT_CHUNK_DIVERGENCE", 0.7)
 
     overlaid = runtime_settings.overlay(get_settings())
     assert overlaid.WHISPER_VERIFY_ENABLED is True
@@ -103,6 +111,10 @@ def test_whisper_verify_settings_are_runtime_tunable(env: Path) -> None:
     assert isinstance(overlaid.WHISPER_DIVERGENCE_THRESHOLD, float)
     assert overlaid.WHISPER_VERIFY_MIN_WORDS == 12
     assert isinstance(overlaid.WHISPER_VERIFY_MIN_WORDS, int)
+    assert overlaid.WHISPER_MAX_DIVERGENT_RUN == 10
+    assert isinstance(overlaid.WHISPER_MAX_DIVERGENT_RUN, int)
+    assert overlaid.WHISPER_SHORT_CHUNK_DIVERGENCE == 0.7
+    assert isinstance(overlaid.WHISPER_SHORT_CHUNK_DIVERGENCE, float)
 
 
 def test_rss_render_reflects_runtime_overrides(env: Path) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1614,7 +1615,81 @@ async def test_chunk_asr_verify_regenerates_on_divergence(
     assert result.transcript == text
 
 
-async def test_chunk_asr_verify_skips_short_chunk(
+async def test_chunk_asr_divergent_run_regenerates_despite_low_global(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Localized garbage: 10 of 30 words babble. Global divergence stays under
+    # WHISPER_DIVERGENCE_THRESHOLD (the old blind spot) but the contiguous run
+    # exceeds WHISPER_MAX_DIVERGENT_RUN, so the chunk must regenerate.
+    monkeypatch.setenv("AUDIO_ANALYSIS_ENABLED", "false")
+    monkeypatch.setenv("WHISPER_VERIFY_ENABLED", "true")
+    get_settings.cache_clear()
+    database.run_migrations(env)
+    from app.services import asr_verify, tts
+
+    text = " ".join(f"tok{i}" for i in range(30))
+    garbled = [f"tok{i}" for i in range(30)]
+    garbled[10:20] = [f"garble{i}" for i in range(10)]
+    bad_transcript = " ".join(garbled)
+    settings = get_settings()
+    assert asr_verify.analyze(text, bad_transcript)[0] <= settings.WHISPER_DIVERGENCE_THRESHOLD
+
+    calls = {"n": 0}
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
+        calls["n"] += 1
+        return tts.GenerateResult(
+            wav_path=str(tmp_path / "ep_chunk_0.wav"),
+            duration_secs=1.0,
+            sample_rate=24000,
+            transcript=bad_transcript if calls["n"] == 1 else text,
+        )
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    job = _seed_job(env)
+    result = await pipeline._generate_chunk_quality_checked(job, text, 0, settings)
+    assert calls["n"] == 2  # run check flagged attempt 1, regen matched
+    assert result.transcript == text
+
+
+async def test_chunk_asr_short_chunk_regenerates_on_gross_mismatch(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("AUDIO_ANALYSIS_ENABLED", "false")
+    monkeypatch.setenv("WHISPER_VERIFY_ENABLED", "true")
+    get_settings.cache_clear()
+    database.run_migrations(env)
+    from app.services import tts
+
+    text = "three short words"
+    calls = {"n": 0}
+    verifies: list[bool] = []
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
+        calls["n"] += 1
+        verifies.append(verify)
+        return tts.GenerateResult(
+            wav_path=str(tmp_path / "ep_chunk_0.wav"),
+            duration_secs=1.0,
+            sample_rate=24000,
+            transcript=(
+                "totally unrelated garbage instead" if calls["n"] == 1 else text
+            ),
+        )
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    job = _seed_job(env)
+    # Short chunks (< WHISPER_VERIFY_MIN_WORDS) are still transcribed and fail
+    # on gross mismatch -- a fully wrong 3-word chunk must not slip through.
+    result = await pipeline._generate_chunk_quality_checked(
+        job, text, 0, get_settings()
+    )
+    assert calls["n"] == 2
+    assert all(verifies)
+    assert result.transcript == text
+
+
+async def test_chunk_asr_short_chunk_tolerates_mild_divergence(
     env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("AUDIO_ANALYSIS_ENABLED", "false")
@@ -1624,27 +1699,91 @@ async def test_chunk_asr_verify_skips_short_chunk(
     from app.services import tts
 
     calls = {"n": 0}
-    verifies: list[bool] = []
 
-    async def _fake_tts(
-        text, episode_id, chunk_index, settings, seed=None, verify=False
-    ):
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
         calls["n"] += 1
-        verifies.append(verify)
         return tts.GenerateResult(
             wav_path=str(tmp_path / "ep_chunk_0.wav"),
             duration_secs=1.0,
             sample_rate=24000,
-            transcript="totally unrelated transcript that would diverge",
+            # Two of three proper nouns misheard (divergence ~0.67): whisper
+            # mishears names deterministically on fine audio, so this must not
+            # trigger a regen -- it would burn the full budget every episode.
+            transcript="by Edscher Dykstra",
         )
 
     monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
     job = _seed_job(env)
-    # 3 words is below WHISPER_VERIFY_MIN_WORDS (8): verify is not requested and
-    # the divergent transcript is ignored, so there is no regeneration.
-    await pipeline._generate_chunk_quality_checked(job, "three short words", 0, get_settings())
+    await pipeline._generate_chunk_quality_checked(
+        job, "by Edsger Dijkstra", 0, get_settings()
+    )
     assert calls["n"] == 1
-    assert verifies == [False]
+
+
+async def test_chunk_asr_acronym_heavy_chunk_gates_on_normalized_words(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # 13 raw words but only 3 after acronym collapse: the short-chunk gate must
+    # use the comparison word list, or ASR spelling of acronyms ("four tran")
+    # hits the tuned 0.35 threshold and regenerates correct audio forever.
+    monkeypatch.setenv("AUDIO_ANALYSIS_ENABLED", "false")
+    monkeypatch.setenv("WHISPER_VERIFY_ENABLED", "true")
+    get_settings.cache_clear()
+    database.run_migrations(env)
+    from app.services import tts
+
+    calls = {"n": 0}
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
+        calls["n"] += 1
+        return tts.GenerateResult(
+            wav_path=str(tmp_path / "ep_chunk_0.wav"),
+            duration_secs=1.0,
+            sample_rate=24000,
+            transcript="four tran and cobalt",
+        )
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    job = _seed_job(env)
+    await pipeline._generate_chunk_quality_checked(
+        job, "F O R T R A N and C O B O L", 0, get_settings()
+    )
+    assert calls["n"] == 1
+
+
+async def test_chunk_asr_missing_transcript_logged_and_passes(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Whisper enabled on the backend but the wrapper returned no transcript
+    # (model down, per-chunk ASR error): the chunk passes as before, but the
+    # silent skip must now be visible in the logs.
+    monkeypatch.setenv("AUDIO_ANALYSIS_ENABLED", "false")
+    monkeypatch.setenv("WHISPER_VERIFY_ENABLED", "true")
+    get_settings.cache_clear()
+    database.run_migrations(env)
+    from app.services import tts
+
+    calls = {"n": 0}
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
+        calls["n"] += 1
+        return tts.GenerateResult(
+            wav_path=str(tmp_path / "ep_chunk_0.wav"),
+            duration_secs=1.0,
+            sample_rate=24000,
+            transcript=None,
+        )
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    job = _seed_job(env)
+    with caplog.at_level(logging.WARNING, logger="app.services.pipeline"):
+        await pipeline._generate_chunk_quality_checked(
+            job, "this chunk has clearly more than eight spoken words in it", 0, get_settings()
+        )
+    assert calls["n"] == 1
+    assert any(
+        getattr(r, "event", None) == "asr_transcript_missing" for r in caplog.records
+    )
 
 
 async def test_pipeline_cancelled_job_ends_cancelled_not_failed(

@@ -936,9 +936,11 @@ async def _generate_chunk_quality_checked(
 
     Two independent checks gate a chunk, either of which can trigger a regen:
     the signal-level audio analysis (drone / noise / repetition) and, when
-    WHISPER_VERIFY_ENABLED, an ASR divergence check that compares a faster-whisper
-    transcript of the produced audio against the text we asked it to speak
-    (catches dropout, hallucination, leaked preamble). Both share the
+    WHISPER_VERIFY_ENABLED, an ASR check that compares a faster-whisper
+    transcript of the produced audio against the text we asked it to speak.
+    The ASR check flags both global divergence (dropout, hallucination, leaked
+    preamble) and localized divergent runs (a garbage stretch inside an
+    otherwise-fine chunk, which a global ratio dilutes). Both share the
     AUDIO_ANALYSIS_MAX_REGEN budget.
 
     Chatterbox is non-deterministic, so a re-gen usually recovers. The wrapper
@@ -949,10 +951,13 @@ async def _generate_chunk_quality_checked(
 
     word_count = len(text.split())
     audio_enabled = settings.AUDIO_ANALYSIS_ENABLED
-    # Skip ASR on tiny chunks where transcription noise dominates the divergence.
-    verify_enabled = (
-        settings.WHISPER_VERIFY_ENABLED and word_count >= settings.WHISPER_VERIFY_MIN_WORDS
-    )
+    verify_enabled = settings.WHISPER_VERIFY_ENABLED
+    # Tiny chunks skip the tuned thresholds (transcription noise dominates) but
+    # still get a gross-mismatch check -- a fully wrong 3-word chunk is audible.
+    # Gate on the comparison word list, not the raw split: spaced acronyms
+    # ("F O R T R A N") collapse to one word for the diff, so an acronym-heavy
+    # line is tiny for ASR purposes even when its raw word count is not.
+    short_chunk = len(asr_verify.normalize_words(text)) < settings.WHISPER_VERIFY_MIN_WORDS
     # max(0, ...) so a misconfigured negative regen count can't make the loop
     # body skip and return None (the field is operator-tunable at runtime).
     max_extra = (
@@ -988,13 +993,39 @@ async def _generate_chunk_quality_checked(
                 reasons.extend(verdict.reasons)
 
         asr_div: float | None = None
-        if verify_enabled and result.transcript is not None:
-            asr_div = asr_verify.divergence(text, result.transcript)
-            if asr_div > settings.WHISPER_DIVERGENCE_THRESHOLD:
-                reasons.append("asr_divergence")
+        asr_run: int | None = None
+        if verify_enabled:
+            if result.transcript is None:
+                # The check silently not running looks identical to it passing;
+                # make a dead wrapper-side whisper visible in the logs.
+                logger.warning(
+                    "ASR verify enabled but wrapper returned no transcript; skipping check",
+                    extra={"event": "asr_transcript_missing", "chunk_index": index},
+                )
+            else:
+                asr_div, asr_run = asr_verify.analyze(text, result.transcript)
+                threshold = (
+                    settings.WHISPER_SHORT_CHUNK_DIVERGENCE
+                    if short_chunk
+                    else settings.WHISPER_DIVERGENCE_THRESHOLD
+                )
+                if asr_div > threshold:
+                    reasons.append("asr_divergence")
+                if not short_chunk and asr_run >= settings.WHISPER_MAX_DIVERGENT_RUN:
+                    reasons.append("asr_divergent_run")
 
         last_reasons = reasons
         if not reasons:
+            if asr_div is not None:
+                logger.debug(
+                    "Chunk ASR check passed",
+                    extra={
+                        "event": "chunk_asr_ok",
+                        "chunk_index": index,
+                        "asr_divergence": asr_div,
+                        "asr_run": asr_run,
+                    },
+                )
             if attempt > 0:
                 logger.info(
                     "Chunk passed after regeneration",
@@ -1011,6 +1042,7 @@ async def _generate_chunk_quality_checked(
             "attempt": attempt + 1,
             "reasons": reasons,
             "asr_divergence": asr_div,
+            "asr_run": asr_run,
         }
         if verdict is not None:
             log_extra.update(
