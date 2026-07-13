@@ -6,6 +6,15 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.48.1] - 2026-07-13
+
+### Added
+
+- Settings UI: new "Audio analysis" group exposing the AUDIO_ANALYSIS_*
+  runtime settings (enable, regen budget, and the signal-level detector
+  thresholds). These were already settable via PUT /api/v1/settings but had
+  no UI surface.
+
 ## [0.48.0] - 2026-07-13
 
 ### Fixed

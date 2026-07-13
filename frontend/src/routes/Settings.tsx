@@ -87,6 +87,18 @@ const GROUPS: Record<string, string[]> = {
     "WHISPER_VERIFY_MIN_WORDS",
     "WHISPER_SHORT_CHUNK_DIVERGENCE",
   ],
+  "Audio analysis": [
+    "AUDIO_ANALYSIS_ENABLED",
+    "AUDIO_ANALYSIS_MAX_REGEN",
+    "AUDIO_ANALYSIS_MIN_RMS_CV",
+    "AUDIO_ANALYSIS_MIN_CREST",
+    "AUDIO_ANALYSIS_MAX_ZCR",
+    "AUDIO_ANALYSIS_MAX_SILENT_FRACTION",
+    "AUDIO_ANALYSIS_WORDS_PER_SEC",
+    "AUDIO_ANALYSIS_DURATION_OVERHEAD_SECS",
+    "AUDIO_ANALYSIS_MAX_DURATION_RATIO",
+    "AUDIO_ANALYSIS_MIN_DURATION_RATIO",
+  ],
   Cleanup: ["MIN_CLEANUP_CHARS", "MAX_PROMPT_LENGTH_BYTES"],
   Uploads: ["UPLOAD_MAX_MB"],
   Pipeline: ["JOB_TIMEOUT_SECONDS", "JOB_TIMEOUT_PER_CHUNK_SECONDS"],
@@ -116,6 +128,12 @@ const GROUP_NOTES: Record<string, string> = {
     "wrong-word stretch this long or longer regenerates (catches short garbage " +
     "inside a long chunk). short_chunk_divergence: gross-mismatch bar for " +
     "chunks under min_words",
+  "Audio analysis":
+    "signal-level checks on every chunk (drone, noise, dead air, bad pacing); " +
+    "a failing take regenerates with a fresh seed. max_regen is the shared " +
+    "regen budget for these checks AND the whisper checks above. the rest are " +
+    "detector thresholds -- leave them alone unless chunks are being flagged " +
+    "or missed consistently",
   Uploads: "max direct-upload size in MB -- applies immediately, no restart",
   Pipeline:
     "per-job time = max(JOB_TIMEOUT_SECONDS, chunks x per-chunk). raise per-chunk " +
