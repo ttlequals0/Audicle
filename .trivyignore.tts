@@ -29,3 +29,5 @@ CVE-2026-54283
 
 # transformers 5.2.0 (fixed 5.3.0):
 CVE-2026-4372
+# transformers 5.2.0 (fixed 5.5.0), added 0.48.2 -- same exact-pin situation:
+CVE-2026-5241
