@@ -137,6 +137,24 @@ async def test_check_firecrawl_reports_unreachable_on_network_error(
     assert "unreachable" in result.detail
 
 
+async def test_check_firecrawl_reports_unreachable_on_server_disconnect(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # RemoteProtocolError is a ProtocolError, not a NetworkError; the probe
+    # must report unreachable instead of letting it escape.
+    _patch_async_client(
+        monkeypatch,
+        _transport(
+            httpx.RemoteProtocolError("server disconnected"),
+            httpx.RemoteProtocolError("server disconnected"),
+            httpx.RemoteProtocolError("server disconnected"),
+        ),
+    )
+    result = await reachability.check_firecrawl(get_settings())
+    assert result.ok is False
+    assert "unreachable" in result.detail
+
+
 async def test_check_firecrawl_reports_last_failure_when_all_endpoints_5xx(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

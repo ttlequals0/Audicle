@@ -6,6 +6,36 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.48.2] - 2026-07-16
+
+### Fixed
+
+- A TTS wrapper crash mid-request (for example an OOM kill during a long
+  episode) failed the whole pipeline instead of retrying. The wrapper's
+  dropped connection surfaces as httpx.RemoteProtocolError, which subclasses
+  ProtocolError rather than NetworkError, so the client's transport-error
+  handling never classified it as a retryable TTSProviderError and the
+  tenacity retry loop never fired. All three wrapper calls (generate, reload,
+  select-voice) now classify RemoteProtocolError as retryable alongside
+  network errors.
+- The same classification gap existed in the LLM client, the Firecrawl
+  extraction call, the pinned reader fetch, and the reachability probes; all
+  now catch httpx.RemoteProtocolError too. Client-side transport errors
+  (UnsupportedProtocol from a malformed base URL, LocalProtocolError from
+  e.g. a newline in an API key) stay unclassified on purpose: permanent
+  misconfiguration should fail fast, not burn the retry budget as
+  "unreachable".
+- Voice selection now uses the same retry policy as chunk generation
+  (select_voice_with_retry). The pipeline treats voice-select failures as
+  best-effort (log and continue), so once generation could ride out a
+  wrapper restart, a restart during voice selection would have silently
+  rendered the episode in the wrapper's resting voice instead of the
+  chosen one.
+- TTS_RETRY_COUNT default raised from 3 to 7. Three attempts gave ~6s of
+  cumulative backoff, far short of the ~40s the wrapper needs to restart and
+  reload its models after a crash; seven gives ~90s, so a single wrapper
+  restart no longer fails the episode.
+
 ## [0.48.1] - 2026-07-13
 
 ### Added

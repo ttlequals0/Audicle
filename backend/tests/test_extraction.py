@@ -361,6 +361,35 @@ async def test_extract_retries_on_5xx_then_succeeds(
     assert result.markdown.startswith("body ")
 
 
+async def test_extract_retries_on_server_disconnect_then_succeeds(
+    env: Path, monkeypatch: pytest.MonkeyPatch, fast_backoff
+) -> None:
+    # Firecrawl dying mid-request raises RemoteProtocolError (a ProtocolError,
+    # not a NetworkError); it must classify transient so the retry loop fires.
+    transport = _stub_transport(
+        httpx.RemoteProtocolError("Server disconnected without sending a response."),
+        _ok_response("body " * 200),
+    )
+    _patch_async_client(monkeypatch, transport)
+
+    result = await extraction.extract("https://example.test/article", get_settings())
+    assert result.markdown.startswith("body ")
+
+
+async def test_extract_does_not_retry_unsupported_protocol(
+    env: Path, monkeypatch: pytest.MonkeyPatch, fast_backoff
+) -> None:
+    # A malformed FIRECRAWL_URL is permanent misconfiguration; it must escape
+    # raw on the first attempt, not burn the retry budget as "unreachable".
+    transport = _stub_transport(
+        httpx.UnsupportedProtocol("Request URL is missing an 'http://' protocol.")
+    )
+    _patch_async_client(monkeypatch, transport)
+
+    with pytest.raises(httpx.UnsupportedProtocol):
+        await extraction.extract("https://example.test/article", get_settings())
+
+
 async def test_extract_does_not_retry_on_4xx(
     env: Path, monkeypatch: pytest.MonkeyPatch, fast_backoff
 ) -> None:

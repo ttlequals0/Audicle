@@ -2,10 +2,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import httpx
 import pytest
 from app.config import get_settings
 from app.services import pinned_fetch, reader
-from app.services.extraction_types import ExtractionPermanentError
+from app.services.extraction_types import ExtractionPermanentError, ExtractionTransientError
+
+
+def _patch_async_client(monkeypatch: pytest.MonkeyPatch, transport: httpx.MockTransport) -> None:
+    original = httpx.AsyncClient
+
+    def factory(*args, **kwargs):
+        kwargs.setdefault("transport", transport)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
 
 # A representative Jina Reader response: a small metadata header, then the article body
 # after the "Markdown Content:" marker.
@@ -90,3 +101,24 @@ async def test_fetch_sends_api_key_when_configured(
     await reader.fetch("https://www.wsj.com/a", get_settings())
 
     assert captured["headers"]["Authorization"] == "Bearer jina_secret"
+
+
+async def test_get_text_server_disconnect_raises_transient_error(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A host dropping the connection mid-request raises RemoteProtocolError
+    # (a ProtocolError, not a NetworkError); it must classify transient so
+    # the caller's retry loop fires instead of the raw httpx error escaping.
+    def _raise(_request):
+        raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(_raise))
+
+    with pytest.raises(ExtractionTransientError, match="Could not reach"):
+        await pinned_fetch.get_text(
+            "https://example.test/article",
+            get_settings(),
+            headers={},
+            max_bytes=1024,
+            timeout_seconds=1.0,
+        )

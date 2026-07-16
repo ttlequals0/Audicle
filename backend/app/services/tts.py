@@ -18,6 +18,7 @@ through.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -44,7 +45,8 @@ class TTSTimeoutError(TTSError):
 
 
 class TTSProviderError(TTSError):
-    """5xx response or network failure. Retryable."""
+    """5xx response or transport failure (unreachable, connection dropped
+    mid-request by an OOM-killed wrapper). Retryable."""
 
 
 class TTSRequestError(TTSError):
@@ -69,6 +71,33 @@ def generation_params(settings: Settings, seed: int | None = None) -> dict[str, 
     }
 
 
+async def _post(
+    path: str,
+    settings: Settings,
+    payload: dict[str, Any] | None,
+    what: str,
+) -> httpx.Response:
+    """POST to the wrapper, mapping connection-level failures to typed errors.
+
+    ``RemoteProtocolError`` (a ``ProtocolError``, not a ``NetworkError``) is
+    what a wrapper killed mid-request raises -- it must classify retryable
+    like ``ConnectError``. Client-side transport errors (``UnsupportedProtocol``
+    from a bad TTS_URL, ``LocalProtocolError``) stay unclassified so permanent
+    misconfiguration fails fast instead of burning the retry budget. Status
+    handling stays with each caller because it differs per endpoint.
+    """
+
+    endpoint = f"{settings.TTS_URL.rstrip('/')}{path}"
+    timeout = httpx.Timeout(settings.TTS_HTTP_TIMEOUT_SECONDS)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        try:
+            return await client.post(endpoint, json=payload)
+        except httpx.TimeoutException as exc:
+            raise TTSTimeoutError(f"{what} timed out: {exc}") from exc
+        except (httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+            raise TTSProviderError(f"TTS unreachable: {exc}") from exc
+
+
 @dataclass(frozen=True)
 class GenerateResult:
     wav_path: str
@@ -90,7 +119,6 @@ async def generate_chunk(
 ) -> GenerateResult:
     """POST a single chunk to the wrapper's ``/generate`` endpoint."""
 
-    endpoint = f"{settings.TTS_URL.rstrip('/')}/generate"
     payload: dict[str, Any] = {
         "text": text,
         "episode_id": episode_id,
@@ -100,15 +128,7 @@ async def generate_chunk(
         # applies to the next job; no restart.
         **generation_params(settings, seed),
     }
-    timeout = httpx.Timeout(settings.TTS_HTTP_TIMEOUT_SECONDS)
-
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            response = await client.post(endpoint, json=payload)
-        except httpx.TimeoutException as exc:
-            raise TTSTimeoutError(f"TTS call timed out: {exc}") from exc
-        except httpx.NetworkError as exc:
-            raise TTSProviderError(f"TTS unreachable: {exc}") from exc
+    response = await _post("/generate", settings, payload, "TTS call")
 
     if response.is_server_error:
         raise TTSProviderError(f"TTS returned {response.status_code}: {response.text[:200]}")
@@ -153,6 +173,16 @@ async def generate_chunk_with_retry(
     :class:`TTSRequestError` propagates immediately.
     """
 
+    return await _retry_transients(
+        lambda: generate_chunk(text, episode_id, chunk_index, settings, seed, verify),
+        settings,
+    )
+
+
+async def _retry_transients(op: Callable[[], Awaitable[Any]], settings: Settings) -> Any:
+    """Run ``op`` under the shared wrapper retry policy: ``TTS_RETRY_COUNT``
+    attempts, exponential backoff, retry only provider/timeout errors."""
+
     retrying = AsyncRetrying(
         stop=stop_after_attempt(settings.TTS_RETRY_COUNT),
         wait=wait_exponential(multiplier=1, min=1, max=30),
@@ -162,9 +192,7 @@ async def generate_chunk_with_retry(
     try:
         async for attempt in retrying:
             with attempt:
-                return await generate_chunk(
-                    text, episode_id, chunk_index, settings, seed, verify
-                )
+                return await op()
     except RetryError as exc:
         inner = exc.last_attempt.exception()
         if isinstance(inner, TTSError):
@@ -173,19 +201,22 @@ async def generate_chunk_with_retry(
     raise TTSProviderError("TTS retry loop exited without a response")
 
 
+async def select_voice_with_retry(settings: Settings, slot: int) -> None:
+    """``select_voice`` under the same retry policy as chunk generation.
+
+    The pipeline treats voice-select failures as best-effort (log and keep the
+    wrapper's current voice), so without a retry a wrapper restart that chunk
+    generation rides out would silently render the episode in the wrong voice.
+    """
+
+    await _retry_transients(lambda: select_voice(settings, slot), settings)
+
+
 async def reload(settings: Settings) -> dict[str, Any]:
     """POST ``/reload`` on the wrapper to re-encode its resting voice (lowest filled
     slot). Used by slot auditions to restore the wrapper after a temporary switch."""
 
-    endpoint = f"{settings.TTS_URL.rstrip('/')}/reload"
-    timeout = httpx.Timeout(settings.TTS_HTTP_TIMEOUT_SECONDS)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            response = await client.post(endpoint)
-        except httpx.TimeoutException as exc:
-            raise TTSTimeoutError(f"TTS reload timed out: {exc}") from exc
-        except httpx.NetworkError as exc:
-            raise TTSProviderError(f"TTS unreachable: {exc}") from exc
+    response = await _post("/reload", settings, None, "TTS reload")
     if response.is_server_error:
         raise TTSProviderError(f"TTS reload returned {response.status_code}: {response.text[:200]}")
     if response.is_client_error:
@@ -206,15 +237,7 @@ async def select_voice(settings: Settings, slot: int) -> None:
     to a slot. Raises on failure; the pipeline treats it as best-effort and keeps
     the wrapper's current voice when a slot has gone missing."""
 
-    endpoint = f"{settings.TTS_URL.rstrip('/')}/select-voice"
-    timeout = httpx.Timeout(settings.TTS_HTTP_TIMEOUT_SECONDS)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            response = await client.post(endpoint, json={"slot": slot})
-        except httpx.TimeoutException as exc:
-            raise TTSTimeoutError(f"TTS select-voice timed out: {exc}") from exc
-        except httpx.NetworkError as exc:
-            raise TTSProviderError(f"TTS unreachable: {exc}") from exc
+    response = await _post("/select-voice", settings, {"slot": slot}, "TTS select-voice")
     if response.is_error:
         raise TTSProviderError(
             f"TTS select-voice returned {response.status_code}: {response.text[:200]}"

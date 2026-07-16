@@ -139,5 +139,5 @@ async def get_text(
                 "A redirect pointed to a non-public address and was blocked."
             ) from exc
         raise ExtractionTransientError(f"Could not resolve a redirect target: {exc.reason}") from exc
-    except (httpx.TimeoutException, httpx.NetworkError) as exc:
+    except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
         raise ExtractionTransientError(f"Could not reach the host: {exc}") from exc

@@ -85,6 +85,19 @@ async def test_check_tts_reports_failure_after_grace_expires(
     assert "grace period" in result.detail
 
 
+async def test_check_tts_reports_failure_on_server_disconnect(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _raise(_request):
+        raise httpx.RemoteProtocolError("server disconnected")
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(_raise))
+
+    result = await reachability.check_tts(get_settings())
+    assert result.ok is False
+    assert "grace period" in result.detail
+
+
 async def test_check_tts_reports_failure_when_model_never_loads(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

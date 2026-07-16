@@ -44,6 +44,19 @@ async def test_llm_openai_compatible_reports_network_failure(
     assert "unreachable" in result.detail
 
 
+async def test_llm_openai_compatible_reports_server_disconnect(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _raise(_request):
+        raise httpx.RemoteProtocolError("server disconnected")
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(_raise))
+
+    result = await reachability.check_llm(get_settings())
+    assert result.ok is False
+    assert "unreachable" in result.detail
+
+
 async def test_llm_openai_compatible_reports_5xx(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

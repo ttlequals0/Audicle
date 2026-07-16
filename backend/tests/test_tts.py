@@ -7,6 +7,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+import tenacity
 from app.config import RUNTIME_SETTING_BOUNDS, Settings, get_settings
 from app.services import tts
 
@@ -29,6 +30,12 @@ def _capture_transport(*, response: httpx.Response):
         return response
 
     return httpx.MockTransport(handler), captured
+
+
+def _server_disconnect(_request):
+    """MockTransport handler for a wrapper killed mid-request (e.g. OOM)."""
+
+    raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
 
 
 def _ok_generate(*, wav_path: str = "/data/media/abc_chunk_0.wav") -> httpx.Response:
@@ -207,6 +214,38 @@ async def test_generate_chunk_network_error_classified_as_provider_error(
         await tts.generate_chunk("hi", "ep", 0, get_settings())
 
 
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param(lambda s: tts.generate_chunk("hi", "ep", 0, s), id="generate_chunk"),
+        pytest.param(lambda s: tts.reload(s), id="reload"),
+        pytest.param(lambda s: tts.select_voice(s, 1), id="select_voice"),
+    ],
+)
+async def test_server_disconnect_classified_as_provider_error(
+    env: Path, monkeypatch: pytest.MonkeyPatch, call
+) -> None:
+    # RemoteProtocolError is not a NetworkError; it must still classify
+    # retryable instead of escaping as a raw httpx exception.
+    _patch_async_client(monkeypatch, httpx.MockTransport(_server_disconnect))
+    with pytest.raises(tts.TTSProviderError):
+        await call(get_settings())
+
+
+async def test_generate_chunk_unsupported_protocol_escapes_raw(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Client-side transport errors (bad TTS_URL, malformed request) are
+    # permanent misconfiguration; they must NOT classify as retryable
+    # TTSProviderError or every chunk burns the full retry budget on them.
+    def _raise(_request):
+        raise httpx.UnsupportedProtocol("Request URL is missing an 'http://' protocol.")
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(_raise))
+    with pytest.raises(httpx.UnsupportedProtocol):
+        await tts.generate_chunk("hi", "ep", 0, get_settings())
+
+
 async def test_generate_chunk_non_json_raises_request_error(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -259,9 +298,7 @@ async def test_retry_succeeds_after_transient_5xx(
     """5xx then 200: retry returns the successful result, never raises."""
 
     monkeypatch.setenv("TTS_RETRY_COUNT", "3")
-    from app.config import get_settings as gs
-
-    gs.cache_clear()
+    get_settings.cache_clear()
 
     responses = iter([httpx.Response(500, text="boom"), _ok_generate()])
 
@@ -270,21 +307,88 @@ async def test_retry_succeeds_after_transient_5xx(
 
     _patch_async_client(monkeypatch, httpx.MockTransport(handler))
     # Strip the exponential wait so the test doesn't sleep.
-    import tenacity
-
     monkeypatch.setattr(tenacity.wait_exponential, "__call__", lambda self, rs: 0)
 
-    result = await tts.generate_chunk_with_retry("hi", "ep", 0, gs())
+    result = await tts.generate_chunk_with_retry("hi", "ep", 0, get_settings())
     assert result.wav_path == "/data/media/abc_chunk_0.wav"
+
+
+async def test_retry_succeeds_after_server_disconnect(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Wrapper killed mid-request (OOM) then back up: retry rides it out."""
+
+    monkeypatch.setenv("TTS_RETRY_COUNT", "3")
+    get_settings.cache_clear()
+
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            _server_disconnect(request)
+        return _ok_generate()
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    monkeypatch.setattr(tenacity.wait_exponential, "__call__", lambda self, rs: 0)
+
+    result = await tts.generate_chunk_with_retry("hi", "ep", 0, get_settings())
+    assert result.wav_path == "/data/media/abc_chunk_0.wav"
+    assert calls["n"] == 2
+
+
+async def test_select_voice_retry_succeeds_after_server_disconnect(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Voice selection must ride out a wrapper restart like generate does;
+    otherwise the episode silently renders in the wrapper's resting voice."""
+
+    monkeypatch.setenv("TTS_RETRY_COUNT", "3")
+    get_settings.cache_clear()
+
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            _server_disconnect(request)
+        return httpx.Response(200, json={"ok": True})
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    monkeypatch.setattr(tenacity.wait_exponential, "__call__", lambda self, rs: 0)
+
+    await tts.select_voice_with_retry(get_settings(), 1)
+    assert calls["n"] == 2
+
+
+async def test_default_retry_backoff_spans_wrapper_restart(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After an OOM kill the wrapper needs ~40s to restart and reload its
+    models. The default policy's cumulative backoff must exceed that window
+    with margin, or every wrapper restart still fails the episode."""
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(_server_disconnect))
+
+    waits: list[float] = []
+    real_call = tenacity.wait_exponential.__call__
+
+    def spy(self, retry_state):
+        waits.append(real_call(self, retry_state))
+        return 0
+
+    monkeypatch.setattr(tenacity.wait_exponential, "__call__", spy)
+
+    with pytest.raises(tts.TTSProviderError):
+        await tts.generate_chunk_with_retry("hi", "ep", 0, get_settings())
+    assert sum(waits) >= 60
 
 
 async def test_retry_does_not_retry_on_4xx(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """4xx is non-retryable; first attempt raises and propagates."""
 
     monkeypatch.setenv("TTS_RETRY_COUNT", "3")
-    from app.config import get_settings as gs
-
-    gs.cache_clear()
+    get_settings.cache_clear()
 
     attempts = {"n": 0}
 
@@ -295,7 +399,7 @@ async def test_retry_does_not_retry_on_4xx(env: Path, monkeypatch: pytest.Monkey
     _patch_async_client(monkeypatch, httpx.MockTransport(handler))
 
     with pytest.raises(tts.TTSRequestError, match="400"):
-        await tts.generate_chunk_with_retry("hi", "ep", 0, gs())
+        await tts.generate_chunk_with_retry("hi", "ep", 0, get_settings())
     assert attempts["n"] == 1
 
 
@@ -303,9 +407,7 @@ async def test_retry_exhausts_then_raises_provider_error(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("TTS_RETRY_COUNT", "3")
-    from app.config import get_settings as gs
-
-    gs.cache_clear()
+    get_settings.cache_clear()
 
     attempts = {"n": 0}
 
@@ -314,10 +416,8 @@ async def test_retry_exhausts_then_raises_provider_error(
         return httpx.Response(500, text="still down")
 
     _patch_async_client(monkeypatch, httpx.MockTransport(handler))
-    import tenacity
-
     monkeypatch.setattr(tenacity.wait_exponential, "__call__", lambda self, rs: 0)
 
     with pytest.raises(tts.TTSProviderError):
-        await tts.generate_chunk_with_retry("hi", "ep", 0, gs())
+        await tts.generate_chunk_with_retry("hi", "ep", 0, get_settings())
     assert attempts["n"] == 3
