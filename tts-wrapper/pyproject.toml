@@ -51,7 +51,7 @@ whisper = ["faster-whisper>=1.0"]
 # (resemble-ai/chatterbox#486) is stale. Revisit when chatterbox-tts moves off them.
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=83.0.0"]
 build-backend = "setuptools.build_meta"
 
 # The wrapper is a flat layout of top-level modules. Declare them explicitly:

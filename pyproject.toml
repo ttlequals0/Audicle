@@ -25,7 +25,7 @@ dependencies = [
     "soundfile>=0.12",
     "mutagen>=1.47",
     # Phase 6 artwork. Pillow reads JPEG/PNG/WebP/GIF/BMP/TIFF.
-    "pillow>=10.4",
+    "pillow>=12.3.0",
     # Phase 7 RSS feed. feedgen renders the iTunes/Atom/PSC namespaces; PC2
     # tags are appended via string-level XML construction afterwards because
     # feedgen doesn't model the namespace natively.
@@ -45,7 +45,7 @@ dependencies = [
     "python-multipart>=0.0.30",
     # Direct file upload (0.30.0): parse uploaded PDF/DOCX into article text. HTML
     # reuses the existing trafilatura path (html_markdown); md/txt are read directly.
-    "pypdf>=6.13.3",
+    "pypdf>=6.14.2",
     "python-docx>=1.1",
 ]
 
