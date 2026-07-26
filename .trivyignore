@@ -59,3 +59,10 @@ CVE-2026-54369
 # Audicle uses soundfile (Python binding) for read/write only, no untrusted files.
 # Present in app and tts images; included here so the app scan (shared-only) passes.
 CVE-2026-37555
+
+# perl Storable (perl-base in app/render; libperl5.40, perl, perl-base,
+# perl-modules-5.40 in tts) (CRITICAL x1, "affected"): signed integer overflow
+# in Storable before 3.41 (CVE-2026-57433). Perl rides in the Debian base;
+# no application code invokes perl or deserializes Storable data. No Debian
+# fix released. Added 0.48.3. Remove when trixie ships a patched perl.
+CVE-2026-57433

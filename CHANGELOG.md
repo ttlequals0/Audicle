@@ -24,6 +24,12 @@ work lives under `[Unreleased]`.
 - The remaining tts-wrapper alerts (transformers, gradio, torch) are pinned
   by chatterbox-tts 0.1.7 and unreachable in the wrapper; they are dismissed
   on GitHub with the rationale recorded in tts-wrapper/pyproject.toml.
+- Bumped pypdf 6.13.3 to 6.14.2 after the release CVE gate flagged
+  CVE-2026-59935 and CVE-2026-59936 in the app image.
+- Accepted two new unfixable Debian base-image CVEs at the gate, with
+  rationale in the ignore files: CVE-2026-57433 (perl Storable, all three
+  images, no fix released) and CVE-2026-36849 (libtiff6 in the render
+  image, marked will_not_fix).
 
 ### Fixed
 
