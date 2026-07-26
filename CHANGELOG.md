@@ -6,6 +6,8 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.48.4] - 2026-07-25
+
 ### Fixed
 
 - The README's CPU deployment steps told operators to pin
