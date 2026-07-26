@@ -231,7 +231,13 @@ class Settings(BaseSettings):
     TTS_HTTP_TIMEOUT_SECONDS: float = 120
     # Used by the per-chunk pipeline call site; defined here so
     # operators can tune .env now without a follow-up rebuild.
-    TTS_RETRY_COUNT: int = 3
+    # 7 attempts = ~90s cumulative backoff, enough to ride out the wrapper's
+    # ~40s restart + model reload after an OOM kill (3 attempts was ~6s, so
+    # any wrapper restart failed the whole episode). Trade-off: a wrapper that
+    # HANGS instead of dying now takes up to 7 x TTS_HTTP_TIMEOUT_SECONDS
+    # (~15 min) to surface a chunk failure; lower this if hang-mode failures
+    # matter more than restart-riding.
+    TTS_RETRY_COUNT: int = 7
     TTS_REACHABILITY_GRACE_SECONDS: float = 60
     TTS_REACHABILITY_PROBE_TIMEOUT: float = 10
 

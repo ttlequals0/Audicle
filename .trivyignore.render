@@ -49,3 +49,9 @@ CVE-2026-12912
 # libcups2t64 (HIGH x1): CUPS printing library in the render image (browser dep).
 # No fix released. Remove when Debian ships a patch.
 CVE-2026-34980
+
+# libxml2 (CRITICAL x1, "affected"): DoS via crafted XML input; no fix released.
+# System libxml2 rides in via browser deps; the render container is only
+# reachable on the internal Docker network. Added 0.48.2. Remove when Debian
+# trixie ships a patched libxml2.
+CVE-2026-6653

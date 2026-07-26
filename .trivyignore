@@ -12,15 +12,20 @@
 # -- Debian trixie base (python:*-slim): no fixed package released yet.
 # Remove each when `apt-get upgrade` in a rebuild clears it from the scan.
 
-# perl / perl-base / libperl5.40 / perl-modules-5.40 (CRITICAL x2, HIGH x3):
+# perl / perl-base / libperl5.40 / perl-modules-5.40 (CRITICAL x3, HIGH x4):
 # interpreter ships in the slim base; nothing in Audicle invokes perl.
-# Statuses: CVE-2026-8376 and CVE-2026-48962 are "affected"; the other three
-# are "fix_deferred". All five are equally not-yet-fixed in trixie.
+# Statuses: CVE-2026-8376, CVE-2026-48962, CVE-2026-13221 and CVE-2026-57432
+# are "affected"; the other three are "fix_deferred". All seven are equally
+# not-yet-fixed in trixie.
 CVE-2026-42496
 CVE-2026-42497
 CVE-2026-8376
 CVE-2026-48962
 CVE-2026-9538
+# regex engine silently-incorrect-match (CRITICAL) and S_measure_struct integer
+# overflow (HIGH), added 0.48.2:
+CVE-2026-13221
+CVE-2026-57432
 
 # curl / libcurl4t64 / libcurl3t64-gnutls (HIGH x10):
 # system curl ships in base; backend Python httpx does not use system libcurl.

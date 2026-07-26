@@ -573,7 +573,7 @@ async def _post_with_retry(
         with attempt:
             try:
                 response = await client.post(endpoint, json=payload)
-            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
                 raise ExtractionTransientError(f"Firecrawl unreachable: {exc}") from exc
             _raise_for_status(response)
         if attempt.retry_state.outcome and not attempt.retry_state.outcome.failed:

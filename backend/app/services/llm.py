@@ -261,7 +261,7 @@ async def _post(
             response = await client.post(endpoint, headers=headers, json=payload)
         except httpx.TimeoutException as exc:
             raise LLMTimeoutError(f"LLM call timed out: {exc}") from exc
-        except httpx.NetworkError as exc:
+        except (httpx.NetworkError, httpx.RemoteProtocolError) as exc:
             raise LLMProviderError(f"LLM unreachable: {exc}") from exc
 
     if response.is_server_error:

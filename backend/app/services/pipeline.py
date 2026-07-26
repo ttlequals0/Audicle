@@ -1086,7 +1086,7 @@ async def _stage_tts(
     if job.voice_id:
         try:
             slot = int(job.voice_id)
-            await tts.select_voice(settings, slot)
+            await tts.select_voice_with_retry(settings, slot)
             target_slot = slot
         except (ValueError, tts.TTSError):
             logger.warning(
@@ -1097,7 +1097,7 @@ async def _stage_tts(
         default = voices.default_slot()
         if default is not None:
             try:
-                await tts.select_voice(settings, default)
+                await tts.select_voice_with_retry(settings, default)
                 target_slot = default
             except (ValueError, tts.TTSError):
                 logger.warning(
@@ -1115,7 +1115,7 @@ async def _stage_tts(
             # chunk can still race between this select and its generate). The wrapper
             # skips the re-encode when the slot is already active, so this is cheap.
             try:
-                await tts.select_voice(settings, target_slot)
+                await tts.select_voice_with_retry(settings, target_slot)
             except (ValueError, tts.TTSError):
                 logger.warning(
                     "Voice re-select failed; continuing with the wrapper's current voice",

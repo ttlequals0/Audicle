@@ -146,6 +146,34 @@ async def test_openai_compatible_timeout_raises_timeout_error(
         await llm.generate("s", "u", get_settings())
 
 
+async def test_openai_compatible_server_disconnect_raises_provider_error(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A provider dying mid-request raises RemoteProtocolError (a ProtocolError,
+    # not a NetworkError); it must classify retryable, not escape raw.
+    def _raise(_request):
+        raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(_raise))
+
+    with pytest.raises(llm.LLMProviderError):
+        await llm.generate("s", "u", get_settings())
+
+
+async def test_openai_compatible_local_protocol_error_escapes_raw(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Client-side errors (e.g. an API key with a newline -> illegal header)
+    # are permanent; they must not classify as retryable LLMProviderError.
+    def _raise(_request):
+        raise httpx.LocalProtocolError("Illegal header value")
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(_raise))
+
+    with pytest.raises(httpx.LocalProtocolError):
+        await llm.generate("s", "u", get_settings())
+
+
 async def test_openai_compatible_non_json_body_raises_request_error(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

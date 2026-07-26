@@ -52,7 +52,7 @@ async def check_firecrawl(settings: Settings, *, timeout: float = 5.0) -> CheckR
         for endpoint in candidates:
             try:
                 response = await client.get(endpoint)
-            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
                 last_detail = f"unreachable ({exc.__class__.__name__}: {exc})"
                 continue
             if response.is_success:
@@ -99,7 +99,7 @@ async def check_llm(settings: Settings, *, timeout: float = 5.0) -> CheckResult:
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:
             response = await client.get(endpoint, headers=headers)
-        except (httpx.TimeoutException, httpx.NetworkError) as exc:
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
             return CheckResult(
                 name="llm",
                 ok=False,
@@ -137,7 +137,7 @@ async def check_tts(settings: Settings) -> CheckResult:
             attempt += 1
             try:
                 response = await client.get(endpoint)
-            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
                 last_detail = f"unreachable ({exc.__class__.__name__}: {exc})"
             else:
                 # The model being loaded is what makes TTS reachable. A 503 with
