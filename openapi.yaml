@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.48.3
+  version: 0.48.4
 paths:
   /health/live:
     get:
@@ -1158,11 +1158,11 @@ paths:
             application/json:
               schema: {}
   /rss/{slug}.xml:
-    head:
+    get:
       tags:
       - rss
       summary: Get Rss
-      operationId: get_rss_rss__slug__xml_head
+      operationId: get_rss_rss__slug__xml_get
       parameters:
       - name: slug
         in: path
@@ -1198,11 +1198,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    get:
+    head:
       tags:
       - rss
       summary: Get Rss
-      operationId: get_rss_rss__slug__xml_head
+      operationId: get_rss_rss__slug__xml_get
       parameters:
       - name: slug
         in: path
@@ -1239,11 +1239,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.mp3:
-    head:
+    get:
       tags:
       - media
       summary: Get Mp3
-      operationId: get_mp3_media__episode_id__mp3_head
+      operationId: get_mp3_media__episode_id__mp3_get
       parameters:
       - name: episode_id
         in: path
@@ -1263,11 +1263,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    get:
+    head:
       tags:
       - media
       summary: Get Mp3
-      operationId: get_mp3_media__episode_id__mp3_head
+      operationId: get_mp3_media__episode_id__mp3_get
       parameters:
       - name: episode_id
         in: path
@@ -1288,11 +1288,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.jpg:
-    head:
+    get:
       tags:
       - media
       summary: Get Jpg
-      operationId: get_jpg_media__episode_id__jpg_head
+      operationId: get_jpg_media__episode_id__jpg_get
       parameters:
       - name: episode_id
         in: path
@@ -1312,11 +1312,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    get:
+    head:
       tags:
       - media
       summary: Get Jpg
-      operationId: get_jpg_media__episode_id__jpg_head
+      operationId: get_jpg_media__episode_id__jpg_get
       parameters:
       - name: episode_id
         in: path
@@ -1337,11 +1337,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.vtt:
-    head:
+    get:
       tags:
       - media
       summary: Get Vtt
-      operationId: get_vtt_media__episode_id__vtt_head
+      operationId: get_vtt_media__episode_id__vtt_get
       parameters:
       - name: episode_id
         in: path
@@ -1361,11 +1361,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    get:
+    head:
       tags:
       - media
       summary: Get Vtt
-      operationId: get_vtt_media__episode_id__vtt_head
+      operationId: get_vtt_media__episode_id__vtt_get
       parameters:
       - name: episode_id
         in: path
@@ -1386,7 +1386,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.txt:
-    head:
+    get:
       tags:
       - media
       summary: Get Cleaned Text
@@ -1394,7 +1394,7 @@ paths:
         the
 
         ``cleaned_text`` column. 404 for episodes processed before 0.6.0 (NULL).'
-      operationId: get_cleaned_text_media__episode_id__txt_head
+      operationId: get_cleaned_text_media__episode_id__txt_get
       parameters:
       - name: episode_id
         in: path
@@ -1414,7 +1414,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-    get:
+    head:
       tags:
       - media
       summary: Get Cleaned Text
@@ -1422,7 +1422,7 @@ paths:
         the
 
         ``cleaned_text`` column. 404 for episodes processed before 0.6.0 (NULL).'
-      operationId: get_cleaned_text_media__episode_id__txt_head
+      operationId: get_cleaned_text_media__episode_id__txt_get
       parameters:
       - name: episode_id
         in: path
