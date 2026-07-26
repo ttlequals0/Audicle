@@ -563,10 +563,10 @@ function ModelField({
 
   if (freeText) {
     return (
-      <div className="flex gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <input
           id="LLM_MODEL"
-          className="field flex-1"
+          className="field flex-1 min-w-[12rem]"
           value={value}
           placeholder="model id"
           onChange={(e) => onChange(e.target.value)}
@@ -579,10 +579,10 @@ function ModelField({
   }
 
   return (
-    <div className="flex gap-2">
+    <div className="flex flex-wrap items-center gap-2">
       <select
         id="LLM_MODEL"
-        className="field flex-1"
+        className="field flex-1 min-w-[12rem]"
         value={value}
         onChange={(e) => onChange(e.target.value)}
       >

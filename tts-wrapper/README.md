@@ -20,7 +20,8 @@ generated audio commercially.
 
 | Method | Path           | Purpose                                                             |
 |--------|----------------|---------------------------------------------------------------------|
-| POST   | /generate      | Synthesize a chunk. Body: `{text, episode_id, chunk_index, seed?, verify?}`. |
+| POST   | /generate      | Synthesize a chunk. Body: `{text, episode_id, chunk_index, seed?, verify?, temperature?, repetition_penalty?, top_p?, top_k?, max_chars?}` (the generation knobs below, per request). |
+| GET    | /health/live   | Liveness: `{ok, model_loaded}`. 503 until the model loads; ignores the reference voice. The compose healthcheck hits this. |
 | GET    | /health        | `{ok, model_loaded, reference_loaded}`. 503 until everything is ready. |
 | POST   | /select-voice  | Switch the active voice to a slot. Body: `{slot}` (1-5).            |
 | POST   | /reload        | Re-encode the resting voice (the lowest filled slot) into the speaker conditionals. |
@@ -40,7 +41,13 @@ model-load failure exits the process.
 
 ## Local dev
 
-CUDA hosts: `docker compose build tts-wrapper && docker compose up tts-wrapper`.
+CUDA hosts (compose pulls the published image and has no `build:` stanza, so build directly):
+
+```
+docker build -t audicle-tts:dev -f tts-wrapper/Dockerfile tts-wrapper/
+```
+
+Then pin that tag in `docker-compose.yml` and `docker compose up tts-wrapper`.
 
 CPU-only hosts (5-10x slower):
 

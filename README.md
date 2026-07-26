@@ -6,7 +6,7 @@
 
 Self-hosted Podcasting 2.0 service that turns saved articles into a personal podcast feed.
 
-Paste a URL or upload a document (PDF, DOCX, Markdown, text, or HTML), wait a few minutes, and get an episode with cloned-voice narration, artwork, and a WebVTT transcript. Subscribe in Pocket Casts, Overcast, or Apple Podcasts like any other show.
+Paste a URL or upload a document (PDF, DOCX, Markdown, text, or HTML), wait a few minutes, and get an episode with cloned-voice narration, artwork, an LLM-written episode summary, and a WebVTT transcript. Subscribe in Pocket Casts, Overcast, or Apple Podcasts like any other show.
 
 *Your reading list, as a podcast you own.*
 
@@ -17,6 +17,7 @@ Paste a URL or upload a document (PDF, DOCX, Markdown, text, or HTML), wait a fe
 - [Why](#why)
 - [What's in the repo](#whats-in-the-repo)
 - [Quickstart](#quickstart)
+- [Authenticated feeds](#authenticated-feeds)
 - [Required env vars](#required-env-vars)
 - [Valid iTunes categories](#valid-itunes-categories)
 - [Voices](#voices)
@@ -85,7 +86,6 @@ render/         full-article render sidecar (Camoufox + xvfb; clicks expand gate
 frontend/       React + Tailwind operator UI
 data/           runtime artifacts (gitignored: SQLite, MP3, JPG, VTT)
 docker-compose.yml
-build-plan.md   the design document the implementation tracks against
 ```
 
 ## Quickstart
@@ -94,11 +94,11 @@ You need Docker and docker-compose. The app boots unconfigured: set the LLM prov
 
 ```bash
 git clone https://github.com/ttlequals0/Audicle && cd Audicle
-cp .env.example .env   # optional: pre-set BASE_URL and any defaults
+cp .env.example .env   # compose requires .env to exist; pre-set BASE_URL and any defaults here
 docker compose up -d
 ```
 
-The web UI is at `http://localhost:8000/`. The RSS feed is served at a slug derived from the feed name, so `FEED_TITLE="Articles of Interest"` becomes `/rss/articles_of_interest.xml`. The Feed page shows the exact URL with a copy button; paste it into any podcatcher. Renaming the feed changes the slug and mints new feed/episode GUIDs, so subscribers resubscribe to the new URL.
+The web UI is at `http://localhost:8000/`. It is an installable PWA: add it to a phone home screen and it behaves like an app, with updates applied automatically. The RSS feed is served at a slug derived from the feed name, so `FEED_TITLE="Articles of Interest"` becomes `/rss/articles_of_interest.xml`. The Feed page shows the exact URL with a copy button; paste it into any podcatcher. Renaming the feed changes the slug and mints new feed/episode GUIDs, so subscribers resubscribe to the new URL.
 
 The container runs as a non-root user (uid 1000). If you bind-mount host directories (or set `user:` in compose), make them writable by uid 1000 so the app can write the database and media and seed the default prompt/corrections:
 
@@ -106,7 +106,11 @@ The container runs as a non-root user (uid 1000). If you bind-mount host directo
 chown -R 1000:1000 ./data ./backend/app/prompts ./backend/app/corrections ./backend/app/reference
 ```
 
-No CUDA GPU? Override the wrapper to CPU:
+No CUDA GPU? `TTS_DEVICE=cpu` alone is not enough: the stock compose file pins the CUDA image and reserves an NVIDIA device. Three changes in `docker-compose.yml` get you a CPU deployment:
+
+1. Point the `tts-wrapper` service at the CPU image tag (`ttlequals0/audicle-tts:<version>-cpu`).
+2. Remove the `deploy.resources` GPU reservation from that service.
+3. Set `TTS_DEVICE=cpu` (in `.env` or the environment).
 
 ```bash
 TTS_DEVICE=cpu docker compose up -d
@@ -115,6 +119,12 @@ TTS_DEVICE=cpu docker compose up -d
 The first-run model download is ~2 GB and persists on the `./data` volume under `hf_cache/` and `tts_home/` (the wrapper sets `HF_HOME`/`TTS_HOME` there), so restarts load from disk instantly.
 
 Extraction works out of the box: the default `direct` engine fetches the page in-process and parses it with trafilatura. To use a self-hosted [Firecrawl](https://github.com/firecrawl/firecrawl) instead, set `EXTRACTION_ENGINE=firecrawl` and point `FIRECRAWL_URL` at it. Either way, JS-rendered and bot-gated pages fall back to FlareSolverr and the web archive (see [Paywalled articles](#paywalled-articles)).
+
+## Authenticated feeds
+
+The feed is open by default: anyone with the URL can read it. The "authenticated feeds" section in Settings puts a 64-hex key on every feed and media URL: `?key=<key>` on the RSS, MP3, and transcript URLs, and a `/media/<id>-<key>.jpg` path token for artwork (podcast apps drop query strings on image URLs, so art carries the key in the path). With the toggle on, a request without a valid key gets a 401.
+
+The Feed page always shows the exact URL to paste into a podcatcher, key included. Regenerating the key (or flipping the toggle) changes every URL, so existing subscriptions break and need a resubscribe. The same controls sit behind `GET`/`POST /api/v1/feed-auth` and `POST /api/v1/feed-auth/regenerate`.
 
 ## Required env vars
 
@@ -127,7 +137,7 @@ Extraction works out of the box: the default `direct` engine fetches the page in
 | `FEED_CATEGORY` | iTunes category (see list below) | `Technology` |
 | `FEED_LANGUAGE` | RFC 5646 tag | `en-US` |
 | `EXTRACTION_ENGINE` | `direct` (built-in, no extra service) or `firecrawl` | `direct` |
-| `FIRECRAWL_URL` | Self-hosted Firecrawl base URL (only when `EXTRACTION_ENGINE=firecrawl`) | `http://firecrawl:3002` |
+| `FIRECRAWL_URL` | Self-hosted Firecrawl base URL (only when `EXTRACTION_ENGINE=firecrawl`); the literal compose placeholder `http://firecrawl:3002` counts as unconfigured | `http://firecrawl-api:3002` |
 | `FIRECRAWL_API_KEY` | Optional bearer token for a Firecrawl behind auth (blank = open) | _(unset)_ |
 | `LLM_PROVIDER` | `openai-compatible`, `anthropic`, `openrouter`, or `ollama` | `openai-compatible` |
 | `OPENAI_BASE_URL` | for openai-compatible | `http://llm:8080/v1` |
@@ -140,7 +150,7 @@ Extraction works out of the box: the default `direct` engine fetches the page in
 | `TRUST_PROXY_HEADERS` | Key the login rate-limit and IP lockout off `X-Forwarded-For` instead of the socket peer; enable only behind a trusted proxy | `true` behind Cloudflare/nginx |
 | `TRUSTED_PROXY_HOPS` | How many proxy hops to trust (counted from the right of `X-Forwarded-For`) | `1` |
 
-None of this is required. The app boots unconfigured; you set operational config and the admin password at runtime in Settings. The admin password lives under Settings > Security (bcrypt hash in the DB), and until it's set the app runs in open convenience mode. The full list with defaults is in `.env.example`, and the runtime allowlist (what's editable from the UI without a restart) is enforced in `backend/app/services/runtime_settings.py`.
+None of this is required. The app boots unconfigured; you set operational config and the admin password at runtime in Settings. The admin password lives under Settings > Security (bcrypt hash in the DB), and until it's set the app runs in open convenience mode. Most settings and their defaults are in `.env.example`; a handful of runtime-only knobs (Chatterbox generation, the chime, upload size, feed auth) live in Settings instead. The runtime allowlist (what's editable from the UI without a restart) is enforced in `backend/app/services/runtime_settings.py`.
 
 ## Valid iTunes categories
 
@@ -156,9 +166,9 @@ Subcategories aren't surfaced in the UI; set the top-level category and you're d
 
 ## Voices
 
-The wrapper narrates each episode by conditioning on a short reference clip you supply. Manage clips in Settings under "voices": a Default fallback plus five labelled slots. Each row plays its stored clip and can audition a TTS sample, so you hear a voice before you use it.
+The wrapper narrates each episode by conditioning on a short reference clip you supply. Manage clips in Settings under "voices": five labelled slots. Each row plays its stored clip and can audition a TTS sample, so you hear a voice before you use it.
 
-Each episode picks a voice at submit time from the picker under the Submit button on Home: Random (a random filled slot), Last used, or a specific slot. With no slots filled, every episode uses Default.
+Each episode picks a voice at submit time from the picker under the Submit button on Home: Random (a random filled slot), Last used, or a specific slot. At least one slot must stay filled: submit and upload are rejected with a 400 until a voice is loaded. A job with no recorded voice falls back to the lowest filled slot at synthesis time.
 
 Recommended clip: mono, 24 kHz, 8-12 seconds, ~250 kB to 1 MB. Upload limits are 3-60 seconds and 5 MB. WAV, MP3, M4A/AAC, FLAC, and OGG/Opus are accepted; anything that isn't already a WAV is converted with ffmpeg before storage. See `backend/app/reference/README.md` for the sourcing playbook.
 
@@ -166,7 +176,7 @@ Output quality mostly tracks clip quality. Cleaning the source (noise reduction,
 
 ## End-of-episode chime
 
-Settings has an "end chime" section: upload one short clip that plays at the end of every episode, so back-to-back episodes are easy to tell apart on autoplay. Turn it on with `CHIME_ENABLED` under TTS settings; the clip is transcoded and loudness-matched to the narration. Upload WAV/MP3/M4A/FLAC/OGG, trimmed to about 15 seconds. Delete it to stop.
+Settings has an "end chime" section: upload one short clip that plays at the end of every episode, so back-to-back episodes are easy to tell apart on autoplay. Turn it on with the toggle in that same section (`CHIME_ENABLED`); the clip is transcoded and loudness-matched to the narration. Upload WAV/MP3/M4A/FLAC/OGG, trimmed to about 15 seconds. Delete it to stop.
 
 ## Episode artwork
 
@@ -174,12 +184,11 @@ Each episode's cover goes into the feed (`itunes:image`) and is embedded in the 
 
 ## Pronunciation corrections
 
-Settings has a corrections table for words the narrator mispronounces. Each row is a match term, the spoken form to say instead, a mode, an optional IPA field, and an "Aa" case toggle. A curated seed set ships built in (`GET /api/v1/corrections/seed`); your rows override it.
+Settings has a corrections table for words the narrator mispronounces. Each row is a match term, the spoken form to say instead, a mode, and an "Aa" case toggle. A curated seed set ships built in (`GET /api/v1/corrections/seed`); your rows override it.
 
 - spoken drives narration -- write it the way you want it read ("four oh four media", "clawed").
 - mode is override (say the spoken form), word (read an acronym as a word), or spell (read it letter by letter).
 - Aa makes the match case-sensitive; off (the default) folds case, so a "404 media" row also catches "404 Media".
-- ipa is optional and feeds only the PLS lexicon export; it does NOT affect narration. Audicle auto-derives it from the spoken form, so it may look like gibberish phonetics and can go stale if you later edit the spoken text. That's expected; ignore it unless you use the PLS export.
 
 ## Webhooks
 
@@ -240,7 +249,7 @@ An upload episode is the same shape with `"source_type": "upload"` and a `"sourc
 
 Delivery is fire-and-forget: a background task with a short timeout (`WEBHOOK_TIMEOUT_SECONDS`, default 10s) and a few retries with backoff, so a dead or slow receiver never delays or fails the episode. To test from the API, `POST /api/v1/webhooks/test` returns `{ "delivered", "status_code", "error" }`.
 
-A failed job can also be requeued from the Recents list on Home -- URL jobs re-fetch, uploads re-run from the stored original.
+A failed job can also be requeued from the Recents list on Home: URL jobs re-fetch, uploads re-run from the stored original. A queued or processing job can be cancelled from the same list (`POST /api/v1/jobs/{id}/cancel`).
 
 ## Paywalled articles
 
@@ -291,31 +300,40 @@ The Audicle name and logo are reserved; see `branding/README.md`.
         a detected Cloudflare challenge auto-routes through FlareSolverr
         |
         v
-URL --> extract (direct / Firecrawl) --> cleanup (LLM) --> corrections (regex)
-                                                       |
-                                                       v
-                                              chunk + TTS (Chatterbox)
-                                                       |
-                                                       v
-                                   quality gate: audio QA + optional
-                                   Whisper ASR verify --> regen on fail
-                                                       |
-                                                       v
-                                       audio (ffmpeg) + artwork + VTT
-                                                       |
-                                                       v
-                                          finalize (write DB + RSS)
+URL --> extract (direct / Firecrawl) --> cleanup (LLM)
+                                              |
+                                              v
+                          normalize (LLM pronunciation pass +
+                          base lexicon + regex corrections)
+                                              |
+                                              v
+                              summary (LLM episode description)
+                                              |
+                                              v
+                                   chunk + TTS (Chatterbox)
+                                              |
+                                              v
+                        quality gate: audio QA + optional
+                        Whisper ASR verify --> regen on fail
+                                              |
+                                              v
+                            audio (ffmpeg) + artwork + VTT
+                                              |
+                                              v
+                               finalize (write DB + RSS)
 ```
 
 The paywall bypass is operator-configured (see [Paywalled articles](#paywalled-articles)).
 
 The chunker self-heals before TTS: it splits run-on sentences that arrive glued together (`end.Next`), and when a long sentence has no comma or semicolon to break on it falls back to a whitespace split instead of failing the job. Only a single word longer than the character cap is unsplittable.
 
-Two containers: the backend (FastAPI + SQLite) and the TTS wrapper (separate so GPU memory stays isolated and the model reloads only when the voice changes). They share a `/data` volume so the backend can read what the wrapper produces.
+Three containers: the backend (FastAPI + SQLite), the TTS wrapper (separate so GPU memory stays isolated and the model reloads only when the voice changes), and the render sidecar (a headful browser for expand-gated pages; the app tolerates it being down). The backend and wrapper share a `/data` volume so the backend can read what the wrapper produces.
 
 There's no message queue. SQLite handles the work queue with a single locked row update -- fine for one or two operators, not the right shape for fanning out across hosts.
 
 ### TTS verification
+
+Chatterbox's generation knobs (temperature, repetition penalty, top-p, top-k, seed, and the per-chunk character cap) are live-tunable from the "TTS generation" group in Settings; the audio-analysis thresholds have their own group.
 
 Every chunk passes a quality gate before the audio stage. Signal-level audio analysis catches a take that came back as a flat drone, steady noise, or a repetition; a bad take is regenerated with a fresh seed (Chatterbox is non-deterministic, so a re-gen usually recovers).
 
@@ -326,10 +344,10 @@ It's off by default and adds per-chunk latency, so it takes two switches: `WHISP
 ## Operating
 
 - `/health/live` is a flat liveness probe.
-- `/health/ready` aggregates DB, ffmpeg, TTS wrapper, Firecrawl, and (optionally) LLM probes. Returns 503 if any check fails.
-- `POST /api/v1/purge` removes episodes older than the retention window. Confirmation required.
-- A background retention sweep runs from the worker on a fixed cadence, configurable via `RETENTION_DAYS`.
-- Default rate limits are conservative; the `slowapi` wiring lives in `backend/app/main.py`.
+- `/health/ready` aggregates DB, TTS wrapper, Firecrawl, and LLM probes and returns 503 if any fails. The ffmpeg version and render-sidecar reachability are reported under `components` but never fail readiness.
+- `POST /api/v1/purge?confirm=true&older_than_days=N` deletes episodes older than N days. The default `older_than_days=0` wipes every episode, so pass a cutoff when you mean one.
+- A retention sweep runs daily from the worker at `RETENTION_SWEEP_HOUR_UTC`, deleting episodes older than `RETENTION_DAYS`.
+- The login endpoint is rate limited (`LOGIN_RATE_LIMIT`) with an IP lockout on repeated failures; the limiter lives in `backend/app/api/v1/auth.py` and is registered in `backend/app/main.py`.
 
 If something's broken, start with `/health/ready` -- it tells you which dependency is unhappy. Logs are where docker put them (`docker compose logs app` / `tts-wrapper` / `render`).
 
@@ -339,7 +357,7 @@ Backend:
 
 ```bash
 uv sync
-uv run pytest                              # 800+ tests, ~60s
+uv run pytest                              # 900+ tests, ~60s
 uv run uvicorn app.main:create_app --factory --reload --app-dir backend
 ```
 
@@ -351,7 +369,7 @@ cd frontend && npm install && npm run dev   # Vite, hot reload
 
 There's an OpenAPI dump at `openapi.yaml`; regenerate it with `uv run python scripts/dump_openapi.py`.
 
-CodeQL runs on every PR. Pre-commit hooks aren't installed by default -- wire them with `git config core.hooksPath .githooks` once the `.githooks` directory is in place.
+CodeQL runs on every PR through GitHub's default-setup code scanning (there is no in-repo workflow file for it). Pre-commit hooks aren't installed by default; wire them with `git config core.hooksPath .githooks` once the `.githooks` directory is in place.
 
 ## LLM Disclosure
 
