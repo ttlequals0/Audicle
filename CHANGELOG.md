@@ -6,6 +6,21 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Security
+
+- Bumped react-router-dom 6.30.4 to 7.18.1, clearing the open-redirect and
+  XSS advisories Dependabot flagged against the 6.x line. Dependabot's own
+  proposal (PR #105) targeted 7.0.0, which carries six high-severity
+  advisories of its own; 7.18.1 is the first release that clears them.
+  The frontend only uses BrowserRouter, Routes, Route, NavLink, Navigate,
+  and useNavigate, all unchanged in v7 declarative mode, so the upgrade
+  needed no code changes. Verified by building and driving the app: routes
+  render and client-side navigation works.
+- Accepted GHSA-qwww-vcr4-c8h2 (react-router RSC-mode CSRF bypass) in the
+  dependency-review allowlist. It has no fixed release yet, and the
+  vulnerable path is RSC/framework mode with server actions, which this
+  client-only SPA does not use.
+
 ## [0.48.3] - 2026-07-25
 
 ### Security

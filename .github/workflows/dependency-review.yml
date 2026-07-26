@@ -37,7 +37,14 @@ jobs:
           #     the model. None of the vulnerable paths exist in the wrapper: no form/multipart
           #     endpoints (JSON + GET only), no StaticFiles, no HTTPEndpoint classes, runs on
           #     Linux. Dismissed in the Dependabot tab with the same reasoning.
-          allow-ghsas: GHSA-98h9-4798-4q5v, GHSA-7wx4-6vff-v64p, GHSA-82w8-qh3p-5jfq, GHSA-wqp7-x3pw-xc5r, GHSA-jp82-jpqv-5vv3, GHSA-x746-7m8f-x49c
+          #   * GHSA-qwww-vcr4-c8h2 -- react-router RSC-mode CSRF bypass, vulnerable
+          #     >=7.12.0 <8.3.0. There is no fixed release: 7.18.1 is the latest published
+          #     version and no 8.x exists, so the only "fix" npm offers is a downgrade to
+          #     7.11.0, which reinstates the open-redirect/XSS advisories that 7.18.1 clears.
+          #     The vulnerable path is RSC / framework mode with server actions; the frontend
+          #     is a client-only SPA (BrowserRouter + Routes/Route/NavLink/Navigate) with no
+          #     RSC, no SSR, and no server actions. Revisit when 8.3.0 ships.
+          allow-ghsas: GHSA-98h9-4798-4q5v, GHSA-7wx4-6vff-v64p, GHSA-82w8-qh3p-5jfq, GHSA-wqp7-x3pw-xc5r, GHSA-jp82-jpqv-5vv3, GHSA-x746-7m8f-x49c, GHSA-qwww-vcr4-c8h2
           # The MIT/BSD/Apache/PSF set covers what we already use. LGPL-2.1/3.0 and
           # ZPL-2.1 were added deliberately: the gruut phonemizer (used for IPA
           # derivation) pulls num2words (LGPL) and pytz (MIT AND ZPL-2.1). LGPL/ZPL
