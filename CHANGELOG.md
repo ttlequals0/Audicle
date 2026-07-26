@@ -6,6 +6,39 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.48.3] - 2026-07-25
+
+### Security
+
+- Bumped pillow 12.2.0 to 12.3.0 in the backend and tts-wrapper locks. This
+  clears 14 open Dependabot advisories against 12.2.0, including heap
+  out-of-bounds writes in ImageCmsTransform.apply(), Image.paste()/crop(),
+  and ImageFilter.RankFilter, plus several decompression-bomb check bypasses.
+- Bumped setuptools 81.0.0 to 83.0.0 in both locks (MANIFEST.in exclusion
+  bypass via Unicode normalization, GHSA-h35f-9h28-mq5c).
+- Frontend: brace-expansion raised to 2.1.2 and 5.0.8 (exponential-time
+  expansion DoS, GHSA-3jxr-9vmj-r5cp) and postcss patched via npm audit fix.
+- Merged dependabot PRs #99 (torch 2.13.0 in the backend lock), #100
+  (astral-sh/uv 0.11.29 base image), and #101 (fast-uri 3.1.4, host
+  confusion advisories).
+- The remaining tts-wrapper alerts (transformers, gradio, torch) are pinned
+  by chatterbox-tts 0.1.7 and unreachable in the wrapper; they are dismissed
+  on GitHub with the rationale recorded in tts-wrapper/pyproject.toml.
+
+### Fixed
+
+- Settings on narrow screens truncated the selected LLM model name because
+  the select shared its row with the refresh and custom buttons and could
+  shrink below its content. The model row now uses the same wrap pattern as
+  the file's other field rows: the select keeps a 12rem minimum width and
+  the buttons wrap below it when the row is too narrow.
+- Pipeline and worker tests stub the wrapper's voice-select call. 0.48.2 put
+  voice selection under the shared retry policy (7 attempts, about 61s of
+  backoff), so tests that reached the TTS stage either failed their tight
+  timeouts or silently slept through the backoff. The shared tts/audio stub
+  helper now covers select_voice_with_retry, and _stub_full_chain delegates
+  to it instead of keeping a drifted copy of the same stubs.
+
 ## [0.48.2] - 2026-07-16
 
 ### Fixed

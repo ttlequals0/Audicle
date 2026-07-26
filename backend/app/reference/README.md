@@ -29,9 +29,9 @@ curl -X POST "$BASE/api/v1/reference/slots/1" \
 
 | Property | Recommended | Hard limits (enforced on upload) |
 |---|---|---|
-| Format | WAV (PCM, 16-bit) | any of WAV/MP3/M4A/FLAC/OGG; transcoded to WAV |
-| Channels | mono | mono or stereo (mixed down internally) |
-| Sample rate | 24 kHz | 16-48 kHz |
+| Format | WAV (PCM, 16-bit) | any of WAV/MP3/M4A/FLAC/OGG; non-WAV is transcoded to mono 24 kHz WAV |
+| Channels | mono (stereo WAVs are stored as-is; only non-WAV uploads get mixed down) | n/a |
+| Sample rate | 24 kHz (WAV rates are not range-checked; only non-WAV uploads get resampled) | n/a |
 | Duration | 8-12 seconds | 3-60 seconds |
 | Loudness | -20 to -16 LUFS | n/a |
 | Content | clean speech, no background music, no silence padding | n/a |

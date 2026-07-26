@@ -30,9 +30,13 @@ path of a normal extraction.
 
 ## Build and run
 
+Compose pulls the published image and has no `build:` stanza, so build directly:
+
 ```
-docker compose build render && docker compose up render
+docker build -t audicle-render:dev -f render/Dockerfile render/
 ```
+
+Then pin that tag in `docker-compose.yml` and `docker compose up render`.
 
 The image bakes the Camoufox browser at build time (`camoufox fetch`). DataDome is
 probabilistic and IP-reputation aware, so a fraction of renders still hit a CAPTCHA

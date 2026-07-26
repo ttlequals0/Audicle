@@ -81,8 +81,14 @@ async def test_pickup_runs_pipeline_against_a_queued_job(
         output_mp3.write_bytes(b"FAKE_MP3")
         return audio.EncodeResult(mp3_path=output_mp3, duration_secs=2.5)
 
+    # Same reason as test_pipeline's _stub_tts_and_audio: the voice-select call
+    # retries against the unreachable test host with ~61s of real backoff.
+    async def _fake_select(_settings, _slot) -> None:
+        pass
+
     monkeypatch.setattr(extraction, "extract", _fake_extract)
     monkeypatch.setattr(llm, "generate", _fake_llm)
+    monkeypatch.setattr(tts, "select_voice_with_retry", _fake_select)
     monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
     monkeypatch.setattr(audio, "concat_with_padding", _fake_concat)
     monkeypatch.setattr(audio, "normalize_and_encode", _fake_encode)

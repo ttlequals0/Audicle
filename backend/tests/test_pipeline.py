@@ -33,32 +33,9 @@ def _stub_full_chain(monkeypatch: pytest.MonkeyPatch) -> None:
             "Forty more sentences follow for word-count headroom. "
         ) * 10
 
-    from app.services import audio, tts
-
-    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
-        _ = text  # acknowledge
-        _ = settings
-        return tts.GenerateResult(
-            wav_path=f"/tmp/{episode_id}_chunk_{chunk_index}.wav",
-            duration_secs=1.0,
-            sample_rate=24000,
-        )
-
-    def _fake_concat(_paths, output_path, _settings):
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(b"FAKE_WAV")
-        return output_path, 24000, [1.0] * len(_paths)
-
-    def _fake_encode(_input_wav, output_mp3, _settings):
-        output_mp3.parent.mkdir(parents=True, exist_ok=True)
-        output_mp3.write_bytes(b"FAKE_MP3")
-        return audio.EncodeResult(mp3_path=output_mp3, duration_secs=2.5)
-
     monkeypatch.setattr(extraction, "extract", _fake_extract)
     monkeypatch.setattr(llm, "generate", _fake_llm)
-    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
-    monkeypatch.setattr(audio, "concat_with_padding", _fake_concat)
-    monkeypatch.setattr(audio, "normalize_and_encode", _fake_encode)
+    _stub_tts_and_audio(monkeypatch)
 
 
 def _stub_tts_and_audio(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -86,6 +63,12 @@ def _stub_tts_and_audio(monkeypatch: pytest.MonkeyPatch) -> None:
         output_mp3.write_bytes(b"FAKE_MP3")
         return audio.EncodeResult(mp3_path=output_mp3, duration_secs=2.5)
 
+    # _stage_tts always selects a voice (the autouse fixture fills slot 1), and
+    # the real call retries against the unreachable test host with real sleeps.
+    async def _fake_select(_settings, _slot) -> None:
+        pass
+
+    monkeypatch.setattr(tts, "select_voice_with_retry", _fake_select)
     monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
     monkeypatch.setattr(audio, "concat_with_padding", _fake_concat)
     monkeypatch.setattr(audio, "normalize_and_encode", _fake_encode)
