@@ -106,10 +106,15 @@ The container runs as a non-root user (uid 1000). If you bind-mount host directo
 chown -R 1000:1000 ./data ./backend/app/prompts ./backend/app/corrections ./backend/app/reference
 ```
 
-No CUDA GPU? `TTS_DEVICE=cpu` alone is not enough: the stock compose file pins the CUDA image and reserves an NVIDIA device. Three changes in `docker-compose.yml` get you a CPU deployment:
+No CUDA GPU? `TTS_DEVICE=cpu` alone is not enough: the stock compose file pins the CUDA image and reserves an NVIDIA device. Three steps get you a CPU deployment:
 
-1. Point the `tts-wrapper` service at the CPU image tag (`ttlequals0/audicle-tts:<version>-cpu`).
-2. Remove the `deploy.resources` GPU reservation from that service.
+1. Build the CPU wrapper image yourself. No current `-cpu` tag is published, so build it from the CPU Dockerfile:
+
+   ```bash
+   docker build -t audicle-tts:cpu -f tts-wrapper/Dockerfile.cpu tts-wrapper/
+   ```
+
+2. Point the `tts-wrapper` service at that image and remove the `deploy.resources` GPU reservation from it.
 3. Set `TTS_DEVICE=cpu` in `.env`.
 
 Then bring the stack up as usual:
