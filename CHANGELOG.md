@@ -6,6 +6,14 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Fixed
+
+- The README's CPU deployment steps told operators to pin
+  `ttlequals0/audicle-tts:<version>-cpu`. No such tag has been published
+  since 0.6.0, so anyone following that on a current version would find
+  nothing to pull. The steps now build the image from
+  `tts-wrapper/Dockerfile.cpu`, matching what tts-wrapper/README.md says.
+
 ### Security
 
 - Bumped react-router-dom 6.30.4 to 7.18.1, clearing the open-redirect and
