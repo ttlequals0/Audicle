@@ -110,10 +110,12 @@ No CUDA GPU? `TTS_DEVICE=cpu` alone is not enough: the stock compose file pins t
 
 1. Point the `tts-wrapper` service at the CPU image tag (`ttlequals0/audicle-tts:<version>-cpu`).
 2. Remove the `deploy.resources` GPU reservation from that service.
-3. Set `TTS_DEVICE=cpu` (in `.env` or the environment).
+3. Set `TTS_DEVICE=cpu` in `.env`.
+
+Then bring the stack up as usual:
 
 ```bash
-TTS_DEVICE=cpu docker compose up -d
+docker compose up -d
 ```
 
 The first-run model download is ~2 GB and persists on the `./data` volume under `hf_cache/` and `tts_home/` (the wrapper sets `HF_HOME`/`TTS_HOME` there), so restarts load from disk instantly.

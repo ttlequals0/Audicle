@@ -31,8 +31,8 @@ chatterbox = ["chatterbox-tts>=0.1.7"]
 # every image but import-gated at runtime by WHISPER_ENABLED -- the model only
 # loads when an operator turns verification on.
 whisper = ["faster-whisper>=1.0"]
-# NOTE: chatterbox-tts 0.1.7 hard-pins several transitive deps that each carry
-# HIGH advisories, none reachable in this wrapper:
+# NOTE: chatterbox-tts 0.1.7 hard-pins several transitive deps that carry open
+# advisories (HIGH unless noted), none reachable in this wrapper:
 #   * ``diffusers==0.29.0`` -- CVE-2026-44513 / CVE-2026-45804, ``trust_remote_code``
 #     / TOCTOU remote-code-load bypasses (fixed in 0.38.0). Chatterbox imports
 #     diffusers only for its flow-matching decoder, never sets ``trust_remote_code``,
