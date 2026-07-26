@@ -55,3 +55,10 @@ CVE-2026-34980
 # reachable on the internal Docker network. Added 0.48.2. Remove when Debian
 # trixie ships a patched libxml2.
 CVE-2026-6653
+
+# libtiff6 (HIGH x1, "will_not_fix"): DoS via large SamplesPerPixel tag
+# (CVE-2026-36849). TIFF support rides in via browser image deps; the render
+# sidecar only screenshots pages on the internal Docker network and never
+# processes operator-supplied TIFFs. Debian marks it will_not_fix for trixie.
+# Added 0.48.3. Remove if a patch ships.
+CVE-2026-36849
