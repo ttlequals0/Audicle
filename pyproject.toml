@@ -20,7 +20,7 @@ dependencies = [
     # Phase 5 audio pipeline. CPU-only torch wheel because the main app never
     # runs GPU inference -- that's the tts-wrapper container's job. soundfile
     # handles WAV I/O without torchaudio's TorchCodec dependency.
-    "torch>=2.4",
+    "torch>=2.13.0",
     "numpy>=1.26",
     "soundfile>=0.12",
     "mutagen>=1.47",
