@@ -114,6 +114,12 @@ class GenerateRequest(BaseModel):
     # audio with faster-whisper and return it as `transcript`. Backward-compatible:
     # the backend only sends it when WHISPER_VERIFY_ENABLED is on.
     verify: bool = False
+    # Reference-voice slot to narrate this chunk in. Selecting here rather than
+    # via a preceding /select-voice makes the switch and the inference one
+    # critical section, so a slot audition firing mid-episode cannot land
+    # between them and narrate a chunk in the wrong voice. Omitted = use
+    # whatever voice is already loaded (the pre-0.49.0 behaviour).
+    slot: int | None = Field(default=None, ge=1, le=NUM_SLOTS)
 
 
 class GenerateResponse(BaseModel):
@@ -290,6 +296,29 @@ def create_app(
         # The lock serializes GPU inference; /health never takes it, and
         # synthesize offloads the blocking call, so /health stays responsive.
         async with lock:
+            if body.slot is not None:
+                # Inside the lock, so /select-voice and /reload (which take the
+                # same lock) cannot interleave between the switch and the
+                # inference below. select_voice no-ops when the slot is already
+                # active, so per-chunk cost is a comparison.
+                try:
+                    await engine.select_voice(cfg.slot_path(body.slot))
+                except FileNotFoundError as exc:
+                    raise HTTPException(
+                        status_code=404, detail=f"voice slot {body.slot} is empty"
+                    ) from exc
+                except InferenceBusyError as exc:
+                    raise HTTPException(
+                        status_code=503, detail={"error": "inference busy"}
+                    ) from exc
+                except Exception as exc:
+                    logger.exception(
+                        "select-voice during generate failed",
+                        extra={"event": "tts_select_voice_failed", "slot": body.slot},
+                    )
+                    raise HTTPException(
+                        status_code=500, detail=f"select-voice failed: {exc}"
+                    ) from exc
             inference_started = time.perf_counter()
             try:
                 wav_bytes = await asyncio.wait_for(

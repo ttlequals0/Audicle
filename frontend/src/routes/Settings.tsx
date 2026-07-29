@@ -98,10 +98,18 @@ const GROUPS: Record<string, string[]> = {
     "AUDIO_ANALYSIS_DURATION_OVERHEAD_SECS",
     "AUDIO_ANALYSIS_MAX_DURATION_RATIO",
     "AUDIO_ANALYSIS_MIN_DURATION_RATIO",
+    "AUDIO_ANALYSIS_REGEN_CHARS_FACTOR",
+    "AUDIO_ANALYSIS_REGEN_MIN_CHARS",
+    "AUDIO_ANALYSIS_REGEN_PENALTY_STEP",
   ],
   Cleanup: ["MIN_CLEANUP_CHARS", "MAX_PROMPT_LENGTH_BYTES"],
   Uploads: ["UPLOAD_MAX_MB"],
-  Pipeline: ["JOB_TIMEOUT_SECONDS", "JOB_TIMEOUT_PER_CHUNK_SECONDS"],
+  Pipeline: [
+    "JOB_STALL_SECONDS",
+    "JOB_TIMEOUT_SECONDS",
+    "JOB_TIMEOUT_PER_CHUNK_SECONDS",
+    "JOB_TIMEOUT_CEILING_MULTIPLIER",
+  ],
   Retention: ["RETENTION_DAYS"],
   RSS: ["RSS_CACHE_MAX_AGE_SECONDS"],
 };
@@ -130,14 +138,20 @@ const GROUP_NOTES: Record<string, string> = {
     "chunks under min_words",
   "Audio analysis":
     "signal-level checks on every chunk (drone, noise, dead air, bad pacing); " +
-    "a failing take regenerates with a fresh seed. max_regen is the shared " +
-    "regen budget for these checks AND the whisper checks above. the rest are " +
-    "detector thresholds -- leave them alone unless chunks are being flagged " +
-    "or missed consistently",
+    "a failing take regenerates with a fresh seed, a shorter text window, and a " +
+    "higher repetition penalty. max_regen is the shared regen budget for these " +
+    "checks AND the whisper checks above. the regen_* keys set how hard each " +
+    "retry escalates -- lower chars_factor or raise penalty_step when chunks " +
+    "keep failing after every attempt. the rest are detector thresholds -- " +
+    "leave them alone unless chunks are being flagged or missed consistently",
   Uploads: "max direct-upload size in MB -- applies immediately, no restart",
   Pipeline:
-    "per-job time = max(JOB_TIMEOUT_SECONDS, chunks x per-chunk). raise per-chunk " +
-    "on slower hardware. applies to the next job",
+    "a job is stopped when it goes stall_seconds without finishing a stage or a " +
+    "chunk -- not for simply taking a long time. raise stall_seconds if slow " +
+    "hardware makes single chunks take longer than the window. the other three " +
+    "set the ceiling a job can never pass even while progressing: " +
+    "max(timeout_seconds, chunks x per_chunk) x ceiling_multiplier. applies to " +
+    "the next job",
 };
 
 // Secret fields: rendered as password inputs. The backend masks them on read

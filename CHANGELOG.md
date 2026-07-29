@@ -6,6 +6,74 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.49.0] - 2026-07-28
+
+### Fixed
+
+- A job is no longer killed for taking a long time, only for stopping. The
+  per-job timeout was a wall-clock budget of
+  `max(JOB_TIMEOUT_SECONDS, chunks x JOB_TIMEOUT_PER_CHUNK_SECONDS)`, which
+  killed healthy work: a 195-chunk article died at chunk 152 after
+  progressing steadily the whole run, at 30.1 s per chunk against the 25.6 s
+  left once the earlier stages took 852 s out of the same pot. Raising the
+  budget only moves the number the next long article trips over. The job now
+  runs under a watchdog: every stage change and every finished chunk resets
+  a `JOB_STALL_SECONDS` window, and only silence for that long ends the job.
+  An absolute ceiling of `max(JOB_TIMEOUT_SECONDS, chunks x per-chunk) x
+  JOB_TIMEOUT_CEILING_MULTIPLIER` remains, so a job that inches forward
+  forever still cannot hold the single worker. The failure message says which
+  of the two fired.
+- A regenerated chunk now differs from the take that failed by more than its
+  seed. The quality loop re-rolled only the seed, leaving every retry in the
+  same failure basin: on the episode that prompted this, three
+  identical-parameter attempts took 43 bad chunks down to only 24, and 37 of
+  56 failing chunks never recovered at all. Each retry now also shortens the
+  text fed to one inference call, which is what triggers Chatterbox's
+  repetition loops, and raises the repetition penalty. The escalated values
+  are clamped into the wrapper's request bounds so no operator setting can
+  turn a degraded chunk into a failed job, and both are logged on every regen
+  so the curve can be tuned against real recoveries.
+- A voice audition started from the UI can no longer narrate part of a
+  running episode in the wrong voice. The backend re-asserted the job's slot
+  before each chunk, but selection and generation were two separate HTTP
+  calls and an audition could land between them. `/generate` now carries the
+  slot, and the wrapper switches voices inside the same GPU lock that guards
+  inference, closing the window. This also drops one HTTP round-trip per
+  chunk. Observed in production at 01:44Z on 2026-07-29, when the wrapper
+  re-encoded slot 1 and then slot 4 twenty seconds later, mid-episode.
+  Deploy note: the app and wrapper images must ship together for this
+  release. `/generate` rejects unknown fields, so a 0.49.0 app talking to a
+  pre-0.49.0 wrapper gets a 422 on every chunk. The stack already pins the
+  same `BUILD_VERSION` for both, so a normal redeploy is safe.
+
+### Added
+
+- The narration text is written to `media/{episode_id}.narration.txt` when
+  the normalize stage finishes. `episodes.cleaned_text` is only stored at
+  finalize, so a job that died in TTS, the longest and most failure-prone
+  stage, left nothing behind to diagnose. The orphan sweep reclaims the file
+  once no episode points at it, so a failed job's copy lives about a day and
+  nothing accumulates. Writing it is best-effort: a full disk never fails an
+  otherwise good job.
+- Five settings, editable live in the Settings UI and through
+  `PUT /api/v1/settings`: `JOB_STALL_SECONDS` (default 1800),
+  `JOB_TIMEOUT_CEILING_MULTIPLIER` (3.0),
+  `AUDIO_ANALYSIS_REGEN_CHARS_FACTOR` (0.6),
+  `AUDIO_ANALYSIS_REGEN_MIN_CHARS` (150), and
+  `AUDIO_ANALYSIS_REGEN_PENALTY_STEP` (0.15). The stall default is sized
+  against the worst legitimate silence: one `/generate` can burn
+  `TTS_RETRY_COUNT x TTS_HTTP_TIMEOUT_SECONDS` = 840 s against a hung
+  wrapper.
+
+### Changed
+
+- `JOB_TIMEOUT_SECONDS` and `JOB_TIMEOUT_PER_CHUNK_SECONDS` keep their names
+  and defaults but now size the ceiling rather than the kill deadline.
+  Operators who raised them to work around the old behaviour can leave them
+  raised; the watchdog makes them much less load-bearing.
+- The `pipeline_timeout` log event carries a `kill_reason` of `stall` or
+  `ceiling`, and `job_timeout_rescaled` is replaced by `job_watchdog_armed`.
+
 ## [0.48.4] - 2026-07-25
 
 ### Fixed

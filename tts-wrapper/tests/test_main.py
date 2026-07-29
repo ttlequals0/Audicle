@@ -47,6 +47,7 @@ class FakeEngine:
         oom_synthesize: bool = False,
         busy_synthesize: bool = False,
         synthesize_returns: bytes | None = None,
+        select_raises: Exception | None = None,
     ) -> None:
         self.model_loaded = False
         self.reference_loaded = False
@@ -56,6 +57,11 @@ class FakeEngine:
         self.synthesize_returns = synthesize_returns or _silent_wav()
         self.synthesize_calls: list[str] = []
         self.reload_calls = 0
+        self.select_raises = select_raises
+        self.selected_refs: list[Path] = []
+        # Ordered trace of select/synthesize so a test can prove the voice
+        # switch happens BEFORE the inference it is meant to condition.
+        self.events: list[str] = []
 
     def load(self) -> None:
         if self.fail_load:
@@ -63,8 +69,16 @@ class FakeEngine:
         self.model_loaded = True
         self.reference_loaded = True
 
+    async def select_voice(self, ref_path: Path) -> None:
+        if self.select_raises is not None:
+            raise self.select_raises
+        self.selected_refs.append(ref_path)
+        self.events.append("select")
+        self.reference_loaded = True
+
     async def synthesize(self, text: str, params: GenerationParams) -> bytes:
         self.synthesize_calls.append(text)
+        self.events.append("synthesize")
         self.last_params = params
         if self.oom_synthesize:
             raise GPUOutOfMemoryError("simulated OOM")
@@ -493,6 +507,68 @@ def test_sample_rate_mismatch_between_engine_and_wav_is_observable(
     # actual header rate, not the engine's claimed rate. Both expected values
     # are documented so a future refactor doesn't silently swap them.
     assert 0.95 <= body["duration_secs"] <= 1.05
+
+
+def test_generate_selects_the_requested_slot_before_synthesizing(tmp_path: Path) -> None:
+    """The whole point of carrying the slot on /generate: the switch and the
+    inference share one critical section, in that order, so a concurrent
+    audition can't land between them."""
+
+    engine = FakeEngine()
+    with _client(engine, tmp_path) as client:
+        response = client.post(
+            "/generate",
+            json={"text": "hi", "episode_id": "ep", "chunk_index": 0, "slot": 2},
+        )
+    assert response.status_code == 200
+    assert [p.name for p in engine.selected_refs] == ["slot2.wav"]
+    assert engine.events == ["select", "synthesize"]
+
+
+def test_generate_without_slot_leaves_the_loaded_voice_alone(tmp_path: Path) -> None:
+    engine = FakeEngine()
+    with _client(engine, tmp_path) as client:
+        response = client.post(
+            "/generate",
+            json={"text": "hi", "episode_id": "ep", "chunk_index": 0},
+        )
+    assert response.status_code == 200
+    assert engine.selected_refs == []
+    assert engine.events == ["synthesize"]
+
+
+def test_generate_404s_when_the_requested_slot_is_empty(tmp_path: Path) -> None:
+    engine = FakeEngine(select_raises=FileNotFoundError("no clip"))
+    with _client(engine, tmp_path) as client:
+        response = client.post(
+            "/generate",
+            json={"text": "hi", "episode_id": "ep", "chunk_index": 0, "slot": 3},
+        )
+    assert response.status_code == 404
+    assert "slot 3" in response.json()["detail"]
+    assert engine.synthesize_calls == []
+
+
+def test_generate_503s_when_the_gpu_is_busy_during_slot_select(tmp_path: Path) -> None:
+    engine = FakeEngine(select_raises=InferenceBusyError("busy"))
+    with _client(engine, tmp_path) as client:
+        response = client.post(
+            "/generate",
+            json={"text": "hi", "episode_id": "ep", "chunk_index": 0, "slot": 1},
+        )
+    assert response.status_code == 503
+    assert engine.synthesize_calls == []
+
+
+def test_generate_rejects_an_out_of_range_slot(tmp_path: Path) -> None:
+    engine = FakeEngine()
+    with _client(engine, tmp_path) as client:
+        response = client.post(
+            "/generate",
+            json={"text": "hi", "episode_id": "ep", "chunk_index": 0, "slot": 0},
+        )
+    assert response.status_code == 422
+    assert engine.synthesize_calls == []
 
 
 def test_atomic_write_does_not_leave_tmp_files_on_success(tmp_path: Path) -> None:

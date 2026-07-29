@@ -62,3 +62,40 @@ def test_orphan_sweep_is_no_op_when_media_dir_missing(env: Path) -> None:
     database.run_migrations(env)
     removed = retention.sweep_orphan_media(get_settings())
     assert removed == 0
+
+
+def test_orphan_sweep_keeps_a_live_episodes_narration_and_reaps_a_dead_jobs(env: Path) -> None:
+    """The narration dump is per-episode-id, so it must survive as long as the
+    episode does -- and be reclaimed once nothing points at it, which is how a
+    failed job's copy stops accumulating."""
+
+    database.run_migrations(env)
+    media = media_dir(get_settings())
+    media.mkdir(parents=True, exist_ok=True)
+
+    (media / "live.mp3").write_bytes(b"FAKE")
+    (media / "live.narration.txt").write_text("narration", encoding="utf-8")
+    conn = database.connect(database.db_path(env))
+    try:
+        episodes.upsert(
+            conn,
+            id="live",
+            job_id=None,
+            original_url="https://example.test/live",
+            title="Live",
+            author="A",
+            audio_path=str(media / "live.mp3"),
+            artwork_path=None,
+            transcript_vtt="WEBVTT\n",
+            duration_secs=10,
+        )
+    finally:
+        conn.close()
+
+    # A job that died in TTS: narration on disk, no episodes row.
+    (media / "dead.narration.txt").write_text("narration", encoding="utf-8")
+
+    removed = retention.sweep_orphan_media(get_settings())
+    assert removed == 1
+    assert (media / "live.narration.txt").exists()
+    assert not (media / "dead.narration.txt").exists()

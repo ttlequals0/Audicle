@@ -10,11 +10,14 @@ Conventions enforced here:
   job-timeout path can report exactly which stage was running.
 - Stage start/end/failure emit structured log records with ``job_id`` +
   ``episode_id`` stamped via contextvars.
-- The whole job runs under an ``asyncio.timeout`` whose deadline starts at
-  ``JOB_TIMEOUT_SECONDS`` and is rescheduled once the chunk count is known to
-  ``max(JOB_TIMEOUT_SECONDS, chunks * JOB_TIMEOUT_PER_CHUNK_SECONDS)`` -- a long
-  document gets proportionally more time. The timeout handler reads the last
-  persisted stage and writes a clear error.
+- The whole job runs under a :class:`_Watchdog` that kills it when it STALLS,
+  not when it has simply run a long time. Every heartbeat (a stage change, a
+  finished chunk, a finished TTS attempt) pushes the deadline out by
+  ``JOB_STALL_SECONDS``; an absolute ceiling of
+  ``max(JOB_TIMEOUT_SECONDS, chunks * JOB_TIMEOUT_PER_CHUNK_SECONDS) *
+  JOB_TIMEOUT_CEILING_MULTIPLIER`` is the backstop so a job that inches forward
+  forever still cannot hold the single worker. The timeout handler reads the
+  last persisted stage, works out which deadline fired, and writes a clear error.
 """
 
 from __future__ import annotations
@@ -25,10 +28,11 @@ import re
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
-from app.config import Settings
+from app.config import RUNTIME_SETTING_BOUNDS, Settings
 from app.core import database
 from app.core.paths import file_size_or_zero, media_dir
 from app.services import (
@@ -54,6 +58,7 @@ from app.services import (
     webhooks,
 )
 from app.services import prompt as prompt_service
+from app.services.atomic_write import write_bytes_atomic
 from app.utils.logging import episode_id_ctx, job_id_ctx, stage_ctx
 
 logger = logging.getLogger("app.services.pipeline")
@@ -87,13 +92,95 @@ def _stage_context(stage_name: str):
 
 
 def effective_job_timeout(settings: Settings, chunk_count: int) -> float:
-    """Per-job timeout in seconds: the base ceiling, or the chunk-scaled budget
-    when the document is large enough to need it."""
+    """How long the job is *expected* to take: the base budget, or the
+    chunk-scaled one when the document is large enough to need it. The watchdog
+    multiplies this into an absolute ceiling; it is not a kill deadline."""
 
     return max(
         settings.JOB_TIMEOUT_SECONDS,
         chunk_count * settings.JOB_TIMEOUT_PER_CHUNK_SECONDS,
     )
+
+
+def job_ceiling(settings: Settings, chunk_count: int) -> float:
+    """Absolute seconds a job may run even while it keeps making progress."""
+
+    return effective_job_timeout(settings, chunk_count) * settings.JOB_TIMEOUT_CEILING_MULTIPLIER
+
+
+class _Watchdog:
+    """Liveness deadline for one running job.
+
+    Wall-clock budgets kill healthy work: a long document that is synthesizing
+    steadily is indistinguishable from a hung one under a fixed timeout. This
+    kills on *silence* instead. Every ``beat()`` -- a stage change, a finished
+    chunk, a finished TTS attempt -- pushes the deadline out by ``stall_seconds``,
+    bounded by ``ceiling_at`` so a job that inches forward forever still cannot
+    hold the single worker indefinitely.
+    """
+
+    def __init__(
+        self,
+        cm: asyncio.Timeout,
+        loop: asyncio.AbstractEventLoop,
+        stall_seconds: float,
+        started_at: float,
+        ceiling_seconds: float,
+    ) -> None:
+        self._cm = cm
+        self._loop = loop
+        self._started_at = started_at
+        self._armed = True
+        self.stall_seconds = stall_seconds
+        # Kept as seconds as well as an absolute deadline so the failure message
+        # can quote the policy that was in force without recomputing it.
+        self.ceiling_seconds = ceiling_seconds
+        self.chunk_count = 0
+        self.ceiling_at = started_at + ceiling_seconds
+        self.last_beat = loop.time()
+        self.beat()
+
+    def beat(self) -> None:
+        """Record progress and push the deadline out. A no-op once disarmed, so
+        a late beat from a teardown path can't ``reschedule`` an exited CM."""
+
+        if not self._armed:
+            return
+        self.last_beat = self._loop.time()
+        self._cm.reschedule(min(self.last_beat + self.stall_seconds, self.ceiling_at))
+
+    def set_ceiling(self, ceiling_seconds: float, chunk_count: int) -> None:
+        """Move the backstop once the chunk count makes the estimate real."""
+
+        self.ceiling_seconds = ceiling_seconds
+        self.chunk_count = chunk_count
+        self.ceiling_at = self._started_at + ceiling_seconds
+        self.beat()
+
+    def disarm(self) -> None:
+        self._armed = False
+
+    def stalled(self) -> bool:
+        """Whether the stall window fired rather than the ceiling. Derived from
+        which deadline was binding at the last beat rather than from a clock
+        read, so the answer can't drift with how slow the failure path is."""
+
+        return self.last_beat + self.stall_seconds <= self.ceiling_at
+
+
+# Set for the duration of one ``process_job``. A contextvar rather than a
+# parameter because the beat sites (``_set_stage``, ``_set_progress``, the TTS
+# regen loop) sit several frames deep behind call signatures that have no
+# business carrying it.
+_watchdog_ctx: ContextVar[_Watchdog | None] = ContextVar("pipeline_watchdog", default=None)
+
+
+def _beat() -> None:
+    """Tell the running job's watchdog that progress happened."""
+
+    watchdog = _watchdog_ctx.get()
+    if watchdog is not None:
+        watchdog.beat()
 
 
 class JobCancelledError(Exception):
@@ -126,45 +213,47 @@ def _raise_if_cancelled(job_id: str, settings: Settings) -> None:
 async def process_job(job: jobs.Job, settings: Settings) -> None:
     """Run the configured pipeline stages against ``job``.
 
-    On any failure write ``stage`` + ``error`` and set status=failed. On
-    timeout report the last persisted stage in the error message.
+    On any failure write ``stage`` + ``error`` and set status=failed. On a
+    watchdog kill report the last persisted stage plus which deadline fired.
 
-    The job runs under an ``asyncio.timeout`` that starts at
-    ``JOB_TIMEOUT_SECONDS`` and is rescheduled once the chunk count is known so a
-    long document gets ``max(base, chunks * JOB_TIMEOUT_PER_CHUNK_SECONDS)``.
+    The job runs under a :class:`_Watchdog`: it dies after ``JOB_STALL_SECONDS``
+    with no heartbeat, or on hitting the absolute ceiling, whichever comes first.
     """
 
-    base = settings.JOB_TIMEOUT_SECONDS
-    # Mutable cell the reschedule hook updates so the timeout error message can
-    # report the effective deadline + chunk count, not just the base.
-    timeout_state = {"effective": base, "chunks": 0}
+    stall = settings.JOB_STALL_SECONDS
+    # None only if the stall window elapses inside ``asyncio.timeout.__aenter__``,
+    # before the body can build one -- reachable with a very small stall setting.
+    watchdog: _Watchdog | None = None
 
     with _job_context(job):
         logger.info("Pipeline starting", extra={"event": "pipeline_start"})
         terminal_event = "episode.processed"
         try:
             loop = asyncio.get_running_loop()
-            t0 = loop.time()
 
             def _rescale(chunk_count: int) -> None:
-                eff = effective_job_timeout(settings, chunk_count)
-                timeout_state["effective"] = eff
-                timeout_state["chunks"] = chunk_count
-                if eff > base:
-                    # Deadline is absolute (loop clock) from job start.
-                    cm.reschedule(t0 + eff)
-                    logger.info(
-                        "Job timeout rescaled for chunk count",
-                        extra={
-                            "event": "job_timeout_rescaled",
-                            "chunk_count": chunk_count,
-                            "timeout_seconds": eff,
-                            "base_timeout": base,
-                        },
-                    )
+                seconds = job_ceiling(settings, chunk_count)
+                watchdog.set_ceiling(seconds, chunk_count)
+                logger.info(
+                    "Job watchdog armed for chunk count",
+                    extra={
+                        "event": "job_watchdog_armed",
+                        "chunk_count": chunk_count,
+                        "stall_seconds": stall,
+                        "ceiling_seconds": seconds,
+                    },
+                )
 
-            async with asyncio.timeout(base) as cm:
-                await _run_stages(job, settings, on_chunk_count=_rescale)
+            async with asyncio.timeout(stall) as cm:
+                watchdog = _Watchdog(cm, loop, stall, loop.time(), job_ceiling(settings, 0))
+                token = _watchdog_ctx.set(watchdog)
+                try:
+                    await _run_stages(job, settings, on_chunk_count=_rescale)
+                finally:
+                    # Disarm before the CM exits so nothing can reschedule a dead
+                    # deadline on the way out.
+                    watchdog.disarm()
+                    _watchdog_ctx.reset(token)
         except JobCancelledError:
             # Operator cancelled mid-run; jobs.mark_cancelled already set the status.
             # Don't finalize a failure and don't fire a terminal webhook -- just stop.
@@ -172,21 +261,32 @@ async def process_job(job: jobs.Job, settings: Settings) -> None:
             return
         except TimeoutError:
             terminal_event = "episode.failed"
-            eff = timeout_state["effective"]
-            chunks = timeout_state["chunks"]
+            ceiling = watchdog.ceiling_seconds if watchdog else job_ceiling(settings, 0)
+            chunks = watchdog.chunk_count if watchdog else 0
+            # A watchdog that never got built means the timeout fired before the
+            # first beat, which is the stall window by definition.
+            stalled = watchdog is None or watchdog.stalled()
+            if stalled:
+                error_template = (
+                    f"job made no progress for {stall:.0f}s "
+                    f"(JOB_STALL_SECONDS={stall}) during stage {{stage}}"
+                )
+            else:
+                error_template = (
+                    f"job exceeded its ceiling of {ceiling:.0f}s "
+                    f"({chunks} chunks) while still progressing, during stage {{stage}}"
+                )
             _finalize_failure(
                 job.id,
                 settings,
-                error_template=(
-                    f"job exceeded its timeout of {eff:.0f}s "
-                    f"(JOB_TIMEOUT_SECONDS={base}, {chunks} chunks) during stage {{stage}}"
-                ),
-                log_message="Pipeline timed out",
+                error_template=error_template,
+                log_message="Pipeline stalled" if stalled else "Pipeline hit its ceiling",
                 log_event="pipeline_timeout",
                 log_level=logging.WARNING,
                 extra_log_fields={
-                    "timeout_seconds": eff,
-                    "base_timeout": base,
+                    "kill_reason": "stall" if stalled else "ceiling",
+                    "stall_seconds": stall,
+                    "ceiling_seconds": ceiling,
                     "chunk_count": chunks,
                 },
             )
@@ -920,9 +1020,51 @@ async def _stage_chunk(corrected: str, settings: Settings) -> list[str]:
 # configured CHATTERBOX_SEED baseline applies (tts.generation_params).
 _REGEN_SEED_BASE = 0x9E3779B1
 
+# Escalated values are clamped into the wrapper's own request bounds so no
+# operator setting can produce a request it 422s -- a rejected regen would
+# surface as a hard job failure instead of a degraded chunk. Read from
+# RUNTIME_SETTING_BOUNDS rather than re-stated here: a drift test already pins
+# that table to the wrapper's GENERATION_BOUNDS, so this clamp inherits the
+# guarantee instead of becoming a third copy to keep in sync. The clamp is load
+# bearing because CHATTERBOX_MAX_CHARS deliberately carries no pydantic Field
+# constraint (a stale env var must not fail startup).
+_MAX_CHARS_BOUNDS = RUNTIME_SETTING_BOUNDS["CHATTERBOX_MAX_CHARS"]
+_PENALTY_BOUNDS = RUNTIME_SETTING_BOUNDS["CHATTERBOX_REPETITION_PENALTY"]
+
 
 def _regen_seed(chunk_index: int, attempt: int) -> int:
     return (_REGEN_SEED_BASE + chunk_index * 131 + attempt) & 0xFFFFFFFF
+
+
+def _regen_params(settings: Settings, attempt: int) -> tuple[int | None, float | None]:
+    """``(max_chars, repetition_penalty)`` overrides for a regeneration attempt.
+
+    A re-gen that only re-rolls the seed leaves the model in the same failure
+    basin: on the episode that prompted this, three identical-parameter attempts
+    took 43 bad chunks down to only 24. Each retry instead shortens the text fed
+    to one inference call (the repetition-loop trigger) and stiffens the
+    repetition penalty. Attempt 0 returns ``(None, None)`` so the baseline take
+    is exactly what the operator configured.
+    """
+
+    if attempt <= 0:
+        return None, None
+    factor = settings.AUDIO_ANALYSIS_REGEN_CHARS_FACTOR
+    scaled = int(settings.CHATTERBOX_MAX_CHARS * factor**attempt)
+    # Operator floor first, then the wrapper's hard bounds.
+    max_chars = max(settings.AUDIO_ANALYSIS_REGEN_MIN_CHARS, scaled)
+    step = settings.AUDIO_ANALYSIS_REGEN_PENALTY_STEP
+    penalty = settings.CHATTERBOX_REPETITION_PENALTY + step * attempt
+    return (
+        int(_clamp(max_chars, _MAX_CHARS_BOUNDS)),
+        _clamp(penalty, _PENALTY_BOUNDS),
+    )
+
+
+def _clamp(value: float, bounds: dict[str, float]) -> float:
+    """Hold ``value`` inside a RUNTIME_SETTING_BOUNDS entry's ge/le range."""
+
+    return min(bounds["le"], max(bounds["ge"], value))
 
 
 async def _generate_chunk_quality_checked(
@@ -930,6 +1072,7 @@ async def _generate_chunk_quality_checked(
     text: str,
     index: int,
     settings: Settings,
+    slot: int | None = None,
 ) -> tts.GenerateResult:
     """Synthesize one chunk, then (if enabled) check the audio and regenerate it
     when it came back degraded.
@@ -943,11 +1086,13 @@ async def _generate_chunk_quality_checked(
     otherwise-fine chunk, which a global ratio dilutes). Both share the
     AUDIO_ANALYSIS_MAX_REGEN budget.
 
-    Chatterbox is non-deterministic, so a re-gen usually recovers. The wrapper
-    overwrites the same ``{episode_id}_chunk_{index}.wav`` each call, so on
-    persistent failure we keep the *last* attempt (earlier ones are gone from
-    disk) and log a WARN -- a degraded chunk never fails the whole episode.
-    Analysis errors are swallowed: they must never become a new failure mode."""
+    Chatterbox is non-deterministic, so a re-gen usually recovers -- but only if
+    it is actually different. Each attempt escalates the generation parameters
+    as well as the seed (``_regen_params``). The wrapper overwrites the same
+    ``{episode_id}_chunk_{index}.wav`` each call, so on persistent failure we
+    keep the *last* attempt (earlier ones are gone from disk) and log a WARN --
+    a degraded chunk never fails the whole episode. Analysis errors are
+    swallowed: they must never become a new failure mode."""
 
     word_count = len(text.split())
     audio_enabled = settings.AUDIO_ANALYSIS_ENABLED
@@ -967,6 +1112,7 @@ async def _generate_chunk_quality_checked(
     result = None
     last_reasons: list[str] = []
     for attempt in range(max_extra + 1):  # 1 baseline + up to max_extra regenerations
+        max_chars, penalty = _regen_params(settings, attempt)
         result = await tts.generate_chunk_with_retry(
             text=text,
             episode_id=job.episode_id,
@@ -974,7 +1120,15 @@ async def _generate_chunk_quality_checked(
             settings=settings,
             seed=None if attempt == 0 else _regen_seed(index, attempt),
             verify=verify_enabled,
+            slot=slot,
+            max_chars=max_chars,
+            repetition_penalty=penalty,
         )
+        # Progress lands per completed chunk, but a single /generate can burn
+        # TTS_RETRY_COUNT x TTS_HTTP_TIMEOUT_SECONDS against a hung wrapper.
+        # Beat per attempt so the stall window is sized against one call, not
+        # against a whole regen loop's worth of them.
+        _beat()
         if not (audio_enabled or verify_enabled):
             return result
 
@@ -1033,6 +1187,10 @@ async def _generate_chunk_quality_checked(
                         "event": "chunk_regen_recovered",
                         "chunk_index": index,
                         "attempts": attempt + 1,
+                        # The escalated values that recovered it, so the curve
+                        # can be tuned against real recoveries.
+                        "max_chars": max_chars,
+                        "repetition_penalty": penalty,
                     },
                 )
             return result
@@ -1043,6 +1201,10 @@ async def _generate_chunk_quality_checked(
             "reasons": reasons,
             "asr_divergence": asr_div,
             "asr_run": asr_run,
+            # None on the baseline take; the escalated values on a regen, so a
+            # log sweep can tell whether escalation is buying recoveries.
+            "max_chars": max_chars,
+            "repetition_penalty": penalty,
         }
         if verdict is not None:
             log_extra.update(
@@ -1073,15 +1235,15 @@ async def _stage_tts(
     transient failures. Returns the list of GenerateResult so the audio
     stage can read the per-chunk WAVs."""
 
-    # Select this job's reference voice before the first chunk so it conditions on the
-    # right voice. A job with no recorded slot (a pre-slots row or a reprocess/requeue
-    # carrying None), or one whose recorded slot was deleted after submit, falls back to
-    # the default (lowest filled) slot so it never inherits a slot left selected by an
-    # earlier job or an audition. Only when no slot exists at all is selection skipped --
-    # the wrapper then 503s and the job fails loudly rather than using a stale voice.
-    # ``target_slot`` is the slot that selection actually settled on; it is re-asserted
-    # before every later chunk (see the loop) so a concurrent audition's /reload can't
-    # leave the rest of the episode in a different voice.
+    # Resolve this job's reference voice before the first chunk. A job with no recorded
+    # slot (a pre-slots row or a reprocess/requeue carrying None), or one whose recorded
+    # slot was deleted after submit, falls back to the default (lowest filled) slot so it
+    # never inherits a slot left selected by an earlier job or an audition. Only when no
+    # slot exists at all is selection skipped -- the wrapper then 503s and the job fails
+    # loudly rather than using a stale voice.
+    # ``target_slot`` is the slot selection settled on; every /generate below carries it,
+    # so the wrapper re-selects inside the same GPU lock that guards inference and a
+    # concurrent audition cannot slip between choosing the voice and using it.
     target_slot: int | None = None
     if job.voice_id:
         try:
@@ -1109,19 +1271,7 @@ async def _stage_tts(
     total = len(chunks)
     for index, text in enumerate(chunks):
         _raise_if_cancelled(job.id, settings)
-        if index > 0 and target_slot is not None:
-            # Re-assert the voice before each later chunk so a concurrent slot audition's
-            # /reload can't leave the rest of the episode in a different voice (a single
-            # chunk can still race between this select and its generate). The wrapper
-            # skips the re-encode when the slot is already active, so this is cheap.
-            try:
-                await tts.select_voice_with_retry(settings, target_slot)
-            except (ValueError, tts.TTSError):
-                logger.warning(
-                    "Voice re-select failed; continuing with the wrapper's current voice",
-                    extra={"event": "tts_reselect_failed", "slot": target_slot},
-                )
-        result = await _generate_chunk_quality_checked(job, text, index, settings)
+        result = await _generate_chunk_quality_checked(job, text, index, settings, target_slot)
         results.append(result)
         _set_progress(job.id, index + 1, total, settings)
         logger.info(
@@ -1525,6 +1675,7 @@ async def _stage_normalize(job: jobs.Job, cleaned: str, settings: Settings) -> s
 
     pronounced = await _pronounce_with_llm(job.id, cleaned, settings)
     result = await _apply_corrections(pronounced, settings)
+    _persist_narration(job.episode_id, result, settings)
     logger.info(
         "Normalize stage complete",
         extra={
@@ -1534,6 +1685,28 @@ async def _stage_normalize(job: jobs.Job, cleaned: str, settings: Settings) -> s
         },
     )
     return result
+
+
+def _persist_narration(episode_id: str, text: str, settings: Settings) -> None:
+    """Drop the narration text next to the episode's media before TTS runs.
+
+    ``episodes.cleaned_text`` is only written at finalize, so a job that dies in
+    TTS -- the longest and most failure-prone stage -- leaves nothing behind to
+    diagnose. This file is that evidence. ``sweep_orphan_media`` reclaims it once
+    the episode is gone, so a dead job's copy lives about a day.
+
+    Best-effort: a full disk or a read-only volume must not fail an otherwise
+    good job.
+    """
+
+    path = media_dir(settings) / f"{episode_id}.narration.txt"
+    try:
+        write_bytes_atomic(path, text.encode("utf-8"))
+    except OSError:
+        logger.warning(
+            "Could not persist narration text; continuing",
+            extra={"event": "narration_persist_failed", "path": str(path)},
+        )
 
 
 async def _stage_summary(text: str, settings: Settings) -> str | None:
@@ -1615,6 +1788,8 @@ def _set_stage(job_id: str, stage: str, settings: Settings) -> None:
         jobs.set_stage(conn, job_id, stage)
     finally:
         conn.close()
+    # The DB row and the watchdog track the same signal; keep them in step.
+    _beat()
 
 
 def _set_progress(job_id: str, current: int, total: int, settings: Settings) -> None:
@@ -1623,6 +1798,7 @@ def _set_progress(job_id: str, current: int, total: int, settings: Settings) -> 
         jobs.set_progress(conn, job_id, current, total)
     finally:
         conn.close()
+    _beat()
 
 
 def _mark_done(job_id: str, *, final_stage: str, settings: Settings) -> None:

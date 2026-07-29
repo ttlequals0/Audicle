@@ -59,8 +59,9 @@ class ChatterboxEngine:
         self._torch = None  # cached torch module reference
         # The reference clip whose conditionals are currently encoded. Lets
         # ``select_voice`` skip a redundant re-encode when the requested voice is
-        # already active -- the backend re-selects the job voice before every chunk to
-        # survive a concurrent audition, and without this that would re-encode each time.
+        # already active -- every /generate carries the job's slot so the switch and
+        # the inference share one critical section, and without this that would
+        # re-encode on every chunk.
         self._current_ref: Path | None = None
         # Single-flight guard over ALL GPU work (inference and conditional
         # recompute); an overlapping call is rejected rather than run concurrently.
@@ -179,8 +180,8 @@ class ChatterboxEngine:
         rollback semantics as /reload -- a failed encode keeps the prior voice.
 
         Idempotent: if the requested clip is already the active voice, skip the
-        re-encode. The backend re-selects the job voice before every chunk to survive a
-        concurrent audition, so the no-op path keeps that cheap."""
+        re-encode. Every /generate carries the job's slot so selection and inference
+        share one critical section, so the no-op path keeps that cheap."""
 
         if self.reference_loaded and self._current_ref == ref_path:
             return

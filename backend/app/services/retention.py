@@ -138,12 +138,14 @@ def sweep_orphan_media(settings: Settings) -> int:
     for child in out_root.iterdir():
         if not child.is_file():
             continue
-        # ``{id}.{ext}``, ``{id}_combined.wav`` and ``{id}.source.{ext}`` all
-        # belong to an episode id; strip the optional ``_combined`` tail and the
-        # ``.source`` tail (Path.stem only removes the final extension, so an
-        # uploaded ``{id}.source.pdf`` leaves a ``{id}.source`` stem that would
-        # otherwise never match a live id and get a live episode's original wiped).
-        stem = child.stem.removesuffix("_combined").removesuffix(".source")
+        # ``{id}.{ext}``, ``{id}_combined.wav``, ``{id}.source.{ext}`` and
+        # ``{id}.narration.txt`` all belong to an episode id; strip those tails
+        # (Path.stem only removes the final extension, so an uploaded
+        # ``{id}.source.pdf`` leaves a ``{id}.source`` stem that would otherwise
+        # never match a live id and get a live episode's original wiped).
+        stem = (
+            child.stem.removesuffix("_combined").removesuffix(".source").removesuffix(".narration")
+        )
         if stem in live_ids:
             continue
         # Skip the operator's reference voice clip, the bundled default podcast

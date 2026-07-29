@@ -44,7 +44,7 @@ def _stub_tts_and_audio(monkeypatch: pytest.MonkeyPatch) -> None:
 
     from app.services import audio, tts
 
-    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
         _ = text
         _ = settings
         return tts.GenerateResult(
@@ -131,9 +131,12 @@ async def test_pipeline_marks_failed_with_stage_and_error_on_extraction_failure(
     assert "Firecrawl said no" in after.error
 
 
-async def test_pipeline_marks_failed_with_timeout_error_on_job_timeout(
+async def test_pipeline_marks_failed_when_a_stage_stops_making_progress(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """A stage that goes silent for longer than the stall window is killed, and
+    the error names the stall rather than an elapsed-time budget."""
+
     database.run_migrations(env)
 
     async def _slow_extract(url, settings, registry=None):
@@ -141,7 +144,7 @@ async def test_pipeline_marks_failed_with_timeout_error_on_job_timeout(
         return extraction.ExtractionResult(markdown="x" * 1000, metadata={})
 
     monkeypatch.setattr(extraction, "extract", _slow_extract)
-    monkeypatch.setenv("JOB_TIMEOUT_SECONDS", "0.05")
+    monkeypatch.setenv("JOB_STALL_SECONDS", "0.05")
     get_settings.cache_clear()
 
     job = _seed_job(env)
@@ -150,7 +153,8 @@ async def test_pipeline_marks_failed_with_timeout_error_on_job_timeout(
     after = _job_after(env, job.id)
     assert after.status == "failed"
     assert after.stage == "extract"
-    assert "JOB_TIMEOUT_SECONDS" in (after.error or "")
+    assert "made no progress" in (after.error or "")
+    assert "JOB_STALL_SECONDS" in (after.error or "")
 
 
 def test_effective_job_timeout_scales_with_chunk_count() -> None:
@@ -160,11 +164,22 @@ def test_effective_job_timeout_scales_with_chunk_count() -> None:
     assert pipeline.effective_job_timeout(s, 200) == 6000.0  # chunk-scaled wins
 
 
-async def test_pipeline_reschedules_timeout_for_long_document(
+def test_job_ceiling_multiplies_the_chunk_scaled_estimate() -> None:
+    s = SimpleNamespace(
+        JOB_TIMEOUT_SECONDS=3600.0,
+        JOB_TIMEOUT_PER_CHUNK_SECONDS=30.0,
+        JOB_TIMEOUT_CEILING_MULTIPLIER=3.0,
+    )
+    assert pipeline.job_ceiling(s, 0) == 10800.0
+    assert pipeline.job_ceiling(s, 200) == 18000.0
+
+
+async def test_pipeline_survives_past_the_estimate_while_it_keeps_progressing(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A document with enough chunks gets a rescaled (longer) timeout, so a job
-    that would blow the base ceiling during TTS still completes."""
+    """The regression this change exists for: a job whose TTS stage runs well
+    past max(base, chunks x per-chunk) still finishes, because every completed
+    chunk resets the stall window. The old wall-clock budget killed it mid-TTS."""
 
     database.run_migrations(env)
     _stub_full_chain(monkeypatch)
@@ -173,7 +188,7 @@ async def test_pipeline_reschedules_timeout_for_long_document(
 
     monkeypatch.setattr(chunker, "chunk", lambda *a, **k: ["a sentence."] * 10)
 
-    async def _slow_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
+    async def _slow_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
         await asyncio.sleep(0.08)
         return tts.GenerateResult(
             wav_path=f"/tmp/{episode_id}_chunk_{chunk_index}.wav",
@@ -182,10 +197,13 @@ async def test_pipeline_reschedules_timeout_for_long_document(
         )
 
     monkeypatch.setattr(tts, "generate_chunk_with_retry", _slow_tts)
-    # base 0.5s would time out mid-TTS (10 x 0.08 = 0.8s); rescaled to
-    # max(0.5, 10 x 0.5 = 5.0) it finishes.
+    # Estimate is max(0.5, 10 x 0.01) = 0.5s and TTS alone needs ~0.8s, so the
+    # old model would have killed this. Ceiling is 10s and no chunk takes longer
+    # than the 0.5s stall window, so the watchdog lets it run.
     monkeypatch.setenv("JOB_TIMEOUT_SECONDS", "0.5")
-    monkeypatch.setenv("JOB_TIMEOUT_PER_CHUNK_SECONDS", "0.5")
+    monkeypatch.setenv("JOB_TIMEOUT_PER_CHUNK_SECONDS", "0.01")
+    monkeypatch.setenv("JOB_TIMEOUT_CEILING_MULTIPLIER", "20")
+    monkeypatch.setenv("JOB_STALL_SECONDS", "0.5")
     get_settings.cache_clear()
 
     job = _seed_job(env)
@@ -196,11 +214,12 @@ async def test_pipeline_reschedules_timeout_for_long_document(
     assert after.error is None
 
 
-async def test_pipeline_still_times_out_when_scaled_budget_exceeded(
+async def test_pipeline_fails_at_the_ceiling_even_while_progressing(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The scaled timeout is still a ceiling: a job slower than max(base,
-    chunks x per-chunk) fails, and the error reports the chunk count."""
+    """Progress is not a licence to run forever: a job that keeps beating still
+    dies at the absolute ceiling, and the error says so rather than blaming a
+    stall."""
 
     database.run_migrations(env)
     _stub_full_chain(monkeypatch)
@@ -209,7 +228,9 @@ async def test_pipeline_still_times_out_when_scaled_budget_exceeded(
 
     monkeypatch.setattr(chunker, "chunk", lambda *a, **k: ["a sentence."] * 5)
 
-    async def _very_slow_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
+    async def _very_slow_tts(
+        text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw
+    ):
         await asyncio.sleep(0.3)
         return tts.GenerateResult(
             wav_path=f"/tmp/{episode_id}_chunk_{chunk_index}.wav",
@@ -218,9 +239,14 @@ async def test_pipeline_still_times_out_when_scaled_budget_exceeded(
         )
 
     monkeypatch.setattr(tts, "generate_chunk_with_retry", _very_slow_tts)
-    # effective = max(0.3, 5 x 0.1 = 0.5) = 0.5s; TTS needs ~1.5s, so it times out.
-    monkeypatch.setenv("JOB_TIMEOUT_SECONDS", "0.3")
-    monkeypatch.setenv("JOB_TIMEOUT_PER_CHUNK_SECONDS", "0.1")
+    # Ceiling = max(1.0, 5 x 0.01) x 1 = 1.0s; TTS needs ~1.5s, so the ceiling
+    # lands mid-TTS with a full second of slack for the stubbed stages ahead of
+    # it. Every chunk beats well inside the 5s stall window, so only the ceiling
+    # can fire.
+    monkeypatch.setenv("JOB_TIMEOUT_SECONDS", "1.0")
+    monkeypatch.setenv("JOB_TIMEOUT_PER_CHUNK_SECONDS", "0.01")
+    monkeypatch.setenv("JOB_TIMEOUT_CEILING_MULTIPLIER", "1")
+    monkeypatch.setenv("JOB_STALL_SECONDS", "5")
     get_settings.cache_clear()
 
     job = _seed_job(env)
@@ -229,8 +255,8 @@ async def test_pipeline_still_times_out_when_scaled_budget_exceeded(
     after = _job_after(env, job.id)
     assert after.status == "failed"
     assert after.stage == "tts"
+    assert "ceiling" in (after.error or "")
     assert "5 chunks" in (after.error or "")
-    assert "JOB_TIMEOUT_SECONDS" in (after.error or "")
 
 
 async def test_pipeline_marks_failed_when_cleanup_returns_too_short(
@@ -574,11 +600,11 @@ async def test_pipeline_transcript_stage_rejects_length_mismatch(
 
     from app.services import tts as tts_module
 
-    async def _drop_one(text, episode_id, chunk_index, settings, seed=None, verify=False):
+    async def _drop_one(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
         result = await _stub_tts_for_extra(text, episode_id, chunk_index, settings)
         return result
 
-    async def _stub_tts_for_extra(text, episode_id, chunk_index, settings, seed=None, verify=False):
+    async def _stub_tts_for_extra(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
         return tts_module.GenerateResult(
             wav_path=f"/tmp/{episode_id}_chunk_{chunk_index}.wav",
             duration_secs=1.0,
@@ -588,7 +614,7 @@ async def test_pipeline_transcript_stage_rejects_length_mismatch(
     call_count = {"n": 0}
     real_tts = _drop_one
 
-    async def _short_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
+    async def _short_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
         call_count["n"] += 1
         # Return only for first call; subsequent calls still execute but the
         # test patches _stage_transcript's inputs by intercepting the chunker.
@@ -1490,7 +1516,7 @@ async def test_chunk_quality_check_regenerates_bad_chunk(
     calls = {"n": 0}
     seeds: list[int | None] = []
 
-    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
         calls["n"] += 1
         seeds.append(seed)
         _write_drone_wav(wav) if calls["n"] == 1 else _write_speechlike_wav(wav)
@@ -1519,7 +1545,7 @@ async def test_chunk_quality_check_keeps_last_after_max_regen(
     wav = tmp_path / "ep_chunk_0.wav"
     calls = {"n": 0}
 
-    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
         calls["n"] += 1
         _write_drone_wav(wav)  # always bad
         return tts.GenerateResult(wav_path=str(wav), duration_secs=1.0, sample_rate=24000)
@@ -1545,7 +1571,7 @@ async def test_chunk_quality_check_disabled_calls_once(
     wav = tmp_path / "ep_chunk_0.wav"
     calls = {"n": 0}
 
-    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
         calls["n"] += 1
         _write_drone_wav(wav)  # bad, but analysis is off so no regen
         return tts.GenerateResult(wav_path=str(wav), duration_secs=1.0, sample_rate=24000)
@@ -1573,7 +1599,7 @@ async def test_chunk_asr_verify_regenerates_on_divergence(
     verifies: list[bool] = []
 
     async def _fake_tts(
-        text, episode_id, chunk_index, settings, seed=None, verify=False
+        text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw
     ):
         calls["n"] += 1
         verifies.append(verify)
@@ -1619,7 +1645,7 @@ async def test_chunk_asr_divergent_run_regenerates_despite_low_global(
 
     calls = {"n": 0}
 
-    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
         calls["n"] += 1
         return tts.GenerateResult(
             wav_path=str(tmp_path / "ep_chunk_0.wav"),
@@ -1648,7 +1674,7 @@ async def test_chunk_asr_short_chunk_regenerates_on_gross_mismatch(
     calls = {"n": 0}
     verifies: list[bool] = []
 
-    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
         calls["n"] += 1
         verifies.append(verify)
         return tts.GenerateResult(
@@ -1683,7 +1709,7 @@ async def test_chunk_asr_short_chunk_tolerates_mild_divergence(
 
     calls = {"n": 0}
 
-    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
         calls["n"] += 1
         return tts.GenerateResult(
             wav_path=str(tmp_path / "ep_chunk_0.wav"),
@@ -1717,7 +1743,7 @@ async def test_chunk_asr_acronym_heavy_chunk_gates_on_normalized_words(
 
     calls = {"n": 0}
 
-    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
         calls["n"] += 1
         return tts.GenerateResult(
             wav_path=str(tmp_path / "ep_chunk_0.wav"),
@@ -1748,7 +1774,7 @@ async def test_chunk_asr_missing_transcript_logged_and_passes(
 
     calls = {"n": 0}
 
-    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False):
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
         calls["n"] += 1
         return tts.GenerateResult(
             wav_path=str(tmp_path / "ep_chunk_0.wav"),
@@ -1790,21 +1816,24 @@ async def test_pipeline_cancelled_job_ends_cancelled_not_failed(
     assert after.error == "cancelled by user"
 
 
-async def test_stage_tts_reselects_job_voice_each_chunk(
+async def test_stage_tts_carries_the_job_voice_on_every_chunk(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Every chunk re-asserts the job's voice so a concurrent audition can't switch it
-    mid-episode."""
+    """Every chunk carries the job's slot so the wrapper re-selects inside the same
+    lock as inference and a concurrent audition can't switch voices mid-episode. The
+    standalone select happens once, up front."""
 
     database.run_migrations(env)
     from app.services import tts as tts_mod
 
     selected: list[int] = []
+    per_chunk_slots: list[int | None] = []
 
     async def _fake_select(_settings, slot):
         selected.append(slot)
 
-    async def _fake_gen(_job, _text, index, _settings):
+    async def _fake_gen(_job, _text, index, _settings, slot=None):
+        per_chunk_slots.append(slot)
         return tts_mod.GenerateResult(
             wav_path=f"/tmp/c{index}.wav", duration_secs=1.0, sample_rate=24000
         )
@@ -1825,5 +1854,104 @@ async def test_stage_tts_reselects_job_voice_each_chunk(
         voice_id="2",
     )
     await pipeline._stage_tts(job, ["one.", "two.", "three."], get_settings())
-    # One initial select + one re-select per later chunk, always the job's slot.
-    assert selected == [2, 2, 2]
+    assert selected == [2]
+    assert per_chunk_slots == [2, 2, 2]
+
+
+def test_regen_params_leaves_the_baseline_take_untouched() -> None:
+    """Attempt 0 must be exactly what the operator configured, so escalation
+    can't silently change the audio of a chunk that was never in trouble."""
+
+    assert pipeline._regen_params(get_settings(), 0) == (None, None)
+
+
+def test_regen_params_shrink_the_window_and_stiffen_the_penalty_each_attempt() -> None:
+    s = SimpleNamespace(
+        CHATTERBOX_MAX_CHARS=500,
+        CHATTERBOX_REPETITION_PENALTY=1.2,
+        AUDIO_ANALYSIS_REGEN_CHARS_FACTOR=0.6,
+        AUDIO_ANALYSIS_REGEN_MIN_CHARS=150,
+        AUDIO_ANALYSIS_REGEN_PENALTY_STEP=0.15,
+    )
+    assert pipeline._regen_params(s, 1) == (300, pytest.approx(1.35))
+    assert pipeline._regen_params(s, 2) == (180, pytest.approx(1.5))
+    # Attempt 3 would scale to 108 chars; the operator floor holds it at 150.
+    assert pipeline._regen_params(s, 3) == (150, pytest.approx(1.65))
+
+
+def test_regen_params_stay_inside_the_wrappers_request_bounds() -> None:
+    """CHATTERBOX_MAX_CHARS carries no pydantic constraint and the penalty step
+    is operator-set, so extreme settings must still produce a legal request --
+    a 422 from the wrapper would turn a degraded chunk into a failed job."""
+
+    s = SimpleNamespace(
+        CHATTERBOX_MAX_CHARS=99999,
+        CHATTERBOX_REPETITION_PENALTY=1.9,
+        AUDIO_ANALYSIS_REGEN_CHARS_FACTOR=1.0,
+        AUDIO_ANALYSIS_REGEN_MIN_CHARS=100,
+        AUDIO_ANALYSIS_REGEN_PENALTY_STEP=1.0,
+    )
+    max_chars, penalty = pipeline._regen_params(s, 1)
+    assert max_chars == 2000
+    assert penalty == 2.0
+
+    tiny = SimpleNamespace(
+        CHATTERBOX_MAX_CHARS=10,
+        CHATTERBOX_REPETITION_PENALTY=1.0,
+        AUDIO_ANALYSIS_REGEN_CHARS_FACTOR=0.1,
+        AUDIO_ANALYSIS_REGEN_MIN_CHARS=100,
+        AUDIO_ANALYSIS_REGEN_PENALTY_STEP=0.0,
+    )
+    assert pipeline._regen_params(tiny, 1) == (100, 1.0)
+
+
+async def test_narration_is_on_disk_when_the_job_dies_in_tts(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """episodes.cleaned_text is only written at finalize, so a TTS failure used
+    to leave nothing to diagnose. The normalize stage now dumps the narration
+    next to the media so the text that broke synthesis survives the failure."""
+
+    from app.core.paths import media_dir
+
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+
+    from app.services import tts
+
+    async def _boom_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        raise tts.TTSRequestError("wrapper said no")
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _boom_tts)
+
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+
+    after = _job_after(env, job.id)
+    assert after.status == "failed"
+    assert after.stage == "tts"
+
+    narration = media_dir(get_settings()) / f"{job.episode_id}.narration.txt"
+    assert narration.exists()
+    assert "cleaned narration" in narration.read_text(encoding="utf-8")
+
+
+async def test_narration_write_failure_does_not_fail_the_job(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Forensics are never worth losing an episode over."""
+
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+
+    def _boom(*_a, **_k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(pipeline, "write_bytes_atomic", _boom)
+
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+
+    after = _job_after(env, job.id)
+    assert after.status == "done"
+    assert after.error is None
