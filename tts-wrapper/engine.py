@@ -121,6 +121,16 @@ _TRIM_BUFFER_MS = 50
 # was supposed to be spoken, and a brief gap lets ASR verify flag the dropout
 # (and regenerate) rather than the episode carrying the whole silent tail.
 _ALL_SILENT_KEEP_MS = 250
+# A degraded generation also strews multi-second pauses THROUGH the speech, not
+# just after it (measured: flagged takes still 50-94% silent frames with edge
+# trim active). Runs longer than MAX are cut to KEEP, half retained at each end
+# so the speech decay/attack around the pause survives. Values mirror the
+# backend's AUDIO_MAX_INTERNAL_SILENCE_MS / AUDIO_INTERNAL_SILENCE_KEEP_MS
+# defaults, so this changes nothing audible -- the backend already applied the
+# same compression to published audio, only after the quality gate had judged
+# the uncompressed take.
+_MAX_INTERNAL_SILENCE_MS = 1000
+_INTERNAL_SILENCE_KEEP_MS = 500
 
 
 def trim_edge_silence(wav, sample_rate: int):
@@ -139,6 +149,42 @@ def trim_edge_silence(wav, sample_rate: int):
     start = max(0, int(indices[0]) - buffer_n)
     end = min(len(wav), int(indices[-1]) + 1 + buffer_n)
     return wav[start:end]
+
+
+def compress_internal_silence_np(wav, sample_rate: int):
+    """Shorten silence runs inside a piece that exceed ``_MAX_INTERNAL_SILENCE_MS``
+    to ``_INTERNAL_SILENCE_KEEP_MS`` (half kept at each end of the run). numpy
+    mirror of the backend's ``compress_internal_silence``; an all-silent piece is
+    returned unchanged (``trim_edge_silence`` owns that case)."""
+
+    import numpy as np  # noqa: PLC0415  (lazy: numpy comes from torch's wheel)
+
+    silent = np.abs(wav) <= _TRIM_SILENCE_THRESHOLD
+    if silent.all() or not silent.any():
+        return wav
+
+    max_run = int(sample_rate * _MAX_INTERNAL_SILENCE_MS / 1000)
+    keep_half = int(sample_rate * _INTERNAL_SILENCE_KEEP_MS / 2000)
+
+    edges = np.diff(silent.astype(np.int8))
+    starts = (np.nonzero(edges == 1)[0] + 1).tolist()
+    ends = (np.nonzero(edges == -1)[0] + 1).tolist()
+    if silent[0]:
+        starts.insert(0, 0)
+    if silent[-1]:
+        ends.append(len(wav))
+
+    pieces = []
+    cursor = 0
+    for start, end in zip(starts, ends, strict=True):
+        if end - start <= max_run:
+            continue
+        pieces.append(wav[cursor : start + keep_half])
+        cursor = end - keep_half
+    if not pieces:  # no run exceeded the cap
+        return wav
+    pieces.append(wav[cursor:])
+    return np.concatenate(pieces)
 
 
 def pcm16_wav_bytes(wav_array, sample_rate: int) -> bytes:

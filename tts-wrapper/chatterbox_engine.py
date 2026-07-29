@@ -36,6 +36,7 @@ from engine import (
     GPUOutOfMemoryError,
     InferenceBusyError,
     _split_into_pieces,
+    compress_internal_silence_np,
     join_with_silence,
     pcm16_wav_bytes,
     trim_edge_silence,
@@ -219,12 +220,16 @@ class ChatterboxEngine:
             # a quality regeneration so the re-gen produces *different* audio.
             if params.seed != 0:
                 self._set_seed(params.seed)
-            # Trim each piece's edge silence at the source: an EOS-failure
-            # generation pads to the ~40 s token cap with silence, and the
-            # quality gate + whisper verify run on the WAV this produces.
+            # Remove dead air at the source: a degraded generation pads to the
+            # ~40 s token cap with silence, both trailing (edge trim) and strewn
+            # through the speech as multi-second pauses (internal compression).
+            # The quality gate + whisper verify run on the WAV this produces.
             wavs = [
-                trim_edge_silence(
-                    np.asarray(self._infer_piece(piece, params), dtype=np.float32),
+                compress_internal_silence_np(
+                    trim_edge_silence(
+                        np.asarray(self._infer_piece(piece, params), dtype=np.float32),
+                        self.sample_rate,
+                    ),
                     self.sample_rate,
                 )
                 for piece in pieces

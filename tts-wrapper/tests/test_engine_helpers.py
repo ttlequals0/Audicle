@@ -11,8 +11,10 @@ import numpy as np
 from engine import (
     _ALL_SILENT_KEEP_MS,
     _DEFAULT_MAX_CHARS,
+    _INTERNAL_SILENCE_KEEP_MS,
     _TRIM_BUFFER_MS,
     _split_into_pieces,
+    compress_internal_silence_np,
     trim_edge_silence,
 )
 
@@ -121,3 +123,41 @@ def test_trim_short_piece_not_erased() -> None:
     wav = _silence(0.1)  # shorter than the all-silent remnant
     out = trim_edge_silence(wav, rate)
     assert len(out) == len(wav)
+
+
+# --- compress_internal_silence_np -------------------------------------------
+
+
+def test_internal_silence_run_compressed_to_keep_length() -> None:
+    rate = 24000
+    wav = np.concatenate([_speech(1.0), _silence(10.0), _speech(1.0)])
+    out = compress_internal_silence_np(wav, rate)
+    keep = int(rate * _INTERNAL_SILENCE_KEEP_MS / 1000)
+    assert len(out) == int(rate * 2.0) + keep
+    # Speech on both sides intact.
+    assert np.count_nonzero(np.abs(out) > 0.003) == int(rate * 2.0)
+
+
+def test_internal_silence_under_cap_untouched() -> None:
+    rate = 24000
+    wav = np.concatenate([_speech(0.5), _silence(0.8), _speech(0.5)])
+    out = compress_internal_silence_np(wav, rate)
+    assert len(out) == len(wav)
+    assert np.array_equal(out, wav)
+
+
+def test_internal_silence_multiple_runs_all_compressed() -> None:
+    rate = 24000
+    wav = np.concatenate(
+        [_speech(0.5), _silence(3.0), _speech(0.5), _silence(5.0), _speech(0.5)]
+    )
+    out = compress_internal_silence_np(wav, rate)
+    keep = int(rate * _INTERNAL_SILENCE_KEEP_MS / 1000)
+    assert len(out) == int(rate * 1.5) + 2 * keep
+
+
+def test_internal_silence_all_silent_untouched() -> None:
+    rate = 24000
+    wav = _silence(2.0)
+    out = compress_internal_silence_np(wav, rate)
+    assert np.array_equal(out, wav)

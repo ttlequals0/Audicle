@@ -6,6 +6,19 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.49.2] - 2026-07-29
+
+### Fixed
+
+- The wrapper now also compresses silence *inside* each generated piece, not
+  only at its edges. The 0.49.1 measurement run showed edge trimming alone
+  was not enough: flagged takes still carried 50-94% silent frames and up to
+  5x expected duration, because a degraded generation strews multi-second
+  pauses through the speech rather than only after it. Runs longer than 1 s
+  are cut to 500 ms, half kept at each end, matching the values the backend
+  already applied to published audio after the quality gate. Nothing audible
+  changes; the gate and the ASR check now judge the same audio listeners get.
+
 ## [0.49.1] - 2026-07-29
 
 ### Fixed
