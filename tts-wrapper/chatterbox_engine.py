@@ -38,6 +38,7 @@ from engine import (
     _split_into_pieces,
     join_with_silence,
     pcm16_wav_bytes,
+    trim_edge_silence,
 )
 
 logger = logging.getLogger("tts.chatterbox")
@@ -218,8 +219,14 @@ class ChatterboxEngine:
             # a quality regeneration so the re-gen produces *different* audio.
             if params.seed != 0:
                 self._set_seed(params.seed)
+            # Trim each piece's edge silence at the source: an EOS-failure
+            # generation pads to the ~40 s token cap with silence, and the
+            # quality gate + whisper verify run on the WAV this produces.
             wavs = [
-                np.asarray(self._infer_piece(piece, params), dtype=np.float32)
+                trim_edge_silence(
+                    np.asarray(self._infer_piece(piece, params), dtype=np.float32),
+                    self.sample_rate,
+                )
                 for piece in pieces
             ]
             return join_with_silence(wavs, self.sample_rate)

@@ -106,6 +106,41 @@ def _split_into_pieces(text: str, max_chars: int = _DEFAULT_MAX_CHARS) -> list[s
     return pieces
 
 
+# Piece-level edge-silence trim. Chatterbox Turbo's stop token is sampled, not
+# enforced; when it fails to fire after the text completes, generation pads with
+# silence to the 1000-token (~40 s) cap. Measured on one episode that dead air
+# was 28.8% of all produced audio and drove most quality-gate failures, because
+# the gate and whisper verify run on the raw chunk WAV. Trimming each piece at
+# the source fixes every downstream consumer at once.
+# Threshold mirrors the backend's AUDIO_SILENCE_THRESHOLD default. The buffer is
+# larger than the backend's 5 ms edge trim because these cuts land next to the
+# 0.12 s join gap and consonant tails must survive.
+_TRIM_SILENCE_THRESHOLD = 0.003
+_TRIM_BUFFER_MS = 50
+# An all-silent piece keeps a short remnant instead of the full run: the text
+# was supposed to be spoken, and a brief gap lets ASR verify flag the dropout
+# (and regenerate) rather than the episode carrying the whole silent tail.
+_ALL_SILENT_KEEP_MS = 250
+
+
+def trim_edge_silence(wav, sample_rate: int):
+    """Trim leading/trailing silence from a float32 mono piece, keeping a
+    ``_TRIM_BUFFER_MS`` margin on each end. All-silent input returns a
+    ``_ALL_SILENT_KEEP_MS`` remnant (never grows shorter input)."""
+
+    import numpy as np  # noqa: PLC0415  (lazy: numpy comes from torch's wheel)
+
+    above = np.abs(wav) > _TRIM_SILENCE_THRESHOLD
+    indices = np.nonzero(above)[0]
+    if indices.size == 0:
+        # Slicing past the end is a no-op, so shorter input passes through.
+        return wav[: int(sample_rate * _ALL_SILENT_KEEP_MS / 1000)]
+    buffer_n = int(sample_rate * _TRIM_BUFFER_MS / 1000)
+    start = max(0, int(indices[0]) - buffer_n)
+    end = min(len(wav), int(indices[-1]) + 1 + buffer_n)
+    return wav[start:end]
+
+
 def pcm16_wav_bytes(wav_array, sample_rate: int) -> bytes:
     """Encode a 1D float32 array in [-1, 1] as 16-bit PCM mono WAV bytes.
 

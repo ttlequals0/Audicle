@@ -6,7 +6,15 @@ or the TTS model library.
 
 from __future__ import annotations
 
-from engine import _DEFAULT_MAX_CHARS, _split_into_pieces
+import numpy as np
+
+from engine import (
+    _ALL_SILENT_KEEP_MS,
+    _DEFAULT_MAX_CHARS,
+    _TRIM_BUFFER_MS,
+    _split_into_pieces,
+    trim_edge_silence,
+)
 
 
 def test_split_short_text_one_piece_per_sentence() -> None:
@@ -54,3 +62,62 @@ def test_split_oversize_sentence_cut_at_clause_boundary() -> None:
     assert all(len(p) <= _DEFAULT_MAX_CHARS for p in pieces)
     # Every non-final piece ends on the clause punctuation it was cut at.
     assert all(p.endswith(",") for p in pieces[:-1])
+
+
+# --- trim_edge_silence ------------------------------------------------------
+
+
+def _speech(secs: float, rate: int = 24000, level: float = 0.5) -> "np.ndarray":
+    return np.full(int(rate * secs), level, dtype=np.float32)
+
+
+def _silence(secs: float, rate: int = 24000) -> "np.ndarray":
+    return np.zeros(int(rate * secs), dtype=np.float32)
+
+
+def test_trim_removes_leading_and_trailing_silence() -> None:
+    rate = 24000
+    wav = np.concatenate([_silence(2.0), _speech(1.0), _silence(30.0)])
+    out = trim_edge_silence(wav, rate)
+    # Speech body plus at most the buffer on each side; the 30s run-to-cap
+    # tail (the EOS-failure signature) must be gone.
+    buffer_n = int(rate * _TRIM_BUFFER_MS / 1000)
+    assert len(out) == int(rate * 1.0) + 2 * buffer_n
+    # The kept region is centered on the speech: its loud part is intact.
+    assert np.abs(out).max() == np.float32(0.5)
+    assert np.count_nonzero(np.abs(out) > 0.003) == int(rate * 1.0)
+
+
+def test_trim_keeps_buffer_samples_on_both_ends() -> None:
+    rate = 24000
+    wav = np.concatenate([_silence(1.0), _speech(0.5), _silence(1.0)])
+    out = trim_edge_silence(wav, rate)
+    buffer_n = int(rate * _TRIM_BUFFER_MS / 1000)
+    # Leading and trailing buffer regions are silence carried from the source.
+    assert np.abs(out[:buffer_n]).max() <= 0.003
+    assert np.abs(out[-buffer_n:]).max() <= 0.003
+
+
+def test_trim_leaves_piece_without_edge_silence_unchanged() -> None:
+    rate = 24000
+    wav = _speech(0.8)
+    out = trim_edge_silence(wav, rate)
+    assert len(out) == len(wav)
+    assert np.array_equal(out, wav)
+
+
+def test_trim_all_silent_piece_returns_short_remnant() -> None:
+    rate = 24000
+    wav = _silence(40.0)  # a full run-to-cap silent generation
+    out = trim_edge_silence(wav, rate)
+    # Kept short so ASR verify flags the dropped text instead of the episode
+    # carrying 40s of dead air.
+    assert len(out) == int(rate * _ALL_SILENT_KEEP_MS / 1000)
+    assert np.abs(out).max() <= 0.003
+
+
+def test_trim_short_piece_not_erased() -> None:
+    rate = 24000
+    wav = _silence(0.1)  # shorter than the all-silent remnant
+    out = trim_edge_silence(wav, rate)
+    assert len(out) == len(wav)

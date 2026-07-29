@@ -6,6 +6,37 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.49.1] - 2026-07-29
+
+### Fixed
+
+- Chatterbox generations no longer carry dead air into the pipeline. The
+  model's stop token is sampled, not enforced, and its Turbo inference has a
+  hard 1000-token cap, which at 25 tokens/s is 40 s of audio per generated
+  piece. When the stop token fails to fire after the text completes, the
+  model pads to that cap with silence. On the episode that surfaced this,
+  28.8% of all produced audio (1982 s of 6876 s) was silence: 53 of 187
+  chunks carried over 20 s each, and the worst generations ran to the 40 s
+  cap. The failure is stochastic per generation; the same document processed
+  twice 13 minutes apart trimmed 4% one run and 21% the next, and recent
+  episodes ranged 0-48%.
+  The audio stage already trimmed this silence before publishing, but the
+  quality gate and whisper verification run on the raw chunk WAV, so dead
+  air inflated duration ratios, silent fractions, and fed multi-second
+  silence windows to faster-whisper, which is a known hallucination
+  trigger. Healthy chunks entered the regeneration loop (56% of chunks on
+  that episode) and each false regeneration burned a full GPU generation.
+  Pieces that ended mid-clause, which happens when a sentence is longer
+  than CHATTERBOX_MAX_CHARS and gets cut, failed to stop far more often:
+  median 22.5 s of dead air against 2.2 s for uncut chunks.
+  The wrapper now trims leading and trailing silence from each piece right
+  after inference, before pieces are joined, so the chunk WAV every
+  downstream consumer sees carries speech. An all-silent generation keeps a
+  250 ms remnant instead of the full run, so the ASR check still flags the
+  dropped text and regenerates it. The trim threshold matches the audio
+  stage's, with a 50 ms buffer so consonant tails survive next to the
+  0.12 s join gap.
+
 ## [0.49.0] - 2026-07-28
 
 ### Fixed
