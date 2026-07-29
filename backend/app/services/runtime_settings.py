@@ -43,10 +43,13 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "RETENTION_DAYS",
         # Per-file upload size ceiling in MB; tunable live for image-heavy PDFs.
         "UPLOAD_MAX_MB",
-        # Per-job timeout base + per-chunk budget; tunable live so long-form
+        # Watchdog policy: the base + per-chunk budget size the absolute ceiling,
+        # the stall window is what actually kills a job. Tunable live so long-form
         # documents and slower hardware get proportional synthesis time.
         "JOB_TIMEOUT_SECONDS",
         "JOB_TIMEOUT_PER_CHUNK_SECONDS",
+        "JOB_STALL_SECONDS",
+        "JOB_TIMEOUT_CEILING_MULTIPLIER",
         # Fire-and-forget webhook on terminal job transitions; empty disables.
         "WEBHOOK_URL",
         # Arc XP static body extractor toggle.
@@ -102,6 +105,11 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "AUDIO_ANALYSIS_DURATION_OVERHEAD_SECS",
         "AUDIO_ANALYSIS_MAX_DURATION_RATIO",
         "AUDIO_ANALYSIS_MIN_DURATION_RATIO",
+        # How a regeneration differs from the take that failed. Shared by the
+        # audio-QA and whisper paths, same as the MAX_REGEN budget above.
+        "AUDIO_ANALYSIS_REGEN_CHARS_FACTOR",
+        "AUDIO_ANALYSIS_REGEN_MIN_CHARS",
+        "AUDIO_ANALYSIS_REGEN_PENALTY_STEP",
         # Post-TTS ASR verification policy. Tunable live so an operator can turn
         # the gate on/off and adjust strictness without a restart. The wrapper's
         # WHISPER_ENABLED (which loads the model) stays env-only -- it is a

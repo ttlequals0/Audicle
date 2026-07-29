@@ -106,6 +106,109 @@ def _split_into_pieces(text: str, max_chars: int = _DEFAULT_MAX_CHARS) -> list[s
     return pieces
 
 
+# Piece-level edge-silence trim. Chatterbox Turbo's stop token is sampled, not
+# enforced; when it fails to fire after the text completes, generation pads with
+# silence to the 1000-token (~40 s) cap. Measured on one episode that dead air
+# was 28.8% of all produced audio and drove most quality-gate failures, because
+# the gate and whisper verify run on the raw chunk WAV. Trimming each piece at
+# the source fixes every downstream consumer at once.
+# Threshold mirrors the backend's AUDIO_SILENCE_THRESHOLD default. The buffer is
+# larger than the backend's 5 ms edge trim because these cuts land next to the
+# 0.12 s join gap and consonant tails must survive.
+_TRIM_SILENCE_THRESHOLD = 0.003
+_TRIM_BUFFER_MS = 50
+# An all-silent piece keeps a short remnant instead of the full run: the text
+# was supposed to be spoken, and a brief gap lets ASR verify flag the dropout
+# (and regenerate) rather than the episode carrying the whole silent tail.
+_ALL_SILENT_KEEP_MS = 250
+# A degraded generation also strews multi-second pauses THROUGH the speech, not
+# just after it (measured: flagged takes still 50-94% silent frames with edge
+# trim active). Runs longer than MAX are cut to KEEP, half retained at each end
+# so the speech decay/attack around the pause survives. Values mirror the
+# backend's AUDIO_MAX_INTERNAL_SILENCE_MS / AUDIO_INTERNAL_SILENCE_KEEP_MS
+# defaults, so this changes nothing audible -- the backend already applied the
+# same compression to published audio, only after the quality gate had judged
+# the uncompressed take.
+_MAX_INTERNAL_SILENCE_MS = 1000
+_INTERNAL_SILENCE_KEEP_MS = 500
+
+# Generation-length cap. Chatterbox Turbo's stop token is sampled; a generation
+# that misses it runs to the model's 1000-token (~40 s) limit at pure GPU cost.
+# The backend gate rejects any take longer than (words / WORDS_PER_SEC +
+# OVERHEAD) * MAX_RATIO seconds as overlong, so audio past that bound can never
+# ship -- generating it is provable waste. Constants mirror the backend's
+# AUDIO_ANALYSIS_* defaults; the overhead applies per piece where the backend
+# applies it per chunk, which errs on the generous side.
+_WORDS_PER_SEC = 2.7
+_DURATION_OVERHEAD_SECS = 1.0
+_MAX_DURATION_RATIO = 2.0
+_S3_TOKENS_PER_SEC = 25
+_MAX_GEN_TOKENS = 1000
+_MIN_GEN_TOKENS = 125  # 5 s floor so a tiny piece is never starved
+
+
+def max_gen_tokens(text: str) -> int:
+    """Speech-token budget for one piece: the gate's overlong bound in tokens."""
+
+    words = len(text.split())
+    bound_secs = (words / _WORDS_PER_SEC + _DURATION_OVERHEAD_SECS) * _MAX_DURATION_RATIO
+    return min(_MAX_GEN_TOKENS, max(_MIN_GEN_TOKENS, int(bound_secs * _S3_TOKENS_PER_SEC)))
+
+
+def trim_edge_silence(wav, sample_rate: int):
+    """Trim leading/trailing silence from a float32 mono piece, keeping a
+    ``_TRIM_BUFFER_MS`` margin on each end. All-silent input returns a
+    ``_ALL_SILENT_KEEP_MS`` remnant (never grows shorter input)."""
+
+    import numpy as np  # noqa: PLC0415  (lazy: numpy comes from torch's wheel)
+
+    above = np.abs(wav) > _TRIM_SILENCE_THRESHOLD
+    indices = np.nonzero(above)[0]
+    if indices.size == 0:
+        # Slicing past the end is a no-op, so shorter input passes through.
+        return wav[: int(sample_rate * _ALL_SILENT_KEEP_MS / 1000)]
+    buffer_n = int(sample_rate * _TRIM_BUFFER_MS / 1000)
+    start = max(0, int(indices[0]) - buffer_n)
+    end = min(len(wav), int(indices[-1]) + 1 + buffer_n)
+    return wav[start:end]
+
+
+def compress_internal_silence_np(wav, sample_rate: int):
+    """Shorten silence runs inside a piece that exceed ``_MAX_INTERNAL_SILENCE_MS``
+    to ``_INTERNAL_SILENCE_KEEP_MS`` (half kept at each end of the run). numpy
+    mirror of the backend's ``compress_internal_silence``; an all-silent piece is
+    returned unchanged (``trim_edge_silence`` owns that case)."""
+
+    import numpy as np  # noqa: PLC0415  (lazy: numpy comes from torch's wheel)
+
+    silent = np.abs(wav) <= _TRIM_SILENCE_THRESHOLD
+    if silent.all() or not silent.any():
+        return wav
+
+    max_run = int(sample_rate * _MAX_INTERNAL_SILENCE_MS / 1000)
+    keep_half = int(sample_rate * _INTERNAL_SILENCE_KEEP_MS / 2000)
+
+    edges = np.diff(silent.astype(np.int8))
+    starts = (np.nonzero(edges == 1)[0] + 1).tolist()
+    ends = (np.nonzero(edges == -1)[0] + 1).tolist()
+    if silent[0]:
+        starts.insert(0, 0)
+    if silent[-1]:
+        ends.append(len(wav))
+
+    pieces = []
+    cursor = 0
+    for start, end in zip(starts, ends, strict=True):
+        if end - start <= max_run:
+            continue
+        pieces.append(wav[cursor : start + keep_half])
+        cursor = end - keep_half
+    if not pieces:  # no run exceeded the cap
+        return wav
+    pieces.append(wav[cursor:])
+    return np.concatenate(pieces)
+
+
 def pcm16_wav_bytes(wav_array, sample_rate: int) -> bytes:
     """Encode a 1D float32 array in [-1, 1] as 16-bit PCM mono WAV bytes.
 

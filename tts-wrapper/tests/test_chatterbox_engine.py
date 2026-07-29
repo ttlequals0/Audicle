@@ -329,3 +329,70 @@ async def test_synthesize_encodes_mono_pcm16_wav() -> None:
         assert wf.getsampwidth() == 2
         assert wf.getframerate() == 24000
         assert wf.getnframes() == int(24000 * 0.2)
+
+
+def test_run_inference_trims_piece_silence_tail() -> None:
+    """An EOS-failure generation pads to the token cap with silence; that tail
+    must be trimmed per piece, before the join, so the chunk WAV the quality
+    gate and whisper see carries speech, not dead air."""
+
+    class _TailModel(FakeChatterboxModel):
+        def generate(self, text, **kwargs):
+            self.generate_calls.append(text)
+            speech = np.full(int(self.sr * 0.5), 0.5, dtype=np.float32)
+            tail = np.zeros(int(self.sr * 10.0), dtype=np.float32)
+            return _FakeTensor(np.concatenate([speech, tail]))
+
+    model = _TailModel()
+    engine = _loaded_engine(model)
+    out = engine._run_inference("One. Two.", GenerationParams())
+    assert model.generate_calls == ["One.", "Two."]
+    from engine import _TRIM_BUFFER_MS
+
+    piece = int(model.sr * 0.5) + int(model.sr * _TRIM_BUFFER_MS / 1000)  # trailing buffer only
+    gap = int(model.sr * 0.12)
+    # Two trimmed pieces + one join gap; the 10s tails are gone.
+    assert len(out) == piece + gap + piece
+    assert len(out) < int(model.sr * 3)
+
+
+# --- generation-length cap --------------------------------------------------
+
+
+def test_generation_cap_injects_piece_max_gen_len() -> None:
+    engine = _loaded_engine()
+    recorded: list[dict] = []
+    engine._model.t3 = types.SimpleNamespace(
+        inference_turbo=lambda **kw: recorded.append(kw)
+    )
+    engine._install_generation_cap()
+    engine._piece_max_gen_len = 550
+    engine._model.t3.inference_turbo(text_tokens="x")
+    assert recorded[0]["max_gen_len"] == 550
+
+
+def test_generation_cap_respects_explicit_caller_value() -> None:
+    engine = _loaded_engine()
+    recorded: list[dict] = []
+    engine._model.t3 = types.SimpleNamespace(
+        inference_turbo=lambda **kw: recorded.append(kw)
+    )
+    engine._install_generation_cap()
+    engine._piece_max_gen_len = 550
+    engine._model.t3.inference_turbo(text_tokens="x", max_gen_len=42)
+    assert recorded[0]["max_gen_len"] == 42
+
+
+def test_generation_cap_missing_t3_is_harmless() -> None:
+    engine = _loaded_engine()  # FakeChatterboxModel has no .t3
+    engine._install_generation_cap()  # must not raise
+    out = engine._run_inference("Hello world.", GenerationParams())
+    assert isinstance(out, np.ndarray)
+
+
+def test_run_inference_sets_cap_from_piece_text() -> None:
+    from engine import max_gen_tokens
+
+    engine = _loaded_engine()
+    engine._run_inference("One two three four five.", GenerationParams())
+    assert engine._piece_max_gen_len == max_gen_tokens("One two three four five.")

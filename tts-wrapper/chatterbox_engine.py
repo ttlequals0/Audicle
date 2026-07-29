@@ -32,12 +32,17 @@ from pathlib import Path
 
 from config import NUM_SLOTS, Config
 from engine import (
+    _MAX_GEN_TOKENS,
+    _S3_TOKENS_PER_SEC,
     GenerationParams,
     GPUOutOfMemoryError,
     InferenceBusyError,
     _split_into_pieces,
+    compress_internal_silence_np,
     join_with_silence,
+    max_gen_tokens,
     pcm16_wav_bytes,
+    trim_edge_silence,
 )
 
 logger = logging.getLogger("tts.chatterbox")
@@ -59,12 +64,17 @@ class ChatterboxEngine:
         self._torch = None  # cached torch module reference
         # The reference clip whose conditionals are currently encoded. Lets
         # ``select_voice`` skip a redundant re-encode when the requested voice is
-        # already active -- the backend re-selects the job voice before every chunk to
-        # survive a concurrent audition, and without this that would re-encode each time.
+        # already active -- every /generate carries the job's slot so the switch and
+        # the inference share one critical section, and without this that would
+        # re-encode on every chunk.
         self._current_ref: Path | None = None
         # Single-flight guard over ALL GPU work (inference and conditional
         # recompute); an overlapping call is rejected rather than run concurrently.
         self._gpu_lock = threading.Lock()
+        # Per-piece speech-token budget, set by _infer_piece before each generate
+        # and read by the inference_turbo shim (_install_generation_cap). Written
+        # only under _gpu_lock, so no race.
+        self._piece_max_gen_len = _MAX_GEN_TOKENS
 
     def load(self) -> None:
         import torch  # noqa: PLC0415  (intentional lazy import)
@@ -80,6 +90,7 @@ class ChatterboxEngine:
         self._model = ChatterboxTurboTTS.from_pretrained(device=device)
         # Trust the model's native output rate (24 kHz) over the config default.
         self.sample_rate = int(self._model.sr)
+        self._install_generation_cap()
         self.model_loaded = True
         logger.info(
             "Chatterbox Turbo model loaded",
@@ -179,8 +190,8 @@ class ChatterboxEngine:
         rollback semantics as /reload -- a failed encode keeps the prior voice.
 
         Idempotent: if the requested clip is already the active voice, skip the
-        re-encode. The backend re-selects the job voice before every chunk to survive a
-        concurrent audition, so the no-op path keeps that cheap."""
+        re-encode. Every /generate carries the job's slot so selection and inference
+        share one critical section, so the no-op path keeps that cheap."""
 
         if self.reference_loaded and self._current_ref == ref_path:
             return
@@ -217,8 +228,18 @@ class ChatterboxEngine:
             # a quality regeneration so the re-gen produces *different* audio.
             if params.seed != 0:
                 self._set_seed(params.seed)
+            # Remove dead air at the source: a degraded generation pads to the
+            # ~40 s token cap with silence, both trailing (edge trim) and strewn
+            # through the speech as multi-second pauses (internal compression).
+            # The quality gate + whisper verify run on the WAV this produces.
             wavs = [
-                np.asarray(self._infer_piece(piece, params), dtype=np.float32)
+                compress_internal_silence_np(
+                    trim_edge_silence(
+                        np.asarray(self._infer_piece(piece, params), dtype=np.float32),
+                        self.sample_rate,
+                    ),
+                    self.sample_rate,
+                )
                 for piece in pieces
             ]
             return join_with_silence(wavs, self.sample_rate)
@@ -238,8 +259,38 @@ class ChatterboxEngine:
         np.random.seed(seed & 0xFFFFFFFF)
         random.seed(seed)
 
+    def _install_generation_cap(self) -> None:
+        """Wrap ``t3.inference_turbo`` so each call gets a per-piece
+        ``max_gen_len`` instead of the library's fixed 1000-token default.
+
+        ``ChatterboxTurboTTS.generate()`` never passes ``max_gen_len``, so a
+        generation that misses its stop token burns the full ~40 s cap on the
+        GPU even though the backend gate rejects anything past its overlong
+        bound. The shim injects the bound (``engine.max_gen_tokens``) computed
+        per piece by ``_infer_piece``; an explicit caller value wins. Guarded
+        against library shape changes: no ``t3`` means no cap, never a failed
+        load -- the chatterbox-monitor workflow flags version bumps."""
+
+        t3 = getattr(self._model, "t3", None)
+        original = getattr(t3, "inference_turbo", None)
+        if not callable(original):
+            logger.warning(
+                "Generation cap unavailable; running with the library default",
+                extra={"event": "tts_gen_cap_unavailable"},
+            )
+            return
+
+        def _capped_inference(*args, **kwargs):
+            kwargs.setdefault("max_gen_len", self._piece_max_gen_len)
+            return original(*args, **kwargs)
+
+        t3.inference_turbo = _capped_inference
+
     def _infer_piece(self, text: str, params: GenerationParams):
         assert self._model is not None
+        # Budget this piece's generation at the gate's overlong bound: audio past
+        # it can never pass the quality gate, so generating it is pure waste.
+        self._piece_max_gen_len = max_gen_tokens(text)
         # No audio_prompt_path -> reuse the conditionals cached by
         # prepare_conditionals (the per-chunk performance win). Only knobs
         # Turbo honors are passed; exaggeration/cfg_weight would be ignored
@@ -252,4 +303,20 @@ class ChatterboxEngine:
             top_k=params.top_k,
         )
         # generate returns a torch.Tensor (1, N) float32 in [-1, 1].
-        return wav.squeeze(0).detach().cpu().numpy()
+        arr = wav.squeeze(0).detach().cpu().numpy()
+        # A piece whose audio reaches its token budget was cut short: the model
+        # never sampled its stop token. Loggable signal for measuring how often
+        # the cap converts a doomed 40 s generation into a bounded one.
+        piece_secs = len(arr) / self.sample_rate
+        if piece_secs >= self._piece_max_gen_len / _S3_TOKENS_PER_SEC - 0.3:
+            logger.info(
+                "Generation ran to its token budget",
+                extra={
+                    "event": "tts_gen_cap_hit",
+                    "budget_tokens": self._piece_max_gen_len,
+                    "piece_secs": round(piece_secs, 2),
+                    "piece_words": len(text.split()),
+                    "piece_chars": len(text),
+                },
+            )
+        return arr

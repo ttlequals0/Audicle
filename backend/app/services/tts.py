@@ -53,20 +53,34 @@ class TTSRequestError(TTSError):
     """4xx response, malformed JSON, or any non-retryable failure."""
 
 
-def generation_params(settings: Settings, seed: int | None = None) -> dict[str, Any]:
+def generation_params(
+    settings: Settings,
+    seed: int | None = None,
+    *,
+    max_chars: int | None = None,
+    repetition_penalty: float | None = None,
+) -> dict[str, Any]:
     """Chatterbox knobs attached to every ``/generate`` call (0.44.0: the
     wrapper's env knobs are gone; these runtime settings are the single
     source). Shared by the per-chunk client below and the slot-audition
-    endpoint so samples always match episode synthesis. ``seed`` is the
-    configured baseline unless a caller passes an override (a quality
-    regeneration, so the re-gen produces different audio)."""
+    endpoint so samples always match episode synthesis.
+
+    Every override is the configured baseline unless a caller passes one. All
+    three exist for the quality-regeneration loop: a re-gen needs a different
+    seed to produce different audio, and a shorter ``max_chars`` plus a higher
+    ``repetition_penalty`` to leave the failure basin rather than re-roll inside
+    it (pipeline._regen_params)."""
 
     return {
         "temperature": settings.CHATTERBOX_TEMPERATURE,
-        "repetition_penalty": settings.CHATTERBOX_REPETITION_PENALTY,
+        "repetition_penalty": (
+            settings.CHATTERBOX_REPETITION_PENALTY
+            if repetition_penalty is None
+            else repetition_penalty
+        ),
         "top_p": settings.CHATTERBOX_TOP_P,
         "top_k": settings.CHATTERBOX_TOP_K,
-        "max_chars": settings.CHATTERBOX_MAX_CHARS,
+        "max_chars": settings.CHATTERBOX_MAX_CHARS if max_chars is None else max_chars,
         "seed": settings.CHATTERBOX_SEED if seed is None else seed,
     }
 
@@ -116,8 +130,16 @@ async def generate_chunk(
     settings: Settings,
     seed: int | None = None,
     verify: bool = False,
+    *,
+    slot: int | None = None,
+    max_chars: int | None = None,
+    repetition_penalty: float | None = None,
 ) -> GenerateResult:
-    """POST a single chunk to the wrapper's ``/generate`` endpoint."""
+    """POST a single chunk to the wrapper's ``/generate`` endpoint.
+
+    ``slot`` makes voice selection part of this call: the wrapper switches to it
+    inside the same GPU lock that guards inference, so a concurrent audition
+    cannot land between selecting the voice and using it."""
 
     payload: dict[str, Any] = {
         "text": text,
@@ -126,8 +148,12 @@ async def generate_chunk(
         "verify": verify,
         # The worker snapshots settings once per job, so a Settings change
         # applies to the next job; no restart.
-        **generation_params(settings, seed),
+        **generation_params(
+            settings, seed, max_chars=max_chars, repetition_penalty=repetition_penalty
+        ),
     }
+    if slot is not None:
+        payload["slot"] = slot
     response = await _post("/generate", settings, payload, "TTS call")
 
     if response.is_server_error:
@@ -164,6 +190,10 @@ async def generate_chunk_with_retry(
     settings: Settings,
     seed: int | None = None,
     verify: bool = False,
+    *,
+    slot: int | None = None,
+    max_chars: int | None = None,
+    repetition_penalty: float | None = None,
 ) -> GenerateResult:
     """Per-chunk TTS call with retry on transient failures.
 
@@ -174,7 +204,17 @@ async def generate_chunk_with_retry(
     """
 
     return await _retry_transients(
-        lambda: generate_chunk(text, episode_id, chunk_index, settings, seed, verify),
+        lambda: generate_chunk(
+            text,
+            episode_id,
+            chunk_index,
+            settings,
+            seed,
+            verify,
+            slot=slot,
+            max_chars=max_chars,
+            repetition_penalty=repetition_penalty,
+        ),
         settings,
     )
 

@@ -6,6 +6,137 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.50.0] - 2026-07-29
+
+### Changed
+
+- Each Chatterbox generation is now budgeted at the quality gate's own
+  overlong bound instead of the library's fixed 1000-token (40 s) limit. The
+  gate rejects any take longer than (words / 2.7 + 1.0) x 2.0 seconds, so
+  audio past that bound could never ship; a generation that missed its stop
+  token still burned the full 40 s on the GPU producing it, up to three
+  times per failing chunk. The wrapper now passes a per-piece max_gen_len
+  derived from the piece's word count (clamped between 5 s and the model
+  cap), cutting each doomed generation roughly in half on typical pieces.
+  Takes the cap cuts short were already being rejected and regenerated; the
+  ASR check catches the missing tail the same way it catches the overlong
+  take today. A `tts_gen_cap_hit` log fires whenever a generation reaches
+  its budget, so the savings are measurable in Loki. If a future chatterbox
+  release changes the internal inference entry point, the wrapper logs
+  `tts_gen_cap_unavailable` and runs uncapped rather than failing to load.
+
+## [0.49.2] - 2026-07-29
+
+### Fixed
+
+- The wrapper now also compresses silence *inside* each generated piece, not
+  only at its edges. The 0.49.1 measurement run showed edge trimming alone
+  was not enough: flagged takes still carried 50-94% silent frames and up to
+  5x expected duration, because a degraded generation strews multi-second
+  pauses through the speech rather than only after it. Runs longer than 1 s
+  are cut to 500 ms, half kept at each end, matching the values the backend
+  already applied to published audio after the quality gate. Nothing audible
+  changes; the gate and the ASR check now judge the same audio listeners get.
+
+## [0.49.1] - 2026-07-29
+
+### Fixed
+
+- Chatterbox generations no longer carry dead air into the pipeline. The
+  model's stop token is sampled, not enforced, and its Turbo inference has a
+  hard 1000-token cap, which at 25 tokens/s is 40 s of audio per generated
+  piece. When the stop token fails to fire after the text completes, the
+  model pads to that cap with silence. On the episode that surfaced this,
+  28.8% of all produced audio (1982 s of 6876 s) was silence: 53 of 187
+  chunks carried over 20 s each, and the worst generations ran to the 40 s
+  cap. The failure is stochastic per generation; the same document processed
+  twice 13 minutes apart trimmed 4% one run and 21% the next, and recent
+  episodes ranged 0-48%.
+  The audio stage already trimmed this silence before publishing, but the
+  quality gate and whisper verification run on the raw chunk WAV, so dead
+  air inflated duration ratios, silent fractions, and fed multi-second
+  silence windows to faster-whisper, which is a known hallucination
+  trigger. Healthy chunks entered the regeneration loop (56% of chunks on
+  that episode) and each false regeneration burned a full GPU generation.
+  Pieces that ended mid-clause, which happens when a sentence is longer
+  than CHATTERBOX_MAX_CHARS and gets cut, failed to stop far more often:
+  median 22.5 s of dead air against 2.2 s for uncut chunks.
+  The wrapper now trims leading and trailing silence from each piece right
+  after inference, before pieces are joined, so the chunk WAV every
+  downstream consumer sees carries speech. An all-silent generation keeps a
+  250 ms remnant instead of the full run, so the ASR check still flags the
+  dropped text and regenerates it. The trim threshold matches the audio
+  stage's, with a 50 ms buffer so consonant tails survive next to the
+  0.12 s join gap.
+
+## [0.49.0] - 2026-07-28
+
+### Fixed
+
+- A job is no longer killed for taking a long time, only for stopping. The
+  per-job timeout was a wall-clock budget of
+  `max(JOB_TIMEOUT_SECONDS, chunks x JOB_TIMEOUT_PER_CHUNK_SECONDS)`, which
+  killed healthy work: a 195-chunk article died at chunk 152 after
+  progressing steadily the whole run, at 30.1 s per chunk against the 25.6 s
+  left once the earlier stages took 852 s out of the same pot. Raising the
+  budget only moves the number the next long article trips over. The job now
+  runs under a watchdog: every stage change and every finished chunk resets
+  a `JOB_STALL_SECONDS` window, and only silence for that long ends the job.
+  An absolute ceiling of `max(JOB_TIMEOUT_SECONDS, chunks x per-chunk) x
+  JOB_TIMEOUT_CEILING_MULTIPLIER` remains, so a job that inches forward
+  forever still cannot hold the single worker. The failure message says which
+  of the two fired.
+- A regenerated chunk now differs from the take that failed by more than its
+  seed. The quality loop re-rolled only the seed, leaving every retry in the
+  same failure basin: on the episode that prompted this, three
+  identical-parameter attempts took 43 bad chunks down to only 24, and 37 of
+  56 failing chunks never recovered at all. Each retry now also shortens the
+  text fed to one inference call, which is what triggers Chatterbox's
+  repetition loops, and raises the repetition penalty. The escalated values
+  are clamped into the wrapper's request bounds so no operator setting can
+  turn a degraded chunk into a failed job, and both are logged on every regen
+  so the curve can be tuned against real recoveries.
+- A voice audition started from the UI can no longer narrate part of a
+  running episode in the wrong voice. The backend re-asserted the job's slot
+  before each chunk, but selection and generation were two separate HTTP
+  calls and an audition could land between them. `/generate` now carries the
+  slot, and the wrapper switches voices inside the same GPU lock that guards
+  inference, closing the window. This also drops one HTTP round-trip per
+  chunk. Observed in production at 01:44Z on 2026-07-29, when the wrapper
+  re-encoded slot 1 and then slot 4 twenty seconds later, mid-episode.
+  Deploy note: the app and wrapper images must ship together for this
+  release. `/generate` rejects unknown fields, so a 0.49.0 app talking to a
+  pre-0.49.0 wrapper gets a 422 on every chunk. The stack already pins the
+  same `BUILD_VERSION` for both, so a normal redeploy is safe.
+
+### Added
+
+- The narration text is written to `media/{episode_id}.narration.txt` when
+  the normalize stage finishes. `episodes.cleaned_text` is only stored at
+  finalize, so a job that died in TTS, the longest and most failure-prone
+  stage, left nothing behind to diagnose. The orphan sweep reclaims the file
+  once no episode points at it, so a failed job's copy lives about a day and
+  nothing accumulates. Writing it is best-effort: a full disk never fails an
+  otherwise good job.
+- Five settings, editable live in the Settings UI and through
+  `PUT /api/v1/settings`: `JOB_STALL_SECONDS` (default 1800),
+  `JOB_TIMEOUT_CEILING_MULTIPLIER` (3.0),
+  `AUDIO_ANALYSIS_REGEN_CHARS_FACTOR` (0.6),
+  `AUDIO_ANALYSIS_REGEN_MIN_CHARS` (150), and
+  `AUDIO_ANALYSIS_REGEN_PENALTY_STEP` (0.15). The stall default is sized
+  against the worst legitimate silence: one `/generate` can burn
+  `TTS_RETRY_COUNT x TTS_HTTP_TIMEOUT_SECONDS` = 840 s against a hung
+  wrapper.
+
+### Changed
+
+- `JOB_TIMEOUT_SECONDS` and `JOB_TIMEOUT_PER_CHUNK_SECONDS` keep their names
+  and defaults but now size the ceiling rather than the kill deadline.
+  Operators who raised them to work around the old behaviour can leave them
+  raised; the watchdog makes them much less load-bearing.
+- The `pipeline_timeout` log event carries a `kill_reason` of `stall` or
+  `ceiling`, and `job_timeout_rescaled` is replaced by `job_watchdog_armed`.
+
 ## [0.48.4] - 2026-07-25
 
 ### Fixed

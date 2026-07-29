@@ -170,16 +170,24 @@ class Settings(BaseSettings):
 
     # Queue / HTTP / worker.
     QUEUE_POLL_INTERVAL_SECONDS: float = 2.0
-    # Base per-job ceiling. The effective timeout scales with the chunk count
-    # (see pipeline.effective_job_timeout): a long document gets proportionally
-    # more time. Both this and the per-chunk budget are operator-tunable so a
-    # slower GPU/CPU can be accommodated without a redeploy.
+    # A job is killed when it STALLS, not when it has simply run a long time
+    # (see pipeline._Watchdog). These two size the absolute ceiling the watchdog
+    # falls back on: estimate = max(JOB_TIMEOUT_SECONDS, chunks * per-chunk).
+    # Both stay operator-tunable so slower hardware can be accommodated without
+    # a redeploy.
     JOB_TIMEOUT_SECONDS: float = Field(default=3600, gt=0)
-    # Per-TTS-chunk time budget used to scale the per-job timeout once the chunk
-    # count is known: effective = max(JOB_TIMEOUT_SECONDS, chunks * this).
-    # ~15.8 s/chunk was observed on a GPU; 30 s leaves headroom for slow or
-    # regenerated chunks and slower hardware.
+    # Per-TTS-chunk budget folded into that estimate. ~15.8 s/chunk was observed
+    # on a GPU; 30 s leaves headroom for slow or regenerated chunks.
     JOB_TIMEOUT_PER_CHUNK_SECONDS: float = Field(default=30.0, gt=0)
+    # No progress heartbeat (a stage change or a chunk completing) for this long
+    # means the job is dead. Floor is set by the worst legitimate silence: one
+    # /generate call can burn TTS_RETRY_COUNT x TTS_HTTP_TIMEOUT_SECONDS = 840 s
+    # against a hung wrapper, so 1800 s leaves better than 2x margin.
+    JOB_STALL_SECONDS: float = Field(default=1800, gt=0)
+    # Absolute ceiling as a multiple of the chunk-scaled estimate, so a job that
+    # keeps inching forward forever still cannot hold the single worker. 3x of a
+    # 195-chunk estimate is ~4.9 h.
+    JOB_TIMEOUT_CEILING_MULTIPLIER: float = Field(default=3.0, ge=1.0)
     WEB_WORKERS: int = 2
 
     # Logging.
@@ -308,6 +316,15 @@ class Settings(BaseSettings):
     AUDIO_ANALYSIS_DURATION_OVERHEAD_SECS: float = 1.0
     AUDIO_ANALYSIS_MAX_DURATION_RATIO: float = 2.0  # over-long => repetition
     AUDIO_ANALYSIS_MIN_DURATION_RATIO: float = 0.25  # too-short => truncation
+    # Regeneration escalation. A re-gen that only re-rolls the seed leaves the
+    # model in the same failure basin; observed recovery was 43 -> 33 -> 24 bad
+    # chunks over three identical-parameter attempts. Each retry instead shrinks
+    # the per-inference text window (the repetition-loop trigger) and stiffens
+    # the repetition penalty. attempt N: max_chars = CHATTERBOX_MAX_CHARS *
+    # factor**N (floored), repetition_penalty = base + step * N.
+    AUDIO_ANALYSIS_REGEN_CHARS_FACTOR: float = Field(default=0.6, gt=0, le=1.0)
+    AUDIO_ANALYSIS_REGEN_MIN_CHARS: int = Field(default=150, ge=100, le=2000)
+    AUDIO_ANALYSIS_REGEN_PENALTY_STEP: float = Field(default=0.15, ge=0, le=1.0)
 
     # Post-TTS ASR verification (defense-in-depth, off by default). When enabled,
     # the wrapper transcribes each produced chunk with faster-whisper and the
@@ -410,6 +427,15 @@ RUNTIME_SETTING_BOUNDS: dict[str, dict[str, float]] = {
     # 0 would flag every chunk (asr_run >= 0 always holds).
     "WHISPER_MAX_DIVERGENT_RUN": {"ge": 1},
     "WHISPER_SHORT_CHUNK_DIVERGENCE": {"gt": 0, "le": 1.0},
+    # Watchdog: stall window and the ceiling multiplier over the chunk-scaled
+    # estimate. A multiplier below 1 would put the ceiling under the estimate.
+    "JOB_STALL_SECONDS": {"gt": 0},
+    "JOB_TIMEOUT_CEILING_MULTIPLIER": {"ge": 1.0},
+    # Regen escalation. The chars floor mirrors the wrapper's max_chars bounds
+    # so a floored value is still a legal request.
+    "AUDIO_ANALYSIS_REGEN_CHARS_FACTOR": {"gt": 0, "le": 1.0},
+    "AUDIO_ANALYSIS_REGEN_MIN_CHARS": {"ge": 100, "le": 2000},
+    "AUDIO_ANALYSIS_REGEN_PENALTY_STEP": {"ge": 0, "le": 1.0},
 }
 
 
