@@ -6,6 +6,25 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.50.0] - 2026-07-29
+
+### Changed
+
+- Each Chatterbox generation is now budgeted at the quality gate's own
+  overlong bound instead of the library's fixed 1000-token (40 s) limit. The
+  gate rejects any take longer than (words / 2.7 + 1.0) x 2.0 seconds, so
+  audio past that bound could never ship; a generation that missed its stop
+  token still burned the full 40 s on the GPU producing it, up to three
+  times per failing chunk. The wrapper now passes a per-piece max_gen_len
+  derived from the piece's word count (clamped between 5 s and the model
+  cap), cutting each doomed generation roughly in half on typical pieces.
+  Takes the cap cuts short were already being rejected and regenerated; the
+  ASR check catches the missing tail the same way it catches the overlong
+  take today. A `tts_gen_cap_hit` log fires whenever a generation reaches
+  its budget, so the savings are measurable in Loki. If a future chatterbox
+  release changes the internal inference entry point, the wrapper logs
+  `tts_gen_cap_unavailable` and runs uncapped rather than failing to load.
+
 ## [0.49.2] - 2026-07-29
 
 ### Fixed

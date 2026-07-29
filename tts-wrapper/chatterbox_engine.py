@@ -32,12 +32,15 @@ from pathlib import Path
 
 from config import NUM_SLOTS, Config
 from engine import (
+    _MAX_GEN_TOKENS,
+    _S3_TOKENS_PER_SEC,
     GenerationParams,
     GPUOutOfMemoryError,
     InferenceBusyError,
     _split_into_pieces,
     compress_internal_silence_np,
     join_with_silence,
+    max_gen_tokens,
     pcm16_wav_bytes,
     trim_edge_silence,
 )
@@ -68,6 +71,10 @@ class ChatterboxEngine:
         # Single-flight guard over ALL GPU work (inference and conditional
         # recompute); an overlapping call is rejected rather than run concurrently.
         self._gpu_lock = threading.Lock()
+        # Per-piece speech-token budget, set by _infer_piece before each generate
+        # and read by the inference_turbo shim (_install_generation_cap). Written
+        # only under _gpu_lock, so no race.
+        self._piece_max_gen_len = _MAX_GEN_TOKENS
 
     def load(self) -> None:
         import torch  # noqa: PLC0415  (intentional lazy import)
@@ -83,6 +90,7 @@ class ChatterboxEngine:
         self._model = ChatterboxTurboTTS.from_pretrained(device=device)
         # Trust the model's native output rate (24 kHz) over the config default.
         self.sample_rate = int(self._model.sr)
+        self._install_generation_cap()
         self.model_loaded = True
         logger.info(
             "Chatterbox Turbo model loaded",
@@ -251,8 +259,38 @@ class ChatterboxEngine:
         np.random.seed(seed & 0xFFFFFFFF)
         random.seed(seed)
 
+    def _install_generation_cap(self) -> None:
+        """Wrap ``t3.inference_turbo`` so each call gets a per-piece
+        ``max_gen_len`` instead of the library's fixed 1000-token default.
+
+        ``ChatterboxTurboTTS.generate()`` never passes ``max_gen_len``, so a
+        generation that misses its stop token burns the full ~40 s cap on the
+        GPU even though the backend gate rejects anything past its overlong
+        bound. The shim injects the bound (``engine.max_gen_tokens``) computed
+        per piece by ``_infer_piece``; an explicit caller value wins. Guarded
+        against library shape changes: no ``t3`` means no cap, never a failed
+        load -- the chatterbox-monitor workflow flags version bumps."""
+
+        t3 = getattr(self._model, "t3", None)
+        original = getattr(t3, "inference_turbo", None)
+        if not callable(original):
+            logger.warning(
+                "Generation cap unavailable; running with the library default",
+                extra={"event": "tts_gen_cap_unavailable"},
+            )
+            return
+
+        def _capped_inference(*args, **kwargs):
+            kwargs.setdefault("max_gen_len", self._piece_max_gen_len)
+            return original(*args, **kwargs)
+
+        t3.inference_turbo = _capped_inference
+
     def _infer_piece(self, text: str, params: GenerationParams):
         assert self._model is not None
+        # Budget this piece's generation at the gate's overlong bound: audio past
+        # it can never pass the quality gate, so generating it is pure waste.
+        self._piece_max_gen_len = max_gen_tokens(text)
         # No audio_prompt_path -> reuse the conditionals cached by
         # prepare_conditionals (the per-chunk performance win). Only knobs
         # Turbo honors are passed; exaggeration/cfg_weight would be ignored
@@ -265,4 +303,20 @@ class ChatterboxEngine:
             top_k=params.top_k,
         )
         # generate returns a torch.Tensor (1, N) float32 in [-1, 1].
-        return wav.squeeze(0).detach().cpu().numpy()
+        arr = wav.squeeze(0).detach().cpu().numpy()
+        # A piece whose audio reaches its token budget was cut short: the model
+        # never sampled its stop token. Loggable signal for measuring how often
+        # the cap converts a doomed 40 s generation into a bounded one.
+        piece_secs = len(arr) / self.sample_rate
+        if piece_secs >= self._piece_max_gen_len / _S3_TOKENS_PER_SEC - 0.3:
+            logger.info(
+                "Generation ran to its token budget",
+                extra={
+                    "event": "tts_gen_cap_hit",
+                    "budget_tokens": self._piece_max_gen_len,
+                    "piece_secs": round(piece_secs, 2),
+                    "piece_words": len(text.split()),
+                    "piece_chars": len(text),
+                },
+            )
+        return arr

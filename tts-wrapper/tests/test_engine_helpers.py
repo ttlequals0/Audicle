@@ -12,9 +12,11 @@ from engine import (
     _ALL_SILENT_KEEP_MS,
     _DEFAULT_MAX_CHARS,
     _INTERNAL_SILENCE_KEEP_MS,
+    _MAX_GEN_TOKENS,
     _TRIM_BUFFER_MS,
     _split_into_pieces,
     compress_internal_silence_np,
+    max_gen_tokens,
     trim_edge_silence,
 )
 
@@ -161,3 +163,23 @@ def test_internal_silence_all_silent_untouched() -> None:
     wav = _silence(2.0)
     out = compress_internal_silence_np(wav, rate)
     assert np.array_equal(out, wav)
+
+
+# --- max_gen_tokens ---------------------------------------------------------
+
+
+def test_max_gen_tokens_matches_the_gate_overlong_bound() -> None:
+    # 27 words: (27/2.7 + 1.0) * 2.0 * 25 = 550 tokens.
+    text = "word " * 27
+    assert max_gen_tokens(text.strip()) == 550
+
+
+def test_max_gen_tokens_clamps_to_model_cap_for_long_text() -> None:
+    text = ("word " * 60).strip()  # (60/2.7+1)*2*25 = 1161 -> clamp 1000
+    assert max_gen_tokens(text) == _MAX_GEN_TOKENS
+
+
+def test_max_gen_tokens_floor_for_tiny_text() -> None:
+    # 1 word: (0.37+1)*2*25 = ~68 -> floor 125 so a short piece is never starved.
+    assert max_gen_tokens("hi") == 125
+    assert max_gen_tokens("") == 125

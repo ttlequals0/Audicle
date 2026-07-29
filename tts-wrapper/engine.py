@@ -132,6 +132,28 @@ _ALL_SILENT_KEEP_MS = 250
 _MAX_INTERNAL_SILENCE_MS = 1000
 _INTERNAL_SILENCE_KEEP_MS = 500
 
+# Generation-length cap. Chatterbox Turbo's stop token is sampled; a generation
+# that misses it runs to the model's 1000-token (~40 s) limit at pure GPU cost.
+# The backend gate rejects any take longer than (words / WORDS_PER_SEC +
+# OVERHEAD) * MAX_RATIO seconds as overlong, so audio past that bound can never
+# ship -- generating it is provable waste. Constants mirror the backend's
+# AUDIO_ANALYSIS_* defaults; the overhead applies per piece where the backend
+# applies it per chunk, which errs on the generous side.
+_WORDS_PER_SEC = 2.7
+_DURATION_OVERHEAD_SECS = 1.0
+_MAX_DURATION_RATIO = 2.0
+_S3_TOKENS_PER_SEC = 25
+_MAX_GEN_TOKENS = 1000
+_MIN_GEN_TOKENS = 125  # 5 s floor so a tiny piece is never starved
+
+
+def max_gen_tokens(text: str) -> int:
+    """Speech-token budget for one piece: the gate's overlong bound in tokens."""
+
+    words = len(text.split())
+    bound_secs = (words / _WORDS_PER_SEC + _DURATION_OVERHEAD_SECS) * _MAX_DURATION_RATIO
+    return min(_MAX_GEN_TOKENS, max(_MIN_GEN_TOKENS, int(bound_secs * _S3_TOKENS_PER_SEC)))
+
 
 def trim_edge_silence(wav, sample_rate: int):
     """Trim leading/trailing silence from a float32 mono piece, keeping a

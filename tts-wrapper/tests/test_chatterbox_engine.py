@@ -354,3 +354,45 @@ def test_run_inference_trims_piece_silence_tail() -> None:
     # Two trimmed pieces + one join gap; the 10s tails are gone.
     assert len(out) == piece + gap + piece
     assert len(out) < int(model.sr * 3)
+
+
+# --- generation-length cap --------------------------------------------------
+
+
+def test_generation_cap_injects_piece_max_gen_len() -> None:
+    engine = _loaded_engine()
+    recorded: list[dict] = []
+    engine._model.t3 = types.SimpleNamespace(
+        inference_turbo=lambda **kw: recorded.append(kw)
+    )
+    engine._install_generation_cap()
+    engine._piece_max_gen_len = 550
+    engine._model.t3.inference_turbo(text_tokens="x")
+    assert recorded[0]["max_gen_len"] == 550
+
+
+def test_generation_cap_respects_explicit_caller_value() -> None:
+    engine = _loaded_engine()
+    recorded: list[dict] = []
+    engine._model.t3 = types.SimpleNamespace(
+        inference_turbo=lambda **kw: recorded.append(kw)
+    )
+    engine._install_generation_cap()
+    engine._piece_max_gen_len = 550
+    engine._model.t3.inference_turbo(text_tokens="x", max_gen_len=42)
+    assert recorded[0]["max_gen_len"] == 42
+
+
+def test_generation_cap_missing_t3_is_harmless() -> None:
+    engine = _loaded_engine()  # FakeChatterboxModel has no .t3
+    engine._install_generation_cap()  # must not raise
+    out = engine._run_inference("Hello world.", GenerationParams())
+    assert isinstance(out, np.ndarray)
+
+
+def test_run_inference_sets_cap_from_piece_text() -> None:
+    from engine import max_gen_tokens
+
+    engine = _loaded_engine()
+    engine._run_inference("One two three four five.", GenerationParams())
+    assert engine._piece_max_gen_len == max_gen_tokens("One two three four five.")
