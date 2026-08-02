@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.49.0
+  version: 0.50.0
 paths:
   /health/live:
     get:
@@ -233,8 +233,22 @@ paths:
     get:
       tags:
       - prompt
-      summary: Read the cleanup prompt
+      summary: Read a pipeline prompt
       operationId: read_prompt_api_v1_prompt_get
+      parameters:
+      - name: kind
+        in: query
+        required: false
+        schema:
+          enum:
+          - cleanup
+          - summary
+          - pronunciation
+          type: string
+          description: Which pipeline prompt to act on.
+          default: cleanup
+          title: Kind
+        description: Which pipeline prompt to act on.
       responses:
         '200':
           description: Successful Response
@@ -242,17 +256,37 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PromptResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
     put:
       tags:
       - prompt
-      summary: Replace the cleanup prompt
+      summary: Replace a pipeline prompt
       operationId: write_prompt_api_v1_prompt_put
+      parameters:
+      - name: kind
+        in: query
+        required: false
+        schema:
+          enum:
+          - cleanup
+          - summary
+          - pronunciation
+          type: string
+          description: Which pipeline prompt to act on.
+          default: cleanup
+          title: Kind
+        description: Which pipeline prompt to act on.
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/PromptBody'
-        required: true
       responses:
         '200':
           description: Successful Response
@@ -269,8 +303,22 @@ paths:
     delete:
       tags:
       - prompt
-      summary: Reset the cleanup prompt to default
+      summary: Reset a pipeline prompt to default
       operationId: reset_prompt_api_v1_prompt_delete
+      parameters:
+      - name: kind
+        in: query
+        required: false
+        schema:
+          enum:
+          - cleanup
+          - summary
+          - pronunciation
+          type: string
+          description: Which pipeline prompt to act on.
+          default: cleanup
+          title: Kind
+        description: Which pipeline prompt to act on.
       responses:
         '200':
           description: Successful Response
@@ -278,6 +326,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PromptResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/corrections:
     get:
       tags:

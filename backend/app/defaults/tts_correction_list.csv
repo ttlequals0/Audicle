@@ -302,8 +302,8 @@ Financial,1k,one thousand,k suffix as thousand
 Tech Acronym,OS,oh ess,Operating system; pulled from user dictionary
 Tech Acronym,VMs,vee emz,"Virtual machines, plural; pulled from user dictionary"
 Financial,Opex,op eks,Operating expenses; pulled from user dictionary
-Tech Brand,OpenAI,open A eye,Pulled from user dictionary; letter-word 'ay' was voiced as 'eye'
-Tech Acronym,AI,A eye,Artificial Intelligence -- bare capital A voices the letter reliably
+Tech Brand,OpenAI,open A-eye,"Same hyphenation as the bare AI entry: 'open A eye' let the A reduce to an article and vanish"
+Tech Acronym,AI,A-eye,"Artificial Intelligence; hyphenated so the leading A can't reduce to the article ""a"" (0.50.1: bare ""A eye"" was voiced as just ""eye"")"
 Mispronounced Word,retry,ree try,Not 'reh-tree'; pulled from user dictionary
 Financial,EBITDA,ee bit dah,Earnings Before Interest Taxes Depreciation Amortization -- said as a word
 Financial,EBIT,ee bit,Earnings Before Interest and Taxes -- said as a word

@@ -34,6 +34,7 @@ def test_run_migrations_creates_tables(tmp_path: Path) -> None:
         "021_drop_lexicon_ipa_column",
         "022_reimport_seed_lexicon",
         "023_reimport_seed_lexicon",
+        "024_reimport_seed_lexicon",
     ]
 
     conn = database.connect(database.db_path(tmp_path))
@@ -73,6 +74,7 @@ def test_second_run_is_a_noop(tmp_path: Path) -> None:
         "021_drop_lexicon_ipa_column",
         "022_reimport_seed_lexicon",
         "023_reimport_seed_lexicon",
+        "024_reimport_seed_lexicon",
     ]
     assert second == []
 
@@ -85,11 +87,12 @@ def test_no_backup_on_fresh_init_or_noop(tmp_path: Path) -> None:
 
 def test_m016_backfills_voice_label(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Apply through 015, seed episodes + jobs, then let 016 backfill: a recorded
-    # slot -> "Slot N", a NULL voice_id or a missing job -> "Default". Slice off the
-    # last eight migrations (016 voice_label, 017/019/020/022/023 seed re-imports, 018
-    # voice.wav -> slot1, 021 drop-ipa-column) so 016 runs against the seeded rows.
+    # slot -> "Slot N", a NULL voice_id or a missing job -> "Default". Cut the list at
+    # 016 by NAME rather than by a trailing count, so appending a migration doesn't
+    # silently shift the slice and let 016 run before the rows exist.
     full = database.MIGRATIONS
-    monkeypatch.setattr(database, "MIGRATIONS", full[:-8])
+    cutoff = next(i for i, (name, _) in enumerate(full) if name == "016_episode_voice_label")
+    monkeypatch.setattr(database, "MIGRATIONS", full[:cutoff])
     database.run_migrations(tmp_path)
     conn = database.connect(database.db_path(tmp_path))
     try:

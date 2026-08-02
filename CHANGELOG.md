@@ -6,6 +6,34 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.50.1] - 2026-08-02
+
+### Fixed
+
+- "AI" was narrated as "eye", losing its first letter. The respelling was
+  "A eye", which puts a bare capital A in front of a vowel-initial word, and
+  that is exactly where English reduces the article "a" to a schwa. Chatterbox
+  took the article reading and swallowed the letter. Both affected entries,
+  "AI" and "OpenAI", are now hyphenated ("A-eye", "open A-eye") so the A is
+  part of a single token and no article reading is available. Normalization
+  itself was never at fault: it converted 27 of 27 instances in the episode
+  that surfaced this.
+- "LLM" was narrated as "LM". No pronunciation rule for it exists, by design:
+  letter-spelled acronyms were removed in 0.36.0 because Chatterbox says
+  common ones natively. The LLM pronunciation pass was inventing "L L M"
+  anyway, against its own instruction to change only terms in the reference,
+  and the doubled letter then collapsed. The prompt now forbids letter-spacing
+  any acronym that has no reference entry, which covers every acronym rather
+  than just this one.
+
+### Added
+
+- `GET`/`PUT`/`DELETE /api/v1/prompt` accept `?kind=` (`cleanup`, `summary`,
+  `pronunciation`). The route previously hardcoded `cleanup`, so the summary
+  and pronunciation prompts could be edited in code but not by an operator,
+  even though both have had storage keys and packaged defaults all along. The
+  parameter defaults to `cleanup`, so existing callers are unchanged.
+
 ## [0.50.0] - 2026-07-29
 
 ### Changed
