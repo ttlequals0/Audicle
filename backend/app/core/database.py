@@ -625,6 +625,16 @@ def _m023_reimport_seed_lexicon(conn: sqlite3.Connection) -> None:
     _reimport_seed_lexicon(conn)
 
 
+def _m024_reimport_seed_lexicon(conn: sqlite3.Connection) -> None:
+    """0.50.1: re-sync the seed after the AI respellings were hyphenated. 'A eye' and
+    'open A eye' let the leading bare A reduce to the article 'a' and vanish (heard as
+    just 'eye'), so both are now 'A-eye'. LLM needed no seed row: acronyms without one
+    reach Chatterbox verbatim by design (019), and the pronunciation prompt now forbids
+    the letter-spacing the LLM pass had been improvising."""
+
+    _reimport_seed_lexicon(conn)
+
+
 def _m018_voice_wav_to_slot1(conn: sqlite3.Connection) -> None:
     """Migrate the legacy committed ``voice.wav`` into voice slot 1 (0.35.0).
 
@@ -687,6 +697,7 @@ MIGRATIONS: list[tuple[str, Migration]] = [
     ("021_drop_lexicon_ipa_column", _m021_drop_lexicon_ipa_column),
     ("022_reimport_seed_lexicon", _m022_reimport_seed_lexicon),
     ("023_reimport_seed_lexicon", _m023_reimport_seed_lexicon),
+    ("024_reimport_seed_lexicon", _m024_reimport_seed_lexicon),
 ]
 
 

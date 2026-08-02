@@ -123,7 +123,7 @@ def test_seed_includes_merged_manual_corrections() -> None:
     assert entries["OS"].replacement_text == "oh ess"
     assert entries["VMs"].replacement_text == "vee emz"
     assert entries["Opex"].replacement_text == "op eks"
-    assert entries["OpenAI"].replacement_text == "open A eye"  # fixes the prod "opemai" typo
+    assert entries["OpenAI"].replacement_text == "open A-eye"  # fixes the prod "opemai" typo
     assert entries["retry"].replacement_text == "ree try"
 
 
@@ -163,7 +163,6 @@ def test_letter_a_is_bare_capital_not_ay() -> None:
     # letter A is written as a bare capital A, which it voices as the letter.
     rows = seed_corrections.load_seed(seed_corrections.seed_path())
     entries = _by_input(rows)
-    assert entries["AI"].replacement_text == "A eye"
     assert entries["Claude"].replacement_text == "clawed"
     offenders = [
         e.input_text
@@ -171,3 +170,14 @@ def test_letter_a_is_bare_capital_not_ay() -> None:
         if re.search(r"(?<![\w'])ay(?![\w'])", e.replacement_text)
     ]
     assert offenders == [], f"replace letter-word 'ay' with bare capital A: {offenders}"
+
+
+def test_ai_is_hyphenated_so_the_a_cannot_read_as_an_article() -> None:
+    # 0.50.1: "A eye" put a bare capital A before a vowel-initial word, exactly where
+    # English reduces the article "a" to a schwa -- Chatterbox dropped it and the term
+    # was heard as plain "eye". Hyphenating makes it one token, so no article reading
+    # is available. Still one bare capital A (the letter-word "ay" voices as "aye").
+    entries = _by_input(seed_corrections.load_seed(seed_corrections.seed_path()))
+    assert entries["AI"].replacement_text == "A-eye"
+    # Same defect, same fix: "open A eye" put the bare A before a vowel too.
+    assert entries["OpenAI"].replacement_text == "open A-eye"

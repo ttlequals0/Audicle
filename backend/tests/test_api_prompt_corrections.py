@@ -203,3 +203,52 @@ def test_export_json(client: TestClient) -> None:
     assert js.status_code == 200
     assert '"Acme"' in js.text and "ACK-mee" in js.text
     assert "ipa" not in js.text
+
+
+def test_prompt_kind_selects_each_pipeline_prompt(client: TestClient) -> None:
+    """0.50.1: before this, ?kind= was not a parameter and the route hardcoded
+    "cleanup", so the summary and pronunciation prompts were editable in code but
+    unreachable for an operator."""
+
+    seen = {}
+    with client:
+        for kind in ("cleanup", "summary", "pronunciation"):
+            response = client.get("/api/v1/prompt", params={"kind": kind})
+            assert response.status_code == 200, response.text
+            assert response.json()["is_default"] is True
+            seen[kind] = response.json()["prompt"]
+    # Three distinct packaged defaults, not one prompt echoed three times.
+    assert len(set(seen.values())) == 3
+
+
+def test_prompt_defaults_to_cleanup_when_kind_omitted(client: TestClient) -> None:
+    with client:
+        bare = client.get("/api/v1/prompt")
+        explicit = client.get("/api/v1/prompt", params={"kind": "cleanup"})
+    assert bare.status_code == 200
+    assert bare.json() == explicit.json()
+
+
+def test_prompt_rejects_unknown_kind(client: TestClient) -> None:
+    # The app maps RequestValidationError to 400 (api/errors.py), not FastAPI's 422.
+    with client:
+        response = client.get("/api/v1/prompt", params={"kind": "nope"})
+    assert response.status_code == 400
+    assert response.json()["error"] == "Validation failed"
+
+
+def test_prompt_override_is_isolated_per_kind(client: TestClient) -> None:
+    with client:
+        put = client.put(
+            "/api/v1/prompt",
+            params={"kind": "pronunciation"},
+            json={"prompt": "custom pronunciation prompt"},
+        )
+        assert put.status_code == 200, put.text
+        stored = client.get("/api/v1/prompt", params={"kind": "pronunciation"}).json()
+        # Overriding one kind must not disturb another.
+        other = client.get("/api/v1/prompt", params={"kind": "cleanup"}).json()
+        reset = client.delete("/api/v1/prompt", params={"kind": "pronunciation"})
+    assert stored == {"prompt": "custom pronunciation prompt", "is_default": False}
+    assert other["is_default"] is True
+    assert reset.status_code == 200 and reset.json()["is_default"] is True

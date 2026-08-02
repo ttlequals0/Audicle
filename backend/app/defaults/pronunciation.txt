@@ -10,6 +10,10 @@ ABSOLUTE OUTPUT CONTRACT (read first):
   of it. This is a copy-with-substitutions task, not a summary or an analysis.
 - Change ONLY the spelled form of terms that match the pronunciation reference.
   Leave every other word exactly as written, character for character.
+- NEVER spell out or letter-space an acronym that is not in the reference. The
+  narrator says common acronyms (CEO, GPU, API, LLM) correctly on its own, and
+  splitting one into letters makes it drop letters: "L L M" is voiced "LM". An
+  acronym with no reference entry is copied exactly as written.
 - Do NOT summarize, shorten, paraphrase, reorder, omit, or add content.
 - Do NOT comment, explain, greet, or describe what you changed. NEVER reply with
   a note such as "No changes needed" or "The text contains no terms..." -- even
