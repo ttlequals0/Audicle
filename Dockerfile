@@ -13,7 +13,7 @@ RUN npm run build
 
 # ---- Stage 2: uv builder ----
 # Pin uv to a single tag for reproducibility; bump deliberately.
-FROM ghcr.io/astral-sh/uv:0.11.29 AS uv
+FROM ghcr.io/astral-sh/uv:0.12.0 AS uv
 
 # ---- Stage 2b: static ffmpeg ----
 # Pinned BtbN GPL static build, sha256-verified. Audicle only subprocesses the
