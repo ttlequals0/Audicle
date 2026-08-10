@@ -58,6 +58,9 @@ from app.services import (
     voices,
     webhooks,
 )
+from app.services import (
+    chapters as chapters_service,
+)
 from app.services import prompt as prompt_service
 from app.services.atomic_write import write_bytes_atomic
 from app.utils.logging import episode_id_ctx, job_id_ctx, stage_ctx
@@ -462,6 +465,18 @@ async def _run_stages(
     # which those players already display correctly, so embedding would just bloat the file.
     if artwork_result is not None:
         _embed_episode_cover(audio_result.mp3_path, artwork_result.embed_jpg_bytes)
+    chapters_json = await _run_stage(
+        "chapters",
+        lambda: _stage_chapters(
+            chunks,
+            chunk_durations,
+            audio_result.duration_secs,
+            audio_result.mp3_path,
+            settings,
+        ),
+        job.id,
+        settings,
+    )
     vtt = await _run_stage(
         "transcript",
         lambda: _stage_transcript(chunks, chunk_durations, settings),
@@ -478,6 +493,7 @@ async def _run_stages(
             vtt=vtt,
             summary=summary,
             cleaned_text=cleaned,
+            chapters_json=chapters_json,
             settings=settings,
         ),
         job.id,
@@ -1458,6 +1474,75 @@ async def _stage_artwork(
     return result
 
 
+async def _stage_chapters(
+    chunks: list[str],
+    chunk_durations: list[float],
+    duration_secs: float,
+    mp3_path: Path,
+    settings: Settings,
+) -> str | None:
+    """Generate the Podcasting 2.0 chapters document (3b), or None.
+
+    Runs after the audio stage, when the chunk list, measured per-chunk
+    durations, and the real MP3 duration are all known, so timestamps are
+    exact. One LLM call receives the numbered chunk list and returns start
+    indices with short titles. Never fails the job: chapters are
+    non-essential, so any error returns None and the episode still ships.
+    """
+
+    if not settings.CHAPTERS_ENABLED or duration_secs < settings.CHAPTERS_MIN_DURATION_SECS:
+        logger.info(
+            "Chapters skipped",
+            extra={
+                "event": "chapters_skipped",
+                "enabled": settings.CHAPTERS_ENABLED,
+                "duration_secs": duration_secs,
+            },
+        )
+        return None
+    try:
+        with database.connection(settings.DATA_DIR) as conn:
+            system_prompt = prompt_service.load_effective(conn, "chapters")
+        numbered = "\n".join(f"{i}: {text[:200]}" for i, text in enumerate(chunks))
+        raw = await _llm_with_retry(system_prompt, f"Chunks:\n\n{numbered}", settings)
+        entries = chapters_service.parse_llm_chapters(raw, len(chunks))
+        if len(entries) < 2:
+            # A lone forced "Introduction" chapter is noise, not navigation.
+            logger.info(
+                "Chapters skipped: too few parsed from the LLM reply",
+                extra={"event": "chapters_too_few", "parsed": len(entries)},
+            )
+            return None
+        starts = chapters_service.chunk_start_times(
+            chunk_durations, settings.TTS_CHUNK_SILENCE_MS
+        )
+        try:
+            audio.embed_chapters(
+                mp3_path,
+                [(starts[index], title) for index, title in entries],
+                duration_secs,
+            )
+        except Exception:
+            logger.warning(
+                "Chapter ID3 embed failed; feed JSON still served",
+                extra={"event": "chapters_embed_failed"},
+                exc_info=True,
+            )
+        doc = chapters_service.build_chapters_json(entries, starts)
+        logger.info(
+            "Chapters generated",
+            extra={"event": "chapters_complete", "chapter_count": len(entries)},
+        )
+        return doc
+    except Exception:
+        logger.error(
+            "Chapter generation failed; episode ships without chapters",
+            extra={"event": "chapters_failed"},
+            exc_info=True,
+        )
+        return None
+
+
 async def _stage_transcript(
     chunks: list[str],
     chunk_durations: list[float],
@@ -1502,6 +1587,7 @@ async def _stage_finalize(
     vtt: str,
     summary: str | None,
     cleaned_text: str | None,
+    chapters_json: str | None,
     settings: Settings,
 ) -> None:
     """Upsert the ``episodes`` row that the RSS feed and media handlers read.
@@ -1553,6 +1639,7 @@ async def _stage_finalize(
             source_type=source_type,
             source_filename=source_filename,
             voice_label=voice_label,
+            chapters_json=chapters_json,
         )
     finally:
         conn.close()

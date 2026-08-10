@@ -2218,3 +2218,70 @@ async def test_run_stages_prepends_intro_before_chunking(
     assert stored_text and stored_text.startswith("Test Article. By Test Author.")
     # The intro flows into the first transcript cue like any other chunk text.
     assert row is not None and "Test Article. By Test Author." in row.transcript_vtt
+
+
+# --- 3b: chapters stage -----------------------------------------------------
+
+
+async def test_stage_chapters_skipped_below_min_duration(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    calls = {"n": 0}
+
+    async def _fake(_s, _u, _settings, **_k):
+        calls["n"] += 1
+        return "0 | Nope"
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _fake)
+    out = await pipeline._stage_chapters(
+        ["one", "two"], [30.0, 30.0], 60.0, Path("/tmp/x.mp3"), get_settings()
+    )
+    assert out is None
+    assert calls["n"] == 0
+
+
+async def test_stage_chapters_generates_document_with_exact_timestamps(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+
+    async def _fake(_system, user, _settings, **_k):
+        assert "0:" in user and "2:" in user  # numbered chunk list sent
+        return "0 | Opening remarks\n2 | The second act"
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _fake)
+    embedded = {}
+
+    def _spy_embed(mp3_path, pairs, total):
+        embedded["pairs"] = pairs
+        embedded["total"] = total
+
+    monkeypatch.setattr(pipeline.audio, "embed_chapters", _spy_embed)
+    import json as json_mod
+
+    out = await pipeline._stage_chapters(
+        ["a", "b", "c"], [300.0, 200.0, 200.0], 700.0, Path("/tmp/x.mp3"), get_settings()
+    )
+    assert out is not None
+    doc = json_mod.loads(out)
+    silence = get_settings().TTS_CHUNK_SILENCE_MS / 1000
+    assert doc["chapters"][0] == {"startTime": 0.0, "title": "Opening remarks"}
+    assert doc["chapters"][1]["startTime"] == 300.0 + 200.0 + 2 * silence
+    assert embedded["pairs"][0] == (0.0, "Opening remarks")
+    assert embedded["total"] == 700.0
+
+
+async def test_stage_chapters_llm_failure_returns_none(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+
+    async def _boom(_s, _u, _settings, **_k):
+        raise RuntimeError("llm down")
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _boom)
+    out = await pipeline._stage_chapters(
+        ["one", "two"], [400.0, 400.0], 800.0, Path("/tmp/x.mp3"), get_settings()
+    )
+    assert out is None

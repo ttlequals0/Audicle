@@ -625,6 +625,14 @@ def _m023_reimport_seed_lexicon(conn: sqlite3.Connection) -> None:
     _reimport_seed_lexicon(conn)
 
 
+def _m025_episode_chapters_json(conn: sqlite3.Connection) -> None:
+    """0.51.0: Podcasting 2.0 chapters document per episode, stored like
+    transcript_vtt. NULL for every pre-existing row (chapters are generated
+    only for new or reprocessed episodes)."""
+
+    conn.execute("ALTER TABLE episodes ADD COLUMN chapters_json TEXT")
+
+
 def _m024_reimport_seed_lexicon(conn: sqlite3.Connection) -> None:
     """0.50.1: re-sync the seed after the AI respellings were hyphenated. 'A eye' and
     'open A eye' let the leading bare A reduce to the article 'a' and vanish (heard as
@@ -698,6 +706,7 @@ MIGRATIONS: list[tuple[str, Migration]] = [
     ("022_reimport_seed_lexicon", _m022_reimport_seed_lexicon),
     ("023_reimport_seed_lexicon", _m023_reimport_seed_lexicon),
     ("024_reimport_seed_lexicon", _m024_reimport_seed_lexicon),
+    ("025_episode_chapters_json", _m025_episode_chapters_json),
 ]
 
 

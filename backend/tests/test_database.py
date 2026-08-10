@@ -35,6 +35,7 @@ def test_run_migrations_creates_tables(tmp_path: Path) -> None:
         "022_reimport_seed_lexicon",
         "023_reimport_seed_lexicon",
         "024_reimport_seed_lexicon",
+        "025_episode_chapters_json",
     ]
 
     conn = database.connect(database.db_path(tmp_path))
@@ -75,6 +76,7 @@ def test_second_run_is_a_noop(tmp_path: Path) -> None:
         "022_reimport_seed_lexicon",
         "023_reimport_seed_lexicon",
         "024_reimport_seed_lexicon",
+        "025_episode_chapters_json",
     ]
     assert second == []
 

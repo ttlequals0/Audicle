@@ -102,6 +102,25 @@ async def get_vtt(
     )
 
 
+@router.api_route("/{episode_id}.chapters.json", methods=["GET", "HEAD"])
+async def get_chapters(
+    episode_id: str,
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+) -> Response:
+    """The Podcasting 2.0 chapters document, served from the ``chapters_json``
+    column. 404 for episodes without chapters (short, disabled, or pre-0.51.0)."""
+
+    _validate_episode_id(episode_id)
+    episode = episodes.get_by_id(conn, episode_id)
+    if episode is None or not episode.chapters_json:
+        raise HTTPException(status_code=404, detail="not found")
+    return Response(
+        content=episode.chapters_json,
+        media_type="application/json+chapters",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
 @router.api_route("/{episode_id}.txt", methods=["GET", "HEAD"])
 async def get_cleaned_text(
     episode_id: str,

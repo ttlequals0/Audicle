@@ -302,6 +302,12 @@ class Settings(BaseSettings):
     # drone / steady noise / repetition and regenerate it (Chatterbox is
     # non-deterministic, so a re-gen usually fixes it). Thresholds are starting
     # points and need empirical tuning against real failures.
+    # Chapters (3b): one LLM call after the audio stage names 3-7 chapters;
+    # emitted as podcast:chapters JSON and embedded ID3 CHAP/CTOC frames.
+    # Episodes under the duration floor get none (navigation noise).
+    CHAPTERS_ENABLED: bool = True
+    CHAPTERS_MIN_DURATION_SECS: int = 600
+
     # Read "{title}. By {author}." at the top of each episode (3a). The line is
     # prepended to the cleaned text before chunking so it flows through
     # corrections, TTS, the transcript, and chapter timing with no special case.

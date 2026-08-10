@@ -40,6 +40,7 @@ SESSION_SECRET_KEY_NAME = "session_secret"
 CLEANUP_PROMPT_KEY = "cleanup_prompt"
 SUMMARY_PROMPT_KEY = "summary_prompt"
 PRONUNCIATION_PROMPT_KEY = "pronunciation_prompt"
+CHAPTERS_PROMPT_KEY = "chapters_prompt"
 PRONUNCIATION_KEY = "pronunciation_dict"
 
 

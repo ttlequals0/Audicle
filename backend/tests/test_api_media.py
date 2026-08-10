@@ -162,3 +162,27 @@ def test_media_routes_reject_dot_prefixed_id(env: Path) -> None:
     # would produce ``"Not Found"`` (capital N), so the lowercase body
     # proves ``_validate_episode_id`` is what rejected the request.
     assert response.json() == {"error": "not found", "status": 404}
+
+
+def test_get_chapters_json_serves_stored_document(env: Path) -> None:
+    _seed_episode(env, id_="abc", transcript_vtt=None)
+    conn = database.connect(database.db_path(env))
+    try:
+        conn.execute(
+            "UPDATE episodes SET chapters_json = ? WHERE id = 'abc'",
+            ('{"version": "1.2.0", "chapters": []}',),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    with _client(env) as client:
+        response = client.get("/media/abc.chapters.json")
+    assert response.status_code == 200
+    assert response.json()["version"] == "1.2.0"
+
+
+def test_get_chapters_json_404_when_absent(env: Path) -> None:
+    _seed_episode(env, id_="abc", transcript_vtt=None)
+    with _client(env) as client:
+        response = client.get("/media/abc.chapters.json")
+    assert response.status_code == 404

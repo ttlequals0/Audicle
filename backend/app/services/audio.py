@@ -144,6 +144,56 @@ def embed_cover(mp3_path: Path, cover_jpg_bytes: bytes) -> None:
             tmp.unlink()
 
 
+def embed_chapters(
+    mp3_path: Path,
+    chapter_starts: list[tuple[float, str]],
+    total_duration_secs: float,
+) -> None:
+    """Embed chapters as ID3 CHAP + CTOC frames (same v2.3 tagging as the
+    cover). Clients like Castro read only the embedded frames, so the feed's
+    ``podcast:chapters`` JSON alone is not enough. Replaces any existing
+    chapter frames so a reprocess doesn't stack them."""
+
+    from mutagen.id3 import CHAP, CTOC, TIT2, CTOCFlags
+
+    tmp = mp3_path.with_name(f".chap-{mp3_path.name}")
+    try:
+        shutil.copyfile(mp3_path, tmp)
+        tagged = MP3(tmp, ID3=ID3)
+        if tagged.tags is None:
+            tagged.add_tags()
+        tagged.tags.delall("CHAP")
+        tagged.tags.delall("CTOC")
+        element_ids = [f"chp{i}" for i in range(len(chapter_starts))]
+        for i, (start_secs, title) in enumerate(chapter_starts):
+            end_secs = (
+                chapter_starts[i + 1][0]
+                if i + 1 < len(chapter_starts)
+                else total_duration_secs
+            )
+            tagged.tags.add(
+                CHAP(
+                    element_id=element_ids[i],
+                    start_time=int(start_secs * 1000),
+                    end_time=int(end_secs * 1000),
+                    sub_frames=[TIT2(encoding=3, text=[title])],
+                )
+            )
+        tagged.tags.add(
+            CTOC(
+                element_id="toc",
+                flags=CTOCFlags.TOP_LEVEL | CTOCFlags.ORDERED,
+                child_element_ids=element_ids,
+                sub_frames=[TIT2(encoding=3, text=["Chapters"])],
+            )
+        )
+        tagged.save(v2_version=3)
+        os.replace(tmp, mp3_path)
+    finally:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+
+
 # --- Stage 1: silence trim --------------------------------------------------
 
 
