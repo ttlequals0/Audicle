@@ -539,7 +539,7 @@ interface JobAction {
 }
 
 // Recents row menu. Terminal jobs have more than one thing you can do to them
-// now (re-run everything, or just redo chapters), so the old single Reprocess
+// (re-run everything, or just redo chapters), so the old single Reprocess
 // button became a menu. Closes on outside click and on Escape.
 function JobActions({ actions, pending }: { actions: JobAction[]; pending: boolean }) {
   const [open, setOpen] = useState(false);
@@ -564,31 +564,36 @@ function JobActions({ actions, pending }: { actions: JobAction[]; pending: boole
   return (
     <div className="relative inline-block mt-2" ref={box}>
       <button
-        className="btn-ghost"
+        className="btn-ghost inline-flex items-center gap-1.5"
         disabled={pending}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        &#8635; Redo <span className="text-mute">▾</span>
+        &#8635; Redo
+        <span
+          aria-hidden="true"
+          className={`text-mute text-lg leading-none transition-transform motion-reduce:transition-none ${
+            open ? "rotate-90" : ""
+          }`}
+        >
+          ›
+        </span>
       </button>
       {open && (
-        <div
-          role="menu"
-          className="absolute left-0 z-20 mt-1 min-w-[15rem] card p-1 shadow-lg"
-        >
+        <div role="menu" className="absolute left-0 z-20 mt-1 menu-panel">
           {actions.map((a) => (
             <button
               key={a.label}
               role="menuitem"
-              className="w-full text-left px-3 py-2 rounded hover:bg-line/60"
+              className="menu-item"
               onClick={() => {
                 setOpen(false);
                 a.run();
               }}
             >
-              <span className="text-sm block">{a.label}</span>
-              <span className="mono-xs text-mute">{a.hint}</span>
+              <span className="text-sm text-fg">{a.label}</span>
+              <span className="mono-xs text-mute col-start-2">// {a.hint}</span>
             </button>
           ))}
         </div>
