@@ -6,13 +6,9 @@ This module is only imported by ``file_extraction`` when a parse actually needs
 OCR, and rapidocr itself is imported lazily here, so API-server startup never
 pays for it.
 
-Two failure modes are deliberate:
-
-- A page sweep whose mean recognition confidence is under ``OCR_MIN_CONFIDENCE``
-  raises :class:`OcrLowConfidenceError` -- narrating recognition noise is worse
-  than failing the job with a clear message.
-- OCR of a long scan runs for minutes inside one worker thread, so the caller
-  passes a ``beat`` callback invoked per page to keep the job watchdog fed.
+Two deliberate behaviors: a sweep under ``OCR_MIN_CONFIDENCE`` raises
+:class:`OcrLowConfidenceError` rather than narrating noise, and the caller's
+``beat`` callback fires per page so a long scan keeps the watchdog fed.
 """
 
 from __future__ import annotations
@@ -26,11 +22,9 @@ from app.config import Settings
 
 logger = logging.getLogger("app.services.ocr")
 
-# Languages the shipped model packs actually cover. The wheel bundles the
-# PP-OCRv6 det/rec models (Chinese + English); only English is advertised until
-# another language's model pack ships in the image. The Settings dropdown and
-# the OCR_LANGUAGE validation both read this tuple, so adding a language later
-# is one model pack plus one entry here -- no schema or API change.
+# Languages the shipped model packs cover. The wheel bundles PP-OCRv6
+# (Chinese + English); only English is advertised until another pack ships.
+# The Settings dropdown and OCR_LANGUAGE validation both read this tuple.
 SUPPORTED_LANGUAGES: tuple[str, ...] = ("en",)
 DEFAULT_LANGUAGE = "en"
 
@@ -47,8 +41,7 @@ _engine: Any = None
 
 
 def _get_engine() -> Any:
-    """The shared RapidOCR engine, constructed on first use (models load in
-    about a second and stay resident in the worker process)."""
+    """The shared RapidOCR engine, built on first use and kept resident."""
 
     global _engine
     if _engine is None:

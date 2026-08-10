@@ -83,11 +83,10 @@ class ChatterboxEngine:
         return ChatterboxTurboTTS.from_pretrained(device=device)
 
     def unload(self) -> None:
-        """Release model weights and GPU memory ahead of a model swap.
+        """Release model weights and GPU memory before a model swap.
 
-        Takes the single-flight GPU lock like every other GPU operation: freeing
-        CUDA memory under an in-flight (possibly orphaned post-timeout)
-        inference would run concurrent GPU work."""
+        Takes the GPU lock like every other GPU operation: freeing CUDA memory
+        under an in-flight inference would run concurrent GPU work."""
 
         if not self._gpu_lock.acquire(blocking=False):
             raise InferenceBusyError("an inference is already running on this wrapper")
@@ -348,9 +347,8 @@ class ChatterboxEngine:
 
 
 class ChatterboxMultilingualEngine(ChatterboxEngine):
-    """Chatterbox Multilingual backend: same wrapper contract as Turbo, with
-    the narration language chosen per request (``params.language``). Nothing
-    reloads on a language change."""
+    """Chatterbox Multilingual: same contract as Turbo, with the language
+    chosen per request. Nothing reloads on a language change."""
 
     name = "chatterbox-multilingual"
     # Fallback list; replaced by the package's own table at load time.

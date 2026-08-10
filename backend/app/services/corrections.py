@@ -186,11 +186,10 @@ def is_acronym_key(key: str) -> bool:
 
 
 def boundary_wrap(inner: str, *, acronym: bool) -> str:
-    """Wrap regex ``inner`` in the word-boundary lookarounds for its key shape.
+    """Wrap regex ``inner`` in the word boundaries for its key shape.
 
-    Single source of the boundary policy: ``apply`` and the pipeline's
-    pronunciation-reference filter both compile from here, so they can never
-    disagree about which text a key matches."""
+    Single source of the policy: ``apply`` and the pipeline's reference filter
+    both compile from here, so they cannot disagree."""
 
     if acronym:
         return rf"(?<!\w){inner}(?!\w)"
@@ -213,14 +212,10 @@ def apply(text: str, dictionary: dict[str, str], *, case_sensitive: bool = True)
     if not dictionary:
         return text
     sorted_keys = sorted(dictionary, key=len, reverse=True)
-    # Two boundary policies, chosen by key shape:
-    # - Default lookarounds treat letters, digits, underscores AND hyphens as
-    #   word characters, so ``kubectl`` doesn't match inside ``kubectl-helper``
-    #   and keys ending in non-word symbols like ``C++`` still match correctly
-    #   (``\b`` would refuse to match ``+`` next to whitespace).
-    # - Acronym-shaped keys (all caps alnum, 2+ chars) drop the hyphen from
-    #   the lookarounds so ``AI`` matches inside ``anti-AI`` and
-    #   ``AI-generated`` -- that is where hyphenated compounds put acronyms.
+    # Two boundary policies by key shape. Default: hyphens count as word
+    # characters, so ``kubectl`` misses ``kubectl-helper`` and ``C++`` still
+    # matches next to whitespace. Acronyms: hyphens don't, so ``AI`` hits
+    # ``anti-AI`` and ``AI-generated``.
     strict = [k for k in sorted_keys if not is_acronym_key(k)]
     acronym = [k for k in sorted_keys if is_acronym_key(k)]
     parts = []

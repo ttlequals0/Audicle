@@ -190,10 +190,9 @@ def _defaults_map(settings: Settings) -> dict[str, Any]:
     return defaults
 
 
-# Shape checks for the two wrapper-facing strings the Settings UI constrains
-# via dropdowns. Save-time validation so a hand-crafted PUT cannot persist a
-# value that would fail far away on every TTS call (the same rationale as the
-# numeric bounds). The wrapper remains the authority on which names exist.
+# Shape checks for the two wrapper-facing strings, so a hand-crafted PUT
+# cannot store a value that fails later on every TTS call. The wrapper stays
+# the authority on which names exist.
 _TTS_STRING_SHAPES: dict[str, re.Pattern[str]] = {
     "TTS_MODEL": re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$"),
     "TTS_LANGUAGE": re.compile(r"^[a-z]{2,3}$"),

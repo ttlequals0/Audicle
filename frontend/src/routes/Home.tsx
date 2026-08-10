@@ -129,7 +129,7 @@ export default function Home() {
       const status = e instanceof ApiError ? e.status : undefined;
       setRecentMsg(
         status === 409
-          ? "can't reprocess: already queued, or the uploaded file is gone -- re-upload it"
+          ? "can't reprocess: already queued, or the uploaded file is gone. re-upload it"
           : `reprocess failed${status ? ` (HTTP ${status})` : ""}`
       );
       setTimeout(() => setRecentMsg(null), 5000);
@@ -212,7 +212,7 @@ export default function Home() {
         <p className="text-dim text-sm mb-6 leading-relaxed">
           {mode === "url"
             ? "Audicle reads articles aloud. Paste a URL and it joins your feed."
-            : "Audicle reads documents aloud. Upload a file and it joins your feed."}
+            : "Audicle reads files aloud. Upload one and it joins your feed."}
         </p>
 
         <div className="flex border-b border-line mb-5">
@@ -264,7 +264,7 @@ export default function Home() {
                 setDragging(false);
               }}
               onDrop={onDrop}
-              aria-label="Upload a document (PDF, DOCX, Markdown, text, or HTML), up to 50 MB"
+              aria-label="Upload a document or image"
             >
               <input
                 ref={fileInputRef}
@@ -295,9 +295,9 @@ export default function Home() {
               ) : (
                 <>
                   <div className="mono-xs text-accent mb-2">// DROP_FILE</div>
-                  <div className="text-sm text-dim">Drag a document here, or browse</div>
+                  <div className="text-sm text-dim">Drag a file here, or browse</div>
                   <div className="mono-xs text-mute mt-2">
-                    PDF · DOCX · MD · TXT · HTML &nbsp;&mdash;&nbsp; up to {maxUploadMb} MB
+                    PDF · DOCX · MD · TXT · HTML · images &nbsp;·&nbsp; up to {maxUploadMb} MB
                   </div>
                 </>
               )}
@@ -312,7 +312,7 @@ export default function Home() {
           </button>
           {noVoiceLoaded && (
             <p className="mono-xs text-mute mt-2">
-              // no voice loaded -- add a voice slot in settings before submitting
+              // no voice loaded. add a voice slot in settings first
             </p>
           )}
           <div>
@@ -345,7 +345,7 @@ export default function Home() {
                 </select>
                 {filledSlots.length === 0 && (
                   <p className="mono-xs text-mute mt-1">
-                    // no voice loaded -- add a slot in settings before submitting
+                    // no voice loaded. add a slot in settings first
                   </p>
                 )}
               </>

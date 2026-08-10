@@ -41,8 +41,8 @@ class TranscriptChunk:
 def chunk_start_ms(duration_secs: list[float], silence_ms: int) -> list[int]:
     """Start of each chunk in the produced MP3, in integer milliseconds.
 
-    The single timeline shared by VTT cues and chapter timestamps, so the two
-    can never disagree. Integer ms avoids float drift over hundreds of chunks.
+    Shared by VTT cues and chapter timestamps so the two cannot disagree;
+    integer ms avoids float drift over hundreds of chunks.
     """
 
     if silence_ms < 0:

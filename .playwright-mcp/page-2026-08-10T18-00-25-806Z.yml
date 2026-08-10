@@ -1,0 +1,167 @@
+- generic [ref=f4e3]:
+  - banner [ref=f4e4]:
+    - generic [ref=f4e5]:
+      - generic [ref=f4e6]:
+        - link "Audicle audicle" [ref=f4e7] [cursor=pointer]:
+          - /url: /
+          - img "Audicle" [ref=f4e8]
+          - generic [ref=f4e10]: audicle
+        - link "v0.51.0" [ref=f4e12] [cursor=pointer]:
+          - /url: https://github.com/ttlequals0/Audicle
+      - navigation [ref=f4e13]:
+        - link "Home" [ref=f4e14] [cursor=pointer]:
+          - /url: /
+        - link "Feed" [ref=f4e15] [cursor=pointer]:
+          - /url: /feed
+        - link "Settings" [ref=f4e16] [cursor=pointer]:
+          - /url: /settings
+  - generic [ref=f4e19]:
+    - generic [ref=f4e20]: No admin password set, so admin actions are open. Fine on your own machine; set a password before you expose this.
+    - button "dismiss" [ref=f4e21] [cursor=pointer]
+  - main [ref=f4e22]:
+    - generic [ref=f4e23]:
+      - heading "Settings" [level=1] [ref=f4e24]
+      - generic [ref=f4e25]:
+        - button "LLM ›" [expanded] [ref=f4e26] [cursor=pointer]:
+          - generic [ref=f4e27]: LLM
+          - generic [ref=f4e28]: ›
+        - generic [ref=f4e29]:
+          - generic [ref=f4e30]:
+            - generic [ref=f4e31]: LLM_PROVIDER
+            - combobox "LLM_PROVIDER" [ref=f4e32]:
+              - option "openai-compatible" [selected]
+              - option "anthropic"
+              - option "openrouter"
+              - option "ollama"
+          - generic [ref=f4e33]:
+            - generic [ref=f4e34]: LLM_MODEL
+            - generic [ref=f4e35]:
+              - combobox "LLM_MODEL" [ref=f4e36]:
+                - option "(none)" [selected]
+              - button "refresh" [ref=f4e37] [cursor=pointer]
+              - button "custom" [ref=f4e38] [cursor=pointer]
+          - generic [ref=f4e39]:
+            - generic [ref=f4e40]: OPENAI_BASE_URL
+            - textbox "OPENAI_BASE_URL" [ref=f4e41]
+          - generic [ref=f4e42]:
+            - generic [ref=f4e43]: OPENAI_API_KEY
+            - textbox "OPENAI_API_KEY" [ref=f4e44]
+          - generic [ref=f4e45]:
+            - generic [ref=f4e46]: LLM_TEMPERATURE
+            - textbox "LLM_TEMPERATURE" [ref=f4e47]: "0.7"
+          - generic [ref=f4e48]:
+            - generic [ref=f4e49]: LLM_MAX_TOKENS
+            - textbox "LLM_MAX_TOKENS" [ref=f4e50]: "16000"
+          - generic [ref=f4e51]:
+            - generic [ref=f4e52]: LLM_TIMEOUT_SECONDS
+            - textbox "LLM_TIMEOUT_SECONDS" [ref=f4e53]: "300"
+          - generic [ref=f4e54]:
+            - generic [ref=f4e55]: LLM_RETRY_COUNT
+            - textbox "LLM_RETRY_COUNT" [ref=f4e56]: "3"
+      - button "Feed ›" [ref=f4e58] [cursor=pointer]:
+        - generic [ref=f4e59]: Feed
+        - generic [ref=f4e60]: ›
+      - button "Connections ›" [ref=f4e62] [cursor=pointer]:
+        - generic [ref=f4e63]: Connections
+        - generic [ref=f4e64]: ›
+      - button "Extraction ›" [ref=f4e66] [cursor=pointer]:
+        - generic [ref=f4e67]: Extraction
+        - generic [ref=f4e68]: ›
+      - button "Webhooks ›" [ref=f4e70] [cursor=pointer]:
+        - generic [ref=f4e71]: Webhooks
+        - generic [ref=f4e72]: ›
+      - generic [ref=f4e73]:
+        - button "TTS ›" [expanded] [active] [ref=f4e74] [cursor=pointer]:
+          - generic [ref=f4e75]: TTS
+          - generic [ref=f4e76]: ›
+        - generic [ref=f4e159]:
+          - paragraph [ref=f4e160]: "// model and language apply at the start of the next episode; both are locked while a job is running so an episode never switches voice mid-way. chunking: target/max words per chunk, max chars hard ceiling, silence between chunks in ms"
+          - generic [ref=f4e161]:
+            - generic [ref=f4e162]: TTS_MODEL
+            - combobox "TTS_MODEL" [ref=f4e163]:
+              - option "wrapper default" [selected]
+              - option "chatterbox"
+              - option "chatterbox-multilingual"
+          - generic [ref=f4e164]:
+            - generic [ref=f4e165]: TTS_LANGUAGE
+            - combobox "TTS_LANGUAGE" [ref=f4e166]:
+              - option "en" [selected]
+          - generic [ref=f4e167]:
+            - generic [ref=f4e168]: TTS_CHUNK_TARGET_WORDS
+            - textbox "TTS_CHUNK_TARGET_WORDS" [ref=f4e169]: "120"
+          - generic [ref=f4e170]:
+            - generic [ref=f4e171]: TTS_CHUNK_MAX_WORDS
+            - textbox "TTS_CHUNK_MAX_WORDS" [ref=f4e172]: "220"
+          - generic [ref=f4e173]:
+            - generic [ref=f4e174]: TTS_CHUNK_MAX_CHARS
+            - textbox "TTS_CHUNK_MAX_CHARS" [ref=f4e175]: "1100"
+          - generic [ref=f4e176]:
+            - generic [ref=f4e177]: TTS_CHUNK_SILENCE_MS
+            - textbox "TTS_CHUNK_SILENCE_MS" [ref=f4e178]: "250"
+      - button "TTS generation ›" [ref=f4e78] [cursor=pointer]:
+        - generic [ref=f4e79]: TTS generation
+        - generic [ref=f4e80]: ›
+      - button "Verification ›" [ref=f4e82] [cursor=pointer]:
+        - generic [ref=f4e83]: Verification
+        - generic [ref=f4e84]: ›
+      - button "Audio analysis ›" [ref=f4e86] [cursor=pointer]:
+        - generic [ref=f4e87]: Audio analysis
+        - generic [ref=f4e88]: ›
+      - button "Cleanup ›" [ref=f4e90] [cursor=pointer]:
+        - generic [ref=f4e91]: Cleanup
+        - generic [ref=f4e92]: ›
+      - button "Uploads ›" [ref=f4e94] [cursor=pointer]:
+        - generic [ref=f4e95]: Uploads
+        - generic [ref=f4e96]: ›
+      - button "Pipeline ›" [ref=f4e98] [cursor=pointer]:
+        - generic [ref=f4e99]: Pipeline
+        - generic [ref=f4e100]: ›
+      - button "Retention ›" [ref=f4e102] [cursor=pointer]:
+        - generic [ref=f4e103]: Retention
+        - generic [ref=f4e104]: ›
+      - button "RSS ›" [ref=f4e106] [cursor=pointer]:
+        - generic [ref=f4e107]: RSS
+        - generic [ref=f4e108]: ›
+      - button "save all" [ref=f4e110] [cursor=pointer]
+      - button "cleanup prompt ›" [ref=f4e112] [cursor=pointer]:
+        - generic [ref=f4e113]: cleanup prompt
+        - generic [ref=f4e114]: ›
+      - button "pronunciation corrections ›" [ref=f4e116] [cursor=pointer]:
+        - generic [ref=f4e117]: pronunciation corrections
+        - generic [ref=f4e118]: ›
+      - button "site overrides ›" [ref=f4e120] [cursor=pointer]:
+        - generic [ref=f4e121]: site overrides
+        - generic [ref=f4e122]: ›
+      - button "voices ›" [ref=f4e124] [cursor=pointer]:
+        - generic [ref=f4e125]: voices
+        - generic [ref=f4e126]: ›
+      - button "end chime ›" [ref=f4e128] [cursor=pointer]:
+        - generic [ref=f4e129]: end chime
+        - generic [ref=f4e130]: ›
+      - button "authenticated feeds ›" [ref=f4e132] [cursor=pointer]:
+        - generic [ref=f4e133]: authenticated feeds
+        - generic [ref=f4e134]: ›
+      - button "security ›" [ref=f4e136] [cursor=pointer]:
+        - generic [ref=f4e137]: security
+        - generic [ref=f4e138]: ›
+      - generic [ref=f4e139]:
+        - button "system info ›" [expanded] [ref=f4e140] [cursor=pointer]:
+          - generic [ref=f4e141]: system info
+          - generic [ref=f4e142]: ›
+        - generic [ref=f4e143]:
+          - generic [ref=f4e144]:
+            - generic [ref=f4e145]: version
+            - generic [ref=f4e146]: 0.51.0
+          - generic [ref=f4e147]:
+            - generic [ref=f4e148]: uptime
+            - generic [ref=f4e149]: 2m
+          - generic [ref=f4e150]:
+            - generic [ref=f4e151]: password_set
+            - generic [ref=f4e152]: "false"
+          - generic [ref=f4e153]:
+            - generic [ref=f4e154]: authenticated
+            - generic [ref=f4e155]: "true"
+          - generic [ref=f4e156]:
+            - generic [ref=f4e157]: api docs
+            - link "/api/v1/docs" [ref=f4e158] [cursor=pointer]:
+              - /url: /api/v1/docs

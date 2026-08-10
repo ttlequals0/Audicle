@@ -127,48 +127,34 @@ const GROUPS: Record<string, string[]> = {
 const GROUP_NOTES: Record<string, string> = {
   Feed: "applies on the next podcast-app refresh",
   Connections:
-    "firecrawl key optional (blank for self-hosted). reader_api_key = jina key, " +
-    "free at jina.ai/reader -- the keyless endpoint is rate limited",
+    "firecrawl key optional when self-hosting. reader key is a jina key, " +
+    "free at jina.ai/reader; the keyless endpoint is rate limited",
   Webhooks:
-    "POSTs episode.processed / episode.failed to this URL on every finished or " +
-    "failed job. blank disables. the test sends a sample to the saved URL -- save first",
+    "posts episode.processed and episode.failed to this url. blank disables. " +
+    "test sends to the saved url, so save first",
   TTS:
-    "model and language apply at the start of the next episode; both are " +
-    "locked while a job is running so an episode never switches voice " +
-    "mid-way. chunking: target/max words per chunk, max chars hard ceiling, " +
-    "silence between chunks in ms",
+    "model and language apply to the next episode, and lock while a job runs. " +
+    "the rest sizes chunks: words, char ceiling, silence between them",
   "TTS generation":
-    "chatterbox sampling knobs -- apply to the next job (auditions: immediately), " +
-    "no restart. temperature: lower = steadier pronunciation, flatter read. " +
-    "repetition_penalty: raise if words repeat or loop. top_p/top_k: sampling " +
-    "variety caps, lower = safer. seed: fixed = reproducible takes, 0 = random. " +
-    "max_chars: text per model call, larger = fewer splice points",
+    "chatterbox sampling, applied to the next job. lower temperature reads " +
+    "steadier. raise repetition_penalty if words loop. lower top_p/top_k is " +
+    "safer. seed 0 is random",
   Verification:
-    "regenerates chunks when audio drifts from the text. needs WHISPER_ENABLED " +
-    "on the wrapper. threshold 0-1, lower = stricter. max_divergent_run: a " +
-    "wrong-word stretch this long or longer regenerates (catches short garbage " +
-    "inside a long chunk). short_chunk_divergence: gross-mismatch bar for " +
-    "chunks under min_words",
+    "regenerates a chunk when the audio drifts from the text. needs " +
+    "WHISPER_ENABLED on the wrapper. lower threshold is stricter",
   "Audio analysis":
-    "signal-level checks on every chunk (drone, noise, dead air, bad pacing); " +
-    "a failing take regenerates with a fresh seed, a shorter text window, and a " +
-    "higher repetition penalty. max_regen is the shared regen budget for these " +
-    "checks AND the whisper checks above. the regen_* keys set how hard each " +
-    "retry escalates -- lower chars_factor or raise penalty_step when chunks " +
-    "keep failing after every attempt. the rest are detector thresholds -- " +
-    "leave them alone unless chunks are being flagged or missed consistently",
+    "signal checks on every chunk: drone, noise, dead air, pacing. a failing " +
+    "take regenerates with a new seed and stiffer settings, up to max_regen " +
+    "(shared with the whisper checks). leave the thresholds alone unless " +
+    "chunks are being flagged wrongly",
   Uploads:
-    "max direct-upload size in MB, applies immediately. scanned pdfs and " +
-    "images (png, jpg, webp, tiff) are read with built-in OCR when the file " +
-    "has no text layer. min_confidence rejects unreadable scans instead of " +
-    "narrating noise",
+    "upload size cap, applied immediately. scanned pdfs and images are read " +
+    "with built-in ocr when there is no text layer. min_confidence rejects " +
+    "unreadable scans",
   Pipeline:
-    "a job is stopped when it goes stall_seconds without finishing a stage or a " +
-    "chunk -- not for simply taking a long time. raise stall_seconds if slow " +
-    "hardware makes single chunks take longer than the window. the other three " +
-    "set the ceiling a job can never pass even while progressing: " +
-    "max(timeout_seconds, chunks x per_chunk) x ceiling_multiplier. applies to " +
-    "the next job",
+    "a job is stopped after stall_seconds with no progress, not for running " +
+    "long. raise it if single chunks take longer on slow hardware. the other " +
+    "three cap total runtime",
 };
 
 // Secret fields: rendered as password inputs. The backend masks them on read
@@ -1486,9 +1472,8 @@ function VoicesWidget() {
   return (
     <div className="space-y-3">
       <p className="mono-xs text-mute">
-        // a random filled slot narrates each episode unless you pick one at submit. at
-        least one slot must stay loaded. uploads take wav/mp3/m4a/flac/ogg -- converted to
-        wav on the server
+        // a random filled slot narrates each episode unless you pick one at submit.
+        at least one slot must stay loaded. uploads take wav, mp3, m4a, flac, or ogg
       </p>
       <div>
         <label className="label" htmlFor="voice-sample">
@@ -1607,12 +1592,12 @@ function ChimeWidget() {
       </div>
       {data?.present && !enabled && (
         <p className="mono-xs text-danger">
-          // a clip is uploaded but the chime is OFF -- enable it above or it will not play
+          // a clip is uploaded but the chime is off. enable it above to hear it
         </p>
       )}
       {!data?.present && enabled && (
         <p className="mono-xs text-mute">
-          // enabled, but no clip uploaded yet -- nothing plays until you upload one
+          // enabled, but no clip uploaded yet. nothing plays until you add one
         </p>
       )}
       {msg && <p className="mono-xs text-accent">{msg}</p>}
@@ -1710,7 +1695,7 @@ function AuthenticatedFeedsWidget() {
     onSuccess: (d) => {
       qc.setQueryData(["feed-auth"], d);
       qc.invalidateQueries({ queryKey: ["settings"] });
-      setMsg("key rotated -- re-subscribe every app with the new url");
+      setMsg("key rotated. re-subscribe every app with the new url");
     },
     onError: (e) => setMsg(`rotate failed${e instanceof ApiError ? ` (${e.status})` : ""}`),
   });
@@ -1721,7 +1706,7 @@ function AuthenticatedFeedsWidget() {
       setCopied(field);
       setTimeout(() => setCopied((c) => (c === field ? null : c)), 1500);
     } catch {
-      setMsg("copy failed -- select the field and copy manually");
+      setMsg("copy failed. select the field and copy manually");
     }
   };
 

@@ -119,10 +119,9 @@ def wav_duration_secs(path: Path) -> float:
 
 
 def _retag_atomic(mp3_path: Path, tmp_prefix: str, mutate) -> None:
-    """Apply ``mutate(tags)`` to a temp copy of the MP3 and atomically replace
-    the original, so an interrupted tag write can't corrupt the episode.
-    Writes ID3v2.3 -- the most broadly supported tag version, since v2.4
-    frames are read inconsistently by podcast clients."""
+    """Apply ``mutate(tags)`` to a temp copy and atomically replace the original,
+    so an interrupted write can't corrupt the episode. ID3v2.3: podcast clients
+    read v2.4 frames inconsistently."""
 
     tmp = mp3_path.with_name(f".{tmp_prefix}-{mp3_path.name}")
     try:
@@ -414,12 +413,9 @@ _PRE_LOUDNORM_FILTERS = (
 # Dynamic loudnorm rides program material and undershoots on peaky input, which
 # is why the measured two-pass form below is the primary path.
 _LOUDNORM_DYNAMIC = "loudnorm=I={lufs}:TP={tp}:LRA={lra}"
-# Two-pass form: a constant gain computed from the measured values, with a
-# peak limiter at the end of the chain. loudnorm's own linear mode cannot be
-# used here: TTS speech is peaky enough that the true-peak ceiling clamps its
-# gain (measured 2-4 LU under target in production), and the post-loudnorm EQ
-# boosts would push peaks past the ceiling anyway. Gain first, EQ, then a
-# limiter last caps what the EQ added and lands on target.
+# Two-pass form: measured constant gain, then EQ, then a limiter last.
+# loudnorm's linear mode lands 2-4 LU under target on peaky TTS speech (the
+# true-peak ceiling clamps its gain), and the EQ boosts peaks after it.
 _LOUDNORM_GAIN = "volume={gain_db:.2f}dB"
 _LOUDNORM_LIMITER = "alimiter=limit={limit:.6f}:attack=2:release=25:level=false"
 _POST_LOUDNORM_FILTERS = (

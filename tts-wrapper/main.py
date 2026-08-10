@@ -120,9 +120,8 @@ class GenerateRequest(BaseModel):
     # between them and narrate a chunk in the wrong voice. Omitted = use
     # whatever voice is already loaded (the pre-0.49.0 behaviour).
     slot: int | None = Field(default=None, ge=1, le=NUM_SLOTS)
-    # Narration language. Omitted keeps the engine default (en). Checked
-    # against the active engine's language table, so a monolingual engine
-    # rejects anything else with a 422 instead of ignoring it.
+    # Narration language; omitted keeps the engine default. A monolingual
+    # engine 422s anything it cannot speak rather than ignoring it.
     language: str | None = Field(default=None, min_length=2, max_length=8)
 
 
@@ -160,8 +159,8 @@ def _multilingual_factory() -> Engine:
     return ChatterboxMultilingualEngine(Config.from_env())
 
 
-# name -> factory. Language tables come from the engine classes (one source);
-# constructing an engine is light -- weights only load in load().
+# name -> factory. Language tables come from the engine classes; constructing
+# an engine is cheap, weights load in load().
 ENGINE_REGISTRY: dict[str, Any] = {
     "chatterbox": _turbo_factory,
     "chatterbox-multilingual": _multilingual_factory,
@@ -175,8 +174,8 @@ class SelectVoiceRequest(BaseModel):
 
 
 class SelectModelRequest(BaseModel):
-    """Swap the loaded TTS model. Loading takes seconds and holds GPU memory,
-    so unlike language this cannot ride per request."""
+    """Swap the loaded TTS model. Loading holds GPU memory, so unlike
+    language it cannot ride per request."""
 
     model: str = Field(min_length=1, max_length=64)
 
@@ -564,9 +563,8 @@ def create_app(
                 logger.exception(
                     "Model switch failed", extra={"event": "tts_model_switch_failed"}
                 )
-                # Best-effort rollback so the wrapper is not left with a dead
-                # engine; if this reload also fails, /health goes 503 and the
-                # container healthcheck surfaces it.
+                # Rollback so the wrapper isn't left with a dead engine; if
+                # this also fails, /health 503s and the healthcheck catches it.
                 try:
                     await asyncio.to_thread(current.load)
                 except Exception:

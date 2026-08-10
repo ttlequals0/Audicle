@@ -6,6 +6,27 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.51.1] - 2026-08-10
+
+### Fixed
+
+- The Settings page rendered blank. The TTS language list was computed above
+  the `draft` state it reads, so as soon as the model list arrived the lookup
+  ran during render and hit the temporal dead zone. It only broke when the
+  wrapper answered: with the wrapper down the optional chain short-circuited
+  and the lookup never ran, which is why the page worked in a local test and
+  failed in production. The lookup now lives where the value is used.
+
+### Changed
+
+- Settings help text is shorter. The per-group notes had grown into
+  paragraphs; each is now one or two lines saying what the operator needs,
+  with the double-hyphen dashes removed throughout the interface.
+- The upload area lists image formats and no longer claims documents only,
+  matching the OCR support added in 0.51.0.
+- The open-mode banner, the reprocess and copy failure messages, and the
+  voice and chime hints are tightened to one line each.
+
 ## [0.51.0] - 2026-08-10
 
 ### Added

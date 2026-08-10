@@ -1,0 +1,136 @@
+- generic [ref=f3e3]:
+  - banner [ref=f3e4]:
+    - generic [ref=f3e5]:
+      - generic [ref=f3e6]:
+        - link "Audicle audicle" [ref=f3e7] [cursor=pointer]:
+          - /url: /
+          - img "Audicle" [ref=f3e8]
+          - generic [ref=f3e10]: audicle
+        - link "v0.51.0" [ref=f3e12] [cursor=pointer]:
+          - /url: https://github.com/ttlequals0/Audicle
+      - navigation [ref=f3e13]:
+        - link "Home" [ref=f3e14] [cursor=pointer]:
+          - /url: /
+        - link "Feed" [ref=f3e15] [cursor=pointer]:
+          - /url: /feed
+        - link "Settings" [ref=f3e16] [cursor=pointer]:
+          - /url: /settings
+  - generic [ref=f3e19]:
+    - generic [ref=f3e20]: No admin password set, so admin actions are open. Fine on your own machine; set a password before you expose this.
+    - button "dismiss" [ref=f3e21] [cursor=pointer]
+  - main [ref=f3e22]:
+    - generic [ref=f3e23]:
+      - heading "Settings" [level=1] [ref=f3e24]
+      - generic [ref=f3e25]:
+        - button "LLM ›" [expanded] [ref=f3e26] [cursor=pointer]:
+          - generic [ref=f3e27]: LLM
+          - generic [ref=f3e28]: ›
+        - generic [ref=f3e29]:
+          - generic [ref=f3e30]:
+            - generic [ref=f3e31]: LLM_PROVIDER
+            - combobox "LLM_PROVIDER" [ref=f3e32]:
+              - option "openai-compatible" [selected]
+              - option "anthropic"
+              - option "openrouter"
+              - option "ollama"
+          - generic [ref=f3e33]:
+            - generic [ref=f3e34]: LLM_MODEL
+            - generic [ref=f3e35]:
+              - combobox "LLM_MODEL" [ref=f3e36]:
+                - option "(none)" [selected]
+              - button "refresh" [ref=f3e37] [cursor=pointer]
+              - button "custom" [ref=f3e38] [cursor=pointer]
+          - generic [ref=f3e39]:
+            - generic [ref=f3e40]: OPENAI_BASE_URL
+            - textbox "OPENAI_BASE_URL" [ref=f3e41]
+          - generic [ref=f3e42]:
+            - generic [ref=f3e43]: OPENAI_API_KEY
+            - textbox "OPENAI_API_KEY" [ref=f3e44]
+          - generic [ref=f3e45]:
+            - generic [ref=f3e46]: LLM_TEMPERATURE
+            - textbox "LLM_TEMPERATURE" [ref=f3e47]: "0.7"
+          - generic [ref=f3e48]:
+            - generic [ref=f3e49]: LLM_MAX_TOKENS
+            - textbox "LLM_MAX_TOKENS" [ref=f3e50]: "16000"
+          - generic [ref=f3e51]:
+            - generic [ref=f3e52]: LLM_TIMEOUT_SECONDS
+            - textbox "LLM_TIMEOUT_SECONDS" [ref=f3e53]: "300"
+          - generic [ref=f3e54]:
+            - generic [ref=f3e55]: LLM_RETRY_COUNT
+            - textbox "LLM_RETRY_COUNT" [ref=f3e56]: "3"
+      - button "Feed ›" [ref=f3e58] [cursor=pointer]:
+        - generic [ref=f3e59]: Feed
+        - generic [ref=f3e60]: ›
+      - button "Connections ›" [ref=f3e62] [cursor=pointer]:
+        - generic [ref=f3e63]: Connections
+        - generic [ref=f3e64]: ›
+      - button "Extraction ›" [ref=f3e66] [cursor=pointer]:
+        - generic [ref=f3e67]: Extraction
+        - generic [ref=f3e68]: ›
+      - button "Webhooks ›" [ref=f3e70] [cursor=pointer]:
+        - generic [ref=f3e71]: Webhooks
+        - generic [ref=f3e72]: ›
+      - button "TTS ›" [ref=f3e74] [cursor=pointer]:
+        - generic [ref=f3e75]: TTS
+        - generic [ref=f3e76]: ›
+      - button "TTS generation ›" [ref=f3e78] [cursor=pointer]:
+        - generic [ref=f3e79]: TTS generation
+        - generic [ref=f3e80]: ›
+      - button "Verification ›" [ref=f3e82] [cursor=pointer]:
+        - generic [ref=f3e83]: Verification
+        - generic [ref=f3e84]: ›
+      - button "Audio analysis ›" [ref=f3e86] [cursor=pointer]:
+        - generic [ref=f3e87]: Audio analysis
+        - generic [ref=f3e88]: ›
+      - button "Cleanup ›" [ref=f3e90] [cursor=pointer]:
+        - generic [ref=f3e91]: Cleanup
+        - generic [ref=f3e92]: ›
+      - button "Uploads ›" [ref=f3e94] [cursor=pointer]:
+        - generic [ref=f3e95]: Uploads
+        - generic [ref=f3e96]: ›
+      - button "Pipeline ›" [ref=f3e98] [cursor=pointer]:
+        - generic [ref=f3e99]: Pipeline
+        - generic [ref=f3e100]: ›
+      - button "Retention ›" [ref=f3e102] [cursor=pointer]:
+        - generic [ref=f3e103]: Retention
+        - generic [ref=f3e104]: ›
+      - button "RSS ›" [ref=f3e106] [cursor=pointer]:
+        - generic [ref=f3e107]: RSS
+        - generic [ref=f3e108]: ›
+      - button "save all" [ref=f3e110] [cursor=pointer]
+      - button "pronunciation corrections ›" [ref=f3e112] [cursor=pointer]:
+        - generic [ref=f3e113]: pronunciation corrections
+        - generic [ref=f3e114]: ›
+      - button "voices ›" [ref=f3e116] [cursor=pointer]:
+        - generic [ref=f3e117]: voices
+        - generic [ref=f3e118]: ›
+      - button "end chime ›" [ref=f3e120] [cursor=pointer]:
+        - generic [ref=f3e121]: end chime
+        - generic [ref=f3e122]: ›
+      - button "authenticated feeds ›" [ref=f3e124] [cursor=pointer]:
+        - generic [ref=f3e125]: authenticated feeds
+        - generic [ref=f3e126]: ›
+      - button "security ›" [ref=f3e128] [cursor=pointer]:
+        - generic [ref=f3e129]: security
+        - generic [ref=f3e130]: ›
+      - generic [ref=f3e131]:
+        - button "system info ›" [expanded] [ref=f3e132] [cursor=pointer]:
+          - generic [ref=f3e133]: system info
+          - generic [ref=f3e134]: ›
+        - generic [ref=f3e135]:
+          - generic [ref=f3e136]:
+            - generic [ref=f3e137]: version
+            - generic [ref=f3e138]: 0.51.0
+          - generic [ref=f3e139]:
+            - generic [ref=f3e140]: uptime
+            - generic [ref=f3e141]: 2m
+          - generic [ref=f3e142]:
+            - generic [ref=f3e143]: password_set
+            - generic [ref=f3e144]: "false"
+          - generic [ref=f3e145]:
+            - generic [ref=f3e146]: authenticated
+            - generic [ref=f3e147]: "true"
+          - generic [ref=f3e148]:
+            - generic [ref=f3e149]: api docs
+            - link "/api/v1/docs" [ref=f3e150] [cursor=pointer]:
+              - /url: /api/v1/docs

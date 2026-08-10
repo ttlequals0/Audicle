@@ -1,0 +1,133 @@
+- generic [ref=f2e3]:
+  - banner [ref=f2e4]:
+    - generic [ref=f2e5]:
+      - generic [ref=f2e6]:
+        - link "Audicle audicle" [ref=f2e7] [cursor=pointer]:
+          - /url: /
+          - img "Audicle" [ref=f2e8]
+          - generic [ref=f2e10]: audicle
+        - link "v0.51.0" [ref=f2e12] [cursor=pointer]:
+          - /url: https://github.com/ttlequals0/Audicle
+      - navigation [ref=f2e13]:
+        - link "Home" [ref=f2e14] [cursor=pointer]:
+          - /url: /
+        - link "Feed" [ref=f2e15] [cursor=pointer]:
+          - /url: /feed
+        - link "Settings" [ref=f2e16] [cursor=pointer]:
+          - /url: /settings
+  - generic [ref=f2e19]:
+    - generic [ref=f2e20]: No admin password set, so admin actions are open. Fine on your own machine; set a password before you expose this.
+    - button "dismiss" [ref=f2e21] [cursor=pointer]
+  - main [ref=f2e22]:
+    - generic [ref=f2e23]:
+      - heading "Settings" [level=1] [ref=f2e24]
+      - generic [ref=f2e25]:
+        - button "LLM ›" [expanded] [ref=f2e26] [cursor=pointer]:
+          - generic [ref=f2e27]: LLM
+          - generic [ref=f2e28]: ›
+        - generic [ref=f2e29]:
+          - generic [ref=f2e30]:
+            - generic [ref=f2e31]: LLM_PROVIDER
+            - combobox "LLM_PROVIDER" [ref=f2e32]:
+              - option "openai-compatible" [selected]
+              - option "anthropic"
+              - option "openrouter"
+              - option "ollama"
+          - generic [ref=f2e33]:
+            - generic [ref=f2e34]: LLM_MODEL
+            - generic [ref=f2e35]:
+              - combobox "LLM_MODEL" [ref=f2e36]:
+                - option "(none)" [selected]
+              - button "refresh" [disabled] [ref=f2e37]
+              - button "custom" [ref=f2e38] [cursor=pointer]
+          - generic [ref=f2e39]:
+            - generic [ref=f2e40]: LLM_TEMPERATURE
+            - textbox "LLM_TEMPERATURE" [ref=f2e41]
+          - generic [ref=f2e42]:
+            - generic [ref=f2e43]: LLM_MAX_TOKENS
+            - textbox "LLM_MAX_TOKENS" [ref=f2e44]
+          - generic [ref=f2e45]:
+            - generic [ref=f2e46]: LLM_TIMEOUT_SECONDS
+            - textbox "LLM_TIMEOUT_SECONDS" [ref=f2e47]
+          - generic [ref=f2e48]:
+            - generic [ref=f2e49]: LLM_RETRY_COUNT
+            - textbox "LLM_RETRY_COUNT" [ref=f2e50]
+      - button "Feed ›" [ref=f2e52] [cursor=pointer]:
+        - generic [ref=f2e53]: Feed
+        - generic [ref=f2e54]: ›
+      - button "Connections ›" [ref=f2e56] [cursor=pointer]:
+        - generic [ref=f2e57]: Connections
+        - generic [ref=f2e58]: ›
+      - button "Extraction ›" [ref=f2e60] [cursor=pointer]:
+        - generic [ref=f2e61]: Extraction
+        - generic [ref=f2e62]: ›
+      - button "Webhooks ›" [ref=f2e64] [cursor=pointer]:
+        - generic [ref=f2e65]: Webhooks
+        - generic [ref=f2e66]: ›
+      - button "TTS ›" [ref=f2e68] [cursor=pointer]:
+        - generic [ref=f2e69]: TTS
+        - generic [ref=f2e70]: ›
+      - button "TTS generation ›" [ref=f2e72] [cursor=pointer]:
+        - generic [ref=f2e73]: TTS generation
+        - generic [ref=f2e74]: ›
+      - button "Verification ›" [ref=f2e76] [cursor=pointer]:
+        - generic [ref=f2e77]: Verification
+        - generic [ref=f2e78]: ›
+      - button "Audio analysis ›" [ref=f2e80] [cursor=pointer]:
+        - generic [ref=f2e81]: Audio analysis
+        - generic [ref=f2e82]: ›
+      - button "Cleanup ›" [ref=f2e84] [cursor=pointer]:
+        - generic [ref=f2e85]: Cleanup
+        - generic [ref=f2e86]: ›
+      - button "Uploads ›" [ref=f2e88] [cursor=pointer]:
+        - generic [ref=f2e89]: Uploads
+        - generic [ref=f2e90]: ›
+      - button "Pipeline ›" [ref=f2e92] [cursor=pointer]:
+        - generic [ref=f2e93]: Pipeline
+        - generic [ref=f2e94]: ›
+      - button "Retention ›" [ref=f2e96] [cursor=pointer]:
+        - generic [ref=f2e97]: Retention
+        - generic [ref=f2e98]: ›
+      - button "RSS ›" [ref=f2e100] [cursor=pointer]:
+        - generic [ref=f2e101]: RSS
+        - generic [ref=f2e102]: ›
+      - button "save all" [ref=f2e104] [cursor=pointer]
+      - button "pronunciation corrections ›" [ref=f2e106] [cursor=pointer]:
+        - generic [ref=f2e107]: pronunciation corrections
+        - generic [ref=f2e108]: ›
+      - button "site overrides ›" [ref=f2e110] [cursor=pointer]:
+        - generic [ref=f2e111]: site overrides
+        - generic [ref=f2e112]: ›
+      - button "voices ›" [ref=f2e114] [cursor=pointer]:
+        - generic [ref=f2e115]: voices
+        - generic [ref=f2e116]: ›
+      - button "end chime ›" [ref=f2e118] [cursor=pointer]:
+        - generic [ref=f2e119]: end chime
+        - generic [ref=f2e120]: ›
+      - button "authenticated feeds ›" [ref=f2e122] [cursor=pointer]:
+        - generic [ref=f2e123]: authenticated feeds
+        - generic [ref=f2e124]: ›
+      - button "security ›" [ref=f2e126] [cursor=pointer]:
+        - generic [ref=f2e127]: security
+        - generic [ref=f2e128]: ›
+      - generic [ref=f2e129]:
+        - button "system info ›" [expanded] [ref=f2e130] [cursor=pointer]:
+          - generic [ref=f2e131]: system info
+          - generic [ref=f2e132]: ›
+        - generic [ref=f2e133]:
+          - generic [ref=f2e134]:
+            - generic [ref=f2e135]: version
+            - generic [ref=f2e136]: 0.51.0
+          - generic [ref=f2e137]:
+            - generic [ref=f2e138]: uptime
+            - generic [ref=f2e139]: 0m
+          - generic [ref=f2e140]:
+            - generic [ref=f2e141]: password_set
+            - generic [ref=f2e142]: "false"
+          - generic [ref=f2e143]:
+            - generic [ref=f2e144]: authenticated
+            - generic [ref=f2e145]: "true"
+          - generic [ref=f2e146]:
+            - generic [ref=f2e147]: api docs
+            - link "/api/v1/docs" [ref=f2e148] [cursor=pointer]:
+              - /url: /api/v1/docs

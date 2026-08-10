@@ -1,0 +1,22 @@
+- generic [ref=f1e3]:
+  - banner [ref=f1e4]:
+    - generic [ref=f1e5]:
+      - generic [ref=f1e6]:
+        - link "Audicle audicle" [ref=f1e7] [cursor=pointer]:
+          - /url: /
+          - img "Audicle" [ref=f1e8]
+          - generic [ref=f1e10]: audicle
+        - link "v0.51.0" [ref=f1e12] [cursor=pointer]:
+          - /url: https://github.com/ttlequals0/Audicle
+      - navigation [ref=f1e13]:
+        - link "Home" [ref=f1e14] [cursor=pointer]:
+          - /url: /
+        - link "Feed" [ref=f1e15] [cursor=pointer]:
+          - /url: /feed
+        - link "Settings" [ref=f1e16] [cursor=pointer]:
+          - /url: /settings
+  - generic [ref=f1e19]:
+    - generic [ref=f1e20]: No admin password set, so admin actions are open. Fine on your own machine; set a password before you expose this.
+    - button "dismiss" [ref=f1e21] [cursor=pointer]
+  - main [ref=f1e22]:
+    - paragraph [ref=f1e23]: loading...

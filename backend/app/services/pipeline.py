@@ -1071,9 +1071,8 @@ _REGEN_SEED_BASE = 0x9E3779B1
 # bearing because CHATTERBOX_MAX_CHARS deliberately carries no pydantic Field
 # constraint (a stale env var must not fail startup).
 _MAX_CHARS_BOUNDS = RUNTIME_SETTING_BOUNDS["CHATTERBOX_MAX_CHARS"]
-# The wrapper rejects /generate text over this length (GenerateRequest.text
-# max_length in tts-wrapper/main.py). Not the same knob as CHATTERBOX_MAX_CHARS,
-# which only sizes the wrapper's internal inference pieces.
+# Wrapper's /generate text cap (GenerateRequest.text max_length). Not
+# CHATTERBOX_MAX_CHARS, which only sizes its internal inference pieces.
 _WRAPPER_TEXT_CAP = 4000
 _PENALTY_BOUNDS = RUNTIME_SETTING_BOUNDS["CHATTERBOX_REPETITION_PENALTY"]
 
@@ -1160,10 +1159,8 @@ async def _generate_chunk_quality_checked(
 
     result = None
     last_reasons: list[str] = []
-    # Best pitch-only-degraded attempt seen so far: (deviation, its result), with
-    # the WAV preserved in a sidecar because each regen overwrites the canonical
-    # path. Restored on exhaustion so the kept take is the closest to the
-    # reference pitch, not merely the last.
+    # Closest-to-reference pitch attempt so far, kept in a sidecar because each
+    # regen overwrites the canonical WAV. Restored on exhaustion.
     best_pitch: tuple[float, tts.GenerateResult] | None = None
     for attempt in range(max_extra + 1):  # 1 baseline + up to max_extra regenerations
         max_chars, penalty = _regen_params(settings, attempt)
@@ -1200,9 +1197,8 @@ async def _generate_chunk_quality_checked(
             if not verdict.ok:
                 reasons.extend(verdict.reasons)
 
-        # Cross-chunk pitch gate (2b): compares this chunk's median F0 against
-        # the running median of the job's accepted chunks. Inactive until the
-        # tracker's warmup is satisfied or when the chunk has no confident pitch.
+        # Pitch gate: this chunk's median F0 vs the running median of accepted
+        # chunks. Silent until warmup is done or when the chunk has no pitch.
         pitch_dev: float | None = None
         if pitch_tracker is not None and verdict is not None:
             pitch_dev = pitch_tracker.deviation_semitones(verdict.metrics.median_f0_hz)
@@ -1288,9 +1284,8 @@ async def _generate_chunk_quality_checked(
             )
         logger.warning("Bad chunk audio detected", extra=log_extra)
 
-        # A take whose only defect is pitch is still a candidate: preserve the
-        # one closest to the reference, since the next attempt overwrites the
-        # canonical WAV. Best-effort -- keeping-last remains the fallback.
+        # A pitch-only failure is still a usable take; keep the closest one.
+        # Best-effort: keeping the last attempt stays the fallback.
         if (
             reasons == ["pitch_drift"]
             and pitch_dev is not None
@@ -1339,8 +1334,7 @@ async def _stage_tts(
     # ``target_slot`` is the slot selection settled on; every /generate below carries it,
     # so the wrapper re-selects inside the same GPU lock that guards inference and a
     # concurrent audition cannot slip between choosing the voice and using it.
-    # Apply the configured TTS model first; a failure keeps the wrapper's
-    # current model rather than failing the job.
+    # A failed model select keeps the wrapper's current model, not a dead job.
     if settings.TTS_MODEL:
         try:
             await tts.select_model_with_retry(settings, settings.TTS_MODEL)
@@ -1761,8 +1755,7 @@ async def _apply_corrections(text: str, settings: Settings) -> str:
 # only improve pronunciation, never drop article content.
 _PRONUNCIATION_MIN_RATIO = 0.5
 
-# Concurrent pronunciation calls per job: enough to keep the stage's wall clock
-# near-flat in chunk count without hammering the LLM provider.
+# Concurrent pronunciation calls per job.
 _PRONUNCIATION_CONCURRENCY = 4
 
 
@@ -1812,9 +1805,7 @@ async def _pronounce_chunks_with_llm(
         return list(chunks)
     matchers = _reference_matchers(entries)
 
-    # Chunks are independent, so calls run concurrently under a small cap;
-    # progress ticks per completion. Serial per-chunk calls would make this
-    # stage's wall clock scale with chunk count.
+    # Chunks are independent, so run the calls concurrently under a small cap.
     semaphore = asyncio.Semaphore(_PRONUNCIATION_CONCURRENCY)
     done_count = 0
 
