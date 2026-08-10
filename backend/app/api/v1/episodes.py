@@ -22,7 +22,7 @@ from app.api.deps import get_conn
 from app.config import Settings, get_settings
 from app.core.paths import media_dir
 from app.services import episodes as episodes_service
-from app.services import pipeline, transcript
+from app.services import pipeline, runtime_settings, transcript
 from app.services.retention import _remove_path
 
 logger = logging.getLogger("app.api.episodes")
@@ -137,6 +137,10 @@ async def regenerate_chapters(
             status_code=409,
             detail="episode has no transcript to derive chapter timings from",
         )
+    # Effective settings, not env-only: the LLM connection and the chapter
+    # tunables normally live in runtime_settings, the same overlay the worker
+    # applies per job.
+    settings = runtime_settings.overlay(settings)
     cues = transcript.cues_from_vtt(episode.transcript_vtt)
     if not cues:
         raise HTTPException(status_code=409, detail="transcript has no cues")

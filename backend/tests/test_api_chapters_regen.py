@@ -155,3 +155,31 @@ def test_regenerate_keeps_the_episode_guid_stable(
         conn.close()
     assert after.revision == before.revision
     assert after.updated_at == before.updated_at
+
+
+def test_regenerate_uses_runtime_settings_not_just_env(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The LLM connection lives in runtime_settings, not env, so the endpoint
+    must apply the same overlay the worker does. Without it every call fails
+    with "LLM base URL is not configured" even on a configured server."""
+
+    from app.services import pipeline, runtime_settings
+
+    _seed(env)
+    conn = database.connect(database.db_path(env))
+    try:
+        runtime_settings.set_value(conn, "OPENAI_BASE_URL", "https://llm.example.test/v1")
+    finally:
+        conn.close()
+
+    seen: dict = {}
+
+    async def _capture(_system, _user, settings, **_kwargs):
+        seen["base_url"] = settings.OPENAI_BASE_URL
+        return "00:00 One\n10:00 Two"
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _capture)
+    with _client(env) as client:
+        assert client.post("/api/v1/episodes/ep1/chapters").status_code == 200
+    assert seen["base_url"] == "https://llm.example.test/v1"

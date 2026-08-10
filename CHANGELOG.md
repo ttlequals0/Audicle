@@ -6,6 +6,15 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.52.1] - 2026-08-10
+
+### Fixed
+
+- Chapter regeneration failed on a configured server with "LLM base URL is not
+  configured". The endpoint read env-only settings, while the LLM connection
+  is normally stored as runtime settings in the DB. It now applies the same
+  overlay the worker applies per job.
+
 ## [0.52.0] - 2026-08-10
 
 ### Fixed
