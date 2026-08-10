@@ -6,7 +6,7 @@
 
 Self-hosted Podcasting 2.0 service that turns saved articles into a personal podcast feed.
 
-Paste a URL or upload a document (PDF, DOCX, Markdown, text, or HTML), wait a few minutes, and get an episode with cloned-voice narration, artwork, an LLM-written episode summary, and a WebVTT transcript. Subscribe in Pocket Casts, Overcast, or Apple Podcasts like any other show.
+Paste a URL or upload a document (PDF including scanned, DOCX, Markdown, text, HTML, or an image), wait a few minutes, and get an episode with cloned-voice narration, chapters, artwork, an LLM-written episode summary, and a WebVTT transcript. Subscribe in Pocket Casts, Overcast, or Apple Podcasts like any other show.
 
 *Your reading list, as a podcast you own.*
 
@@ -23,6 +23,8 @@ Paste a URL or upload a document (PDF, DOCX, Markdown, text, or HTML), wait a fe
 - [Voices](#voices)
 - [End-of-episode chime](#end-of-episode-chime)
 - [Episode artwork](#episode-artwork)
+- [Chapters](#chapters)
+- [Scanned documents and images](#scanned-documents-and-images)
 - [Pronunciation corrections](#pronunciation-corrections)
 - [Webhooks](#webhooks)
 - [Paywalled articles](#paywalled-articles)
@@ -181,6 +183,8 @@ Recommended clip: mono, 24 kHz, 8-12 seconds, ~250 kB to 1 MB. Upload limits are
 
 Output quality mostly tracks clip quality. Cleaning the source (noise reduction, leveling) helps more than any TTS knob.
 
+The TTS model and narration language are switchable in Settings under TTS: `chatterbox` (English, the default) or `chatterbox-multilingual`. Both apply on the next episode with no restart, and the dropdowns lock while a job is running so an episode never changes voice partway through.
+
 ## End-of-episode chime
 
 Settings has an "end chime" section: upload one short clip that plays at the end of every episode, so back-to-back episodes are easy to tell apart on autoplay. Turn it on with the toggle in that same section (`CHIME_ENABLED`); the clip is transcoded and loudness-matched to the narration. Upload WAV/MP3/M4A/FLAC/OGG, trimmed to about 15 seconds. Delete it to stop.
@@ -188,6 +192,14 @@ Settings has an "end chime" section: upload one short clip that plays at the end
 ## Episode artwork
 
 Each episode's cover goes into the feed (`itunes:image`) and is embedded in the MP3, because some players (Pocket Casts among them) read only embedded art and ignore the feed tag. Episodes without their own cover fall back to the show image. The embedded copy is a 1400px JPEG (`EMBED_ARTWORK_SIZE_PX`) to keep file size down; the feed still serves the full 3000px master.
+
+## Chapters
+
+Episodes 10 minutes and over get 3 to 7 chapters. One LLM call over the episode's chunk list picks the start points and short titles; timestamps come from the measured audio, so they line up with the transcript. Chapters ship two ways, because clients differ in what they read: a Podcasting 2.0 `podcast:chapters` JSON document in the feed, and ID3 chapter frames embedded in the MP3. `CHAPTERS_ENABLED` and `CHAPTERS_MIN_DURATION_SECS` control the feature; the prompt is editable via `/api/v1/prompt?kind=chapters`. Episodes also open with a spoken "{title}. By {author}." line (`INTRO_READ_ENABLED`).
+
+## Scanned documents and images
+
+A PDF with no usable text layer falls back to on-device OCR (RapidOCR on CPU; models ship in the image, nothing is downloaded). Direct image uploads (PNG, JPG, WEBP, TIFF) go straight to OCR. Text PDFs never pay the OCR cost, and a scan too blurry to read fails the job with a clear error instead of narrating noise. The `OCR_*` knobs (page cap, DPI, confidence floor, language) are in Settings under Uploads.
 
 ## Pronunciation corrections
 
