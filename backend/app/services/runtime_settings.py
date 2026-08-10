@@ -69,6 +69,10 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "FIRECRAWL_URL",
         "FIRECRAWL_API_KEY",
         "TTS_URL",
+        # TTS model + narration language (0.51.0): model applied per job start,
+        # language rides every /generate call.
+        "TTS_MODEL",
+        "TTS_LANGUAGE",
         # FlareSolverr endpoint for the flaresolverr paywall strategy; operator-
         # tunable so they can point at their own solver without an env edit.
         "FLARESOLVERR_URL",

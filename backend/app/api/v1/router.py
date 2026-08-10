@@ -29,6 +29,7 @@ from app.api.v1 import settings as settings_routes
 from app.api.v1 import source_fallbacks as source_fallbacks_routes
 from app.api.v1 import status as status_routes
 from app.api.v1 import submit as submit_routes
+from app.api.v1 import tts_models as tts_models_routes
 from app.api.v1 import uploads as uploads_routes
 from app.api.v1 import webhooks as webhooks_routes
 
@@ -56,4 +57,5 @@ admin.include_router(reference_routes.router)
 admin.include_router(llm_routes.router)
 admin.include_router(webhooks_routes.router)
 admin.include_router(chime_routes.router)
+admin.include_router(tts_models_routes.router)
 router.include_router(admin)

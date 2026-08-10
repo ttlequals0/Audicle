@@ -52,6 +52,7 @@ class ChatterboxEngine:
     """Chatterbox Turbo backend with cached reference conditionals."""
 
     name = "chatterbox"
+    languages: tuple[str, ...] = ("en",)
 
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -76,26 +77,41 @@ class ChatterboxEngine:
         # only under _gpu_lock, so no race.
         self._piece_max_gen_len = _MAX_GEN_TOKENS
 
+    def _load_model(self, device: str):
+        from chatterbox.tts_turbo import ChatterboxTurboTTS  # noqa: PLC0415
+
+        return ChatterboxTurboTTS.from_pretrained(device=device)
+
+    def unload(self) -> None:
+        """Release model weights and GPU memory ahead of a model swap."""
+
+        self._model = None
+        self.model_loaded = False
+        self.reference_loaded = False
+        self._current_ref = None
+        if self._torch is not None and self._torch.cuda.is_available():
+            self._torch.cuda.empty_cache()
+
     def load(self) -> None:
         import torch  # noqa: PLC0415  (intentional lazy import)
-        from chatterbox.tts_turbo import ChatterboxTurboTTS  # noqa: PLC0415
 
         self._torch = torch
         device = self.config.device
         logger.info(
-            "Loading Chatterbox Turbo model",
-            extra={"event": "tts_model_loading", "device": device},
+            "Loading TTS model",
+            extra={"event": "tts_model_loading", "engine": self.name, "device": device},
         )
         load_started = time.perf_counter()
-        self._model = ChatterboxTurboTTS.from_pretrained(device=device)
+        self._model = self._load_model(device)
         # Trust the model's native output rate (24 kHz) over the config default.
         self.sample_rate = int(self._model.sr)
         self._install_generation_cap()
         self.model_loaded = True
         logger.info(
-            "Chatterbox Turbo model loaded",
+            "TTS model loaded",
             extra={
                 "event": "tts_model_loaded",
+                "engine": self.name,
                 "device": device,
                 "sample_rate": self.sample_rate,
                 "load_ms": int((time.perf_counter() - load_started) * 1000),
@@ -320,3 +336,44 @@ class ChatterboxEngine:
                 },
             )
         return arr
+
+
+class ChatterboxMultilingualEngine(ChatterboxEngine):
+    """Chatterbox Multilingual backend: same wrapper contract as Turbo, with
+    the narration language chosen per request (``params.language``). Nothing
+    reloads on a language change."""
+
+    name = "chatterbox-multilingual"
+    # Fallback list; replaced by the package's own table at load time.
+    languages: tuple[str, ...] = (
+        "ar", "da", "de", "el", "en", "es", "fi", "fr", "he", "hi", "it", "ja",
+        "ko", "ms", "nl", "no", "pl", "pt", "ru", "sv", "sw", "tr", "zh",
+    )
+
+    def _load_model(self, device: str):
+        from chatterbox.mtl_tts import ChatterboxMultilingualTTS  # noqa: PLC0415
+
+        try:
+            from chatterbox.mtl_tts import SUPPORTED_LANGUAGES  # noqa: PLC0415
+
+            self.languages = tuple(sorted(SUPPORTED_LANGUAGES))
+        except ImportError:
+            pass  # keep the class fallback
+        return ChatterboxMultilingualTTS.from_pretrained(device=device)
+
+    def _install_generation_cap(self) -> None:
+        # The token-budget shim patches the Turbo inference path only; the
+        # multilingual model keeps the library's own stop-token behavior.
+        return
+
+    def _infer_piece(self, text: str, params: GenerationParams):
+        assert self._model is not None
+        # Only knobs the multilingual model accepts; top_k is Turbo-only.
+        wav = self._model.generate(
+            text,
+            language_id=params.language,
+            temperature=params.temperature,
+            repetition_penalty=params.repetition_penalty,
+            top_p=params.top_p,
+        )
+        return wav.squeeze(0).detach().cpu().numpy()

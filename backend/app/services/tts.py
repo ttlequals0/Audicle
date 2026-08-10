@@ -82,6 +82,9 @@ def generation_params(
         "top_k": settings.CHATTERBOX_TOP_K,
         "max_chars": settings.CHATTERBOX_MAX_CHARS if max_chars is None else max_chars,
         "seed": settings.CHATTERBOX_SEED if seed is None else seed,
+        # Narration language rides every call; a monolingual engine 422s a
+        # value it can't speak rather than ignoring it.
+        "language": settings.TTS_LANGUAGE,
     }
 
 
@@ -250,6 +253,48 @@ async def select_voice_with_retry(settings: Settings, slot: int) -> None:
     """
 
     await _retry_transients(lambda: select_voice(settings, slot), settings)
+
+
+async def select_model(settings: Settings, model: str) -> None:
+    """POST /select-model: swap the wrapper's loaded TTS model."""
+
+    response = await _post("/select-model", settings, {"model": model}, "TTS model select")
+    if response.is_server_error:
+        raise TTSProviderError(
+            f"model select returned {response.status_code}: {response.text[:200]}"
+        )
+    if response.is_client_error:
+        raise TTSRequestError(
+            f"model select rejected ({response.status_code}): {response.text[:200]}"
+        )
+
+
+async def select_model_with_retry(settings: Settings, model: str) -> None:
+    """Model select with the same transient-failure retry as voice select."""
+
+    await _retry_transients(lambda: select_model(settings, model), settings)
+
+
+async def list_models(settings: Settings) -> dict[str, Any]:
+    """GET /models: the engines the wrapper can construct, plus the active one."""
+
+    endpoint = f"{settings.TTS_URL.rstrip('/')}/models"
+    timeout = httpx.Timeout(settings.TTS_HTTP_TIMEOUT_SECONDS)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        try:
+            response = await client.get(endpoint)
+        except httpx.TimeoutException as exc:
+            raise TTSTimeoutError(f"model list timed out: {exc}") from exc
+        except (httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+            raise TTSProviderError(f"TTS unreachable: {exc}") from exc
+    if not response.is_success:
+        raise TTSProviderError(
+            f"model list returned {response.status_code}: {response.text[:200]}"
+        )
+    body = response.json()
+    if not isinstance(body, dict):
+        raise TTSRequestError(f"model list returned non-object JSON: {type(body).__name__}")
+    return body
 
 
 async def reload(settings: Settings) -> dict[str, Any]:

@@ -1333,6 +1333,17 @@ async def _stage_tts(
     # ``target_slot`` is the slot selection settled on; every /generate below carries it,
     # so the wrapper re-selects inside the same GPU lock that guards inference and a
     # concurrent audition cannot slip between choosing the voice and using it.
+    # Apply the configured TTS model first; a failure keeps the wrapper's
+    # current model rather than failing the job.
+    if settings.TTS_MODEL:
+        try:
+            await tts.select_model_with_retry(settings, settings.TTS_MODEL)
+        except tts.TTSError:
+            logger.warning(
+                "Model select failed; using the wrapper's current model",
+                extra={"event": "tts_select_model_failed", "model": settings.TTS_MODEL},
+            )
+
     target_slot: int | None = None
     if job.voice_id:
         try:

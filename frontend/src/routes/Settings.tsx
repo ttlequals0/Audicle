@@ -67,6 +67,8 @@ const GROUPS: Record<string, string[]> = {
   ],
   Webhooks: ["WEBHOOK_URL"],
   TTS: [
+    "TTS_MODEL",
+    "TTS_LANGUAGE",
     "TTS_CHUNK_TARGET_WORDS",
     "TTS_CHUNK_MAX_WORDS",
     "TTS_CHUNK_MAX_CHARS",
@@ -130,7 +132,11 @@ const GROUP_NOTES: Record<string, string> = {
   Webhooks:
     "POSTs episode.processed / episode.failed to this URL on every finished or " +
     "failed job. blank disables. the test sends a sample to the saved URL -- save first",
-  TTS: "chunking: target/max words per chunk, max chars hard ceiling, silence between chunks in ms",
+  TTS:
+    "model and language apply at the start of the next episode; both are " +
+    "locked while a job is running so an episode never switches voice " +
+    "mid-way. chunking: target/max words per chunk, max chars hard ceiling, " +
+    "silence between chunks in ms",
   "TTS generation":
     "chatterbox sampling knobs -- apply to the next job (auditions: immediately), " +
     "no restart. temperature: lower = steadier pronunciation, flatter read. " +
@@ -293,6 +299,24 @@ export default function SettingsRoute() {
         "/api/v1/settings/ocr/languages"
       ),
   });
+  const ttsModelsQ = useQuery({
+    queryKey: ["tts-models"],
+    queryFn: () =>
+      api<{ active: string | null; models: { name: string; languages: string[] }[] }>(
+        "/api/v1/tts/models"
+      ),
+  });
+  const activeJobsQ = useQuery({
+    queryKey: ["jobs-processing"],
+    queryFn: () => api<unknown[]>("/api/v1/jobs?status=processing&per_page=1"),
+    refetchInterval: 15000,
+  });
+  const jobRunning = (activeJobsQ.data?.length ?? 0) > 0;
+  // Languages follow the model chosen in the form, not just the active one.
+  const ttsLanguages =
+    ttsModelsQ.data?.models.find(
+      (m) => m.name === (draft["TTS_MODEL"] || ttsModelsQ.data?.active)
+    )?.languages ?? ["en"];
   const healthQ = useHealthLive();
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
@@ -394,7 +418,39 @@ export default function SettingsRoute() {
                   <label className={`label ${isBool ? "mb-0" : ""}`} htmlFor={key}>
                     {key}
                   </label>
-                  {key === "OCR_LANGUAGE" ? (
+                  {key === "TTS_MODEL" || key === "TTS_LANGUAGE" ? (
+                    <select
+                      id={key}
+                      className="field"
+                      value={draft[key] ?? ""}
+                      disabled={jobRunning}
+                      title={
+                        jobRunning
+                          ? "locked while a job is running"
+                          : undefined
+                      }
+                      onChange={(e) =>
+                        setDraft((p) => ({ ...p, [key]: e.target.value }))
+                      }
+                    >
+                      {key === "TTS_MODEL" ? (
+                        <>
+                          <option value="">wrapper default</option>
+                          {(ttsModelsQ.data?.models ?? []).map((m) => (
+                            <option key={m.name} value={m.name}>
+                              {m.name}
+                            </option>
+                          ))}
+                        </>
+                      ) : (
+                        ttsLanguages.map((opt) => (
+                          <option key={opt} value={opt}>
+                            {opt}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  ) : key === "OCR_LANGUAGE" ? (
                     <select
                       id={key}
                       className="field"

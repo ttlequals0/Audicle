@@ -39,6 +39,8 @@ class FakeEngine:
 
     sample_rate = 24000
     device = "cpu"
+    name = "fake"
+    languages: tuple[str, ...] = ("en",)
 
     def __init__(
         self,
@@ -56,6 +58,7 @@ class FakeEngine:
         self.busy_synthesize = busy_synthesize
         self.synthesize_returns = synthesize_returns or _silent_wav()
         self.synthesize_calls: list[str] = []
+        self.synthesize_params: list[GenerationParams] = []
         self.reload_calls = 0
         self.select_raises = select_raises
         self.selected_refs: list[Path] = []
@@ -80,6 +83,7 @@ class FakeEngine:
         self.synthesize_calls.append(text)
         self.events.append("synthesize")
         self.last_params = params
+        self.synthesize_params.append(params)
         if self.oom_synthesize:
             raise GPUOutOfMemoryError("simulated OOM")
         if self.busy_synthesize:
@@ -583,3 +587,93 @@ def test_atomic_write_does_not_leave_tmp_files_on_success(tmp_path: Path) -> Non
     tmp_files = list(media.glob(".ep_chunk_0.wav.*.tmp"))
     assert len(final_files) == 1
     assert tmp_files == []
+
+
+# --- /models + /select-model + per-request language (0.51.0) ----------------
+
+
+def test_models_lists_registry_and_active(tmp_path: Path) -> None:
+    engine = FakeEngine()
+    with _client(engine, tmp_path) as client:
+        response = client.get("/models")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["active"] == "fake"
+    names = [m["name"] for m in body["models"]]
+    assert "chatterbox" in names
+    assert "chatterbox-multilingual" in names
+    for model in body["models"]:
+        assert model["languages"]
+
+
+def test_select_model_swaps_engine(tmp_path: Path) -> None:
+    first = FakeEngine()
+    second = FakeEngine()
+    second.name = "fake2"
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    app = create_app(
+        engine=first,
+        data_dir=data_dir,
+        engine_registry={"fake2": lambda: second},
+    )
+    with TestClient(app) as client:
+        response = client.post("/select-model", json={"model": "fake2"})
+        assert response.status_code == 200
+        assert response.json() == {"ok": True, "model": "fake2"}
+        assert second.model_loaded  # the new engine was loaded before the swap
+        health = client.get("/health").json()
+    assert health["engine"] == "fake2"
+
+
+def test_select_model_noops_when_already_active(tmp_path: Path) -> None:
+    engine = FakeEngine()
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    app = create_app(engine=engine, data_dir=data_dir, engine_registry={})
+    with TestClient(app) as client:
+        response = client.post("/select-model", json={"model": "fake"})
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "model": "fake"}
+
+
+def test_select_model_unknown_404s(tmp_path: Path) -> None:
+    engine = FakeEngine()
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    app = create_app(engine=engine, data_dir=data_dir, engine_registry={})
+    with TestClient(app) as client:
+        response = client.post("/select-model", json={"model": "nope"})
+    assert response.status_code == 404
+
+
+def test_generate_rejects_language_the_engine_lacks(tmp_path: Path) -> None:
+    engine = FakeEngine()  # languages: ("en",)
+    with _client(engine, tmp_path) as client:
+        response = client.post(
+            "/generate",
+            json={
+                "text": "hello there",
+                "episode_id": "ep-1",
+                "chunk_index": 0,
+                "language": "de",
+            },
+        )
+    assert response.status_code == 422
+    assert "de" in response.text
+
+
+def test_generate_passes_language_to_params(tmp_path: Path) -> None:
+    engine = FakeEngine()
+    with _client(engine, tmp_path) as client:
+        response = client.post(
+            "/generate",
+            json={
+                "text": "hello there",
+                "episode_id": "ep-1",
+                "chunk_index": 0,
+                "language": "en",
+            },
+        )
+    assert response.status_code == 200
+    assert engine.synthesize_params[-1].language == "en"

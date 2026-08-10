@@ -2285,3 +2285,39 @@ async def test_stage_chapters_llm_failure_returns_none(
         ["one", "two"], [400.0, 400.0], 800.0, Path("/tmp/x.mp3"), get_settings()
     )
     assert out is None
+
+
+# --- section 5: model applied per job ----------------------------------------
+
+
+async def test_stage_tts_applies_configured_model(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    from app.services import tts as tts_mod
+
+    selected_models: list[str] = []
+
+    async def _fake_select_model(_settings, model):
+        selected_models.append(model)
+
+    async def _fake_gen(_job, _text, index, _settings, slot=None, pitch_tracker=None):
+        return tts_mod.GenerateResult(
+            wav_path=f"/tmp/c{index}.wav", duration_secs=1.0, sample_rate=24000
+        )
+
+    async def _fake_select_voice(_settings, _slot):
+        pass
+
+    monkeypatch.setattr(tts_mod, "select_model_with_retry", _fake_select_model)
+    monkeypatch.setattr(tts_mod, "select_voice_with_retry", _fake_select_voice)
+    monkeypatch.setattr(pipeline, "_generate_chunk_quality_checked", _fake_gen)
+    monkeypatch.setattr(pipeline, "_set_progress", lambda *a, **k: None)
+    monkeypatch.setenv("TTS_MODEL", "chatterbox-multilingual")
+    get_settings.cache_clear()
+    try:
+        job = _seed_job(env)
+        await pipeline._stage_tts(job, ["one chunk"], get_settings())
+    finally:
+        get_settings.cache_clear()
+    assert selected_models == ["chatterbox-multilingual"]
