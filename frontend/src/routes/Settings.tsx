@@ -312,11 +312,6 @@ export default function SettingsRoute() {
     refetchInterval: 15000,
   });
   const jobRunning = (activeJobsQ.data?.length ?? 0) > 0;
-  // Languages follow the model chosen in the form, not just the active one.
-  const ttsLanguages =
-    ttsModelsQ.data?.models.find(
-      (m) => m.name === (draft["TTS_MODEL"] || ttsModelsQ.data?.active)
-    )?.languages ?? ["en"];
   const healthQ = useHealthLive();
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
@@ -421,6 +416,12 @@ export default function SettingsRoute() {
                     : key === "OCR_LANGUAGE"
                       ? (ocrLangsQ.data?.languages ?? ["en"])
                       : null;
+              // Languages follow the model picked in the form, not just the
+              // loaded one.
+              const ttsLanguages =
+                ttsModelsQ.data?.models.find(
+                  (m) => m.name === (draft["TTS_MODEL"] || ttsModelsQ.data?.active)
+                )?.languages ?? ["en"];
               return (
                 <div
                   key={key}
