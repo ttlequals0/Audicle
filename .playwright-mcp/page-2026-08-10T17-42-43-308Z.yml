@@ -1,7 +1,0 @@
-- main [ref=e3]:
-  - generic [ref=e4]:
-    - heading "login" [level=1] [ref=e5]
-    - generic [ref=e6]:
-      - generic [ref=e7]: password
-      - textbox "password" [ref=e8]
-    - button "sign in" [disabled] [ref=e9]
