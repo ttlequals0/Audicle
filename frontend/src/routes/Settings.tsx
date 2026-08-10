@@ -410,6 +410,17 @@ export default function SettingsRoute() {
             )}
             {visible.map((key) => {
               const isBool = boolKeys.has(key);
+              // Fixed-choice settings render as a dropdown; keys with dynamic
+              // options or extra behavior (TTS model/language lock) keep their
+              // own branch below.
+              const selectOptions =
+                key === "LLM_PROVIDER"
+                  ? PROVIDER_OPTIONS
+                  : key === "EXTRACTION_ENGINE"
+                    ? EXTRACTION_ENGINE_OPTIONS
+                    : key === "OCR_LANGUAGE"
+                      ? (ocrLangsQ.data?.languages ?? ["en"])
+                      : null;
               return (
                 <div
                   key={key}
@@ -450,7 +461,7 @@ export default function SettingsRoute() {
                         ))
                       )}
                     </select>
-                  ) : key === "OCR_LANGUAGE" ? (
+                  ) : selectOptions ? (
                     <select
                       id={key}
                       className="field"
@@ -459,25 +470,7 @@ export default function SettingsRoute() {
                         setDraft((p) => ({ ...p, [key]: e.target.value }))
                       }
                     >
-                      {(ocrLangsQ.data?.languages ?? ["en"]).map((opt) => (
-                        <option key={opt} value={opt}>
-                          {opt}
-                        </option>
-                      ))}
-                    </select>
-                  ) : key === "LLM_PROVIDER" || key === "EXTRACTION_ENGINE" ? (
-                    <select
-                      id={key}
-                      className="field"
-                      value={draft[key] ?? ""}
-                      onChange={(e) =>
-                        setDraft((p) => ({ ...p, [key]: e.target.value }))
-                      }
-                    >
-                      {(key === "EXTRACTION_ENGINE"
-                        ? EXTRACTION_ENGINE_OPTIONS
-                        : PROVIDER_OPTIONS
-                      ).map((opt) => (
+                      {selectOptions.map((opt) => (
                         <option key={opt} value={opt}>
                           {opt}
                         </option>

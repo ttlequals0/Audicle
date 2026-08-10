@@ -20,17 +20,6 @@ import re
 _LINE_RE = re.compile(r"(\d+)\s*[|:.-]\s*(.+)")
 
 
-def chunk_start_times(chunk_durations: list[float], silence_ms: int) -> list[float]:
-    """Start timestamp of each chunk in the concatenated episode."""
-
-    starts: list[float] = []
-    t = 0.0
-    for duration in chunk_durations:
-        starts.append(round(t, 3))
-        t += duration + silence_ms / 1000
-    return starts
-
-
 def parse_llm_chapters(raw: str, chunk_count: int) -> list[tuple[int, str]]:
     """Parse ``index | title`` lines from the LLM reply.
 
@@ -55,15 +44,16 @@ def parse_llm_chapters(raw: str, chunk_count: int) -> list[tuple[int, str]]:
     return sorted(found.items())
 
 
-def build_chapters_json(entries: list[tuple[int, str]], starts: list[float]) -> str:
-    """The Podcasting 2.0 chapters document for ``(chunk_index, title)`` pairs."""
+def build_chapters_json(timed: list[tuple[float, str]]) -> str:
+    """The Podcasting 2.0 chapters document for ``(start_secs, title)`` pairs.
+
+    Timestamps come from ``transcript.chunk_start_ms``, the same timeline the
+    VTT cues use."""
 
     return json.dumps(
         {
             "version": "1.2.0",
-            "chapters": [
-                {"startTime": starts[index], "title": title} for index, title in entries
-            ],
+            "chapters": [{"startTime": start, "title": title} for start, title in timed],
         },
         ensure_ascii=False,
     )

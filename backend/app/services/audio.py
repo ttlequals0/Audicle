@@ -117,24 +117,19 @@ def wav_duration_secs(path: Path) -> float:
     return float(info.duration)
 
 
-def embed_cover(mp3_path: Path, cover_jpg_bytes: bytes) -> None:
-    """Embed ``cover_jpg_bytes`` into the MP3 as an ID3v2.3 front-cover (APIC) frame, so
-    players that read only embedded art (Pocket Casts) show per-episode artwork. Writes
-    ID3v2.3 with a latin-1 description -- the most broadly supported tag version, since v2.4
-    APIC is read inconsistently by podcast clients. Replaces any existing APIC so a reprocess
-    doesn't stack covers. Tags a temp copy and atomically replaces the original, so an
-    interrupted tag write can't corrupt the episode."""
+def _retag_atomic(mp3_path: Path, tmp_prefix: str, mutate) -> None:
+    """Apply ``mutate(tags)`` to a temp copy of the MP3 and atomically replace
+    the original, so an interrupted tag write can't corrupt the episode.
+    Writes ID3v2.3 -- the most broadly supported tag version, since v2.4
+    frames are read inconsistently by podcast clients."""
 
-    tmp = mp3_path.with_name(f".cover-{mp3_path.name}")
+    tmp = mp3_path.with_name(f".{tmp_prefix}-{mp3_path.name}")
     try:
         shutil.copyfile(mp3_path, tmp)
         tagged = MP3(tmp, ID3=ID3)
         if tagged.tags is None:
             tagged.add_tags()
-        tagged.tags.delall("APIC")
-        tagged.tags.add(
-            APIC(encoding=0, mime="image/jpeg", type=3, desc="Cover", data=cover_jpg_bytes)
-        )
+        mutate(tagged.tags)
         tagged.save(v2_version=3)
         os.replace(tmp, mp3_path)
     finally:
@@ -142,6 +137,19 @@ def embed_cover(mp3_path: Path, cover_jpg_bytes: bytes) -> None:
         # error can't mask the real failure (the pipeline logs that one).
         with contextlib.suppress(OSError):
             tmp.unlink()
+
+
+def embed_cover(mp3_path: Path, cover_jpg_bytes: bytes) -> None:
+    """Embed the episode cover as an ID3v2.3 front-cover (APIC) frame with a
+    latin-1 description, so players that read only embedded art (Pocket Casts)
+    show per-episode artwork. Replaces any existing APIC so a reprocess doesn't
+    stack covers."""
+
+    def _mutate(tags) -> None:
+        tags.delall("APIC")
+        tags.add(APIC(encoding=0, mime="image/jpeg", type=3, desc="Cover", data=cover_jpg_bytes))
+
+    _retag_atomic(mp3_path, "cover", _mutate)
 
 
 def embed_chapters(
@@ -156,14 +164,9 @@ def embed_chapters(
 
     from mutagen.id3 import CHAP, CTOC, TIT2, CTOCFlags
 
-    tmp = mp3_path.with_name(f".chap-{mp3_path.name}")
-    try:
-        shutil.copyfile(mp3_path, tmp)
-        tagged = MP3(tmp, ID3=ID3)
-        if tagged.tags is None:
-            tagged.add_tags()
-        tagged.tags.delall("CHAP")
-        tagged.tags.delall("CTOC")
+    def _mutate(tags) -> None:
+        tags.delall("CHAP")
+        tags.delall("CTOC")
         element_ids = [f"chp{i}" for i in range(len(chapter_starts))]
         for i, (start_secs, title) in enumerate(chapter_starts):
             end_secs = (
@@ -171,7 +174,7 @@ def embed_chapters(
                 if i + 1 < len(chapter_starts)
                 else total_duration_secs
             )
-            tagged.tags.add(
+            tags.add(
                 CHAP(
                     element_id=element_ids[i],
                     start_time=int(start_secs * 1000),
@@ -179,7 +182,7 @@ def embed_chapters(
                     sub_frames=[TIT2(encoding=3, text=[title])],
                 )
             )
-        tagged.tags.add(
+        tags.add(
             CTOC(
                 element_id="toc",
                 flags=CTOCFlags.TOP_LEVEL | CTOCFlags.ORDERED,
@@ -187,11 +190,8 @@ def embed_chapters(
                 sub_frames=[TIT2(encoding=3, text=["Chapters"])],
             )
         )
-        tagged.save(v2_version=3)
-        os.replace(tmp, mp3_path)
-    finally:
-        with contextlib.suppress(OSError):
-            tmp.unlink()
+
+    _retag_atomic(mp3_path, "chap", _mutate)
 
 
 # --- Stage 1: silence trim --------------------------------------------------

@@ -1524,22 +1524,17 @@ async def _stage_chapters(
                 extra={"event": "chapters_too_few", "parsed": len(entries)},
             )
             return None
-        starts = chapters_service.chunk_start_times(
-            chunk_durations, settings.TTS_CHUNK_SILENCE_MS
-        )
+        starts_ms = transcript.chunk_start_ms(chunk_durations, settings.TTS_CHUNK_SILENCE_MS)
+        timed = [(starts_ms[index] / 1000, title) for index, title in entries]
         try:
-            audio.embed_chapters(
-                mp3_path,
-                [(starts[index], title) for index, title in entries],
-                duration_secs,
-            )
+            audio.embed_chapters(mp3_path, timed, duration_secs)
         except Exception:
             logger.warning(
                 "Chapter ID3 embed failed; feed JSON still served",
                 extra={"event": "chapters_embed_failed"},
                 exc_info=True,
             )
-        doc = chapters_service.build_chapters_json(entries, starts)
+        doc = chapters_service.build_chapters_json(timed)
         logger.info(
             "Chapters generated",
             extra={"event": "chapters_complete", "chapter_count": len(entries)},
@@ -1708,41 +1703,49 @@ def _apply_base_lexicon(text: str, conn, settings: Settings) -> str:
     return lexicon.WORD_TOKEN_RE.sub(repl, text)
 
 
-async def _apply_corrections(text: str, settings: Settings) -> str:
+async def _apply_corrections_batch(texts: list[str], settings: Settings) -> list[str]:
     """Deterministic normalization backstop, run after the LLM pronunciation pass.
 
-    Order: regex fixups (``_normalize_for_tts``), the user+seed pronunciation
+    Per text: regex fixups (``_normalize_for_tts``), the user+seed pronunciation
     dictionary (longest-key-first regex), the aggressive per-token base-lexicon
     pass, then the snake_case sweep. All pronunciation data is sourced from the
-    ``lexicon`` table. This is the guaranteed coverage layer: anything the LLM pass
-    missed is corrected here.
+    ``lexicon`` table, loaded once for the whole batch (one connection, one
+    lexicon read for the episode instead of one per chunk). This is the
+    guaranteed coverage layer: anything the LLM pass missed is corrected here.
     """
 
-    normalized = _normalize_for_tts(text)
     with database.connection(settings.DATA_DIR) as conn:
         cs_pairs, ci_pairs = lexicon.apply_pairs_by_case(conn)
-        # Acronyms get no automatic letter-spelling: Chatterbox (BPE/char-based, no g2p)
-        # pronounces common ones natively, and forcing "C E O" makes it choppy. A dictionary
-        # entry (seed or user) is the escape hatch for any acronym it should say differently.
-        # Explicit pronunciations from the dictionary apply here: exact-case keys first,
-        # then the case-insensitive group folds so "404 media" hits "404 Media". Then the
-        # aggressive base-lexicon pass and the snake_case sweep.
-        applied = corrections.apply(normalized, cs_pairs)
-        applied = corrections.apply(applied, ci_pairs, case_sensitive=False)
-        applied = _apply_base_lexicon(applied, conn, settings)
-    # Strip periods from dotted acronyms LAST -- catches both article text ("U.S.")
-    # and any dotted respelling a correction injected ("A.I.") -- so the engine
-    # never pauses mid-acronym.
-    result = _normalize_dotted_acronyms(_normalize_identifiers(applied))
+        results: list[str] = []
+        for text in texts:
+            # Acronyms get no automatic letter-spelling: Chatterbox (BPE/char-based, no g2p)
+            # pronounces common ones natively, and forcing "C E O" makes it choppy. A
+            # dictionary entry (seed or user) is the escape hatch for any acronym it should
+            # say differently. Exact-case keys first, then the case-insensitive group folds
+            # so "404 media" hits "404 Media". Then the aggressive base-lexicon pass.
+            applied = corrections.apply(_normalize_for_tts(text), cs_pairs)
+            applied = corrections.apply(applied, ci_pairs, case_sensitive=False)
+            applied = _apply_base_lexicon(applied, conn, settings)
+            # Strip periods from dotted acronyms LAST -- catches both article text ("U.S.")
+            # and any dotted respelling a correction injected ("A.I.") -- so the engine
+            # never pauses mid-acronym.
+            results.append(_normalize_dotted_acronyms(_normalize_identifiers(applied)))
     logger.info(
         "Corrections applied",
         extra={
             "event": "corrections_complete",
             "entries_pairs": len(cs_pairs) + len(ci_pairs),
-            "delta_chars": len(result) - len(text),
+            "text_count": len(texts),
+            "delta_chars": sum(len(r) for r in results) - sum(len(t) for t in texts),
         },
     )
-    return result
+    return results
+
+
+async def _apply_corrections(text: str, settings: Settings) -> str:
+    """Single-text convenience over the batch form."""
+
+    return (await _apply_corrections_batch([text], settings))[0]
 
 
 # A pronunciation pass only respells terms, so each window's output should be
@@ -1750,6 +1753,10 @@ async def _apply_corrections(text: str, settings: Settings) -> str:
 # refusal; below this ratio the window falls back to its input so the pass can
 # only improve pronunciation, never drop article content.
 _PRONUNCIATION_MIN_RATIO = 0.5
+
+# Concurrent pronunciation calls per job: enough to keep the stage's wall clock
+# near-flat in chunk count without hammering the LLM provider.
+_PRONUNCIATION_CONCURRENCY = 4
 
 
 def _reference_matchers(
@@ -1761,8 +1768,10 @@ def _reference_matchers(
 
     matchers: list[tuple[re.Pattern[str], str]] = []
     for term, line in entries:
-        boundary = r"(?<!\w){}(?!\w)" if corrections.is_acronym_key(term) else r"(?<![\w-]){}(?![\w-])"
-        matchers.append((re.compile(boundary.format(re.escape(term)), re.IGNORECASE), line))
+        pattern = corrections.boundary_wrap(
+            re.escape(term), acronym=corrections.is_acronym_key(term)
+        )
+        matchers.append((re.compile(pattern, re.IGNORECASE), line))
     return matchers
 
 
@@ -1796,73 +1805,96 @@ async def _pronounce_chunks_with_llm(
         return list(chunks)
     matchers = _reference_matchers(entries)
 
-    out_parts: list[str] = []
-    for index, window in enumerate(chunks):
+    # Chunks are independent, so calls run concurrently under a small cap;
+    # progress ticks per completion. Serial per-chunk calls would make this
+    # stage's wall clock scale with chunk count.
+    semaphore = asyncio.Semaphore(_PRONUNCIATION_CONCURRENCY)
+    done_count = 0
+
+    async def _pronounce_one(index: int, window: str) -> str:
+        nonlocal done_count
         lines = [line for pattern, line in matchers if pattern.search(window)]
-        if not lines:
-            out_parts.append(window)
-            _set_progress(job_id, index + 1, len(chunks), settings)
-            continue
-        system_prompt = (
-            f"{base_prompt}\n\nPRONUNCIATION REFERENCE (term -> respelling):\n"
-            + "\n".join(lines)
-        )
-        # Same marker contract as cleanup: wrap the output so any preamble the
-        # model glues on ("...here is the text reproduced in full:") lands outside
-        # the markers and is sliced off by extract_clean_output -- the min-ratio
-        # guard below only catches short output, not preamble-bloated output.
-        user_message = (
-            "Reproduce the text below in full, copying every sentence in order and "
-            "changing only the spelled form of terms that match the pronunciation "
-            f"reference. Output ONLY the text between a line {cleanup_output.BEGIN_MARKER} "
-            f"and a line {cleanup_output.END_MARKER} -- no commentary outside the markers."
-            f"\n\n<text>\n{window}\n</text>"
-        )
         try:
-            raw = await _llm_with_retry(system_prompt, user_message, settings)
-            if cleanup_output.BEGIN_MARKER not in raw:
-                # Model ignored the marker contract; one stern retry to force it.
-                raw = await _llm_with_retry(
-                    system_prompt,
-                    "Your previous reply was rejected. Output ONLY the reproduced "
-                    f"text between {cleanup_output.BEGIN_MARKER} and "
-                    f"{cleanup_output.END_MARKER}, with no other words.\n\n" + user_message,
-                    settings,
-                )
-            # Trust only marker-delimited output. If the model defied the contract
-            # twice, keep the window verbatim rather than run extract_clean_output's
-            # preamble heuristic, which is tuned for cleanup and could drop a real
-            # paragraph opening like a preamble ("Here is...") or miss an unrecognized
-            # one; the deterministic backstop still respells this window afterward.
-            part = (
-                cleanup_output.extract_clean_output(raw)
-                if cleanup_output.BEGIN_MARKER in raw
-                else window
+            if not lines:
+                return window
+            system_prompt = (
+                f"{base_prompt}\n\nPRONUNCIATION REFERENCE (term -> respelling):\n"
+                + "\n".join(lines)
             )
-        except Exception:
-            logger.warning(
-                "Pronunciation window failed; passing it through unchanged",
-                extra={"event": "pronunciation_window_failed", "window_index": index},
-                exc_info=True,
+            async with semaphore:
+                part = await _pronounce_window(system_prompt, window, index, settings)
+            return part
+        finally:
+            done_count += 1
+            _set_progress(job_id, done_count, len(chunks), settings)
+
+    return list(
+        await asyncio.gather(
+            *(_pronounce_one(index, window) for index, window in enumerate(chunks))
+        )
+    )
+
+
+async def _pronounce_window(
+    system_prompt: str, window: str, index: int, settings: Settings
+) -> str:
+    """One chunk's LLM pronunciation call, with the marker contract and the
+    keep-verbatim fallbacks."""
+
+    # Same marker contract as cleanup: wrap the output so any preamble the
+    # model glues on ("...here is the text reproduced in full:") lands outside
+    # the markers and is sliced off by extract_clean_output -- the min-ratio
+    # guard below only catches short output, not preamble-bloated output.
+    user_message = (
+        "Reproduce the text below in full, copying every sentence in order and "
+        "changing only the spelled form of terms that match the pronunciation "
+        f"reference. Output ONLY the text between a line {cleanup_output.BEGIN_MARKER} "
+        f"and a line {cleanup_output.END_MARKER} -- no commentary outside the markers."
+        f"\n\n<text>\n{window}\n</text>"
+    )
+    try:
+        raw = await _llm_with_retry(system_prompt, user_message, settings)
+        if cleanup_output.BEGIN_MARKER not in raw:
+            # Model ignored the marker contract; one stern retry to force it.
+            raw = await _llm_with_retry(
+                system_prompt,
+                "Your previous reply was rejected. Output ONLY the reproduced "
+                f"text between {cleanup_output.BEGIN_MARKER} and "
+                f"{cleanup_output.END_MARKER}, with no other words.\n\n" + user_message,
+                settings,
             )
-            part = window
-        if len(part) < len(window) * _PRONUNCIATION_MIN_RATIO:
-            logger.warning(
-                "Pronunciation window output too short; keeping original",
-                extra={
-                    "event": "pronunciation_window_short",
-                    "window_index": index,
-                    "input_chars": len(window),
-                    "output_chars": len(part),
-                    # Snippet of what the model returned, to diagnose a short reply
-                    # (e.g. a refusal or "nothing to respell") vs a real respelling.
-                    "output_preview": part[:200],
-                },
-            )
-            part = window
-        out_parts.append(part)
-        _set_progress(job_id, index + 1, len(chunks), settings)
-    return out_parts
+        # Trust only marker-delimited output. If the model defied the contract
+        # twice, keep the window verbatim rather than run extract_clean_output's
+        # preamble heuristic, which is tuned for cleanup and could drop a real
+        # paragraph opening like a preamble ("Here is...") or miss an unrecognized
+        # one; the deterministic backstop still respells this window afterward.
+        part = (
+            cleanup_output.extract_clean_output(raw)
+            if cleanup_output.BEGIN_MARKER in raw
+            else window
+        )
+    except Exception:
+        logger.warning(
+            "Pronunciation window failed; passing it through unchanged",
+            extra={"event": "pronunciation_window_failed", "window_index": index},
+            exc_info=True,
+        )
+        return window
+    if len(part) < len(window) * _PRONUNCIATION_MIN_RATIO:
+        logger.warning(
+            "Pronunciation window output too short; keeping original",
+            extra={
+                "event": "pronunciation_window_short",
+                "window_index": index,
+                "input_chars": len(window),
+                "output_chars": len(part),
+                # Snippet of what the model returned, to diagnose a short reply
+                # (e.g. a refusal or "nothing to respell") vs a real respelling.
+                "output_preview": part[:200],
+            },
+        )
+        return window
+    return part
 
 
 async def _stage_normalize(job: jobs.Job, chunks: list[str], settings: Settings) -> list[str]:
@@ -1876,7 +1908,7 @@ async def _stage_normalize(job: jobs.Job, chunks: list[str], settings: Settings)
     """
 
     pronounced = await _pronounce_chunks_with_llm(job.id, chunks, settings)
-    narrations = [await _apply_corrections(text, settings) for text in pronounced]
+    narrations = await _apply_corrections_batch(pronounced, settings)
     # Respelling expands text ("PR" -> "P R"); the chunker's cap leaves ~3.6x
     # headroom against the wrapper's request bound, but check rather than assume.
     cap = int(_MAX_CHARS_BOUNDS["le"])

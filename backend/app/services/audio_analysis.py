@@ -78,6 +78,25 @@ def _frame_signal(mono: np.ndarray, frame_n: int, hop_n: int) -> np.ndarray:
     return windows[::hop_n]
 
 
+def _envelope_reasons(
+    rms_cv: float, crest: float, zcr: float, settings: Settings
+) -> tuple[str, ...]:
+    """Drone/noise reasons for one (rms_cv, crest, zcr) triple, at any scope.
+
+    A flat drone is low-variance AND non-peaky (two independent signals, so a
+    legitimate steady-but-peaky passage isn't falsely flagged); steady
+    broadband noise is low-variance but high zero-crossing."""
+
+    if rms_cv >= settings.AUDIO_ANALYSIS_MIN_RMS_CV:
+        return ()
+    reasons = []
+    if crest < settings.AUDIO_ANALYSIS_MIN_CREST:
+        reasons.append("flat_envelope")
+    if zcr > settings.AUDIO_ANALYSIS_MAX_ZCR:
+        reasons.append("broadband_noise")
+    return tuple(reasons)
+
+
 def _window_metrics(
     mono: np.ndarray,
     frame_rms: np.ndarray,
@@ -242,7 +261,12 @@ def analyze_chunk(
     # Windowed pass: a drone occupying a fraction of a long chunk is diluted
     # out of the whole-chunk reductions but dominates its own 3 s window.
     windows = _window_metrics(mono, frame_rms, voiced, frame_zc, frame_n, hop_n, settings)
-    if windows:
+    tripped = [w for w in windows if _envelope_reasons(*w, settings)]
+    if tripped:
+        # Log the tripping window (lowest CV among them), so the worst_window_*
+        # metrics describe the window that actually failed the gate.
+        worst_cv, worst_crest, worst_zcr = min(tripped, key=lambda w: w[0])
+    elif windows:
         worst_cv, worst_crest, worst_zcr = min(windows, key=lambda w: w[0])
     else:
         worst_cv, worst_crest, worst_zcr = rms_cv, crest_factor, zero_crossing_rate
@@ -259,23 +283,18 @@ def analyze_chunk(
         median_f0_hz=_median_f0(mono, sample_rate, floor),
     )
 
-    min_cv = settings.AUDIO_ANALYSIS_MIN_RMS_CV
+    # One detector, two scopes: the whole-chunk triple catches chunk-wide
+    # flatness, each window catches a localized stretch. The verdict is the
+    # union of every scope's reasons.
     reasons: list[str] = []
-    low_envelope = rms_cv < min_cv
-    # A flat drone is low-variance AND non-peaky (two independent signals, so a
-    # legitimate steady-but-peaky passage isn't falsely flagged). The whole-chunk
-    # and the windowed check each suffice: the first catches chunk-wide flatness,
-    # the second a localized stretch.
-    if (low_envelope and crest_factor < settings.AUDIO_ANALYSIS_MIN_CREST) or any(
-        cv < min_cv and crest < settings.AUDIO_ANALYSIS_MIN_CREST
-        for cv, crest, _ in windows
-    ):
-        reasons.append("flat_envelope")
-    # Steady broadband noise is low-variance but high zero-crossing.
-    if (low_envelope and zero_crossing_rate > settings.AUDIO_ANALYSIS_MAX_ZCR) or any(
-        cv < min_cv and zcr > settings.AUDIO_ANALYSIS_MAX_ZCR for cv, _, zcr in windows
-    ):
-        reasons.append("broadband_noise")
+    scoped = [
+        (rms_cv, crest_factor, zero_crossing_rate),
+        *tripped,
+    ]
+    for triple in scoped:
+        for reason in _envelope_reasons(*triple, settings):
+            if reason not in reasons:
+                reasons.append(reason)
     if silent_fraction > settings.AUDIO_ANALYSIS_MAX_SILENT_FRACTION:
         reasons.append("mostly_silent")
     if expected_secs:

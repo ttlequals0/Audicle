@@ -38,6 +38,25 @@ class TranscriptChunk:
     duration_secs: float
 
 
+def chunk_start_ms(duration_secs: list[float], silence_ms: int) -> list[int]:
+    """Start of each chunk in the produced MP3, in integer milliseconds.
+
+    The single timeline shared by VTT cues and chapter timestamps, so the two
+    can never disagree. Integer ms avoids float drift over hundreds of chunks.
+    """
+
+    if silence_ms < 0:
+        raise ValueError(f"silence_ms must be >= 0, got {silence_ms}")
+    starts: list[int] = []
+    cursor_ms = 0
+    for index, duration in enumerate(duration_secs):
+        if not math.isfinite(duration) or duration < 0:
+            raise ValueError(f"chunk {index} has invalid duration {duration!r}")
+        starts.append(cursor_ms)
+        cursor_ms += round(duration * 1000) + silence_ms
+    return starts
+
+
 def build_vtt(chunks: list[TranscriptChunk], silence_ms: int) -> str:
     """Render a WebVTT document from chunk text + per-chunk durations.
 
@@ -50,25 +69,15 @@ def build_vtt(chunks: list[TranscriptChunk], silence_ms: int) -> str:
     that by checking ``len(lines) == 1``.
     """
 
-    if silence_ms < 0:
-        raise ValueError(f"silence_ms must be >= 0, got {silence_ms}")
-
+    starts = chunk_start_ms([chunk.duration_secs for chunk in chunks], silence_ms)
     lines: list[str] = ["WEBVTT", ""]
-    cursor_ms = 0
     for index, chunk in enumerate(chunks):
-        if not math.isfinite(chunk.duration_secs) or chunk.duration_secs < 0:
-            raise ValueError(f"chunk {index} has invalid duration {chunk.duration_secs!r}")
-        duration_ms = round(chunk.duration_secs * 1000)
-        start_ms = cursor_ms
-        end_ms = cursor_ms + duration_ms
+        start_ms = starts[index]
+        end_ms = start_ms + round(chunk.duration_secs * 1000)
         lines.append(str(index + 1))
         lines.append(f"{_format_ts(start_ms)} --> {_format_ts(end_ms)}")
         lines.append(_escape_cue(chunk.text))
         lines.append("")
-        # Silence padding is BETWEEN cues, not after the last one; mirrors
-        # the audio pipeline's concat_with_padding behavior so VTT and MP3
-        # total durations match.
-        cursor_ms = end_ms + silence_ms if index < len(chunks) - 1 else end_ms
 
     # Drop the trailing blank line so the file ends with exactly one \n via
     # the join below.

@@ -184,6 +184,18 @@ def is_acronym_key(key: str) -> bool:
     return len(key) >= 2 and key.isalnum() and key.isupper()
 
 
+def boundary_wrap(inner: str, *, acronym: bool) -> str:
+    """Wrap regex ``inner`` in the word-boundary lookarounds for its key shape.
+
+    Single source of the boundary policy: ``apply`` and the pipeline's
+    pronunciation-reference filter both compile from here, so they can never
+    disagree about which text a key matches."""
+
+    if acronym:
+        return rf"(?<!\w){inner}(?!\w)"
+    return rf"(?<![\w-]){inner}(?![\w-])"
+
+
 def apply(text: str, dictionary: dict[str, str], *, case_sensitive: bool = True) -> str:
     """Replace every whole-word match in ``text`` per the dictionary.
 
@@ -212,9 +224,11 @@ def apply(text: str, dictionary: dict[str, str], *, case_sensitive: bool = True)
     acronym = [k for k in sorted_keys if is_acronym_key(k)]
     parts = []
     if strict:
-        parts.append(r"(?<![\w-])(?:" + "|".join(re.escape(k) for k in strict) + r")(?![\w-])")
+        alternation = "(?:" + "|".join(re.escape(k) for k in strict) + ")"
+        parts.append(boundary_wrap(alternation, acronym=False))
     if acronym:
-        parts.append(r"(?<!\w)(?:" + "|".join(re.escape(k) for k in acronym) + r")(?!\w)")
+        alternation = "(?:" + "|".join(re.escape(k) for k in acronym) + ")"
+        parts.append(boundary_wrap(alternation, acronym=True))
     pattern = re.compile(
         "|".join(parts),
         0 if case_sensitive else re.IGNORECASE,

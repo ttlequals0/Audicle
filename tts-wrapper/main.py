@@ -160,24 +160,12 @@ def _multilingual_factory() -> Engine:
     return ChatterboxMultilingualEngine(Config.from_env())
 
 
-# name -> (factory, languages). Languages are listed statically so /models can
-# answer without loading model weights; an engine may refine its own list at
-# load time (the multilingual engine reads the package's language table).
-ENGINE_REGISTRY: dict[str, tuple[Any, tuple[str, ...]]] = {
-    "chatterbox": (_turbo_factory, ("en",)),
-    "chatterbox-multilingual": (
-        _multilingual_factory,
-        (
-            "ar", "da", "de", "el", "en", "es", "fi", "fr", "he", "hi", "it",
-            "ja", "ko", "ms", "nl", "no", "pl", "pt", "ru", "sv", "sw", "tr",
-            "zh",
-        ),
-    ),
+# name -> factory. Language tables come from the engine classes (one source);
+# constructing an engine is light -- weights only load in load().
+ENGINE_REGISTRY: dict[str, Any] = {
+    "chatterbox": _turbo_factory,
+    "chatterbox-multilingual": _multilingual_factory,
 }
-
-
-def _default_engine_factory() -> Engine:
-    return _turbo_factory()
 
 
 class SelectVoiceRequest(BaseModel):
@@ -204,7 +192,7 @@ def create_app(
 
     Tests pass a fake :class:`Engine` so they exercise the HTTP contract
     without importing the TTS model library. Production calls this with no args
-    and gets the :class:`ChatterboxEngine` via :func:`_default_engine_factory`.
+    and gets the :class:`ChatterboxEngine` via ``_turbo_factory``.
 
     ``verifier`` is the optional faster-whisper transcriber; when omitted it is
     built from the environment only if ``WHISPER_ENABLED`` is set, so the
@@ -212,13 +200,16 @@ def create_app(
     """
 
     cfg = Config.from_env()
-    chosen_engine = engine if engine is not None else _default_engine_factory()
+    chosen_engine = engine if engine is not None else _turbo_factory()
     # Tests inject {name: factory}; production uses ENGINE_REGISTRY.
     registry: dict[str, Any] = (
-        engine_registry
-        if engine_registry is not None
-        else {name: spec[0] for name, spec in ENGINE_REGISTRY.items()}
+        engine_registry if engine_registry is not None else dict(ENGINE_REGISTRY)
     )
+    # Advertised language table per selectable model, read once from the
+    # (unloaded) engines so /models answers without loading weights.
+    registry_languages: dict[str, tuple[str, ...]] = {
+        name: tuple(factory().languages) for name, factory in registry.items()
+    }
     chosen_data_dir = data_dir or Path(os.environ.get("DATA_DIR", "/data"))
     chosen_verifier = verifier
     if chosen_verifier is None and cfg.whisper_enabled:
@@ -514,13 +505,12 @@ def create_app(
     async def models(engine: Engine = Depends(get_engine)) -> dict[str, Any]:
         active = getattr(engine, "name", None)
         listed: list[dict[str, Any]] = []
-        for name, spec in ENGINE_REGISTRY.items():
-            languages = spec[1]
+        for name, languages in registry_languages.items():
             if name == active:
                 # The loaded engine may have refined its language table.
                 languages = tuple(getattr(engine, "languages", languages))
             listed.append({"name": name, "languages": sorted(languages)})
-        if active is not None and active not in ENGINE_REGISTRY:
+        if active is not None and active not in registry_languages:
             listed.append(
                 {"name": active, "languages": sorted(getattr(engine, "languages", ()))}
             )

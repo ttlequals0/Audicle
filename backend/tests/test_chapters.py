@@ -5,12 +5,12 @@ from __future__ import annotations
 
 import json
 
-from app.services import chapters
+from app.services import chapters, transcript
 
 
-def test_chunk_start_times_sum_durations_and_silence() -> None:
-    starts = chapters.chunk_start_times([10.0, 20.0, 30.0], silence_ms=500)
-    assert starts == [0.0, 10.5, 31.0]
+def test_chunk_start_ms_sums_durations_and_silence() -> None:
+    starts = transcript.chunk_start_ms([10.0, 20.0, 30.0], silence_ms=500)
+    assert starts == [0, 10500, 31000]
 
 
 def test_parse_llm_chapters_reads_index_pipe_title_lines() -> None:
@@ -49,11 +49,7 @@ def test_parse_llm_chapters_empty_reply_returns_empty() -> None:
 
 
 def test_build_chapters_json_document() -> None:
-    doc = json.loads(
-        chapters.build_chapters_json(
-            [(0, "Opening"), (2, "Middle")], starts=[0.0, 10.5, 31.0]
-        )
-    )
+    doc = json.loads(chapters.build_chapters_json([(0.0, "Opening"), (31.0, "Middle")]))
     assert doc["version"] == "1.2.0"
     assert doc["chapters"] == [
         {"startTime": 0.0, "title": "Opening"},

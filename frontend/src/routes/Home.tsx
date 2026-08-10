@@ -13,7 +13,7 @@ type Mode = "url" | "file";
 
 // Kept in sync with file_extraction.ALLOWED_EXTENSIONS on the backend.
 const ACCEPT = ".pdf,.docx,.md,.txt,.html,.htm,.png,.jpg,.jpeg,.webp,.tiff";
-const ALLOWED_EXTS = ["pdf", "docx", "md", "txt", "html", "htm"];
+const ALLOWED_EXTS = ACCEPT.split(",").map((ext) => ext.slice(1));
 // Fallback only until the live UPLOAD_MAX_MB setting loads.
 const DEFAULT_MAX_UPLOAD_MB = 50;
 

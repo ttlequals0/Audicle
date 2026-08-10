@@ -167,41 +167,34 @@ def _parse(
         # text falls under the same floor that would fail the job anyway, so
         # text PDFs cost nothing extra.
         if len(markdown.strip()) < settings.MIN_EXTRACTION_CHARS and settings.OCR_ENABLED:
+            from app.services import ocr  # lazy: only loads when a parse needs it
+
             logger.info(
                 "PDF text under extraction floor; running OCR fallback",
                 extra={"event": "ocr_fallback_engaged", "pypdf_chars": len(markdown)},
             )
-            markdown = _run_ocr(lambda: _ocr().ocr_pdf(data, settings, beat))
+            try:
+                markdown = ocr.ocr_pdf(data, settings, beat)
+            except ocr.OcrError as exc:
+                raise ExtractionPermanentError(str(exc)) from exc
         return markdown, metadata
     if ext in IMAGE_EXTENSIONS:
         if not settings.OCR_ENABLED:
             raise ExtractionPermanentError(
                 "image uploads require OCR, which is disabled (OCR_ENABLED)"
             )
-        return _run_ocr(lambda: _ocr().ocr_image(data, settings, beat)), {}
+        from app.services import ocr  # lazy: only loads when a parse needs it
+
+        try:
+            return ocr.ocr_image(data, settings, beat), {}
+        except ocr.OcrError as exc:
+            raise ExtractionPermanentError(str(exc)) from exc
     if ext == ".docx":
         return _parse_docx(data)
     if ext in (".html", ".htm"):
         return html_markdown.html_to_markdown(data.decode("utf-8", errors="replace"))
     # .md / .txt (and any allowed text type): the body is the text itself.
     return _parse_text(data)
-
-
-def _ocr():
-    """Late import so the OCR stack only loads when a parse needs it."""
-
-    from app.services import ocr
-
-    return ocr
-
-
-def _run_ocr(run: Callable[[], str]) -> str:
-    from app.services.ocr import OcrError
-
-    try:
-        return run()
-    except OcrError as exc:
-        raise ExtractionPermanentError(str(exc)) from exc
 
 
 def _parse_pdf(data: bytes) -> tuple[str, dict[str, Any]]:

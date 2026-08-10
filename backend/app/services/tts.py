@@ -255,6 +255,20 @@ async def select_voice_with_retry(settings: Settings, slot: int) -> None:
     await _retry_transients(lambda: select_voice(settings, slot), settings)
 
 
+async def _get(path: str, settings: Settings, what: str) -> httpx.Response:
+    """GET from the wrapper with the same transport-error mapping as ``_post``."""
+
+    endpoint = f"{settings.TTS_URL.rstrip('/')}{path}"
+    timeout = httpx.Timeout(settings.TTS_HTTP_TIMEOUT_SECONDS)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        try:
+            return await client.get(endpoint)
+        except httpx.TimeoutException as exc:
+            raise TTSTimeoutError(f"{what} timed out: {exc}") from exc
+        except (httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+            raise TTSProviderError(f"TTS unreachable: {exc}") from exc
+
+
 async def select_model(settings: Settings, model: str) -> None:
     """POST /select-model: swap the wrapper's loaded TTS model."""
 
@@ -278,15 +292,7 @@ async def select_model_with_retry(settings: Settings, model: str) -> None:
 async def list_models(settings: Settings) -> dict[str, Any]:
     """GET /models: the engines the wrapper can construct, plus the active one."""
 
-    endpoint = f"{settings.TTS_URL.rstrip('/')}/models"
-    timeout = httpx.Timeout(settings.TTS_HTTP_TIMEOUT_SECONDS)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            response = await client.get(endpoint)
-        except httpx.TimeoutException as exc:
-            raise TTSTimeoutError(f"model list timed out: {exc}") from exc
-        except (httpx.NetworkError, httpx.RemoteProtocolError) as exc:
-            raise TTSProviderError(f"TTS unreachable: {exc}") from exc
+    response = await _get("/models", settings, "model list")
     if not response.is_success:
         raise TTSProviderError(
             f"model list returned {response.status_code}: {response.text[:200]}"
