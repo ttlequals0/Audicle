@@ -49,6 +49,9 @@ class EpisodeListItem(BaseModel):
     # True once the cleaned article text exists (0.6.0+); the UI gates the
     # /media/{id}.txt download link on it so older episodes show no dead link.
     has_cleaned_text: bool
+    # True once chapters exist (0.51.0+), so the UI only offers the link when
+    # there is a document to open.
+    has_chapters: bool
     # Source provenance (0.30.0): 'url' or 'upload'. The UI renders an upload's
     # filename instead of a hyperlink and routes its reprocess to /upload/{id}/reprocess.
     source_type: str
@@ -89,6 +92,7 @@ async def list_episodes(
             pub_date=ep.pub_date,
             updated_at=ep.updated_at,
             has_cleaned_text=ep.id in with_text,
+            has_chapters=bool(ep.chapters_json),
             source_type=ep.source_type,
             source_filename=ep.source_filename,
             voice_label=ep.voice_label,

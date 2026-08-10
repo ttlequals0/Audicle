@@ -294,6 +294,7 @@
   }
   .menu-item {
     display: grid;
+    text-decoration: none;
     grid-template-columns: 0.75rem 1fr;
     gap: 0.5rem;
     align-items: baseline;

@@ -6,6 +6,18 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.52.4] - 2026-08-10
+
+### Added
+
+- A View menu on each Feed episode gathers Transcript, Chapters, and Cleaned
+  text in one place, replacing the separate Transcript and Cleaned text
+  buttons. Chapters had no way to read them from the interface at all. The
+  rows are real links, so middle-click and copy-address still work.
+- The episode list reports `has_chapters`, so the Feed offers the chapters
+  link only for episodes that have one, the same way it already gates the
+  cleaned-text link.
+
 ## [0.52.3] - 2026-08-10
 
 ### Fixed

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.52.0
+  version: 0.52.4
 paths:
   /health/live:
     get:
@@ -1785,6 +1785,9 @@ components:
         has_cleaned_text:
           type: boolean
           title: Has Cleaned Text
+        has_chapters:
+          type: boolean
+          title: Has Chapters
         source_type:
           type: string
           title: Source Type
@@ -1812,6 +1815,7 @@ components:
       - pub_date
       - updated_at
       - has_cleaned_text
+      - has_chapters
       - source_type
       - source_filename
       - voice_label

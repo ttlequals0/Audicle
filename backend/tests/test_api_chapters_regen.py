@@ -188,3 +188,20 @@ def test_regenerate_uses_runtime_settings_not_just_env(
     with _client(env) as client:
         assert client.post("/api/v1/episodes/ep1/chapters").status_code == 200
     assert seen["base_url"] == "https://llm.example.test/v1"
+
+
+def test_episode_list_reports_whether_chapters_exist(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Feed only offers a chapters link when there is something to open."""
+
+    from app.services import pipeline
+
+    _seed(env)
+    with _client(env) as client:
+        before = client.get("/api/v1/episodes").json()[0]
+        assert before["has_chapters"] is False
+        monkeypatch.setattr(pipeline, "_llm_with_retry", _fake_llm)
+        assert client.post("/api/v1/episodes/ep1/chapters").status_code == 200
+        after = client.get("/api/v1/episodes").json()[0]
+    assert after["has_chapters"] is True

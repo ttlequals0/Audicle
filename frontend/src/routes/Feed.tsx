@@ -160,14 +160,34 @@ export default function Feed() {
               <AudioPlayer src={`/media/${ep.id}.mp3`} />
             </div>
             <div className="flex flex-wrap gap-2 mt-3">
-              <a className="btn-ghost" href={`/media/${ep.id}.vtt`} target="_blank" rel="noreferrer">
-                Transcript
-              </a>
-              {ep.has_cleaned_text && (
-                <a className="btn-ghost" href={`/media/${ep.id}.txt`} target="_blank" rel="noreferrer">
-                  Cleaned text
-                </a>
-              )}
+              <ActionMenu
+                label="View"
+                actions={[
+                  {
+                    label: "Transcript",
+                    hint: "webvtt with cue timings",
+                    href: `/media/${ep.id}.vtt`,
+                  },
+                  ...(ep.has_chapters
+                    ? [
+                        {
+                          label: "Chapters",
+                          hint: "podcasting 2.0 json",
+                          href: `/media/${ep.id}.chapters.json`,
+                        },
+                      ]
+                    : []),
+                  ...(ep.has_cleaned_text
+                    ? [
+                        {
+                          label: "Cleaned text",
+                          hint: "the article as narrated",
+                          href: `/media/${ep.id}.txt`,
+                        },
+                      ]
+                    : []),
+                ]}
+              />
               <ActionMenu
                 pending={reprocessM.isPending || chaptersM.isPending}
                 actions={[

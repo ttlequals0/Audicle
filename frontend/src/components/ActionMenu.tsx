@@ -4,7 +4,10 @@ import { createPortal } from "react-dom";
 export interface MenuAction {
   label: string;
   hint: string;
-  run: () => void;
+  /** Click handler. Mutually exclusive with `href`. */
+  run?: () => void;
+  /** Renders the row as a real link, so middle-click and copy-address work. */
+  href?: string;
 }
 
 /**
@@ -103,20 +106,39 @@ export default function ActionMenu({
               zIndex: 60,
             }}
           >
-            {actions.map((a) => (
-              <button
-                key={a.label}
-                role="menuitem"
-                className="menu-item"
-                onClick={() => {
-                  setOpen(false);
-                  a.run();
-                }}
-              >
-                <span className="text-sm text-fg">{a.label}</span>
-                <span className="mono-xs text-mute col-start-2">// {a.hint}</span>
-              </button>
-            ))}
+            {actions.map((a) => {
+              const body = (
+                <>
+                  <span className="text-sm text-fg">{a.label}</span>
+                  <span className="mono-xs text-mute col-start-2">// {a.hint}</span>
+                </>
+              );
+              return a.href ? (
+                <a
+                  key={a.label}
+                  role="menuitem"
+                  className="menu-item"
+                  href={a.href}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={() => setOpen(false)}
+                >
+                  {body}
+                </a>
+              ) : (
+                <button
+                  key={a.label}
+                  role="menuitem"
+                  className="menu-item"
+                  onClick={() => {
+                    setOpen(false);
+                    a.run?.();
+                  }}
+                >
+                  {body}
+                </button>
+              );
+            })}
           </div>,
           document.body
         )}
