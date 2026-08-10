@@ -306,6 +306,7 @@ class Settings(BaseSettings):
     AUDIO_ANALYSIS_MAX_REGEN: int = 2  # extra attempts on a bad chunk
     AUDIO_ANALYSIS_FRAME_MS: int = 25
     AUDIO_ANALYSIS_HOP_MS: int = 10
+    AUDIO_ANALYSIS_WINDOW_SECS: float = 3.0  # sliding-window size for localized checks
     AUDIO_ANALYSIS_MIN_RMS_CV: float = 0.35  # below = flat envelope (drone/noise)
     AUDIO_ANALYSIS_MIN_CREST: float = 3.0  # below = non-peaky (tone), linear ratio
     AUDIO_ANALYSIS_MAX_ZCR: float = 0.35  # above = broadband noise (with low rms_cv)

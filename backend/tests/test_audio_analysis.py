@@ -120,3 +120,34 @@ def test_analyze_wav_path_loads_and_flags(env: Path, tmp_path: Path) -> None:
     sf.write(str(path), _drone().squeeze(0).numpy(), _SR, subtype="PCM_16")
     verdict = audio_analysis.analyze_wav_path(path, word_count=5, settings=get_settings())
     assert verdict.ok is False
+
+
+def test_windowed_gate_flags_localized_drone(env: Path) -> None:
+    # A 5 s tone inside 25 s of speech is ~20% of the chunk: too diluted for the
+    # whole-chunk reductions, caught by the windowed pass (2a).
+    speech = _speechlike(duration_secs=25.0)
+    drone = _drone(duration_secs=5.0, freq=217.0, amp=0.35)
+    spliced = torch.cat(
+        [speech[:, : 10 * _SR], drone, speech[:, 10 * _SR : 20 * _SR]], dim=1
+    )
+    settings = get_settings()
+    clean = audio_analysis.analyze_chunk(speech, _SR, word_count=65, settings=settings)
+    assert clean.ok is True, clean.reasons
+    verdict = audio_analysis.analyze_chunk(spliced, _SR, word_count=65, settings=settings)
+    assert verdict.ok is False
+    assert "flat_envelope" in verdict.reasons
+
+
+def test_worst_window_metrics_reported(env: Path) -> None:
+    speech = _speechlike(duration_secs=25.0)
+    drone = _drone(duration_secs=5.0, freq=217.0, amp=0.35)
+    spliced = torch.cat(
+        [speech[:, : 10 * _SR], drone, speech[:, 10 * _SR : 20 * _SR]], dim=1
+    )
+    settings = get_settings()
+    metrics = audio_analysis.analyze_chunk(
+        spliced, _SR, word_count=65, settings=settings
+    ).metrics
+    assert metrics.worst_window_rms_cv < metrics.rms_cv
+    assert metrics.worst_window_rms_cv < settings.AUDIO_ANALYSIS_MIN_RMS_CV
+    assert metrics.worst_window_crest < settings.AUDIO_ANALYSIS_MIN_CREST

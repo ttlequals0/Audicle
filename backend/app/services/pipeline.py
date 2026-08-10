@@ -1213,6 +1213,9 @@ async def _generate_chunk_quality_checked(
                 zero_crossing_rate=verdict.metrics.zero_crossing_rate,
                 silent_fraction=verdict.metrics.silent_fraction,
                 duration_ratio=verdict.metrics.duration_ratio,
+                worst_window_rms_cv=verdict.metrics.worst_window_rms_cv,
+                worst_window_crest=verdict.metrics.worst_window_crest,
+                worst_window_zcr=verdict.metrics.worst_window_zcr,
             )
         logger.warning("Bad chunk audio detected", extra=log_extra)
 
