@@ -413,6 +413,9 @@ async def _run_stages(
         job.id,
         settings,
     )
+    intro = _intro_read_line(extraction_result.metadata, settings)
+    if intro:
+        cleaned = f"{intro}\n\n{cleaned}"
     summary = await _run_stage(
         "summary",
         lambda: _stage_summary(cleaned, settings),
@@ -518,6 +521,23 @@ async def _run_stage(
             extra={"event": "stage_end", "duration_ms": duration_ms},
         )
         return result
+
+
+def _intro_read_line(metadata: dict[str, Any] | None, settings: Settings) -> str | None:
+    """The "{title}. By {author}." opener (3a), or None when disabled or the
+    extraction carried no title. The author clause is omitted when absent, and
+    a title already ending in terminal punctuation gets no extra period."""
+
+    if not settings.INTRO_READ_ENABLED:
+        return None
+    metadata = metadata or {}
+    title = str(metadata.get("title") or "").strip()
+    if not title:
+        return None
+    if title[-1] not in ".!?":
+        title += "."
+    author = str(metadata.get("author") or "").strip()
+    return f"{title} By {author}." if author else title
 
 
 async def _stage_extract(job: jobs.Job, settings: Settings) -> extraction.ExtractionResult:

@@ -2152,3 +2152,69 @@ async def test_run_stages_vtt_keeps_original_text_while_tts_speaks_narration(
     assert not any("SQL" in text for text in spoken)
     # The stored cleaned text is the readable original, not the narration.
     assert stored_text and "sequel" not in stored_text
+
+
+# --- 3a: intro line ---------------------------------------------------------
+
+
+def test_intro_line_with_title_and_author(env: Path) -> None:
+    line = pipeline._intro_read_line(
+        {"title": "The Big Story", "author": "Jane Doe"}, get_settings()
+    )
+    assert line == "The Big Story. By Jane Doe."
+
+
+def test_intro_line_omits_author_when_missing(env: Path) -> None:
+    assert pipeline._intro_read_line({"title": "The Big Story"}, get_settings()) == (
+        "The Big Story."
+    )
+
+
+def test_intro_line_keeps_terminal_punctuation(env: Path) -> None:
+    line = pipeline._intro_read_line({"title": "Is AI Over?"}, get_settings())
+    assert line == "Is AI Over?"
+
+
+def test_intro_line_disabled_or_untitled_returns_none(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert pipeline._intro_read_line({}, get_settings()) is None
+    monkeypatch.setenv("INTRO_READ_ENABLED", "false")
+    get_settings.cache_clear()
+    try:
+        assert (
+            pipeline._intro_read_line({"title": "The Big Story"}, get_settings()) is None
+        )
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_run_stages_prepends_intro_before_chunking(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+
+    async def _fake_extract_with_title(_url, _settings, _registry=None):
+        return extraction.ExtractionResult(
+            markdown="raw " * 250,
+            metadata={"title": "Test Article", "author": "Test Author"},
+        )
+
+    monkeypatch.setattr(extraction, "extract", _fake_extract_with_title)
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+    after = _job_after(env, job.id)
+    assert after.status == "done"
+
+    from app.services import episodes as episodes_service
+
+    conn = database.connect(database.db_path(env))
+    try:
+        row = episodes_service.get_by_id(conn, job.episode_id)
+        stored_text = episodes_service.get_cleaned_text(conn, job.episode_id)
+    finally:
+        conn.close()
+    assert stored_text and stored_text.startswith("Test Article. By Test Author.")
+    # The intro flows into the first transcript cue like any other chunk text.
+    assert row is not None and "Test Article. By Test Author." in row.transcript_vtt

@@ -302,6 +302,11 @@ class Settings(BaseSettings):
     # drone / steady noise / repetition and regenerate it (Chatterbox is
     # non-deterministic, so a re-gen usually fixes it). Thresholds are starting
     # points and need empirical tuning against real failures.
+    # Read "{title}. By {author}." at the top of each episode (3a). The line is
+    # prepended to the cleaned text before chunking so it flows through
+    # corrections, TTS, the transcript, and chapter timing with no special case.
+    INTRO_READ_ENABLED: bool = True
+
     AUDIO_ANALYSIS_ENABLED: bool = True
     AUDIO_ANALYSIS_MAX_REGEN: int = 2  # extra attempts on a bad chunk
     AUDIO_ANALYSIS_FRAME_MS: int = 25
