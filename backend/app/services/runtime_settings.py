@@ -146,6 +146,7 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "LLM_CLEANUP_WINDOW_CHARS",
         "LLM_TIMEOUT_SECONDS",
         "LLM_RETRY_COUNT",
+        "LLM_PRONUNCIATION_CONCURRENCY",
     }
 )
 

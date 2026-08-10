@@ -6,6 +6,28 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.51.2] - 2026-08-10
+
+### Fixed
+
+- A 429 from the LLM provider was treated as a permanent error, so the call
+  was dropped instead of retried and that chunk silently lost its
+  pronunciation pass. Rate limits now raise a retryable error and the backoff
+  waits for the interval the provider asks for (`Retry-After` header or a
+  `retry_after` field in the body), capped at 90 seconds, rather than the
+  exponential 1 to 4 seconds that could never outlast a 60-second window.
+  Latent before 0.51.0; the per-chunk pronunciation pass made it reachable by
+  turning two calls per episode into one per chunk.
+
+### Added
+
+- `LLM_PRONUNCIATION_CONCURRENCY` (default 4, runtime-tunable) caps concurrent
+  per-chunk pronunciation calls, so a provider with a tight rate limit can be
+  accommodated without editing code.
+- Chapter generation logs a preview of the reply when it parses no chapters.
+  The first real episode produced none and the logs recorded only the count,
+  which left nothing to diagnose.
+
 ## [0.51.1] - 2026-08-10
 
 ### Fixed

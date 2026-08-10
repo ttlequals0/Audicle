@@ -411,3 +411,57 @@ async def test_openai_compatible_empty_base_url_raises_request_error(
     get_settings.cache_clear()
     with pytest.raises(llm.LLMRequestError, match="base URL"):
         await llm.generate("s", "u", get_settings())
+
+
+# --- rate limits (429) are retryable ---------------------------------------
+
+
+async def test_429_raises_rate_limit_error_not_request_error(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rate limit is transient: it must classify retryable, not as a
+    permanent 4xx, or the caller silently drops the call."""
+
+    transport = httpx.MockTransport(lambda _r: httpx.Response(429, text="slow down"))
+    _patch_async_client(monkeypatch, transport)
+
+    with pytest.raises(llm.LLMRateLimitError) as exc:
+        await llm.generate("s", "u", get_settings())
+    # Retryable classification rides on the base class the retry policy uses.
+    assert isinstance(exc.value, llm.LLMProviderError)
+
+
+async def test_429_reads_retry_after_header(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport = httpx.MockTransport(
+        lambda _r: httpx.Response(429, text="slow down", headers={"Retry-After": "42"})
+    )
+    _patch_async_client(monkeypatch, transport)
+
+    with pytest.raises(llm.LLMRateLimitError) as exc:
+        await llm.generate("s", "u", get_settings())
+    assert exc.value.retry_after == 42.0
+
+
+async def test_429_reads_retry_after_from_json_body(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = {"error": {"message": "Rate limit exceeded", "retry_after": 60}}
+    transport = httpx.MockTransport(lambda _r: httpx.Response(429, json=body))
+    _patch_async_client(monkeypatch, transport)
+
+    with pytest.raises(llm.LLMRateLimitError) as exc:
+        await llm.generate("s", "u", get_settings())
+    assert exc.value.retry_after == 60.0
+
+
+async def test_429_without_hint_has_no_retry_after(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport = httpx.MockTransport(lambda _r: httpx.Response(429, text="slow down"))
+    _patch_async_client(monkeypatch, transport)
+
+    with pytest.raises(llm.LLMRateLimitError) as exc:
+        await llm.generate("s", "u", get_settings())
+    assert exc.value.retry_after is None

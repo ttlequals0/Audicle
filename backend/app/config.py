@@ -100,6 +100,9 @@ class Settings(BaseSettings):
     LLM_CLEANUP_WINDOW_CHARS: int = 12000
     LLM_TIMEOUT_SECONDS: int = 300
     LLM_RETRY_COUNT: int = 3
+    # Concurrent per-chunk pronunciation calls. Lower it if the provider rate
+    # limits a long article (each chunk with reference terms is one call).
+    LLM_PRONUNCIATION_CONCURRENCY: int = Field(default=4, ge=1, le=16)
 
     # Episode webhooks (0.31.0). Fire-and-forget POST to this URL on every terminal
     # job transition (episode.processed / episode.failed). Empty disables. A dead or
@@ -466,6 +469,7 @@ RUNTIME_SETTING_BOUNDS: dict[str, dict[str, float]] = {
     "JOB_TIMEOUT_CEILING_MULTIPLIER": {"ge": 1.0},
     # Regen escalation. The chars floor mirrors the wrapper's max_chars bounds
     # so a floored value is still a legal request.
+    "LLM_PRONUNCIATION_CONCURRENCY": {"ge": 1, "le": 16},
     "OCR_MAX_PAGES": {"ge": 1, "le": 500},
     "OCR_DPI": {"ge": 72, "le": 600},
     "OCR_MIN_CONFIDENCE": {"ge": 0.0, "le": 1.0},

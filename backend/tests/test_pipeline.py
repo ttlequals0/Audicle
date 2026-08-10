@@ -2321,3 +2321,44 @@ async def test_stage_tts_applies_configured_model(
     finally:
         get_settings.cache_clear()
     assert selected_models == ["chatterbox-multilingual"]
+
+
+# --- LLM rate-limit backoff -------------------------------------------------
+
+
+def test_retry_wait_honors_provider_retry_after() -> None:
+    """A 429 carrying retry_after waits at least that long, so a 3-attempt
+    budget doesn't burn through a 60 s window in 4 seconds."""
+
+    from app.services import llm as llm_mod
+
+    wait = pipeline._llm_retry_wait
+    state = _retry_state(llm_mod.LLMRateLimitError("slow down", retry_after=60))
+    assert wait(state) == pytest.approx(60.0)
+
+
+def test_retry_wait_caps_absurd_retry_after() -> None:
+    from app.services import llm as llm_mod
+
+    state = _retry_state(llm_mod.LLMRateLimitError("slow down", retry_after=3600))
+    assert pipeline._llm_retry_wait(state) == pytest.approx(pipeline._LLM_RETRY_MAX_WAIT)
+
+
+def test_retry_wait_falls_back_to_exponential_without_hint() -> None:
+    from app.services import llm as llm_mod
+
+    state = _retry_state(llm_mod.LLMProviderError("boom"))
+    assert 0 < pipeline._llm_retry_wait(state) <= pipeline._LLM_RETRY_MAX_WAIT
+
+
+def _retry_state(exc: Exception):
+    """Minimal tenacity RetryCallState carrying ``exc`` as the outcome."""
+
+    from tenacity import Future, RetryCallState
+
+    state = RetryCallState(retry_object=None, fn=None, args=(), kwargs={})
+    state.attempt_number = 1
+    future = Future(1)
+    future.set_exception(exc)
+    state.outcome = future
+    return state

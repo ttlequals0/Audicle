@@ -39,6 +39,7 @@ const GROUPS: Record<string, string[]> = {
     "LLM_MAX_TOKENS",
     "LLM_TIMEOUT_SECONDS",
     "LLM_RETRY_COUNT",
+    "LLM_PRONUNCIATION_CONCURRENCY",
   ],
   Feed: [
     "FEED_TITLE",

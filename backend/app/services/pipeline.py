@@ -1519,9 +1519,15 @@ async def _stage_chapters(
         entries = chapters_service.parse_llm_chapters(raw, len(chunks))
         if len(entries) < 2:
             # A lone forced "Introduction" chapter is noise, not navigation.
+            # Carry a reply preview: a parse that yields nothing is otherwise
+            # invisible in the logs.
             logger.info(
                 "Chapters skipped: too few parsed from the LLM reply",
-                extra={"event": "chapters_too_few", "parsed": len(entries)},
+                extra={
+                    "event": "chapters_too_few",
+                    "parsed": len(entries),
+                    "reply_preview": raw[:300],
+                },
             )
             return None
         starts_ms = transcript.chunk_start_ms(chunk_durations, settings.TTS_CHUNK_SILENCE_MS)
@@ -1755,8 +1761,7 @@ async def _apply_corrections(text: str, settings: Settings) -> str:
 # only improve pronunciation, never drop article content.
 _PRONUNCIATION_MIN_RATIO = 0.5
 
-# Concurrent pronunciation calls per job.
-_PRONUNCIATION_CONCURRENCY = 4
+
 
 
 def _reference_matchers(
@@ -1806,7 +1811,7 @@ async def _pronounce_chunks_with_llm(
     matchers = _reference_matchers(entries)
 
     # Chunks are independent, so run the calls concurrently under a small cap.
-    semaphore = asyncio.Semaphore(_PRONUNCIATION_CONCURRENCY)
+    semaphore = asyncio.Semaphore(max(1, settings.LLM_PRONUNCIATION_CONCURRENCY))
     done_count = 0
 
     async def _pronounce_one(index: int, window: str) -> str:
@@ -1989,6 +1994,26 @@ async def _stage_summary(text: str, settings: Settings) -> str | None:
     return summary or None
 
 
+# Ceiling on a single retry wait. A provider can ask for minutes; the job
+# watchdog would kill the stage long before that, so cap and move on.
+_LLM_RETRY_MAX_WAIT = 90.0
+
+
+def _llm_retry_wait(retry_state) -> float:
+    """Backoff for one retry: the provider's own ``retry_after`` when it sent
+    one (a 429 window is not something exponential backoff can guess), else
+    exponential. Capped either way."""
+
+    from tenacity import wait_exponential
+
+    outcome = retry_state.outcome
+    exc = outcome.exception() if outcome is not None else None
+    hinted = getattr(exc, "retry_after", None)
+    if isinstance(hinted, int | float) and hinted > 0:
+        return min(float(hinted), _LLM_RETRY_MAX_WAIT)
+    return min(wait_exponential(multiplier=1, min=1)(retry_state), _LLM_RETRY_MAX_WAIT)
+
+
 async def _llm_with_retry(system: str, user: str, settings: Settings) -> str:
     """Call llm.generate with tenacity retry on transient errors only."""
 
@@ -1997,12 +2022,11 @@ async def _llm_with_retry(system: str, user: str, settings: Settings) -> str:
         RetryError,
         retry_if_exception_type,
         stop_after_attempt,
-        wait_exponential,
     )
 
     retrying = AsyncRetrying(
         stop=stop_after_attempt(settings.LLM_RETRY_COUNT),
-        wait=wait_exponential(multiplier=1, min=1),
+        wait=_llm_retry_wait,
         retry=retry_if_exception_type((llm.LLMProviderError, llm.LLMTimeoutError)),
         reraise=False,
     )
