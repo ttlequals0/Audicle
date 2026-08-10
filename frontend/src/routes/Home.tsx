@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, JobRow, JobStatus, postForm, SettingsPayload, VoiceSlot } from "../lib/api";
 import { fileExt, formatBytes } from "../lib/format";
 import { usePersistentOpen } from "../components/CollapsibleSection";
+import ActionMenu from "../components/ActionMenu";
 
 interface SubmitResponse {
   job_id: string;
@@ -446,7 +447,7 @@ export default function Home() {
                     {/* Own line, wrapping (not truncated), so the failure reason and
                         its fix stay readable. */}
                     {j.error && <p className="text-sm mt-1 text-danger break-words">{j.error}</p>}
-                    <JobActions
+                    <ActionMenu
                       pending={requeueM.isPending || chaptersM.isPending}
                       actions={[
                         {
@@ -530,74 +531,4 @@ function statusTag(status: JobStatus): string {
     default:
       return "tag-queued";
   }
-}
-
-interface JobAction {
-  label: string;
-  hint: string;
-  run: () => void;
-}
-
-// Recents row menu. Terminal jobs have more than one thing you can do to them
-// (re-run everything, or just redo chapters), so the old single Reprocess
-// button became a menu. Closes on outside click and on Escape.
-function JobActions({ actions, pending }: { actions: JobAction[]; pending: boolean }) {
-  const [open, setOpen] = useState(false);
-  const box = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDocClick = (e: MouseEvent) => {
-      if (!box.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-    document.addEventListener("mousedown", onDocClick);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocClick);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  if (actions.length === 0) return null;
-
-  return (
-    <div className="relative inline-block mt-2" ref={box}>
-      <button
-        className="btn-ghost inline-flex items-center gap-1.5"
-        disabled={pending}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-      >
-        &#8635; Redo
-        <span
-          aria-hidden="true"
-          className={`text-mute text-lg leading-none transition-transform motion-reduce:transition-none ${
-            open ? "rotate-90" : ""
-          }`}
-        >
-          ›
-        </span>
-      </button>
-      {open && (
-        <div role="menu" className="absolute left-0 z-20 mt-1 menu-panel">
-          {actions.map((a) => (
-            <button
-              key={a.label}
-              role="menuitem"
-              className="menu-item"
-              onClick={() => {
-                setOpen(false);
-                a.run();
-              }}
-            >
-              <span className="text-sm text-fg">{a.label}</span>
-              <span className="mono-xs text-mute col-start-2">// {a.hint}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
 }

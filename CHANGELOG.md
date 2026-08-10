@@ -6,6 +6,22 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.52.3] - 2026-08-10
+
+### Fixed
+
+- The Redo menu was clipped by its own row. Recents rows and Feed cards use
+  `.card`, which sets `overflow: hidden`, so the menu was cut off at the row's
+  edge and appeared to open behind the next one. It now renders through a
+  portal with fixed coordinates taken from the button, which escapes both the
+  overflow and any stacking context, and it flips above the button near the
+  bottom of the viewport instead of running off screen.
+
+### Added
+
+- The Feed page's Reprocess button is now the same Redo menu, so chapters can
+  be regenerated from the episode list as well as from Recents.
+
 ## [0.52.2] - 2026-08-10
 
 ### Fixed
