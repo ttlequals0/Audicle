@@ -307,6 +307,11 @@ class Settings(BaseSettings):
     AUDIO_ANALYSIS_FRAME_MS: int = 25
     AUDIO_ANALYSIS_HOP_MS: int = 10
     AUDIO_ANALYSIS_WINDOW_SECS: float = 3.0  # sliding-window size for localized checks
+    # Pitch-drift gate (2b): a chunk whose median F0 deviates from the running
+    # median of accepted chunks by more than this many semitones is regenerated.
+    # Default set by the 0.51.0 corpus sweep.
+    AUDIO_ANALYSIS_MAX_F0_SEMITONES: float = 1.0
+    AUDIO_ANALYSIS_F0_WARMUP_CHUNKS: int = 3  # accepted chunks before the gate arms
     AUDIO_ANALYSIS_MIN_RMS_CV: float = 0.35  # below = flat envelope (drone/noise)
     AUDIO_ANALYSIS_MIN_CREST: float = 3.0  # below = non-peaky (tone), linear ratio
     AUDIO_ANALYSIS_MAX_ZCR: float = 0.35  # above = broadband noise (with low rms_cv)

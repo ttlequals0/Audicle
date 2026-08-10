@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import shutil
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
@@ -1073,6 +1074,7 @@ async def _generate_chunk_quality_checked(
     index: int,
     settings: Settings,
     slot: int | None = None,
+    pitch_tracker: audio_analysis.PitchTracker | None = None,
 ) -> tts.GenerateResult:
     """Synthesize one chunk, then (if enabled) check the audio and regenerate it
     when it came back degraded.
@@ -1111,6 +1113,11 @@ async def _generate_chunk_quality_checked(
 
     result = None
     last_reasons: list[str] = []
+    # Best pitch-only-degraded attempt seen so far: (deviation, its result), with
+    # the WAV preserved in a sidecar because each regen overwrites the canonical
+    # path. Restored on exhaustion so the kept take is the closest to the
+    # reference pitch, not merely the last.
+    best_pitch: tuple[float, tts.GenerateResult] | None = None
     for attempt in range(max_extra + 1):  # 1 baseline + up to max_extra regenerations
         max_chars, penalty = _regen_params(settings, attempt)
         result = await tts.generate_chunk_with_retry(
@@ -1146,6 +1153,15 @@ async def _generate_chunk_quality_checked(
             if not verdict.ok:
                 reasons.extend(verdict.reasons)
 
+        # Cross-chunk pitch gate (2b): compares this chunk's median F0 against
+        # the running median of the job's accepted chunks. Inactive until the
+        # tracker's warmup is satisfied or when the chunk has no confident pitch.
+        pitch_dev: float | None = None
+        if pitch_tracker is not None and verdict is not None:
+            pitch_dev = pitch_tracker.deviation_semitones(verdict.metrics.median_f0_hz)
+            if pitch_dev is not None and pitch_dev > settings.AUDIO_ANALYSIS_MAX_F0_SEMITONES:
+                reasons.append("pitch_drift")
+
         asr_div: float | None = None
         asr_run: int | None = None
         if verify_enabled:
@@ -1170,6 +1186,10 @@ async def _generate_chunk_quality_checked(
 
         last_reasons = reasons
         if not reasons:
+            if pitch_tracker is not None and verdict is not None:
+                pitch_tracker.accept(verdict.metrics.median_f0_hz)
+            if best_pitch is not None:
+                Path(best_pitch[1].wav_path + ".pitchbest").unlink(missing_ok=True)
             if asr_div is not None:
                 logger.debug(
                     "Chunk ASR check passed",
@@ -1216,16 +1236,41 @@ async def _generate_chunk_quality_checked(
                 worst_window_rms_cv=verdict.metrics.worst_window_rms_cv,
                 worst_window_crest=verdict.metrics.worst_window_crest,
                 worst_window_zcr=verdict.metrics.worst_window_zcr,
+                median_f0_hz=verdict.metrics.median_f0_hz,
+                pitch_deviation_semitones=pitch_dev,
             )
         logger.warning("Bad chunk audio detected", extra=log_extra)
 
+        # A take whose only defect is pitch is still a candidate: preserve the
+        # one closest to the reference, since the next attempt overwrites the
+        # canonical WAV. Best-effort -- keeping-last remains the fallback.
+        if (
+            reasons == ["pitch_drift"]
+            and pitch_dev is not None
+            and (best_pitch is None or pitch_dev < best_pitch[0])
+        ):
+            try:
+                shutil.copyfile(result.wav_path, result.wav_path + ".pitchbest")
+                best_pitch = (pitch_dev, result)
+            except OSError:
+                pass
+
+    kept = "last"
+    if best_pitch is not None:
+        try:
+            shutil.move(best_pitch[1].wav_path + ".pitchbest", best_pitch[1].wav_path)
+            result = best_pitch[1]
+            kept = "closest_pitch"
+        except OSError:
+            pass
     logger.warning(
-        "Chunk still degraded after max regenerations; keeping last attempt",
+        "Chunk still degraded after max regenerations",
         extra={
             "event": "chunk_quality_unresolved",
             "chunk_index": index,
             "attempts": max_extra + 1,
             "reasons": last_reasons,
+            "kept": kept,
         },
     )
     return result
@@ -1272,9 +1317,14 @@ async def _stage_tts(
 
     results: list[tts.GenerateResult] = []
     total = len(chunks)
+    pitch_tracker = (
+        audio_analysis.PitchTracker(settings) if settings.AUDIO_ANALYSIS_ENABLED else None
+    )
     for index, text in enumerate(chunks):
         _raise_if_cancelled(job.id, settings)
-        result = await _generate_chunk_quality_checked(job, text, index, settings, target_slot)
+        result = await _generate_chunk_quality_checked(
+            job, text, index, settings, target_slot, pitch_tracker
+        )
         results.append(result)
         _set_progress(job.id, index + 1, total, settings)
         logger.info(

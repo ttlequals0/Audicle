@@ -1491,7 +1491,7 @@ def _write_drone_wav(path: Path) -> None:
     sf.write(str(path), (0.5 * np.sin(2 * np.pi * 440 * t)).astype("float32"), 24000, subtype="PCM_16")
 
 
-def _write_speechlike_wav(path: Path) -> None:
+def _write_speechlike_wav(path: Path, carrier: float = 180.0) -> None:
     import numpy as np
     import soundfile as sf
 
@@ -1500,7 +1500,7 @@ def _write_speechlike_wav(path: Path) -> None:
     env[(t > 0.7) & (t < 0.95)] = 0.0
     sf.write(
         str(path),
-        (0.6 * np.sin(2 * np.pi * 180 * t) * env).astype("float32"),
+        (0.6 * np.sin(2 * np.pi * carrier * t) * env).astype("float32"),
         24000,
         subtype="PCM_16",
     )
@@ -1558,6 +1558,90 @@ async def test_chunk_quality_check_keeps_last_after_max_regen(
     # 1 baseline + MAX_REGEN extra attempts; job is not failed (a result returns).
     assert calls["n"] == get_settings().AUDIO_ANALYSIS_MAX_REGEN + 1
     assert result.wav_path == str(wav)
+
+
+async def test_chunk_pitch_drift_regenerates(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    database.run_migrations(env)
+    from app.services import audio_analysis, tts
+
+    wav = tmp_path / "ep_chunk_0.wav"
+    calls = {"n": 0}
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        calls["n"] += 1
+        # First take drifts nearly 5 semitones off the reference; the regen lands on it.
+        _write_speechlike_wav(wav, carrier=240.0 if calls["n"] == 1 else 180.0)
+        return tts.GenerateResult(wav_path=str(wav), duration_secs=2.0, sample_rate=24000)
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    settings = get_settings()
+    tracker = audio_analysis.PitchTracker(settings)
+    for _ in range(settings.AUDIO_ANALYSIS_F0_WARMUP_CHUNKS):
+        tracker.accept(180.0)
+    job = _seed_job(env)
+    result = await pipeline._generate_chunk_quality_checked(
+        job, "two words here now", 0, settings, pitch_tracker=tracker
+    )
+    assert calls["n"] == 2
+    assert result.wav_path == str(wav)
+
+
+async def test_chunk_pitch_drift_keeps_closest_attempt(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When every attempt drifts, the kept take is the one closest to the
+    reference pitch, not the last one."""
+
+    database.run_migrations(env)
+    from app.services import audio_analysis, tts
+
+    wav = tmp_path / "ep_chunk_0.wav"
+    calls = {"n": 0}
+    carriers = [240.0, 340.0, 300.0]  # deviations vs 180 Hz: ~5.0, ~11.0, ~8.8 st
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        _write_speechlike_wav(wav, carrier=carriers[calls["n"]])
+        calls["n"] += 1
+        return tts.GenerateResult(wav_path=str(wav), duration_secs=2.0, sample_rate=24000)
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    settings = get_settings()
+    tracker = audio_analysis.PitchTracker(settings)
+    for _ in range(settings.AUDIO_ANALYSIS_F0_WARMUP_CHUNKS):
+        tracker.accept(180.0)
+    job = _seed_job(env)
+    result = await pipeline._generate_chunk_quality_checked(
+        job, "two words here now", 0, settings, pitch_tracker=tracker
+    )
+    assert calls["n"] == settings.AUDIO_ANALYSIS_MAX_REGEN + 1
+    kept = audio_analysis.analyze_wav_path(result.wav_path, 4, settings)
+    assert 220.0 <= kept.metrics.median_f0_hz <= 260.0
+
+
+async def test_chunk_pitch_gate_inactive_during_warmup(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    database.run_migrations(env)
+    from app.services import audio_analysis, tts
+
+    wav = tmp_path / "ep_chunk_0.wav"
+    calls = {"n": 0}
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        calls["n"] += 1
+        _write_speechlike_wav(wav, carrier=240.0)
+        return tts.GenerateResult(wav_path=str(wav), duration_secs=2.0, sample_rate=24000)
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    settings = get_settings()
+    tracker = audio_analysis.PitchTracker(settings)  # empty: warmup not satisfied
+    job = _seed_job(env)
+    await pipeline._generate_chunk_quality_checked(
+        job, "two words here now", 0, settings, pitch_tracker=tracker
+    )
+    assert calls["n"] == 1
 
 
 async def test_chunk_quality_check_disabled_calls_once(
@@ -1832,7 +1916,7 @@ async def test_stage_tts_carries_the_job_voice_on_every_chunk(
     async def _fake_select(_settings, slot):
         selected.append(slot)
 
-    async def _fake_gen(_job, _text, index, _settings, slot=None):
+    async def _fake_gen(_job, _text, index, _settings, slot=None, pitch_tracker=None):
         per_chunk_slots.append(slot)
         return tts_mod.GenerateResult(
             wav_path=f"/tmp/c{index}.wav", duration_secs=1.0, sample_rate=24000

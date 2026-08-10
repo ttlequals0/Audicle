@@ -151,3 +151,31 @@ def test_worst_window_metrics_reported(env: Path) -> None:
     assert metrics.worst_window_rms_cv < metrics.rms_cv
     assert metrics.worst_window_rms_cv < settings.AUDIO_ANALYSIS_MIN_RMS_CV
     assert metrics.worst_window_crest < settings.AUDIO_ANALYSIS_MIN_CREST
+
+
+def test_median_f0_matches_carrier(env: Path) -> None:
+    metrics = audio_analysis.analyze_chunk(
+        _speechlike(duration_secs=5.0, carrier=180.0), _SR, word_count=12, settings=get_settings()
+    ).metrics
+    assert 170.0 <= metrics.median_f0_hz <= 190.0
+
+
+def test_median_f0_zero_for_noise(env: Path) -> None:
+    metrics = audio_analysis.analyze_chunk(
+        _white_noise(duration_secs=2.0), _SR, word_count=5, settings=get_settings()
+    ).metrics
+    assert metrics.median_f0_hz == 0.0
+
+
+def test_pitch_tracker_warms_up_then_flags_semitone_drift(env: Path) -> None:
+    settings = get_settings()
+    tracker = audio_analysis.PitchTracker(settings)
+    # No reference until AUDIO_ANALYSIS_F0_WARMUP_CHUNKS chunks are accepted.
+    assert tracker.deviation_semitones(200.0) is None
+    for f0 in (100.0, 101.0, 99.0):
+        tracker.accept(f0)
+    # 119 Hz against a 100 Hz reference is ~3 semitones.
+    dev = tracker.deviation_semitones(119.0)
+    assert dev is not None and 2.5 < dev < 3.5
+    # An unmeasured chunk (f0=0) is never judged.
+    assert tracker.deviation_semitones(0.0) is None
