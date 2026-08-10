@@ -177,6 +177,13 @@ def _validate_value(key: str, value: Any) -> list[ValidationFailure]:
     return out
 
 
+def _is_acronym_key(key: str) -> bool:
+    """All-caps alphanumeric keys of 2+ chars (AI, PR, CPU, 3D). These match
+    across hyphens; everything else keeps the strict hyphen boundary."""
+
+    return len(key) >= 2 and key.isalnum() and key.isupper()
+
+
 def apply(text: str, dictionary: dict[str, str], *, case_sensitive: bool = True) -> str:
     """Replace every whole-word match in ``text`` per the dictionary.
 
@@ -193,13 +200,23 @@ def apply(text: str, dictionary: dict[str, str], *, case_sensitive: bool = True)
     if not dictionary:
         return text
     sorted_keys = sorted(dictionary, key=len, reverse=True)
-    # Use lookarounds that treat letters, digits, underscores AND hyphens as
-    # word characters so:
-    # - ``kubectl`` doesn't match inside ``kubectl-helper`` (hyphen counts).
-    # - Keys ending in non-word symbols like ``C++`` still match correctly
+    # Two boundary policies, chosen by key shape:
+    # - Default lookarounds treat letters, digits, underscores AND hyphens as
+    #   word characters, so ``kubectl`` doesn't match inside ``kubectl-helper``
+    #   and keys ending in non-word symbols like ``C++`` still match correctly
     #   (``\b`` would refuse to match ``+`` next to whitespace).
+    # - Acronym-shaped keys (all caps alnum, 2+ chars) drop the hyphen from
+    #   the lookarounds so ``AI`` matches inside ``anti-AI`` and
+    #   ``AI-generated`` -- that is where hyphenated compounds put acronyms.
+    strict = [k for k in sorted_keys if not _is_acronym_key(k)]
+    acronym = [k for k in sorted_keys if _is_acronym_key(k)]
+    parts = []
+    if strict:
+        parts.append(r"(?<![\w-])(?:" + "|".join(re.escape(k) for k in strict) + r")(?![\w-])")
+    if acronym:
+        parts.append(r"(?<!\w)(?:" + "|".join(re.escape(k) for k in acronym) + r")(?!\w)")
     pattern = re.compile(
-        r"(?<![\w-])(?:" + "|".join(re.escape(k) for k in sorted_keys) + r")(?![\w-])",
+        "|".join(parts),
         0 if case_sensitive else re.IGNORECASE,
     )
     if case_sensitive:
