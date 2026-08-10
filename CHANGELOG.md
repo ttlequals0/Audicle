@@ -6,6 +6,96 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.51.0] - 2026-08-10
+
+### Added
+
+- Chapters. Episodes 10 minutes and over get 3 to 7 chapters: one LLM call
+  over the numbered chunk list picks start points and short titles, and chunk
+  indices convert to exact timestamps from the measured per-chunk durations.
+  Emitted twice, because some clients (Castro) read only embedded frames:
+  as `podcast:chapters` JSON served at `/media/{id}.chapters.json`, and as
+  ID3 CHAP/CTOC frames in the MP3. The prompt is editable via
+  `/api/v1/prompt?kind=chapters`. `CHAPTERS_ENABLED` and
+  `CHAPTERS_MIN_DURATION_SECS` control it; a failed LLM call ships the
+  episode without chapters rather than failing the job.
+- Intro read. Each episode opens with "{title}. By {author}." The line is
+  prepended to the cleaned text before chunking, so it flows through
+  corrections, TTS, the transcript, and chapter timing like any other
+  sentence. `INTRO_READ_ENABLED` turns it off; the author clause is omitted
+  when extraction found none.
+- OCR for uploads. Scanned PDFs fall back to RapidOCR (CPU, ONNX models
+  bundled in the wheel) when pypdf finds less text than
+  `MIN_EXTRACTION_CHARS`; text PDFs never pay for it. Image uploads (`.png`,
+  `.jpg`, `.jpeg`, `.webp`, `.tiff`) are accepted and routed straight to OCR.
+  Pages rasterize via pypdfium2 (bundled pdfium, no system deps), each page
+  beats the job watchdog, and a sweep whose mean confidence is under
+  `OCR_MIN_CONFIDENCE` fails the job with a clear error instead of narrating
+  noise. All five `OCR_*` settings are tunable live; the language dropdown is
+  served by `GET /api/v1/settings/ocr/languages` and lists only languages the
+  shipped models cover (English, for now).
+- TTS model and language switching. The wrapper gains an engine registry
+  (`chatterbox`, `chatterbox-multilingual`), `POST /select-model`,
+  `GET /models`, and a per-request `language` field; a monolingual engine
+  rejects a language it cannot speak with a 422 instead of ignoring it. The
+  backend applies `TTS_MODEL` at the start of each job and sends
+  `TTS_LANGUAGE` on every generate call, so switching either from Settings
+  needs no restart. Both dropdowns lock while a job is running so an episode
+  never switches voice mid-way.
+- The pitch gate metrics (`median_f0_hz`, worst-window envelope values) are
+  logged with every `chunk_quality_bad` event for threshold tuning in Loki.
+
+### Fixed
+
+- Localized drones now fail the audio quality gate. The gate averaged
+  `rms_cv`/crest over the whole chunk, so a 5 s tone inside a 28 s chunk
+  was diluted below every threshold (heard at 0:53 in one production
+  episode; that exact window now trips). The three envelope metrics are also
+  computed over sliding 3 s windows at 50 percent overlap, and one bad
+  window fails the chunk. A 149-episode corpus sweep found zero false
+  positives at the existing thresholds.
+- Audible pitch wander inside an episode is now bounded. Each chunk's median
+  F0 (autocorrelation over voiced frames) is compared against the running
+  median of the episode's accepted chunks; a deviation over
+  `AUDIO_ANALYSIS_MAX_F0_SEMITONES` (1.25, set from the corpus sweep: p95 of
+  bucket deviations was 1.21 while the complaint episode peaked at 1.35)
+  regenerates the chunk on the existing regen budget. When every attempt
+  drifts, the take closest to the reference pitch is kept, not the last one.
+  The gate arms after `AUDIO_ANALYSIS_F0_WARMUP_CHUNKS` accepted chunks so a
+  bad first chunk cannot anchor the reference.
+- Episodes now land on `LOUDNORM_TARGET_LUFS` instead of 2 to 4 LU under it.
+  Single-pass dynamic loudnorm undershoots on peaky TTS speech because the
+  true-peak ceiling clamps its gain. The encode now runs a measurement pass
+  first, applies the measured constant gain, and caps peaks with a limiter at
+  the end of the filter chain (after the EQ boosts, which previously pushed
+  peaks past the ceiling). Measured on synthetic peaky speech: dynamic was
+  2.3 LU under target, the new chain 0.3 LU. Falls back to the old
+  single-pass behavior if the measurement pass fails.
+- Hyphenated acronym compounds are pronounced correctly. `anti-AI`, `pre-AI`,
+  `pro-AI`, `AI-ridden`, `AI-generated`, and `AI-critical` were skipped by
+  the corrections regex because its word boundary treated `-` as a word
+  character. All-caps alphanumeric keys of 2+ characters now match across
+  hyphens; `kubectl` still does not match inside `kubectl-helper`. No schema
+  change: the policy derives from the key's shape.
+- The transcript reads as English again. The served VTT carried TTS
+  respellings ("the major A-eye corporations"). Chunking now splits the
+  cleaned text and normalization runs per chunk afterward, so the transcript
+  and stored article text keep the original words while TTS receives the
+  respelled narration, 1:1 by construction. The per-chunk pronunciation call
+  sends only the reference terms present in that chunk, and chunks with no
+  matching terms skip the LLM call entirely, which makes the pass cheaper
+  than the old whole-document windows despite more calls.
+
+### Changed
+
+- `pypdf` 6.15.0, `fast-uri` 3.1.5, `react-router-dom` 7.18.2, `astral-sh/uv`
+  image 0.12.2, plus `npm audit` fixes for `brace-expansion` and `nanoid`.
+  Clears all four open Dependabot alerts.
+- Deploy note: the backend now sends `language` on every `/generate` call and
+  the wrapper rejects unknown fields, so the 0.51.0 app image requires the
+  0.51.0 wrapper image. Push both before redeploying, per the standard
+  release procedure.
+
 ## [0.50.1] - 2026-08-02
 
 ### Fixed
