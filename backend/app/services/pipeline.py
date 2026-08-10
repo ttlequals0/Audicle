@@ -392,12 +392,17 @@ async def _run_stages(
     *,
     on_chunk_count: Callable[[int], None] | None = None,
 ) -> None:
-    """Run the stages in order: extract -> cleanup -> normalize -> summary ->
-    chunk -> tts -> audio -> artwork -> transcript -> finalize (finalize
+    """Run the stages in order: extract -> cleanup -> summary -> chunk ->
+    normalize -> tts -> audio -> artwork -> transcript -> finalize (finalize
     inserts/updates the episodes row).
 
+    Chunking splits the *cleaned* text and normalization then runs per chunk
+    (2e), so the transcript can show the original text while TTS speaks the
+    respelled narration, 1:1 by construction.
+
     ``on_chunk_count`` is invoked with the chunk count right after chunking so
-    the caller can rescale the job timeout before the (longest) TTS stage runs."""
+    the caller can rescale the job timeout before the LLM-per-chunk normalize
+    and (longest) TTS stages run."""
 
     extraction_result = await _run_stage(
         "extract", lambda: _stage_extract(job, settings), job.id, settings
@@ -408,31 +413,31 @@ async def _run_stages(
         job.id,
         settings,
     )
-    normalized = await _run_stage(
-        "normalize",
-        lambda: _stage_normalize(job, cleaned, settings),
-        job.id,
-        settings,
-    )
     summary = await _run_stage(
         "summary",
-        lambda: _stage_summary(normalized, settings),
+        lambda: _stage_summary(cleaned, settings),
         job.id,
         settings,
     )
     chunks = await _run_stage(
         "chunk",
-        lambda: _stage_chunk(normalized, settings),
+        lambda: _stage_chunk(cleaned, settings),
         job.id,
         settings,
     )
     # Rescale the job timeout now that the workload (chunk count) is known, before
-    # the TTS stage -- the longest stage -- begins.
+    # the per-chunk normalize and TTS stages -- the longest stages -- begin.
     if on_chunk_count is not None:
         on_chunk_count(len(chunks))
+    narrations = await _run_stage(
+        "normalize",
+        lambda: _stage_normalize(job, chunks, settings),
+        job.id,
+        settings,
+    )
     chunk_results = await _run_stage(
         "tts",
-        lambda: _stage_tts(job, chunks, settings),
+        lambda: _stage_tts(job, narrations, settings),
         job.id,
         settings,
     )
@@ -469,7 +474,7 @@ async def _run_stages(
             artwork_result=artwork_result,
             vtt=vtt,
             summary=summary,
-            cleaned_text=normalized,
+            cleaned_text=cleaned,
             settings=settings,
         ),
         job.id,
@@ -1629,36 +1634,61 @@ async def _apply_corrections(text: str, settings: Settings) -> str:
 _PRONUNCIATION_MIN_RATIO = 0.5
 
 
-async def _pronounce_with_llm(job_id: str, text: str, settings: Settings) -> str:
-    """LLM pronunciation pass: respell terms from the full correction set (seed +
-    user dictionary) by context, leaving everything else verbatim.
+def _reference_matchers(
+    entries: list[tuple[str, str]],
+) -> list[tuple[re.Pattern[str], str]]:
+    """Compile a word-boundary matcher per reference term, so a chunk's prompt
+    carries only the terms the chunk actually contains. Acronym-shaped terms
+    match across hyphens, mirroring the corrections boundary policy."""
 
-    Per-window like cleanup so a long article never hits the output-token cap.
-    Degrades safely: a failed reference load or a failed/short window passes that
-    text through unchanged. The deterministic backstop in ``_apply_corrections``
-    still runs after, so a skipped window is never left uncorrected.
+    matchers: list[tuple[re.Pattern[str], str]] = []
+    for term, line in entries:
+        boundary = r"(?<!\w){}(?!\w)" if corrections.is_acronym_key(term) else r"(?<![\w-]){}(?![\w-])"
+        matchers.append((re.compile(boundary.format(re.escape(term)), re.IGNORECASE), line))
+    return matchers
+
+
+async def _pronounce_chunks_with_llm(
+    job_id: str, chunks: list[str], settings: Settings
+) -> list[str]:
+    """LLM pronunciation pass, one call per chunk that contains reference terms.
+
+    Runs after chunking (2e), so each chunk's respelled narration stays 1:1
+    with the transcript text. The reference sent with a call is filtered to the
+    terms present in that chunk -- a few lines instead of the full set -- and a
+    chunk with no matching terms skips the LLM entirely. Degrades safely: a
+    failed reference load returns every chunk unchanged, and a failed or short
+    reply keeps that chunk verbatim. The deterministic backstop in
+    ``_apply_corrections`` still runs after, so a skipped chunk is never left
+    uncorrected.
     """
 
     with database.connection(settings.DATA_DIR) as conn:
-        system_prompt = prompt_service.load_effective(conn, "pronunciation")
+        base_prompt = prompt_service.load_effective(conn, "pronunciation")
         try:
-            reference = lexicon.reference_text(conn)
+            entries = lexicon.reference_entries(conn)
         except Exception:
             logger.error(
                 "Pronunciation reference failed to load; skipping LLM pass",
                 extra={"event": "pronunciation_reference_load_failed"},
                 exc_info=True,
             )
-            return text
-    if not reference:
-        return text
-    system_prompt = (
-        f"{system_prompt}\n\nPRONUNCIATION REFERENCE (term -> respelling):\n{reference}"
-    )
+            return list(chunks)
+    if not entries:
+        return list(chunks)
+    matchers = _reference_matchers(entries)
 
-    windows = chunker.pack_paragraphs(text, settings.LLM_CLEANUP_WINDOW_CHARS) or [text]
     out_parts: list[str] = []
-    for index, window in enumerate(windows):
+    for index, window in enumerate(chunks):
+        lines = [line for pattern, line in matchers if pattern.search(window)]
+        if not lines:
+            out_parts.append(window)
+            _set_progress(job_id, index + 1, len(chunks), settings)
+            continue
+        system_prompt = (
+            f"{base_prompt}\n\nPRONUNCIATION REFERENCE (term -> respelling):\n"
+            + "\n".join(lines)
+        )
         # Same marker contract as cleanup: wrap the output so any preamble the
         # model glues on ("...here is the text reproduced in full:") lands outside
         # the markers and is sliced off by extract_clean_output -- the min-ratio
@@ -1713,31 +1743,42 @@ async def _pronounce_with_llm(job_id: str, text: str, settings: Settings) -> str
             )
             part = window
         out_parts.append(part)
-        _set_progress(job_id, index + 1, len(windows), settings)
-    return "\n\n".join(out_parts)
+        _set_progress(job_id, index + 1, len(chunks), settings)
+    return out_parts
 
 
-async def _stage_normalize(job: jobs.Job, cleaned: str, settings: Settings) -> str:
-    """Dedicated pronunciation + normalization phase (post-cleanup, pre-chunk).
+async def _stage_normalize(job: jobs.Job, chunks: list[str], settings: Settings) -> list[str]:
+    """Per-chunk pronunciation + normalization phase (post-chunk, pre-TTS).
 
-    Two layers: an LLM pronunciation pass that respells terms from the full
-    correction set by context, then the deterministic ``_apply_corrections``
-    backstop (regex fixups + seed/user dictionary) that guarantees coverage for
-    anything the LLM missed.
+    Chunk boundaries come from the cleaned text, so each narration returned
+    here stays 1:1 with the chunk the transcript will show (2e). Two layers per
+    chunk: the LLM pronunciation pass (reference filtered to the chunk's own
+    terms), then the deterministic ``_apply_corrections`` backstop that
+    guarantees coverage for anything the LLM missed.
     """
 
-    pronounced = await _pronounce_with_llm(job.id, cleaned, settings)
-    result = await _apply_corrections(pronounced, settings)
-    _persist_narration(job.episode_id, result, settings)
+    pronounced = await _pronounce_chunks_with_llm(job.id, chunks, settings)
+    narrations = [await _apply_corrections(text, settings) for text in pronounced]
+    # Respelling expands text ("PR" -> "P R"); the chunker's cap leaves ~3.6x
+    # headroom against the wrapper's request bound, but check rather than assume.
+    cap = int(_MAX_CHARS_BOUNDS["le"])
+    for index, narration in enumerate(narrations):
+        if len(narration) > cap:
+            raise ValueError(
+                f"normalize stage: chunk {index} narration grew to "
+                f"{len(narration)} chars, over the wrapper's {cap}-char request cap"
+            )
+    _persist_narration(job.episode_id, "\n\n".join(narrations), settings)
     logger.info(
         "Normalize stage complete",
         extra={
             "event": "normalize_complete",
-            "input_chars": len(cleaned),
-            "output_chars": len(result),
+            "chunk_count": len(chunks),
+            "input_chars": sum(len(c) for c in chunks),
+            "output_chars": sum(len(n) for n in narrations),
         },
     )
-    return result
+    return narrations
 
 
 def _persist_narration(episode_id: str, text: str, settings: Settings) -> None:

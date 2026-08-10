@@ -177,7 +177,7 @@ def _validate_value(key: str, value: Any) -> list[ValidationFailure]:
     return out
 
 
-def _is_acronym_key(key: str) -> bool:
+def is_acronym_key(key: str) -> bool:
     """All-caps alphanumeric keys of 2+ chars (AI, PR, CPU, 3D). These match
     across hyphens; everything else keeps the strict hyphen boundary."""
 
@@ -208,8 +208,8 @@ def apply(text: str, dictionary: dict[str, str], *, case_sensitive: bool = True)
     # - Acronym-shaped keys (all caps alnum, 2+ chars) drop the hyphen from
     #   the lookarounds so ``AI`` matches inside ``anti-AI`` and
     #   ``AI-generated`` -- that is where hyphenated compounds put acronyms.
-    strict = [k for k in sorted_keys if not _is_acronym_key(k)]
-    acronym = [k for k in sorted_keys if _is_acronym_key(k)]
+    strict = [k for k in sorted_keys if not is_acronym_key(k)]
+    acronym = [k for k in sorted_keys if is_acronym_key(k)]
     parts = []
     if strict:
         parts.append(r"(?<![\w-])(?:" + "|".join(re.escape(k) for k in strict) + r")(?![\w-])")
