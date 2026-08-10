@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.51.2
+  version: 0.52.0
 paths:
   /health/live:
     get:
@@ -774,6 +774,42 @@ paths:
                 items:
                   $ref: '#/components/schemas/EpisodeListItem'
                 title: Response List Episodes Api V1 Episodes Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/episodes/{episode_id}/chapters:
+    post:
+      tags:
+      - episodes
+      summary: Regenerate Chapters
+      description: 'Rebuild chapters for a finished episode from its stored transcript.
+
+
+        Cues are one per TTS chunk, so the transcript already carries the timeline
+
+        the chapter stage used; no TTS or re-encode is needed. Existing chapters
+
+        survive a failed run, and the episode GUID is left alone because the audio
+
+        does not change.'
+      operationId: regenerate_chapters_api_v1_episodes__episode_id__chapters_post
+      parameters:
+      - name: episode_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Episode Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChaptersRegenResponse'
         '422':
           description: Validation Error
           content:
@@ -1673,6 +1709,20 @@ components:
       required:
       - voice
       title: Body_upload_slot_api_v1_reference_slots__slot__post
+    ChaptersRegenResponse:
+      properties:
+        episode_id:
+          type: string
+          title: Episode Id
+        chapter_count:
+          type: integer
+          title: Chapter Count
+      additionalProperties: false
+      type: object
+      required:
+      - episode_id
+      - chapter_count
+      title: ChaptersRegenResponse
     DeleteEpisodeResponse:
       properties:
         id:

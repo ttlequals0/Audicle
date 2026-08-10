@@ -6,6 +6,41 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.52.0] - 2026-08-10
+
+### Fixed
+
+- Chapter generation produced nothing on real episodes. The prompt asked the
+  model to return chunk indices against a numbered list, and the first
+  30-minute article came back with no parseable line at all. Following
+  MinusPod, the model now reads the narration as a timestamped transcript
+  (`[MM:SS] text`) and answers with `MM:SS Title` lines, so the timestamps
+  come from the text it is reading rather than an index it has to track.
+  Parsing tolerates the things models actually do: preamble sentences, list
+  numbering, bullets, `H:MM:SS`, minutes past 59, and quoted or
+  punctuated titles.
+- A chunk-to-duration desync failed the whole job at the chapters stage.
+  Chapters are supposed to be unable to fail an episode; the transcript stage
+  is what reports that desync loudly.
+
+### Added
+
+- `POST /api/v1/episodes/{id}/chapters` regenerates chapters for a finished
+  episode from its stored transcript. The transcript carries one cue per TTS
+  chunk, which is the same timeline the chapter stage uses, so this needs no
+  TTS and no re-encode: one LLM call and a few seconds. It rewrites the
+  chapters JSON and re-embeds the ID3 frames in place. A failed run keeps the
+  chapters the episode already had, and the episode GUID is left alone so
+  subscribers do not re-download unchanged audio.
+- Recents rows have a Redo menu with "Reprocess article" and, for finished
+  episodes, "Regenerate chapters". Previously only failed jobs offered a
+  reprocess button.
+
+### Changed
+
+- `startTime` in the chapters document is now whole seconds rather than a
+  float, matching the Podcasting 2.0 documents MinusPod publishes.
+
 ## [0.51.2] - 2026-08-10
 
 ### Fixed

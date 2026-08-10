@@ -128,6 +128,19 @@ def get_cleaned_text(conn: sqlite3.Connection, episode_id: str) -> str | None:
     return row["cleaned_text"] if row is not None else None
 
 
+def set_chapters(conn: sqlite3.Connection, episode_id: str, chapters_json: str | None) -> None:
+    """Store the chapters document only.
+
+    Deliberately does not touch ``revision`` or ``updated_at``: the audio is
+    unchanged, and both feed into the episode GUID, so bumping them would make
+    every subscriber re-download the file over a metadata edit."""
+
+    conn.execute(
+        "UPDATE episodes SET chapters_json = ? WHERE id = ?", (chapters_json, episode_id)
+    )
+    conn.commit()
+
+
 def upsert(
     conn: sqlite3.Connection,
     *,

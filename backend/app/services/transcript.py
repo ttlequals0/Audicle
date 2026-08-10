@@ -86,6 +86,46 @@ def build_vtt(chunks: list[TranscriptChunk], silence_ms: int) -> str:
     return "\n".join(lines) + "\n"
 
 
+def cues_from_vtt(vtt: str) -> list[tuple[float, str]]:
+    """``(start_secs, text)`` per cue, the inverse of :func:`build_vtt`.
+
+    Cues are one per TTS chunk, so this recovers the chunk timeline from a
+    finished episode -- what chapter regeneration needs without re-running
+    the pipeline."""
+
+    cues: list[tuple[float, str]] = []
+    start: float | None = None
+    current: list[str] = []
+    for raw in vtt.splitlines():
+        line = raw.strip()
+        if not line:
+            if start is not None and current:
+                cues.append((start, " ".join(current)))
+            start, current = None, []
+            continue
+        if "-->" in line:
+            start = _parse_ts(line.split("-->", 1)[0].strip())
+            current = []
+            continue
+        if start is not None:
+            current.append(html.unescape(line))
+    if start is not None and current:
+        cues.append((start, " ".join(current)))
+    return cues
+
+
+def _parse_ts(stamp: str) -> float:
+    """``HH:MM:SS.mmm`` or ``MM:SS.mmm`` to seconds."""
+
+    parts = stamp.split(":")
+    seconds = float(parts[-1])
+    if len(parts) >= 2:
+        seconds += int(parts[-2]) * 60
+    if len(parts) >= 3:
+        seconds += int(parts[-3]) * 3600
+    return seconds
+
+
 def text_from_vtt(vtt: str) -> str:
     """Reconstruct plain narration text from a WebVTT transcript.
 

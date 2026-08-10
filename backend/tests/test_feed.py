@@ -454,3 +454,23 @@ def test_item_omits_podcast_chapters_when_absent(env: Path) -> None:
     ep = _episode(audio_path="/data/media/abc123.mp3")
     xml = _render([ep], env=env).decode()
     assert "podcast:chapters" not in xml
+
+
+def test_chapters_element_matches_the_podcasting2_spec(env: Path) -> None:
+    """url + type attributes, podcastindex namespace, inside the item."""
+
+    import xml.etree.ElementTree as ET
+
+    ep = _episode(
+        audio_path="/data/media/abc123.mp3",
+        chapters_json='{"version": "1.2.0", "chapters": [{"startTime": 0, "title": "One"}]}',
+    )
+    root = ET.fromstring(_render([ep], env=env))
+    ns = "https://podcastindex.org/namespace/1.0"
+    item = root.find("channel/item")
+    element = item.find(f"{{{ns}}}chapters")
+    assert element is not None
+    assert element.get("type") == "application/json+chapters"
+    assert element.get("url", "").endswith(".chapters.json") or ".chapters.json?" in element.get(
+        "url", ""
+    )

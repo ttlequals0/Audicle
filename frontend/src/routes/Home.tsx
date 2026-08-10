@@ -136,6 +136,30 @@ export default function Home() {
     },
   });
 
+  // Rebuild chapters for a finished episode from its stored transcript. No TTS
+  // and no re-encode, so it is seconds rather than a full reprocess.
+  const chaptersM = useMutation({
+    mutationFn: (episodeId: string) =>
+      api<{ chapter_count: number }>(`/api/v1/episodes/${episodeId}/chapters`, {
+        method: "POST",
+      }),
+    onSuccess: (r) => {
+      setRecentMsg(`chapters regenerated (${r.chapter_count})`);
+      setTimeout(() => setRecentMsg(null), 5000);
+    },
+    onError: (e) => {
+      const status = e instanceof ApiError ? e.status : undefined;
+      setRecentMsg(
+        status === 422
+          ? "no chapters found in the article; existing chapters kept"
+          : status === 409
+            ? "this episode has no transcript to take timings from"
+            : `chapter regeneration failed${status ? ` (HTTP ${status})` : ""}`
+      );
+      setTimeout(() => setRecentMsg(null), 6000);
+    },
+  });
+
   // Cancel a queued or processing job from the queue. A processing job stops at the
   // worker's next checkpoint; a queued job is never started.
   const [cancelMsg, setCancelMsg] = useState<string | null>(null);
@@ -422,15 +446,25 @@ export default function Home() {
                     {/* Own line, wrapping (not truncated), so the failure reason and
                         its fix stay readable. */}
                     {j.error && <p className="text-sm mt-1 text-danger break-words">{j.error}</p>}
-                    {j.status === "failed" && (
-                      <button
-                        className="btn-ghost mt-2"
-                        disabled={requeueM.isPending}
-                        onClick={() => requeueM.mutate(j.id)}
-                      >
-                        &#8635; Reprocess
-                      </button>
-                    )}
+                    <JobActions
+                      pending={requeueM.isPending || chaptersM.isPending}
+                      actions={[
+                        {
+                          label: "Reprocess article",
+                          hint: "re-runs the whole pipeline",
+                          run: () => requeueM.mutate(j.id),
+                        },
+                        ...(j.status === "done" && j.episode_id
+                          ? [
+                              {
+                                label: "Regenerate chapters",
+                                hint: "keeps the existing audio",
+                                run: () => chaptersM.mutate(j.episode_id),
+                              },
+                            ]
+                          : []),
+                      ]}
+                    />
                   </div>
                   <div className="flex flex-col items-end gap-1 flex-shrink-0">
                     <span className={`tag ${statusTag(j.status)}`}>{j.status}</span>
@@ -496,4 +530,69 @@ function statusTag(status: JobStatus): string {
     default:
       return "tag-queued";
   }
+}
+
+interface JobAction {
+  label: string;
+  hint: string;
+  run: () => void;
+}
+
+// Recents row menu. Terminal jobs have more than one thing you can do to them
+// now (re-run everything, or just redo chapters), so the old single Reprocess
+// button became a menu. Closes on outside click and on Escape.
+function JobActions({ actions, pending }: { actions: JobAction[]; pending: boolean }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (!box.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  if (actions.length === 0) return null;
+
+  return (
+    <div className="relative inline-block mt-2" ref={box}>
+      <button
+        className="btn-ghost"
+        disabled={pending}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        &#8635; Redo <span className="text-mute">▾</span>
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute left-0 z-20 mt-1 min-w-[15rem] card p-1 shadow-lg"
+        >
+          {actions.map((a) => (
+            <button
+              key={a.label}
+              role="menuitem"
+              className="w-full text-left px-3 py-2 rounded hover:bg-line/60"
+              onClick={() => {
+                setOpen(false);
+                a.run();
+              }}
+            >
+              <span className="text-sm block">{a.label}</span>
+              <span className="mono-xs text-mute">{a.hint}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }

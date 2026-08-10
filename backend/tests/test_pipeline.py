@@ -2247,8 +2247,8 @@ async def test_stage_chapters_generates_document_with_exact_timestamps(
     database.run_migrations(env)
 
     async def _fake(_system, user, _settings, **_k):
-        assert "0:" in user and "2:" in user  # numbered chunk list sent
-        return "0 | Opening remarks\n2 | The second act"
+        assert "[00:00]" in user  # timestamped transcript sent
+        return "00:00 Opening remarks\n08:23 The second act"
 
     monkeypatch.setattr(pipeline, "_llm_with_retry", _fake)
     embedded = {}
@@ -2265,9 +2265,9 @@ async def test_stage_chapters_generates_document_with_exact_timestamps(
     )
     assert out is not None
     doc = json_mod.loads(out)
-    silence = get_settings().TTS_CHUNK_SILENCE_MS / 1000
-    assert doc["chapters"][0] == {"startTime": 0.0, "title": "Opening remarks"}
-    assert doc["chapters"][1]["startTime"] == 300.0 + 200.0 + 2 * silence
+    assert doc["chapters"][0] == {"startTime": 0, "title": "Opening remarks"}
+    # 08:23 is the timestamp the model returned, echoed back as whole seconds.
+    assert doc["chapters"][1] == {"startTime": 503, "title": "The second act"}
     assert embedded["pairs"][0] == (0.0, "Opening remarks")
     assert embedded["total"] == 700.0
 
@@ -2362,3 +2362,22 @@ def _retry_state(exc: Exception):
     future.set_exception(exc)
     state.outcome = future
     return state
+
+
+async def test_stage_chapters_survives_a_chunk_duration_desync(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Chapters must never be what fails an episode: a desync is the transcript
+    stage's error to raise, not this one's."""
+
+    database.run_migrations(env)
+
+    async def _fake(_system, _user, _settings, **_k):
+        return "00:00 One\n05:00 Two"
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _fake)
+    monkeypatch.setattr(pipeline.audio, "embed_chapters", lambda *a, **k: None)
+    out = await pipeline._stage_chapters(
+        ["a", "b", "c"], [400.0, 400.0], 800.0, Path("/tmp/x.mp3"), get_settings()
+    )
+    assert out is not None
