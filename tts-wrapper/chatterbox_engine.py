@@ -83,14 +83,23 @@ class ChatterboxEngine:
         return ChatterboxTurboTTS.from_pretrained(device=device)
 
     def unload(self) -> None:
-        """Release model weights and GPU memory ahead of a model swap."""
+        """Release model weights and GPU memory ahead of a model swap.
 
-        self._model = None
-        self.model_loaded = False
-        self.reference_loaded = False
-        self._current_ref = None
-        if self._torch is not None and self._torch.cuda.is_available():
-            self._torch.cuda.empty_cache()
+        Takes the single-flight GPU lock like every other GPU operation: freeing
+        CUDA memory under an in-flight (possibly orphaned post-timeout)
+        inference would run concurrent GPU work."""
+
+        if not self._gpu_lock.acquire(blocking=False):
+            raise InferenceBusyError("an inference is already running on this wrapper")
+        try:
+            self._model = None
+            self.model_loaded = False
+            self.reference_loaded = False
+            self._current_ref = None
+            if self._torch is not None and self._torch.cuda.is_available():
+                self._torch.cuda.empty_cache()
+        finally:
+            self._gpu_lock.release()
 
     def load(self) -> None:
         import torch  # noqa: PLC0415  (intentional lazy import)

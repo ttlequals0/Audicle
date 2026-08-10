@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import operator
+import re
 import sqlite3
 from typing import Annotated, Any, Literal, get_args, get_origin
 
@@ -189,6 +190,16 @@ def _defaults_map(settings: Settings) -> dict[str, Any]:
     return defaults
 
 
+# Shape checks for the two wrapper-facing strings the Settings UI constrains
+# via dropdowns. Save-time validation so a hand-crafted PUT cannot persist a
+# value that would fail far away on every TTS call (the same rationale as the
+# numeric bounds). The wrapper remains the authority on which names exist.
+_TTS_STRING_SHAPES: dict[str, re.Pattern[str]] = {
+    "TTS_MODEL": re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$"),
+    "TTS_LANGUAGE": re.compile(r"^[a-z]{2,3}$"),
+}
+
+
 def _validate_value(key: str, value: Any, settings: Settings) -> None:
     """Reject a value that doesn't fit its ``Settings`` field, with a 400.
 
@@ -200,6 +211,14 @@ def _validate_value(key: str, value: Any, settings: Settings) -> None:
     CHATTERBOX_TEMPERATURE, to fail far away on every TTS call.
     """
 
+    shape = _TTS_STRING_SHAPES.get(key)
+    if shape is not None:
+        if value != "" and not shape.fullmatch(str(value)):
+            raise HTTPException(
+                status_code=400,
+                detail=f"{key} must match {shape.pattern} (or be empty), got {value!r}",
+            )
+        return
     field = settings.__class__.model_fields.get(key)
     if field is None:
         return

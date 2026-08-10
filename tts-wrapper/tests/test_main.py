@@ -677,3 +677,21 @@ def test_generate_passes_language_to_params(tmp_path: Path) -> None:
         )
     assert response.status_code == 200
     assert engine.synthesize_params[-1].language == "en"
+
+
+def test_select_model_load_failure_rolls_back(tmp_path: Path) -> None:
+    engine = FakeEngine()
+    failing = FakeEngine(fail_load=True)
+    failing.name = "bad"
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    app = create_app(
+        engine=engine, data_dir=data_dir, engine_registry={"bad": lambda: failing}
+    )
+    with TestClient(app) as client:
+        response = client.post("/select-model", json={"model": "bad"})
+        assert response.status_code == 500
+        # The previous engine was reloaded and still serves.
+        health = client.get("/health")
+    assert health.json()["engine"] == "fake"
+    assert engine.model_loaded

@@ -221,6 +221,8 @@ async def test_generate_chunk_network_error_classified_as_provider_error(
         pytest.param(lambda s: tts.generate_chunk("hi", "ep", 0, s), id="generate_chunk"),
         pytest.param(lambda s: tts.reload(s), id="reload"),
         pytest.param(lambda s: tts.select_voice(s, 1), id="select_voice"),
+        pytest.param(lambda s: tts.select_model(s, "chatterbox"), id="select_model"),
+        pytest.param(lambda s: tts.list_models(s), id="list_models"),
     ],
 )
 async def test_server_disconnect_classified_as_provider_error(

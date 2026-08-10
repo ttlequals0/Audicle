@@ -6,7 +6,9 @@ module scores a chunk waveform with cheap numpy metrics so the pipeline can
 regenerate a bad chunk (the wrapper is non-deterministic, so a re-gen usually
 recovers).
 
-Metrics (all single-pass numpy reductions on the mono signal, ~ms per chunk):
+Metrics (numpy reductions on the mono signal, tens of ms per chunk; the
+envelope triple is also reduced per sliding window, and median F0 comes from
+FFT autocorrelation over voiced frames):
 
 - rms_cv: coefficient of variation of the per-frame RMS envelope over voiced
   frames. Speech has a strongly modulated envelope (high CV); a flat drone or

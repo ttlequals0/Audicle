@@ -246,8 +246,8 @@ class Settings(BaseSettings):
 
     # TTS wrapper.
     TTS_LANGUAGE: str = "en"
-    # Wrapper TTS model, applied at the start of each job via /select-model.
-    # Empty keeps whatever the wrapper booted with.
+    # Wrapper TTS model, applied at the start of each job's TTS stage via
+    # /select-model. Empty keeps whatever the wrapper booted with.
     TTS_MODEL: str = ""
     TTS_DEVICE: Literal["cuda", "cpu"] = "cuda"
     TTS_HTTP_TIMEOUT_SECONDS: float = 120

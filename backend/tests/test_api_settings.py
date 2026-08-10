@@ -373,3 +373,18 @@ def test_put_accepts_ocr_settings(env: Path) -> None:
             },
         )
     assert response.status_code == 200, response.text
+
+
+def test_put_rejects_malformed_tts_model_and_language(env: Path) -> None:
+    with _client(env) as client:
+        bad_model = client.put("/api/v1/settings", json={"TTS_MODEL": "Not A Model!"})
+        bad_lang = client.put("/api/v1/settings", json={"TTS_LANGUAGE": "english"})
+        ok = client.put(
+            "/api/v1/settings",
+            json={"TTS_MODEL": "chatterbox-multilingual", "TTS_LANGUAGE": "de"},
+        )
+        cleared = client.put("/api/v1/settings", json={"TTS_MODEL": ""})
+    assert bad_model.status_code == 400
+    assert bad_lang.status_code == 400
+    assert ok.status_code == 200
+    assert cleared.status_code == 200

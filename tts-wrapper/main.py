@@ -308,6 +308,7 @@ def create_app(
     @app.post("/generate", response_model=GenerateResponse)
     async def generate(
         body: GenerateRequest,
+        request: Request,
         engine: Engine = Depends(get_engine),
         lock: asyncio.Lock = Depends(get_lock),
     ) -> GenerateResponse:
@@ -325,20 +326,24 @@ def create_app(
                 "text_chars": len(body.text),
             },
         )
-        if body.language is not None and body.language not in engine.languages:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"language {body.language!r} is not supported by the "
-                    f"{getattr(engine, 'name', 'active')} engine; "
-                    f"supported: {sorted(engine.languages)}"
-                ),
-            )
         # Fields the request omitted fall back to the GenerationParams defaults.
         params = GenerationParams(**body.model_dump(include=_KNOB_FIELDS, exclude_none=True))
         # The lock serializes GPU inference; /health never takes it, and
         # synthesize offloads the blocking call, so /health stays responsive.
         async with lock:
+            # Re-resolve under the lock: a /select-model that won the lock first
+            # may have unloaded and replaced the engine this request captured at
+            # dispatch time.
+            engine = request.app.state.engine
+            if body.language is not None and body.language not in engine.languages:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"language {body.language!r} is not supported by the "
+                        f"{getattr(engine, 'name', 'active')} engine; "
+                        f"supported: {sorted(engine.languages)}"
+                    ),
+                )
             if body.slot is not None:
                 # Inside the lock, so /select-voice and /reload (which take the
                 # same lock) cannot interleave between the switch and the
@@ -480,10 +485,13 @@ def create_app(
 
     @app.post("/reload")
     async def reload(
-        engine: Engine = Depends(get_engine),
+        request: Request,
         lock: asyncio.Lock = Depends(get_lock),
     ) -> dict[str, Any]:
         async with lock:
+            # Re-resolve under the lock: /select-model may have swapped the
+            # engine after this request was dispatched.
+            engine = request.app.state.engine
             try:
                 await engine.reload_reference()
             except FileNotFoundError as exc:
@@ -543,7 +551,12 @@ def create_app(
             # Free the old engine first: two loaded models cannot share the GPU.
             unload = getattr(current, "unload", None)
             if callable(unload):
-                unload()
+                try:
+                    unload()
+                except InferenceBusyError as exc:
+                    raise HTTPException(
+                        status_code=503, detail={"error": "inference busy"}
+                    ) from exc
             new_engine = factory()
             try:
                 await asyncio.to_thread(new_engine.load)
@@ -551,6 +564,16 @@ def create_app(
                 logger.exception(
                     "Model switch failed", extra={"event": "tts_model_switch_failed"}
                 )
+                # Best-effort rollback so the wrapper is not left with a dead
+                # engine; if this reload also fails, /health goes 503 and the
+                # container healthcheck surfaces it.
+                try:
+                    await asyncio.to_thread(current.load)
+                except Exception:
+                    logger.exception(
+                        "Rollback reload of the previous model failed",
+                        extra={"event": "tts_model_rollback_failed"},
+                    )
                 raise HTTPException(
                     status_code=500, detail=f"model load failed: {exc}"
                 ) from exc
@@ -560,12 +583,15 @@ def create_app(
     @app.post("/select-voice")
     async def select_voice(
         body: SelectVoiceRequest,
-        engine: Engine = Depends(get_engine),
+        request: Request,
         lock: asyncio.Lock = Depends(get_lock),
     ) -> dict[str, Any]:
         # Slots live under voices/ next to reference_path, mounted read-only.
         ref_path = cfg.slot_path(body.slot)
         async with lock:
+            # Re-resolve under the lock: /select-model may have swapped the
+            # engine after this request was dispatched.
+            engine = request.app.state.engine
             try:
                 await engine.select_voice(ref_path)
             except FileNotFoundError as exc:

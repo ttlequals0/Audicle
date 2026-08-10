@@ -61,7 +61,12 @@ def _get_engine() -> Any:
 def _run_page(image: Any) -> tuple[str, list[float]]:
     """OCR one page image: (joined text lines, per-line confidences)."""
 
-    result = _get_engine()(image)
+    try:
+        result = _get_engine()(image)
+    except Exception as exc:
+        # Engine-internal failures (ONNX, cv2) become the one error type the
+        # extraction layer converts to a clear job failure.
+        raise OcrError(f"OCR engine failed: {exc}") from exc
     texts = tuple(result.txts or ())
     scores = list(result.scores or ())
     return "\n".join(texts), scores
@@ -99,7 +104,10 @@ def ocr_pdf(data: bytes, settings: Settings, beat: Callable[[], None]) -> str:
     import numpy as np
     import pypdfium2 as pdfium
 
-    document = pdfium.PdfDocument(data)
+    try:
+        document = pdfium.PdfDocument(data)
+    except Exception as exc:
+        raise OcrError(f"could not open PDF for OCR: {exc}") from exc
     try:
         total = len(document)
         page_count = min(total, settings.OCR_MAX_PAGES)
@@ -112,8 +120,11 @@ def ocr_pdf(data: bytes, settings: Settings, beat: Callable[[], None]) -> str:
         page_texts: list[str] = []
         scores: list[float] = []
         for index in range(page_count):
-            bitmap = document[index].render(scale=scale)
-            image = np.asarray(bitmap.to_pil().convert("RGB"))
+            try:
+                bitmap = document[index].render(scale=scale)
+                image = np.asarray(bitmap.to_pil().convert("RGB"))
+            except Exception as exc:
+                raise OcrError(f"could not rasterize PDF page {index + 1}: {exc}") from exc
             text, page_scores = _run_page(image)
             page_texts.append(text)
             scores.extend(page_scores)

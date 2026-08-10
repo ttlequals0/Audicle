@@ -1,7 +1,7 @@
 """Job processing pipeline orchestrator.
 
-The full chain: extract -> cleanup -> normalize -> summary -> chunk ->
-tts -> audio -> artwork -> transcript -> finalize. Finalize upserts the
+The full chain: extract -> cleanup -> summary -> chunk -> normalize ->
+tts -> audio -> artwork -> chapters -> transcript -> finalize. Finalize upserts the
 ``episodes`` row that the RSS feed and ``/media/{id}.{mp3,jpg,vtt}``
 handlers serve.
 
@@ -1071,6 +1071,10 @@ _REGEN_SEED_BASE = 0x9E3779B1
 # bearing because CHATTERBOX_MAX_CHARS deliberately carries no pydantic Field
 # constraint (a stale env var must not fail startup).
 _MAX_CHARS_BOUNDS = RUNTIME_SETTING_BOUNDS["CHATTERBOX_MAX_CHARS"]
+# The wrapper rejects /generate text over this length (GenerateRequest.text
+# max_length in tts-wrapper/main.py). Not the same knob as CHATTERBOX_MAX_CHARS,
+# which only sizes the wrapper's internal inference pieces.
+_WRAPPER_TEXT_CAP = 4000
 _PENALTY_BOUNDS = RUNTIME_SETTING_BOUNDS["CHATTERBOX_REPETITION_PENALTY"]
 
 
@@ -1134,8 +1138,10 @@ async def _generate_chunk_quality_checked(
     as well as the seed (``_regen_params``). The wrapper overwrites the same
     ``{episode_id}_chunk_{index}.wav`` each call, so on persistent failure we
     keep the *last* attempt (earlier ones are gone from disk) and log a WARN --
-    a degraded chunk never fails the whole episode. Analysis errors are
-    swallowed: they must never become a new failure mode."""
+    except when the only defect was pitch, where the attempt closest to the
+    reference pitch is preserved in a sidecar and restored. A degraded chunk
+    never fails the whole episode. Analysis errors are swallowed: they must
+    never become a new failure mode."""
 
     word_count = len(text.split())
     audio_enabled = settings.AUDIO_ANALYSIS_ENABLED
@@ -1601,10 +1607,11 @@ async def _stage_finalize(
     Title and author come from the extraction metadata (Firecrawl populates
     both when the article has them); ``original_url`` is the job's input
     URL; durations come from the audio stage; ``transcript_vtt`` is the
-    in-memory VTT rendered in the prior stage. ``cleaned_text`` is the
-    post-corrections article (the exact text fed to chunking/TTS), persisted so
-    the API can serve it; ``audio_size_bytes`` is stamped here to avoid stat()
-    per request on the feed/episodes hot paths.
+    in-memory VTT rendered in the prior stage. ``cleaned_text`` is the cleaned
+    article (the exact text fed to chunking and shown in the transcript; TTS
+    speaks the per-chunk respelled narration), persisted so the API can serve
+    it; ``audio_size_bytes`` is stamped here to avoid stat() per request on the
+    feed/episodes hot paths.
     """
 
     title = _coerce_str(metadata.get("title"))
@@ -1911,7 +1918,7 @@ async def _stage_normalize(job: jobs.Job, chunks: list[str], settings: Settings)
     narrations = await _apply_corrections_batch(pronounced, settings)
     # Respelling expands text ("PR" -> "P R"); the chunker's cap leaves ~3.6x
     # headroom against the wrapper's request bound, but check rather than assume.
-    cap = int(_MAX_CHARS_BOUNDS["le"])
+    cap = _WRAPPER_TEXT_CAP
     for index, narration in enumerate(narrations):
         if len(narration) > cap:
             raise ValueError(

@@ -1,12 +1,15 @@
 """Client for the tts-wrapper container.
 
-The wrapper exposes three endpoints (build-plan TTS section):
+The wrapper exposes endpoints (build-plan TTS section):
 
 - ``POST /generate`` - synthesize a single chunk; returns ``wav_path`` (in the
   shared ``/data`` volume), ``duration_secs`` and ``sample_rate``.
 - ``GET /health`` - reports ``ok``, ``model_loaded``, ``reference_loaded``.
 - ``POST /reload`` - re-reads the wrapper's resting voice (its lowest filled slot)
   and recomputes embeddings.
+- ``POST /select-voice`` / ``POST /select-model`` - switch the reference voice
+  slot / the loaded TTS model.
+- ``GET /models`` - the engines the wrapper can construct, plus the active one.
 
 Typed errors mirror the LLM client so the cleanup-stage retry classification
 extends naturally to the per-chunk TTS calls:

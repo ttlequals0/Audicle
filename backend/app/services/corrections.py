@@ -13,8 +13,9 @@ Substitution mechanics:
   match next to whitespace (plain ``\\b`` refuses ``+`` next to space).
 - Case-sensitive (operators add multiple casings when they want every form
   corrected the same way).
-- Longest-key-first: a single regex with all keys joined by ``|`` and ordered
-  by descending length so ``kubectl`` is replaced before ``kube``.
+- Longest-key-first: one compiled regex of all keys joined by ``|`` (two
+  alternation groups, one per boundary policy), ordered by descending length
+  so ``kubectl`` is replaced before ``kube``.
 - Keys are ``re.escape``-d before compile so operators can write ``C++`` or
   ``node.js`` without learning regex.
 """

@@ -12,8 +12,9 @@ Stages (build-plan numbering):
    soundfile (a TorchCodec-free replacement for ``torchaudio.save``; the
    build-plan-mentioned ``torchaudio`` dep is dropped because torchaudio
    2.11 made TorchCodec the default save backend).
-4. Normalize with the ebook2audiobook ffmpeg filter chain (loudnorm, EQ,
-   denoise, gentle compression).
+4. Normalize with the ebook2audiobook-derived ffmpeg filter chain: gate,
+   denoise, gentle compression, then a measured constant gain with an
+   end-of-chain limiter (dynamic loudnorm as the fallback), plus EQ.
 5. Encode to MP3 (libmp3lame, 24000 Hz, stereo upmix via -ac 2, 128k).
 6. Read final MP3 duration via mutagen.
 
@@ -37,7 +38,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 import torch
-from mutagen.id3 import APIC, ID3
+from mutagen.id3 import APIC, CHAP, CTOC, ID3, TIT2, CTOCFlags
 from mutagen.mp3 import MP3
 
 from app.config import Settings
@@ -161,8 +162,6 @@ def embed_chapters(
     cover). Clients like Castro read only the embedded frames, so the feed's
     ``podcast:chapters`` JSON alone is not enough. Replaces any existing
     chapter frames so a reprocess doesn't stack them."""
-
-    from mutagen.id3 import CHAP, CTOC, TIT2, CTOCFlags
 
     def _mutate(tags) -> None:
         tags.delall("CHAP")
@@ -404,13 +403,13 @@ def _save_wav(path: Path, waveform: torch.Tensor, sample_rate: int) -> None:
 # --- Stage 4 + 5: normalize + MP3 encode ------------------------------------
 
 
-# loudnorm targets get filled in from settings at call time so operators
-# can tune the LUFS / true-peak / LRA values via env without a rebuild.
 _PRE_LOUDNORM_FILTERS = (
     "agate=threshold=-25dB:ratio=1.4:attack=10:release=250",
     "afftdn=nf=-70",
     "acompressor=threshold=-20dB:ratio=2:attack=80:release=200:makeup=1dB",
 )
+# Loudness targets get filled in from settings at call time so operators can
+# tune the LUFS / true-peak / LRA values via env without a rebuild.
 # Single-pass (dynamic) form: the fallback when the measurement pass fails.
 # Dynamic loudnorm rides program material and undershoots on peaky input, which
 # is why the measured two-pass form below is the primary path.
@@ -455,7 +454,14 @@ def _measure_loudness(input_wav: Path, settings: Settings) -> dict[str, float] |
         "null",
         "-",
     ]
-    completed = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    try:
+        completed = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    except OSError as exc:
+        logger.warning(
+            "loudnorm measurement pass could not run; falling back to single-pass",
+            extra={"event": "audio_loudnorm_measure_failed", "error": str(exc)},
+        )
+        return None
     if completed.returncode != 0:
         logger.warning(
             "loudnorm measurement pass failed; falling back to single-pass",
