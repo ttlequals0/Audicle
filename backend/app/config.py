@@ -309,8 +309,10 @@ class Settings(BaseSettings):
     AUDIO_ANALYSIS_WINDOW_SECS: float = 3.0  # sliding-window size for localized checks
     # Pitch-drift gate (2b): a chunk whose median F0 deviates from the running
     # median of accepted chunks by more than this many semitones is regenerated.
-    # Default set by the 0.51.0 corpus sweep.
-    AUDIO_ANALYSIS_MAX_F0_SEMITONES: float = 1.0
+    # Set by the 0.51.0 corpus sweep (149 episodes): p95 of 30s-bucket
+    # deviations was 1.21 st while the pitch-complaint episode peaked at 1.35,
+    # so 1.25 flags the complaint without churning on normal variation.
+    AUDIO_ANALYSIS_MAX_F0_SEMITONES: float = 1.25
     AUDIO_ANALYSIS_F0_WARMUP_CHUNKS: int = 3  # accepted chunks before the gate arms
     AUDIO_ANALYSIS_MIN_RMS_CV: float = 0.35  # below = flat envelope (drone/noise)
     AUDIO_ANALYSIS_MIN_CREST: float = 3.0  # below = non-peaky (tone), linear ratio
