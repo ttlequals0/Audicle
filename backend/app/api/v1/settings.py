@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict
 from app.api.deps import get_conn
 from app.config import RUNTIME_SETTING_BOUNDS, Settings, get_settings
 from app.services import feed, feed_auth, runtime_settings, settings_store, slug
+from app.services.ocr import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES
 
 router = APIRouter(tags=["settings"])
 
@@ -51,6 +52,23 @@ async def get_settings_overrides(
 ) -> SettingsResponse:
     stored = runtime_settings.get_all(conn)
     return _masked_response(stored, settings, _effective_feed_key(conn, settings))
+
+
+class OcrLanguagesResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    languages: list[str]
+    default: str
+
+
+@router.get(
+    "/settings/ocr/languages",
+    response_model=OcrLanguagesResponse,
+)
+async def get_ocr_languages() -> OcrLanguagesResponse:
+    """Languages the shipped OCR model packs cover; drives the Settings dropdown."""
+
+    return OcrLanguagesResponse(languages=list(SUPPORTED_LANGUAGES), default=DEFAULT_LANGUAGE)
 
 
 @router.put(

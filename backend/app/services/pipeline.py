@@ -560,7 +560,7 @@ async def _stage_extract(job: jobs.Job, settings: Settings) -> extraction.Extrac
     # Uploaded documents carry a synthetic ``upload://`` source: read and parse the
     # stored file instead of fetching a URL. Everything downstream is identical.
     if file_extraction.is_upload_source(job.url):
-        return await file_extraction.extract_file(job, settings)
+        return await file_extraction.extract_file(job, settings, beat=_beat)
     # Build the effective paywall-fallback registry (operator rules over built-ins, plus
     # a global-default catch-all) so extraction routes known paywall hosts through the
     # configured bypass. Shared with the /source-fallbacks/test endpoint.

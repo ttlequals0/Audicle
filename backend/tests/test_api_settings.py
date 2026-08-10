@@ -328,3 +328,48 @@ def test_put_invalid_value_does_not_partially_apply(env: Path) -> None:
         )
         assert resp.status_code == 400
         assert client.get("/api/v1/settings").json()["values"] == {}
+
+
+# --- OCR settings (section 4) -----------------------------------------------
+
+
+def test_ocr_languages_endpoint_lists_supported(env: Path) -> None:
+    with _client(env) as client:
+        response = client.get("/api/v1/settings/ocr/languages")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["default"] == "en"
+    assert "en" in body["languages"]
+
+
+def test_ocr_language_literal_matches_supported_languages() -> None:
+    """Drift pin: the config Literal and ocr.SUPPORTED_LANGUAGES must agree."""
+
+    from typing import get_args
+
+    from app.config import Settings
+    from app.services import ocr
+
+    literal_args = get_args(Settings.model_fields["OCR_LANGUAGE"].annotation)
+    assert tuple(str(a) for a in literal_args) == ocr.SUPPORTED_LANGUAGES
+
+
+def test_put_rejects_unsupported_ocr_language(env: Path) -> None:
+    with _client(env) as client:
+        response = client.put("/api/v1/settings", json={"OCR_LANGUAGE": "xx"})
+    assert response.status_code == 400
+
+
+def test_put_accepts_ocr_settings(env: Path) -> None:
+    with _client(env) as client:
+        response = client.put(
+            "/api/v1/settings",
+            json={
+                "OCR_ENABLED": False,
+                "OCR_MAX_PAGES": 20,
+                "OCR_DPI": 300,
+                "OCR_MIN_CONFIDENCE": 0.6,
+                "OCR_LANGUAGE": "en",
+            },
+        )
+    assert response.status_code == 200, response.text

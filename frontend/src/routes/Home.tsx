@@ -12,7 +12,7 @@ interface SubmitResponse {
 type Mode = "url" | "file";
 
 // Kept in sync with file_extraction.ALLOWED_EXTENSIONS on the backend.
-const ACCEPT = ".pdf,.docx,.md,.txt,.html,.htm";
+const ACCEPT = ".pdf,.docx,.md,.txt,.html,.htm,.png,.jpg,.jpeg,.webp,.tiff";
 const ALLOWED_EXTS = ["pdf", "docx", "md", "txt", "html", "htm"];
 // Fallback only until the live UPLOAD_MAX_MB setting loads.
 const DEFAULT_MAX_UPLOAD_MB = 50;

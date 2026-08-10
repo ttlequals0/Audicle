@@ -125,6 +125,17 @@ class Settings(BaseSettings):
     FIRECRAWL_BACKOFF_BASE_SECONDS: int = 1
     FIRECRAWL_TIMEOUT_SECONDS: int = 30
     MIN_EXTRACTION_CHARS: int = 500
+
+    # OCR fallback for scanned/image uploads (0.51.0). Engages only when a PDF's
+    # extractable text is under MIN_EXTRACTION_CHARS, or for direct image
+    # uploads. All five are runtime-tunable. OCR_LANGUAGE is validated against
+    # the model packs the image ships (services.ocr.SUPPORTED_LANGUAGES).
+    OCR_ENABLED: bool = True
+    OCR_MAX_PAGES: int = Field(default=40, ge=1, le=500)
+    OCR_DPI: int = Field(default=200, ge=72, le=600)
+    OCR_MIN_CONFIDENCE: float = Field(default=0.5, ge=0.0, le=1.0)
+    # Keep in sync with services.ocr.SUPPORTED_LANGUAGES (drift test pins it).
+    OCR_LANGUAGE: Literal["en"] = "en"
     MIN_CLEANUP_CHARS: int = 200
     # When a direct scrape of a known paywall/JS-gated host (see source_fallbacks)
     # comes back below that source's bar, retry via a reader-proxy rewrite (e.g.
@@ -452,6 +463,9 @@ RUNTIME_SETTING_BOUNDS: dict[str, dict[str, float]] = {
     "JOB_TIMEOUT_CEILING_MULTIPLIER": {"ge": 1.0},
     # Regen escalation. The chars floor mirrors the wrapper's max_chars bounds
     # so a floored value is still a legal request.
+    "OCR_MAX_PAGES": {"ge": 1, "le": 500},
+    "OCR_DPI": {"ge": 72, "le": 600},
+    "OCR_MIN_CONFIDENCE": {"ge": 0.0, "le": 1.0},
     "AUDIO_ANALYSIS_REGEN_CHARS_FACTOR": {"gt": 0, "le": 1.0},
     "AUDIO_ANALYSIS_REGEN_MIN_CHARS": {"ge": 100, "le": 2000},
     "AUDIO_ANALYSIS_REGEN_PENALTY_STEP": {"ge": 0, "le": 1.0},

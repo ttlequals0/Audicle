@@ -159,3 +159,83 @@ async def test_extract_missing_file_raises_permanent(env: Path) -> None:
     )
     with pytest.raises(ExtractionPermanentError):
         await file_extraction.extract_file(job, settings)
+
+
+# --- OCR fallback (section 4) -----------------------------------------------
+
+
+def _text_png(lines: list[str], size=(1000, 400)) -> bytes:
+    import io
+
+    from PIL import Image, ImageDraw
+
+    img = Image.new("RGB", size, "white")
+    draw = ImageDraw.Draw(img)
+    for i, line in enumerate(lines):
+        draw.text((40, 60 + 80 * i), line, fill="black", font_size=40)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+async def test_extract_png_upload_runs_ocr(env: Path) -> None:
+    """A PNG upload is routed straight to OCR and produces article text."""
+
+    lines = [
+        "The quick brown fox jumps over the lazy dog and keeps going.",
+        "Audicle converts articles into narrated podcast episodes daily.",
+    ] * 5
+    result = await _run(env, "scan.png", _text_png(lines, size=(1000, 900)))
+    assert "quick brown fox" in result.markdown
+    assert result.metadata["title"] == "scan"
+
+
+async def test_extract_image_rejected_when_ocr_disabled(
+    env: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("OCR_ENABLED", "false")
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(ExtractionPermanentError):
+            await _run(env, "scan.png", _text_png(["hello there"]))
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_extract_scanned_pdf_falls_back_to_ocr(env: Path, monkeypatch) -> None:
+    """A PDF whose pypdf text is under the floor goes through OCR."""
+
+    from app.services import ocr
+
+    called = {}
+
+    def _fake_ocr_pdf(data, settings, beat):
+        called["n"] = True
+        return "Recovered by OCR. " * 40
+
+    monkeypatch.setattr(ocr, "ocr_pdf", _fake_ocr_pdf)
+    result = await _run(env, "scan.pdf", _make_pdf("tiny"))
+    assert called.get("n")
+    assert "Recovered by OCR" in result.markdown
+
+
+async def test_extract_text_pdf_does_not_invoke_ocr(env: Path, monkeypatch) -> None:
+    from app.services import ocr
+
+    def _boom(*_a, **_k):
+        raise AssertionError("OCR must not run for a text PDF")
+
+    monkeypatch.setattr(ocr, "ocr_pdf", _boom)
+    result = await _run(env, "whitepaper.pdf", _make_pdf(_LONG))
+    assert "Lorem ipsum" in result.markdown
+
+
+async def test_ocr_low_confidence_fails_with_clear_error(env: Path, monkeypatch) -> None:
+    from app.services import ocr
+
+    def _low(_data, _settings, _beat):
+        raise ocr.OcrLowConfidenceError("OCR confidence 0.21 below floor 0.50")
+
+    monkeypatch.setattr(ocr, "ocr_image", _low)
+    with pytest.raises(ExtractionPermanentError, match="confidence"):
+        await _run(env, "noise.png", b"not really a png")

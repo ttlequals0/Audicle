@@ -47,6 +47,14 @@ dependencies = [
     # reuses the existing trafilatura path (html_markdown); md/txt are read directly.
     "pypdf>=6.15.0",
     "python-docx>=1.1",
+    # OCR fallback for scanned/image uploads (0.51.0). rapidocr runs PaddleOCR-
+    # derived ONNX models on CPU; pypdfium2 rasterizes PDF pages (bundled
+    # pdfium, no system deps). opencv-python-headless stands in for rapidocr's
+    # opencv-python dependency, excluded below, so the image needs no libGL.
+    "rapidocr>=3.9.2",
+    "onnxruntime>=1.28.0",
+    "opencv-python-headless>=4.10",
+    "pypdfium2>=4.30",
 ]
 
 # Offline base-lexicon build only (scripts/build_base_lexicon.py). Heavy/optional;
@@ -77,6 +85,10 @@ dev = [
 
 [tool.uv]
 package = false
+# rapidocr depends on opencv-python, which drags libGL into the runtime image.
+# The impossible marker removes it from the graph; the headless wheel above
+# provides the same cv2 module without any GL linkage.
+override-dependencies = ["opencv-python; sys_platform == 'never'"]
 
 [tool.pytest.ini_options]
 pythonpath = ["backend"]

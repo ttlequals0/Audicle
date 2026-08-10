@@ -43,6 +43,12 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "RETENTION_DAYS",
         # Per-file upload size ceiling in MB; tunable live for image-heavy PDFs.
         "UPLOAD_MAX_MB",
+        # OCR for scanned/image uploads (0.51.0).
+        "OCR_ENABLED",
+        "OCR_MAX_PAGES",
+        "OCR_DPI",
+        "OCR_MIN_CONFIDENCE",
+        "OCR_LANGUAGE",
         # Watchdog policy: the base + per-chunk budget size the absolute ceiling,
         # the stall window is what actually kills a job. Tunable live so long-form
         # documents and slower hardware get proportional synthesis time.

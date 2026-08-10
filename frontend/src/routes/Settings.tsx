@@ -103,7 +103,14 @@ const GROUPS: Record<string, string[]> = {
     "AUDIO_ANALYSIS_REGEN_PENALTY_STEP",
   ],
   Cleanup: ["MIN_CLEANUP_CHARS", "MAX_PROMPT_LENGTH_BYTES"],
-  Uploads: ["UPLOAD_MAX_MB"],
+  Uploads: [
+    "UPLOAD_MAX_MB",
+    "OCR_ENABLED",
+    "OCR_MAX_PAGES",
+    "OCR_DPI",
+    "OCR_MIN_CONFIDENCE",
+    "OCR_LANGUAGE",
+  ],
   Pipeline: [
     "JOB_STALL_SECONDS",
     "JOB_TIMEOUT_SECONDS",
@@ -144,7 +151,11 @@ const GROUP_NOTES: Record<string, string> = {
     "retry escalates -- lower chars_factor or raise penalty_step when chunks " +
     "keep failing after every attempt. the rest are detector thresholds -- " +
     "leave them alone unless chunks are being flagged or missed consistently",
-  Uploads: "max direct-upload size in MB -- applies immediately, no restart",
+  Uploads:
+    "max direct-upload size in MB, applies immediately. scanned pdfs and " +
+    "images (png, jpg, webp, tiff) are read with built-in OCR when the file " +
+    "has no text layer. min_confidence rejects unreadable scans instead of " +
+    "narrating noise",
   Pipeline:
     "a job is stopped when it goes stall_seconds without finishing a stage or a " +
     "chunk -- not for simply taking a long time. raise stall_seconds if slow " +
@@ -275,6 +286,13 @@ export default function SettingsRoute() {
     queryKey: ["source-fallbacks"],
     queryFn: () => api<SourceFallbacksConfig>("/api/v1/source-fallbacks"),
   });
+  const ocrLangsQ = useQuery({
+    queryKey: ["ocr-languages"],
+    queryFn: () =>
+      api<{ languages: string[]; default: string }>(
+        "/api/v1/settings/ocr/languages"
+      ),
+  });
   const healthQ = useHealthLive();
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
@@ -376,7 +394,22 @@ export default function SettingsRoute() {
                   <label className={`label ${isBool ? "mb-0" : ""}`} htmlFor={key}>
                     {key}
                   </label>
-                  {key === "LLM_PROVIDER" || key === "EXTRACTION_ENGINE" ? (
+                  {key === "OCR_LANGUAGE" ? (
+                    <select
+                      id={key}
+                      className="field"
+                      value={draft[key] ?? ""}
+                      onChange={(e) =>
+                        setDraft((p) => ({ ...p, [key]: e.target.value }))
+                      }
+                    >
+                      {(ocrLangsQ.data?.languages ?? ["en"]).map((opt) => (
+                        <option key={opt} value={opt}>
+                          {opt}
+                        </option>
+                      ))}
+                    </select>
+                  ) : key === "LLM_PROVIDER" || key === "EXTRACTION_ENGINE" ? (
                     <select
                       id={key}
                       className="field"

@@ -20,6 +20,7 @@ import asyncio
 import io
 import logging
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote
@@ -38,11 +39,17 @@ logger = logging.getLogger("app.services.file_extraction")
 
 SOURCE_SCHEME = "upload://"
 
+# Image uploads route straight to OCR (0.51.0); they are only accepted while
+# OCR_ENABLED is on, checked at parse time so the toggle needs no restart.
+IMAGE_EXTENSIONS: tuple[str, ...] = (".png", ".jpg", ".jpeg", ".webp", ".tiff")
+
 # Accepted upload extensions, mapped to a parser. ``.htm`` is an alias for
 # ``.html``. Each type must have a parser here, so the allowlist is a code
 # constant (not an operator setting): adding a type without a parser would
 # accept files the pipeline then can't read.
-ALLOWED_EXTENSIONS: frozenset[str] = frozenset({".pdf", ".docx", ".md", ".txt", ".html", ".htm"})
+ALLOWED_EXTENSIONS: frozenset[str] = frozenset(
+    {".pdf", ".docx", ".md", ".txt", ".html", ".htm"} | set(IMAGE_EXTENSIONS)
+)
 
 # Strip directory components and control characters from a client-supplied
 # filename before it is embedded in the synthetic URI / used to derive a path.
@@ -96,7 +103,9 @@ def source_path(settings: Settings, episode_id: str, filename: str) -> Path:
     return media_dir(settings) / f"{episode_id}.source{extension_of(filename)}"
 
 
-async def extract_file(job: Job, settings: Settings) -> ExtractionResult:
+async def extract_file(
+    job: Job, settings: Settings, beat: Callable[[], None] = lambda: None
+) -> ExtractionResult:
     """Read and parse the stored upload for ``job`` into article markdown + metadata.
 
     Mirrors ``extraction.extract``'s contract. The CPU-bound parse runs in a
@@ -113,8 +122,12 @@ async def extract_file(job: Job, settings: Settings) -> ExtractionResult:
             "re-upload the document to reprocess it"
         )
 
-    # Read + parse off the event loop so a large file on slow storage can't block it.
-    markdown, metadata = await asyncio.to_thread(lambda: _parse(path.read_bytes(), ext))
+    # Read + parse off the event loop so a large file on slow storage can't block
+    # it. asyncio.to_thread copies the context, so the per-page OCR beat reaches
+    # the running job's watchdog.
+    markdown, metadata = await asyncio.to_thread(
+        lambda: _parse(path.read_bytes(), ext, settings, beat)
+    )
     markdown = markdown.strip()
 
     # Filename (minus extension) is the title fallback when the document declares
@@ -143,17 +156,52 @@ async def extract_file(job: Job, settings: Settings) -> ExtractionResult:
     return ExtractionResult(markdown=markdown, metadata=metadata, article_chars=None)
 
 
-def _parse(data: bytes, ext: str) -> tuple[str, dict[str, Any]]:
+def _parse(
+    data: bytes, ext: str, settings: Settings, beat: Callable[[], None]
+) -> tuple[str, dict[str, Any]]:
     """Dispatch raw bytes to the per-format parser. Returns ``(markdown, metadata)``."""
 
     if ext == ".pdf":
-        return _parse_pdf(data)
+        markdown, metadata = _parse_pdf(data)
+        # OCR is a fallback, never a default: it engages only when the pypdf
+        # text falls under the same floor that would fail the job anyway, so
+        # text PDFs cost nothing extra.
+        if len(markdown.strip()) < settings.MIN_EXTRACTION_CHARS and settings.OCR_ENABLED:
+            logger.info(
+                "PDF text under extraction floor; running OCR fallback",
+                extra={"event": "ocr_fallback_engaged", "pypdf_chars": len(markdown)},
+            )
+            markdown = _run_ocr(lambda: _ocr().ocr_pdf(data, settings, beat))
+        return markdown, metadata
+    if ext in IMAGE_EXTENSIONS:
+        if not settings.OCR_ENABLED:
+            raise ExtractionPermanentError(
+                "image uploads require OCR, which is disabled (OCR_ENABLED)"
+            )
+        return _run_ocr(lambda: _ocr().ocr_image(data, settings, beat)), {}
     if ext == ".docx":
         return _parse_docx(data)
     if ext in (".html", ".htm"):
         return html_markdown.html_to_markdown(data.decode("utf-8", errors="replace"))
     # .md / .txt (and any allowed text type): the body is the text itself.
     return _parse_text(data)
+
+
+def _ocr():
+    """Late import so the OCR stack only loads when a parse needs it."""
+
+    from app.services import ocr
+
+    return ocr
+
+
+def _run_ocr(run: Callable[[], str]) -> str:
+    from app.services.ocr import OcrError
+
+    try:
+        return run()
+    except OcrError as exc:
+        raise ExtractionPermanentError(str(exc)) from exc
 
 
 def _parse_pdf(data: bytes) -> tuple[str, dict[str, Any]]:
