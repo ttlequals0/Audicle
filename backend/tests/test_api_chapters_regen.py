@@ -48,8 +48,13 @@ def _seed(env: Path, *, id_: str = "ep1", duration: int = 1800, vtt: str | None 
         conn.close()
 
 
-async def _fake_llm(_system, user, _settings, **_kwargs):
-    assert "[00:00]" in user  # the timestamped transcript reaches the model
+async def _fake_llm(system, user, _settings, **_kwargs):
+    # The instructions must be in the user turn, ahead of the transcript: with
+    # them only in the system prompt the model answers conversationally.
+    assert "OUTPUT FORMAT" in user
+    assert "[00:00]" in user
+    assert user.index("OUTPUT FORMAT") < user.index("[00:00]")
+    assert system  # a role line, never empty (some providers reject that)
     return "00:00 Opening remarks\n10:00 The middle\n20:00 Closing thoughts"
 
 

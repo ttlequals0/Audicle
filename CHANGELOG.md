@@ -6,6 +6,17 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.52.2] - 2026-08-10
+
+### Fixed
+
+- Chapter generation still returned nothing, and the reply preview added in
+  0.52.0 showed why: the model summarized the transcript and asked what to do
+  with it. The instructions were in the system prompt while the user turn
+  carried only the transcript, so the user turn had nothing to act on. The
+  instructions now lead the user message with the transcript after them, which
+  is how MinusPod sends it.
+
 ## [0.52.1] - 2026-08-10
 
 ### Fixed

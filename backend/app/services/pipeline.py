@@ -1485,6 +1485,14 @@ async def _stage_artwork(
     return result
 
 
+# The editable prompt carries the real instructions; this is only a role line,
+# because an empty system string is rejected by some providers.
+_CHAPTERS_ROLE = (
+    "You mark chapter boundaries in narrated articles. "
+    "Follow the instructions in the message exactly and output only the requested lines."
+)
+
+
 async def generate_chapters_document(
     cues: list[tuple[float, str]],
     duration_secs: float,
@@ -1511,9 +1519,14 @@ async def generate_chapters_document(
         return None
     try:
         with database.connection(settings.DATA_DIR) as conn:
-            system_prompt = prompt_service.load_effective(conn, "chapters")
+            instructions = prompt_service.load_effective(conn, "chapters")
         body = chapters_service.timestamped_transcript(cues)
-        raw = await _llm_with_retry(system_prompt, f"Transcript:\n\n{body}", settings)
+        # Instructions ride in the user turn, ahead of the transcript. With them
+        # in the system prompt and only the transcript as the user message, the
+        # model read the transcript and asked what to do with it.
+        raw = await _llm_with_retry(
+            _CHAPTERS_ROLE, f"{instructions}\n\nTranscript:\n\n{body}", settings
+        )
         timed = chapters_service.parse_llm_chapters(raw, duration_secs)
         if len(timed) < 2:
             # A lone forced "Introduction" chapter is noise, not navigation.
