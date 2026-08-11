@@ -137,6 +137,7 @@ export interface Episode {
   pub_date: string;
   updated_at: string;
   has_cleaned_text: boolean;
+  has_chapters: boolean;
   // Source provenance (0.30.0). 'upload' episodes have a synthetic upload:// URL
   // and render the filename instead of a hyperlink; reprocess routes differently.
   source_type: "url" | "upload";

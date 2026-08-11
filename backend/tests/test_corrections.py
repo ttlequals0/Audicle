@@ -182,3 +182,41 @@ def test_load_rejects_non_object_root(tmp_path: Path) -> None:
     target.write_text(json.dumps(["not", "a", "dict"]))
     with pytest.raises(ValueError, match="JSON object"):
         corrections.load(target)
+
+
+# --- acronym-shaped keys match across hyphens (2d) --------------------------
+
+
+def test_acronym_keys_match_across_hyphens() -> None:
+    d = {"AI": "A-eye"}
+    cases = [
+        ("anti-AI backlash", "anti-A-eye backlash"),
+        ("pre-AI era", "pre-A-eye era"),
+        ("pro-AI stance", "pro-A-eye stance"),
+        ("AI-ridden slop", "A-eye-ridden slop"),
+        ("AI-generated text", "A-eye-generated text"),
+        ("AI-critical writer", "A-eye-critical writer"),
+        ("plain AI too", "plain A-eye too"),
+    ]
+    for text, expected in cases:
+        assert corrections.apply(text, d) == expected, text
+
+
+def test_non_acronym_keys_still_respect_hyphen_boundaries() -> None:
+    assert (
+        corrections.apply("run kubectl-helper now", {"kubectl": "kube control"})
+        == "run kubectl-helper now"
+    )
+
+
+def test_acronym_keys_do_not_match_inside_words() -> None:
+    assert corrections.apply("OPENAI said", {"AI": "A-eye"}) == "OPENAI said"
+    assert corrections.apply("maintain it", {"AI": "A-eye"}) == "maintain it"
+
+
+def test_acronym_keys_fold_case_when_insensitive() -> None:
+    # A case-insensitive acronym entry still crosses hyphens after folding.
+    assert (
+        corrections.apply("an anti-ai rant", {"AI": "A-eye"}, case_sensitive=False)
+        == "an anti-A-eye rant"
+    )

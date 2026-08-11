@@ -32,8 +32,8 @@ export default function OpenModeBanner() {
     ? "border-danger/60 bg-danger/10 text-danger"
     : "border-amber-400/50 bg-amber-400/10 text-amber-300";
   const message = exposed
-    ? "No admin password set, and this server looks internet-facing. Every admin action is open to anyone who can reach it. Set a password in Settings now."
-    : "No admin password set, so admin actions are open. Fine on your own machine; set a password before you expose this.";
+    ? "No password set and this server looks internet-facing. Anyone who can reach it has full admin access. Set a password in Settings."
+    : "No password set, so admin actions are open. Fine on your own machine; set one before you expose this.";
 
   return (
     <div className={`border-b ${tone}`}>

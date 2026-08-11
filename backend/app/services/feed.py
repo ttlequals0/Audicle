@@ -329,6 +329,19 @@ def _inject_pc2_tags(
     # the build fails loudly rather than silently shipping wrong-episode
     # transcripts.
     for item_el, ep in zip(items, episodes, strict=True):
+        if ep.chapters_json:
+            chapters_url = _media_url(
+                settings.BASE_URL,
+                ep.id,
+                "chapters.json",
+                _cache_bust(ep.updated_at),
+                key=feed_auth_key,
+            )
+            ET.SubElement(
+                item_el,
+                f"{{{_PODCAST_NS}}}chapters",
+                attrib={"url": chapters_url, "type": "application/json+chapters"},
+            )
         if not ep.transcript_vtt:
             continue
         transcript_url = _media_url(

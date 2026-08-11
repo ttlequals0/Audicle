@@ -328,3 +328,84 @@ def test_put_invalid_value_does_not_partially_apply(env: Path) -> None:
         )
         assert resp.status_code == 400
         assert client.get("/api/v1/settings").json()["values"] == {}
+
+
+# --- OCR settings (section 4) -----------------------------------------------
+
+
+def test_ocr_languages_endpoint_lists_supported(env: Path) -> None:
+    with _client(env) as client:
+        response = client.get("/api/v1/settings/ocr/languages")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["default"] == "en"
+    assert "en" in body["languages"]
+
+
+def test_ocr_language_literal_matches_supported_languages() -> None:
+    """Drift pin: the config Literal and ocr.SUPPORTED_LANGUAGES must agree."""
+
+    from typing import get_args
+
+    from app.config import Settings
+    from app.services import ocr
+
+    literal_args = get_args(Settings.model_fields["OCR_LANGUAGE"].annotation)
+    assert tuple(str(a) for a in literal_args) == ocr.SUPPORTED_LANGUAGES
+
+
+def test_put_rejects_unsupported_ocr_language(env: Path) -> None:
+    with _client(env) as client:
+        response = client.put("/api/v1/settings", json={"OCR_LANGUAGE": "xx"})
+    assert response.status_code == 400
+
+
+def test_put_accepts_ocr_settings(env: Path) -> None:
+    with _client(env) as client:
+        response = client.put(
+            "/api/v1/settings",
+            json={
+                "OCR_ENABLED": False,
+                "OCR_MAX_PAGES": 20,
+                "OCR_DPI": 300,
+                "OCR_MIN_CONFIDENCE": 0.6,
+                "OCR_LANGUAGE": "en",
+            },
+        )
+    assert response.status_code == 200, response.text
+
+
+def test_put_rejects_malformed_tts_model_and_language(env: Path) -> None:
+    with _client(env) as client:
+        bad_model = client.put("/api/v1/settings", json={"TTS_MODEL": "Not A Model!"})
+        bad_lang = client.put("/api/v1/settings", json={"TTS_LANGUAGE": "english"})
+        ok = client.put(
+            "/api/v1/settings",
+            json={"TTS_MODEL": "chatterbox-multilingual", "TTS_LANGUAGE": "de"},
+        )
+        cleared = client.put("/api/v1/settings", json={"TTS_MODEL": ""})
+    assert bad_model.status_code == 400
+    assert bad_lang.status_code == 400
+    assert ok.status_code == 200
+    assert cleared.status_code == 200
+
+
+def test_blank_value_drops_the_override(env: Path) -> None:
+    """Clearing a field must delete the override, not pin an empty string: an empty
+    stored FEED_TITLE would move the feed to the default slug behind the operator."""
+
+    with _client(env) as client:
+        client.put("/api/v1/settings", json={"FEED_TITLE": "My Show"})
+        cleared = client.put("/api/v1/settings", json={"FEED_TITLE": ""})
+    assert cleared.status_code == 200
+    assert "FEED_TITLE" not in cleared.json()["values"]
+
+
+def test_put_rejects_a_malformed_registration_email(env: Path) -> None:
+    with _client(env) as client:
+        bad = client.put("/api/v1/settings", json={"REGISTRATION_EMAIL": "not-an-address"})
+        ok = client.put("/api/v1/settings", json={"REGISTRATION_EMAIL": "reader@example.test"})
+        cleared = client.put("/api/v1/settings", json={"REGISTRATION_EMAIL": ""})
+    assert bad.status_code == 400
+    assert ok.json()["values"]["REGISTRATION_EMAIL"] == "reader@example.test"
+    assert "REGISTRATION_EMAIL" not in cleared.json()["values"]

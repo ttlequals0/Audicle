@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, JobRow, JobStatus, postForm, SettingsPayload, VoiceSlot } from "../lib/api";
 import { fileExt, formatBytes } from "../lib/format";
 import { usePersistentOpen } from "../components/CollapsibleSection";
+import ActionMenu from "../components/ActionMenu";
 
 interface SubmitResponse {
   job_id: string;
@@ -12,8 +13,8 @@ interface SubmitResponse {
 type Mode = "url" | "file";
 
 // Kept in sync with file_extraction.ALLOWED_EXTENSIONS on the backend.
-const ACCEPT = ".pdf,.docx,.md,.txt,.html,.htm";
-const ALLOWED_EXTS = ["pdf", "docx", "md", "txt", "html", "htm"];
+const ACCEPT = ".pdf,.docx,.md,.txt,.html,.htm,.png,.jpg,.jpeg,.webp,.tiff";
+const ALLOWED_EXTS = ACCEPT.split(",").map((ext) => ext.slice(1));
 // Fallback only until the live UPLOAD_MAX_MB setting loads.
 const DEFAULT_MAX_UPLOAD_MB = 50;
 
@@ -129,10 +130,34 @@ export default function Home() {
       const status = e instanceof ApiError ? e.status : undefined;
       setRecentMsg(
         status === 409
-          ? "can't reprocess: already queued, or the uploaded file is gone -- re-upload it"
+          ? "can't reprocess: already queued, or the uploaded file is gone. re-upload it"
           : `reprocess failed${status ? ` (HTTP ${status})` : ""}`
       );
       setTimeout(() => setRecentMsg(null), 5000);
+    },
+  });
+
+  // Rebuild chapters for a finished episode from its stored transcript. No TTS
+  // and no re-encode, so it is seconds rather than a full reprocess.
+  const chaptersM = useMutation({
+    mutationFn: (episodeId: string) =>
+      api<{ chapter_count: number }>(`/api/v1/episodes/${episodeId}/chapters`, {
+        method: "POST",
+      }),
+    onSuccess: (r) => {
+      setRecentMsg(`chapters regenerated (${r.chapter_count})`);
+      setTimeout(() => setRecentMsg(null), 5000);
+    },
+    onError: (e) => {
+      const status = e instanceof ApiError ? e.status : undefined;
+      setRecentMsg(
+        status === 422
+          ? "no chapters found in the article; existing chapters kept"
+          : status === 409
+            ? "this episode has no transcript to take timings from"
+            : `chapter regeneration failed${status ? ` (HTTP ${status})` : ""}`
+      );
+      setTimeout(() => setRecentMsg(null), 6000);
     },
   });
 
@@ -212,7 +237,7 @@ export default function Home() {
         <p className="text-dim text-sm mb-6 leading-relaxed">
           {mode === "url"
             ? "Audicle reads articles aloud. Paste a URL and it joins your feed."
-            : "Audicle reads documents aloud. Upload a file and it joins your feed."}
+            : "Audicle reads files aloud. Upload one and it joins your feed."}
         </p>
 
         <div className="flex border-b border-line mb-5">
@@ -264,7 +289,7 @@ export default function Home() {
                 setDragging(false);
               }}
               onDrop={onDrop}
-              aria-label="Upload a document (PDF, DOCX, Markdown, text, or HTML), up to 50 MB"
+              aria-label="Upload a document or image"
             >
               <input
                 ref={fileInputRef}
@@ -295,9 +320,9 @@ export default function Home() {
               ) : (
                 <>
                   <div className="mono-xs text-accent mb-2">// DROP_FILE</div>
-                  <div className="text-sm text-dim">Drag a document here, or browse</div>
+                  <div className="text-sm text-dim">Drag a file here, or browse</div>
                   <div className="mono-xs text-mute mt-2">
-                    PDF · DOCX · MD · TXT · HTML &nbsp;&mdash;&nbsp; up to {maxUploadMb} MB
+                    PDF · DOCX · MD · TXT · HTML · images &nbsp;·&nbsp; up to {maxUploadMb} MB
                   </div>
                 </>
               )}
@@ -312,7 +337,7 @@ export default function Home() {
           </button>
           {noVoiceLoaded && (
             <p className="mono-xs text-mute mt-2">
-              // no voice loaded -- add a voice slot in settings before submitting
+              // no voice loaded. add a voice slot in settings first
             </p>
           )}
           <div>
@@ -345,7 +370,7 @@ export default function Home() {
                 </select>
                 {filledSlots.length === 0 && (
                   <p className="mono-xs text-mute mt-1">
-                    // no voice loaded -- add a slot in settings before submitting
+                    // no voice loaded. add a slot in settings first
                   </p>
                 )}
               </>
@@ -422,15 +447,25 @@ export default function Home() {
                     {/* Own line, wrapping (not truncated), so the failure reason and
                         its fix stay readable. */}
                     {j.error && <p className="text-sm mt-1 text-danger break-words">{j.error}</p>}
-                    {j.status === "failed" && (
-                      <button
-                        className="btn-ghost mt-2"
-                        disabled={requeueM.isPending}
-                        onClick={() => requeueM.mutate(j.id)}
-                      >
-                        &#8635; Reprocess
-                      </button>
-                    )}
+                    <ActionMenu
+                      pending={requeueM.isPending || chaptersM.isPending}
+                      actions={[
+                        {
+                          label: "Reprocess article",
+                          hint: "re-runs the whole pipeline",
+                          run: () => requeueM.mutate(j.id),
+                        },
+                        ...(j.status === "done" && j.episode_id
+                          ? [
+                              {
+                                label: "Regenerate chapters",
+                                hint: "keeps the existing audio",
+                                run: () => chaptersM.mutate(j.episode_id),
+                              },
+                            ]
+                          : []),
+                      ]}
+                    />
                   </div>
                   <div className="flex flex-col items-end gap-1 flex-shrink-0">
                     <span className={`tag ${statusTag(j.status)}`}>{j.status}</span>

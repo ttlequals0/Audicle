@@ -48,6 +48,9 @@ class GenerationParams:
     top_k: int = 1000
     seed: int = 1234
     max_chars: int = _DEFAULT_MAX_CHARS
+    # Narration language for engines that support more than one; monolingual
+    # engines only ever see "en" (the route 422s anything else).
+    language: str = "en"
 
 
 # Per-knob request bounds. main.py applies them to GenerateRequest so a bad
@@ -276,6 +279,7 @@ class Engine(Protocol):
     sample_rate: int
     device: str
     name: str  # "chatterbox"
+    languages: tuple[str, ...]  # language ids /generate may carry
 
     def load(self) -> None:
         """Synchronous startup: load model weights + reference embeddings.

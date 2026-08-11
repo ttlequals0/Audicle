@@ -72,7 +72,9 @@ class RenderResult:
 
 
 class Renderer(Protocol):
-    async def render(self, url: str, expand: bool) -> RenderResult: ...
+    async def render(
+        self, url: str, expand: bool, email: str | None = None
+    ) -> RenderResult: ...
 
 
 def _normalize(text: str) -> str:
@@ -88,6 +90,64 @@ def expandable_targets(control_texts: list[str]) -> list[int]:
     not a candidate, so a stray "read more" in an article never trips this."""
 
     return [i for i, text in enumerate(control_texts) if _EXPAND_RE.search(_normalize(text))]
+
+
+# Wording that means the article stops until the reader hands over an email. Kept in
+# step with the backend's _GATE_MARKERS so both sides call the same pages gated.
+_REGISTRATION_MARKERS = (
+    "continue reading this story",
+    "sign me up for the newsletter",
+    "create your free account",
+    "subscribe to continue",
+    "to continue reading",
+    "this post is for paid subscribers",
+    "become a member to read",
+    "already have an account",
+)
+# Field and marker names publishers use on the unlock form. Newspack (WordPress) is
+# the one confirmed in the wild; the generic terms cover the rest.
+_REGISTRATION_FIELD_RE = re.compile(
+    r"newspack_reader_registration|newspack_newsletters_subscribe|newspack_reader",
+    re.IGNORECASE,
+)
+_EMAIL_FIELD_RE = re.compile(r"^(npe|email|email_address|user_email)$", re.IGNORECASE)
+# A form that asks for a password is a login, not a signup, whatever its copy says.
+_PASSWORD_FIELD_RE = re.compile(r"^(password|pass|pwd|user_password)$", re.IGNORECASE)
+# Where to type the address. Mirrors _EMAIL_FIELD_RE, since a publisher may ship the
+# field as type=text.
+EMAIL_INPUT_SELECTOR = (
+    "input[type=email], input[name=npe], input[name=email], "
+    "input[name=email_address], input[name=user_email]"
+)
+
+
+def looks_registration_gated(body_text: str) -> bool:
+    """True when the visible copy says the rest is behind an email signup."""
+
+    lowered = _normalize(body_text).lower()
+    return any(marker in lowered for marker in _REGISTRATION_MARKERS)
+
+
+def registration_form_index(forms: list[dict]) -> int | None:
+    """Index of the form that unlocks the article, or None.
+
+    Each entry is ``{"fields": [input names], "text": visible text}``. A form
+    qualifies only when it asks for an email, asks for no password, and carries
+    registration wording or a known registration field. A search box, a comment
+    form, a login, and a bare footer newsletter box all fail that test, so none of
+    them can receive the operator's address."""
+
+    for index, form in enumerate(forms):
+        fields = [str(f) for f in form.get("fields", [])]
+        if not any(_EMAIL_FIELD_RE.match(f) for f in fields):
+            continue
+        if any(_PASSWORD_FIELD_RE.match(f) for f in fields):
+            continue
+        if any(_REGISTRATION_FIELD_RE.search(f) for f in fields) or looks_registration_gated(
+            str(form.get("text", ""))
+        ):
+            return index
+    return None
 
 
 def is_captcha_wall(body_text: str, html: str = "") -> bool:

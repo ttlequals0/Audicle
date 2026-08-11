@@ -185,15 +185,13 @@ def apply_pairs_by_case(conn: sqlite3.Connection) -> tuple[dict[str, str], dict[
     return cs, ci
 
 
-def reference_text(conn: sqlite3.Connection) -> str:
-    """Format seed + user rows as the LLM pronunciation reference.
+def reference_entries(conn: sqlite3.Connection) -> list[tuple[str, str]]:
+    """Seed + user rows as ``(input_text, formatted reference line)`` pairs so
+    the pronunciation pass can filter the reference to terms present in a
+    chunk. The huge ``base`` layer is excluded: it would blow the prompt
+    context and is applied deterministically per-token instead."""
 
-    One ``- input -> spoken`` line per term. The huge ``base`` layer is excluded:
-    it would blow the prompt context and is applied deterministically per-token
-    instead.
-    """
-
-    lines = []
+    entries: list[tuple[str, str]] = []
     for row in conn.execute(
         "SELECT input_text, spoken, notes FROM lexicon WHERE origin IN ('seed', 'user') "
         "ORDER BY origin DESC, input_text"
@@ -201,8 +199,15 @@ def reference_text(conn: sqlite3.Connection) -> str:
         line = f"- {row['input_text']} -> {row['spoken']}"
         if row["notes"]:  # disambiguation context for homographs etc.
             line += f"  ({row['notes']})"
-        lines.append(line)
-    return "\n".join(lines)
+        entries.append((row["input_text"], line))
+    return entries
+
+
+def reference_text(conn: sqlite3.Connection) -> str:
+    """The full LLM pronunciation reference, one ``- input -> spoken`` line
+    per seed/user term."""
+
+    return "\n".join(line for _, line in reference_entries(conn))
 
 
 def get_user_entries(conn: sqlite3.Connection) -> dict[str, dict]:

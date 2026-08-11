@@ -163,3 +163,29 @@ def test_text_from_vtt_round_trips_build_vtt() -> None:
 
 def test_text_from_vtt_empty_doc() -> None:
     assert transcript.text_from_vtt("WEBVTT\n") == ""
+
+
+# --- cue extraction for chapter regeneration --------------------------------
+
+
+def test_cues_from_vtt_returns_start_times_and_text() -> None:
+    vtt = transcript.build_vtt(
+        [
+            transcript.TranscriptChunk(text="First chunk here.", duration_secs=10.0),
+            transcript.TranscriptChunk(text="Second chunk here.", duration_secs=20.0),
+        ],
+        silence_ms=500,
+    )
+    assert transcript.cues_from_vtt(vtt) == [
+        (0.0, "First chunk here."),
+        (10.5, "Second chunk here."),
+    ]
+
+
+def test_cues_from_vtt_unescapes_and_handles_hours() -> None:
+    vtt = "WEBVTT\n\n1\n01:02:03.500 --> 01:02:04.000\na &amp; b\n"
+    assert transcript.cues_from_vtt(vtt) == [(3723.5, "a & b")]
+
+
+def test_cues_from_vtt_empty_document() -> None:
+    assert transcript.cues_from_vtt("WEBVTT\n") == []

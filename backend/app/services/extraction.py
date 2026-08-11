@@ -161,7 +161,11 @@ async def extract(
                     },
                 )
                 result = ExtractionResult(markdown=arc_md, metadata=result.metadata)
-        if _effective_chars(result, rule, floor) >= floor:
+        # A registration gate ends the article; cut the signup furniture off before
+        # any length decision so the floor judges real text.
+        gated = gate_offset(result.markdown) is not None
+        result = trim_at_gate(result)
+        if _effective_chars(result, rule, floor) >= _accept_floor(gated, floor, settings):
             return await _maybe_render_full(result, url, settings, rule)
         # Best result seen across direct + every bypass, and whether the browser
         # solver was attempted -- together they classify the failure message.
@@ -311,12 +315,18 @@ async def extract(
                     continue
             if alt is None:
                 continue
+            # Every candidate gets the same gate treatment as the primary: a bypass
+            # that fetches the identical walled page must not pass on the signup
+            # furniture's length.
+            if gate_offset(alt.markdown) is not None:
+                gated = True
+                alt = trim_at_gate(alt)
             alt_chars = _effective_chars(alt, rule, accept_floor)
             best_chars = max(best_chars, alt_chars)
-            if alt_chars >= accept_floor:
+            if alt_chars >= _accept_floor(gated, accept_floor, settings):
                 _log_fallback_used(attempt.label, result.markdown, alt.markdown)
                 return await _maybe_render_full(alt, url, settings, rule)
-            _log_fallback_short(attempt.label, alt_chars, accept_floor)
+            _log_fallback_short(attempt.label, alt_chars, _accept_floor(gated, accept_floor, settings))
 
     # Every other strategy came up short. For a render-rule host, give the render
     # sidecar's own browser a last shot before failing -- its Camoufox can clear a
@@ -325,12 +335,64 @@ async def extract(
     if rescued is not None:
         return rescued
 
+    # Last resort on a wall that only wants an email: let the sidecar answer it.
+    if gated and settings.REGISTRATION_EMAIL.strip():
+        unlocked = await _try_registration(url, settings)
+        if unlocked is not None:
+            return unlocked
+
     # Only claim "your cookies look expired" when a solver attempt actually carried
     # cookies -- an auto-escalation solver runs without them, so the rule merely having
     # cookies isn't enough.
+    if gated:
+        raise ExtractionTooShortError(
+            "This article sits behind a sign-up wall: only "
+            f"{best_chars} characters were readable before the registration prompt. "
+            "Add a per-host bypass with your cookies in Settings, or skip this one."
+        )
     raise ExtractionTooShortError(
         _too_short_message(best_chars, solver_tried, settings, solver_sent_cookies)
     )
+
+
+async def _render_above_floor(
+    url: str, settings: Settings, email: str | None = None
+) -> ExtractionResult | None:
+    """Drive the render sidecar and return its body only when it clears the floor.
+
+    Gatedness is read before the trim, because trimming removes the marker it keys on."""
+
+    alt = await render.fetch(url, settings, email=email)
+    if alt is None:
+        return None
+    gated = gate_offset(alt.markdown) is not None
+    alt = trim_at_gate(alt)
+    if len(alt.markdown) < _accept_floor(gated, settings.MIN_EXTRACTION_CHARS, settings):
+        return None
+    return alt
+
+
+async def _try_registration(url: str, settings: Settings) -> ExtractionResult | None:
+    """Have the render sidecar complete a free registration wall, or None.
+
+    Reached only when the page is gated, the cascade already failed, and an address
+    is configured. The unlocked body still has to clear the floor to be used."""
+
+    if not settings.RENDER_URL.strip():
+        return None
+    logger.info(
+        "Answering a registration wall with the configured address",
+        extra={"event": "registration_attempt", "host": urlsplit(url).hostname or ""},
+    )
+    alt = await _render_above_floor(url, settings, email=settings.REGISTRATION_EMAIL.strip())
+    if alt is None:
+        logger.info("Registration wall did not open", extra={"event": "registration_failed"})
+        return None
+    logger.info(
+        "Registration wall opened",
+        extra={"event": "registration_unlocked", "chars": len(alt.markdown)},
+    )
+    return alt
 
 
 def _too_short_message(
@@ -398,6 +460,19 @@ def _log_fallback_short(label: str, alt_chars: int, floor: int) -> None:
     )
 
 
+# A gated page must clear more than the plain floor: the few paragraphs a publisher
+# shows above the wall routinely pass 500 chars while being useless to narrate.
+_GATED_FLOOR_MULTIPLIER = 2
+
+
+def _accept_floor(gated: bool, floor: int, settings: Settings) -> int:
+    """Length a candidate must reach to be accepted."""
+
+    if not gated:
+        return floor
+    return max(floor, settings.MIN_EXTRACTION_CHARS * _GATED_FLOOR_MULTIPLIER)
+
+
 def _effective_chars(result: ExtractionResult, rule: SourceFallback | None, floor: int) -> int:
     """Body length for the floor decision. For an operator-flagged host (a matched
     rule), when the page's own JSON-LD says the article body is below the floor but the
@@ -430,6 +505,50 @@ def looks_truncated(result: ExtractionResult) -> bool:
     return scan_markers(result, _TRUNCATION_MARKERS)
 
 
+# Wording that only appears where a registration/paywall gate replaces the rest of the
+# article. Deliberately narrower than _TRUNCATION_MARKERS: those merely trigger a free
+# render retry, while these truncate the body and can fail a job, so a bare "read more"
+# in a related-links block must not match.
+_GATE_MARKERS = (
+    "continue reading this story",
+    "sign me up for the newsletter",
+    "create your free account",
+    "subscribe to continue",
+    "to continue reading",
+    "this post is for paid subscribers",
+    "become a member to read",
+    "already have an account",
+)
+
+
+def gate_offset(markdown: str) -> int | None:
+    """Index of the earliest registration-gate marker, or None when ungated."""
+
+    lowered = markdown.lower()
+    hits = [lowered.find(marker) for marker in _GATE_MARKERS]
+    found = [i for i in hits if i >= 0]
+    return min(found) if found else None
+
+
+def trim_at_gate(result: ExtractionResult) -> ExtractionResult:
+    """Drop everything from a registration gate onward.
+
+    What follows a gate is the signup form, tag list, and author bio, never article
+    text -- confirmed against w42st.com, where 713 of 1202 scraped chars were
+    furniture. Cutting here both stops that being narrated and lets the ordinary
+    length floor judge what was actually recovered."""
+
+    offset = gate_offset(result.markdown)
+    if offset is None:
+        return result
+    return ExtractionResult(
+        markdown=result.markdown[:offset].strip(),
+        metadata=result.metadata,
+        article_chars=result.article_chars,
+        raw_html=result.raw_html,
+    )
+
+
 def _is_render_rule(rule: SourceFallback | None) -> bool:
     """True when the matched Site-override rule selects the render strategy."""
 
@@ -449,6 +568,8 @@ async def _maybe_render_full(
     if not (_is_render_rule(rule) or looks_truncated(result)):
         return result
     alt = await render.fetch(url, settings)
+    if alt is not None:
+        alt = trim_at_gate(alt)  # the sidecar sees the same wall; don't re-import it
     if alt is None or len(alt.markdown) <= len(result.markdown):
         return result
     logger.info(
@@ -474,8 +595,8 @@ async def _render_rescue(
 
     if not settings.RENDER_URL.strip() or not _is_render_rule(rule):
         return None
-    alt = await render.fetch(url, settings)
-    if alt is None or len(alt.markdown) < settings.MIN_EXTRACTION_CHARS:
+    alt = await _render_above_floor(url, settings)
+    if alt is None:
         return None
     logger.info(
         "Render rescued a blocked extraction",

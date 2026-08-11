@@ -38,6 +38,25 @@ class TranscriptChunk:
     duration_secs: float
 
 
+def chunk_start_ms(duration_secs: list[float], silence_ms: int) -> list[int]:
+    """Start of each chunk in the produced MP3, in integer milliseconds.
+
+    Shared by VTT cues and chapter timestamps so the two cannot disagree;
+    integer ms avoids float drift over hundreds of chunks.
+    """
+
+    if silence_ms < 0:
+        raise ValueError(f"silence_ms must be >= 0, got {silence_ms}")
+    starts: list[int] = []
+    cursor_ms = 0
+    for index, duration in enumerate(duration_secs):
+        if not math.isfinite(duration) or duration < 0:
+            raise ValueError(f"chunk {index} has invalid duration {duration!r}")
+        starts.append(cursor_ms)
+        cursor_ms += round(duration * 1000) + silence_ms
+    return starts
+
+
 def build_vtt(chunks: list[TranscriptChunk], silence_ms: int) -> str:
     """Render a WebVTT document from chunk text + per-chunk durations.
 
@@ -50,31 +69,61 @@ def build_vtt(chunks: list[TranscriptChunk], silence_ms: int) -> str:
     that by checking ``len(lines) == 1``.
     """
 
-    if silence_ms < 0:
-        raise ValueError(f"silence_ms must be >= 0, got {silence_ms}")
-
+    starts = chunk_start_ms([chunk.duration_secs for chunk in chunks], silence_ms)
     lines: list[str] = ["WEBVTT", ""]
-    cursor_ms = 0
     for index, chunk in enumerate(chunks):
-        if not math.isfinite(chunk.duration_secs) or chunk.duration_secs < 0:
-            raise ValueError(f"chunk {index} has invalid duration {chunk.duration_secs!r}")
-        duration_ms = round(chunk.duration_secs * 1000)
-        start_ms = cursor_ms
-        end_ms = cursor_ms + duration_ms
+        start_ms = starts[index]
+        end_ms = start_ms + round(chunk.duration_secs * 1000)
         lines.append(str(index + 1))
         lines.append(f"{_format_ts(start_ms)} --> {_format_ts(end_ms)}")
         lines.append(_escape_cue(chunk.text))
         lines.append("")
-        # Silence padding is BETWEEN cues, not after the last one; mirrors
-        # the audio pipeline's concat_with_padding behavior so VTT and MP3
-        # total durations match.
-        cursor_ms = end_ms + silence_ms if index < len(chunks) - 1 else end_ms
 
     # Drop the trailing blank line so the file ends with exactly one \n via
     # the join below.
     if lines and lines[-1] == "":
         lines.pop()
     return "\n".join(lines) + "\n"
+
+
+def cues_from_vtt(vtt: str) -> list[tuple[float, str]]:
+    """``(start_secs, text)`` per cue, the inverse of :func:`build_vtt`.
+
+    Cues are one per TTS chunk, so this recovers the chunk timeline from a
+    finished episode -- what chapter regeneration needs without re-running
+    the pipeline."""
+
+    cues: list[tuple[float, str]] = []
+    start: float | None = None
+    current: list[str] = []
+    for raw in vtt.splitlines():
+        line = raw.strip()
+        if not line:
+            if start is not None and current:
+                cues.append((start, " ".join(current)))
+            start, current = None, []
+            continue
+        if "-->" in line:
+            start = _parse_ts(line.split("-->", 1)[0].strip())
+            current = []
+            continue
+        if start is not None:
+            current.append(html.unescape(line))
+    if start is not None and current:
+        cues.append((start, " ".join(current)))
+    return cues
+
+
+def _parse_ts(stamp: str) -> float:
+    """``HH:MM:SS.mmm`` or ``MM:SS.mmm`` to seconds."""
+
+    parts = stamp.split(":")
+    seconds = float(parts[-1])
+    if len(parts) >= 2:
+        seconds += int(parts[-2]) * 60
+    if len(parts) >= 3:
+        seconds += int(parts[-3]) * 3600
+    return seconds
 
 
 def text_from_vtt(vtt: str) -> str:

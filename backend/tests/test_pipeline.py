@@ -928,10 +928,10 @@ async def test_normalize_runs_llm_pass_then_deterministic_backstop(
     monkeypatch.setattr(pipeline, "_llm_with_retry", _echo_window(seen))
     job = _seed_job(env)
     out = await pipeline._stage_normalize(
-        job, "I ran a SQL query today.", get_settings()
+        job, ["I ran a SQL query today."], get_settings()
     )
     assert seen.get("called")  # the LLM pass ran
-    assert "sequel" in out  # backstop applied the seed correction
+    assert "sequel" in out[0]  # backstop applied the seed correction
 
 
 async def test_normalize_llm_short_output_falls_back_to_input(
@@ -941,15 +941,14 @@ async def test_normalize_llm_short_output_falls_back_to_input(
     the pass never drops article content."""
 
     database.run_migrations(env)
-    monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _t, _n: None)
 
     async def _truncate(_system, _user, _settings, **_kwargs):
         return "x"  # pathologically short
 
     monkeypatch.setattr(pipeline, "_llm_with_retry", _truncate)
-    long_text = "The council approved the budget after a long debate. " * 20
-    out = await pipeline._pronounce_with_llm("job", long_text, get_settings())
-    assert out == long_text  # original window preserved, not the "x"
+    long_text = "The council approved the SQL budget after a long debate. " * 20
+    out = await pipeline._pronounce_chunks_with_llm("job", [long_text], get_settings())
+    assert out == [long_text]  # original chunk preserved, not the "x"
 
 
 async def test_normalize_llm_strips_preamble_via_marker_contract(
@@ -959,8 +958,7 @@ async def test_normalize_llm_strips_preamble_via_marker_contract(
     text in the begin/end markers must have the commentary dropped, not narrated."""
 
     database.run_migrations(env)
-    monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _t, _n: None)
-    body = "The council approved the budget after a long debate. " * 20
+    body = "The council approved the SQL budget after a long debate. " * 20
 
     async def _preamble(_system, _user, _settings, **_kwargs):
         return (
@@ -970,10 +968,12 @@ async def test_normalize_llm_strips_preamble_via_marker_contract(
         )
 
     monkeypatch.setattr(pipeline, "_llm_with_retry", _preamble)
-    out = await pipeline._pronounce_with_llm("job", body, get_settings())
+    out = "\n\n".join(
+        await pipeline._pronounce_chunks_with_llm("job", [body], get_settings())
+    )
     assert "reproduced in full" not in out
     assert "No pronunciation reference" not in out
-    assert "council approved the budget" in out
+    assert "council approved the SQL budget" in out
 
 
 async def test_normalize_llm_retries_when_model_ignores_markers(
@@ -983,8 +983,7 @@ async def test_normalize_llm_retries_when_model_ignores_markers(
     once; the retry's marker'd content is what survives, with the preamble dropped."""
 
     database.run_migrations(env)
-    monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _t, _n: None)
-    body = "The council approved the budget after a long debate. " * 20
+    body = "The council approved the SQL budget after a long debate. " * 20
     outputs = iter(
         [
             "No pronunciation reference was provided, so there are no terms to "
@@ -999,10 +998,12 @@ async def test_normalize_llm_retries_when_model_ignores_markers(
         return next(outputs)
 
     monkeypatch.setattr(pipeline, "_llm_with_retry", _fake)
-    out = await pipeline._pronounce_with_llm("job", body, get_settings())
+    out = "\n\n".join(
+        await pipeline._pronounce_chunks_with_llm("job", [body], get_settings())
+    )
     assert calls["n"] == 2  # retried once when the first reply had no markers
     assert "reproduced in full" not in out
-    assert "council approved the budget" in out
+    assert "council approved the SQL budget" in out
 
 
 async def test_normalize_llm_no_markers_keeps_window_verbatim(
@@ -1013,16 +1014,17 @@ async def test_normalize_llm_no_markers_keeps_window_verbatim(
     must not be dropped by the cleanup preamble heuristic."""
 
     database.run_migrations(env)
-    monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _t, _n: None)
-    window = "Here is the key finding.\n\n" + "The budget passed after a long debate. " * 20
+    window = "Here is the key finding.\n\n" + "The SQL budget passed after a long debate. " * 20
 
     async def _no_markers(_system, _user, _settings, **_kwargs):
         return window  # never wraps in markers, on either attempt
 
     monkeypatch.setattr(pipeline, "_llm_with_retry", _no_markers)
-    out = await pipeline._pronounce_with_llm("job", window, get_settings())
+    out = "\n\n".join(
+        await pipeline._pronounce_chunks_with_llm("job", [window], get_settings())
+    )
     assert "Here is the key finding" in out  # not stripped as a preamble
-    assert "budget passed after a long debate" in out
+    assert "SQL budget passed after a long debate" in out
 
 
 # --- cleanup: boilerplate-only window drop ---------------------------------
@@ -1491,7 +1493,7 @@ def _write_drone_wav(path: Path) -> None:
     sf.write(str(path), (0.5 * np.sin(2 * np.pi * 440 * t)).astype("float32"), 24000, subtype="PCM_16")
 
 
-def _write_speechlike_wav(path: Path) -> None:
+def _write_speechlike_wav(path: Path, carrier: float = 180.0) -> None:
     import numpy as np
     import soundfile as sf
 
@@ -1500,7 +1502,7 @@ def _write_speechlike_wav(path: Path) -> None:
     env[(t > 0.7) & (t < 0.95)] = 0.0
     sf.write(
         str(path),
-        (0.6 * np.sin(2 * np.pi * 180 * t) * env).astype("float32"),
+        (0.6 * np.sin(2 * np.pi * carrier * t) * env).astype("float32"),
         24000,
         subtype="PCM_16",
     )
@@ -1558,6 +1560,90 @@ async def test_chunk_quality_check_keeps_last_after_max_regen(
     # 1 baseline + MAX_REGEN extra attempts; job is not failed (a result returns).
     assert calls["n"] == get_settings().AUDIO_ANALYSIS_MAX_REGEN + 1
     assert result.wav_path == str(wav)
+
+
+async def test_chunk_pitch_drift_regenerates(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    database.run_migrations(env)
+    from app.services import audio_analysis, tts
+
+    wav = tmp_path / "ep_chunk_0.wav"
+    calls = {"n": 0}
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        calls["n"] += 1
+        # First take drifts nearly 5 semitones off the reference; the regen lands on it.
+        _write_speechlike_wav(wav, carrier=240.0 if calls["n"] == 1 else 180.0)
+        return tts.GenerateResult(wav_path=str(wav), duration_secs=2.0, sample_rate=24000)
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    settings = get_settings()
+    tracker = audio_analysis.PitchTracker(settings)
+    for _ in range(settings.AUDIO_ANALYSIS_F0_WARMUP_CHUNKS):
+        tracker.accept(180.0)
+    job = _seed_job(env)
+    result = await pipeline._generate_chunk_quality_checked(
+        job, "two words here now", 0, settings, pitch_tracker=tracker
+    )
+    assert calls["n"] == 2
+    assert result.wav_path == str(wav)
+
+
+async def test_chunk_pitch_drift_keeps_closest_attempt(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When every attempt drifts, the kept take is the one closest to the
+    reference pitch, not the last one."""
+
+    database.run_migrations(env)
+    from app.services import audio_analysis, tts
+
+    wav = tmp_path / "ep_chunk_0.wav"
+    calls = {"n": 0}
+    carriers = [240.0, 340.0, 300.0]  # deviations vs 180 Hz: ~5.0, ~11.0, ~8.8 st
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        _write_speechlike_wav(wav, carrier=carriers[calls["n"]])
+        calls["n"] += 1
+        return tts.GenerateResult(wav_path=str(wav), duration_secs=2.0, sample_rate=24000)
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    settings = get_settings()
+    tracker = audio_analysis.PitchTracker(settings)
+    for _ in range(settings.AUDIO_ANALYSIS_F0_WARMUP_CHUNKS):
+        tracker.accept(180.0)
+    job = _seed_job(env)
+    result = await pipeline._generate_chunk_quality_checked(
+        job, "two words here now", 0, settings, pitch_tracker=tracker
+    )
+    assert calls["n"] == settings.AUDIO_ANALYSIS_MAX_REGEN + 1
+    kept = audio_analysis.analyze_wav_path(result.wav_path, 4, settings)
+    assert 220.0 <= kept.metrics.median_f0_hz <= 260.0
+
+
+async def test_chunk_pitch_gate_inactive_during_warmup(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    database.run_migrations(env)
+    from app.services import audio_analysis, tts
+
+    wav = tmp_path / "ep_chunk_0.wav"
+    calls = {"n": 0}
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        calls["n"] += 1
+        _write_speechlike_wav(wav, carrier=240.0)
+        return tts.GenerateResult(wav_path=str(wav), duration_secs=2.0, sample_rate=24000)
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    settings = get_settings()
+    tracker = audio_analysis.PitchTracker(settings)  # empty: warmup not satisfied
+    job = _seed_job(env)
+    await pipeline._generate_chunk_quality_checked(
+        job, "two words here now", 0, settings, pitch_tracker=tracker
+    )
+    assert calls["n"] == 1
 
 
 async def test_chunk_quality_check_disabled_calls_once(
@@ -1832,7 +1918,7 @@ async def test_stage_tts_carries_the_job_voice_on_every_chunk(
     async def _fake_select(_settings, slot):
         selected.append(slot)
 
-    async def _fake_gen(_job, _text, index, _settings, slot=None):
+    async def _fake_gen(_job, _text, index, _settings, slot=None, pitch_tracker=None):
         per_chunk_slots.append(slot)
         return tts_mod.GenerateResult(
             wav_path=f"/tmp/c{index}.wav", duration_secs=1.0, sample_rate=24000
@@ -1955,3 +2041,396 @@ async def test_narration_write_failure_does_not_fail_the_job(
     after = _job_after(env, job.id)
     assert after.status == "done"
     assert after.error is None
+
+
+# --- 2e: chunk the cleaned text, normalize per chunk ------------------------
+
+
+async def test_stage_normalize_returns_per_chunk_narrations(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    seen: dict = {}
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _echo_window(seen))
+    job = _seed_job(env)
+    chunks = ["I ran a SQL query today.", "A plain sentence follows here."]
+    out = await pipeline._stage_normalize(job, chunks, get_settings())
+    assert isinstance(out, list) and len(out) == 2
+    assert "sequel" in out[0]  # backstop respelled the term chunk-locally
+    assert out[1] == "A plain sentence follows here."
+
+
+async def test_pronounce_skips_llm_when_no_reference_terms_present(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    calls = {"n": 0}
+
+    async def _fake(_system, _user, _settings, **_kwargs):
+        calls["n"] += 1
+        return "<<<AUDICLE_BEGIN>>>\nwhatever\n<<<AUDICLE_END>>>"
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _fake)
+    chunk = "Nothing here matches the reference vocabulary in any way."
+    out = await pipeline._pronounce_chunks_with_llm("job", [chunk], get_settings())
+    assert calls["n"] == 0
+    assert out == [chunk]
+
+
+async def test_pronounce_reference_filtered_to_present_terms(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    prompts: list[str] = []
+
+    async def _fake(system, user, _settings, **_kwargs):
+        prompts.append(system)
+        body = user.split("<text>\n", 1)[1].rsplit("\n</text>", 1)[0]
+        return f"<<<AUDICLE_BEGIN>>>\n{body}\n<<<AUDICLE_END>>>"
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _fake)
+    await pipeline._pronounce_chunks_with_llm("job", ["I ran a SQL query."], get_settings())
+    assert len(prompts) == 1
+    assert "SQL" in prompts[0]
+    assert "Kubernetes" not in prompts[0]  # absent from the chunk, filtered out
+
+
+async def test_run_stages_vtt_keeps_original_text_while_tts_speaks_narration(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """2e acceptance: the served VTT reads the cleaned text (SQL) while the
+    audio path receives the respelled narration (sequel)."""
+
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+
+    cleaned = (
+        "The team wrote a SQL query to answer the question. "
+        "It ran quickly on the analytics cluster. "
+        "Results were shared with the whole company for discussion. "
+    ) * 8
+
+    async def _fake_llm(system, user, _settings, **_kwargs):
+        if "PRONUNCIATION REFERENCE" in system:
+            body = user.split("<text>\n", 1)[1].rsplit("\n</text>", 1)[0]
+            return f"<<<AUDICLE_BEGIN>>>\n{body}\n<<<AUDICLE_END>>>"
+        return cleaned
+
+    monkeypatch.setattr(llm, "generate", _fake_llm)
+
+    from app.services import tts as tts_module
+
+    spoken: list[str] = []
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        spoken.append(text)
+        return tts_module.GenerateResult(
+            wav_path=f"/tmp/{episode_id}_chunk_{chunk_index}.wav",
+            duration_secs=1.0,
+            sample_rate=24000,
+        )
+
+    monkeypatch.setattr(tts_module, "generate_chunk_with_retry", _fake_tts)
+
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+    after = _job_after(env, job.id)
+    assert after.status == "done"
+
+    from app.services import episodes as episodes_service
+
+    conn = database.connect(database.db_path(env))
+    try:
+        row = episodes_service.get_by_id(conn, job.episode_id)
+        stored_text = episodes_service.get_cleaned_text(conn, job.episode_id)
+    finally:
+        conn.close()
+    assert row is not None and row.transcript_vtt
+    assert "SQL" in row.transcript_vtt
+    assert "sequel" not in row.transcript_vtt
+    assert any("sequel" in text for text in spoken)
+    assert not any("SQL" in text for text in spoken)
+    # The stored cleaned text is the readable original, not the narration.
+    assert stored_text and "sequel" not in stored_text
+
+
+# --- 3a: intro line ---------------------------------------------------------
+
+
+def test_intro_line_with_title_and_author(env: Path) -> None:
+    line = pipeline._intro_read_line(
+        {"title": "The Big Story", "author": "Jane Doe"}, get_settings()
+    )
+    assert line == "The Big Story. By Jane Doe."
+
+
+def test_intro_line_omits_author_when_missing(env: Path) -> None:
+    assert pipeline._intro_read_line({"title": "The Big Story"}, get_settings()) == (
+        "The Big Story."
+    )
+
+
+def test_intro_line_keeps_terminal_punctuation(env: Path) -> None:
+    line = pipeline._intro_read_line({"title": "Is AI Over?"}, get_settings())
+    assert line == "Is AI Over?"
+
+
+def test_intro_line_disabled_or_untitled_returns_none(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert pipeline._intro_read_line({}, get_settings()) is None
+    monkeypatch.setenv("INTRO_READ_ENABLED", "false")
+    get_settings.cache_clear()
+    try:
+        assert (
+            pipeline._intro_read_line({"title": "The Big Story"}, get_settings()) is None
+        )
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_run_stages_prepends_intro_before_chunking(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+
+    async def _fake_extract_with_title(_url, _settings, _registry=None):
+        return extraction.ExtractionResult(
+            markdown="raw " * 250,
+            metadata={"title": "Test Article", "author": "Test Author"},
+        )
+
+    monkeypatch.setattr(extraction, "extract", _fake_extract_with_title)
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+    after = _job_after(env, job.id)
+    assert after.status == "done"
+
+    from app.services import episodes as episodes_service
+
+    conn = database.connect(database.db_path(env))
+    try:
+        row = episodes_service.get_by_id(conn, job.episode_id)
+        stored_text = episodes_service.get_cleaned_text(conn, job.episode_id)
+    finally:
+        conn.close()
+    assert stored_text and stored_text.startswith("Test Article. By Test Author.")
+    # The intro flows into the first transcript cue like any other chunk text.
+    assert row is not None and "Test Article. By Test Author." in row.transcript_vtt
+
+
+# --- 3b: chapters stage -----------------------------------------------------
+
+
+async def test_stage_chapters_skipped_below_min_duration(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    calls = {"n": 0}
+
+    async def _fake(_s, _u, _settings, **_k):
+        calls["n"] += 1
+        return "0 | Nope"
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _fake)
+    out = await pipeline._stage_chapters(
+        ["one", "two"], [30.0, 30.0], 60.0, Path("/tmp/x.mp3"), get_settings()
+    )
+    assert out is None
+    assert calls["n"] == 0
+
+
+async def test_stage_chapters_generates_document_with_exact_timestamps(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+
+    async def _fake(_system, user, _settings, **_k):
+        assert "[00:00]" in user  # timestamped transcript sent
+        return "00:00 Opening remarks\n08:23 The second act"
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _fake)
+    embedded = {}
+
+    def _spy_embed(mp3_path, pairs, total):
+        embedded["pairs"] = pairs
+        embedded["total"] = total
+
+    monkeypatch.setattr(pipeline.audio, "embed_chapters", _spy_embed)
+    import json as json_mod
+
+    out = await pipeline._stage_chapters(
+        ["a", "b", "c"], [300.0, 200.0, 200.0], 700.0, Path("/tmp/x.mp3"), get_settings()
+    )
+    assert out is not None
+    doc = json_mod.loads(out)
+    assert doc["chapters"][0] == {"startTime": 0, "title": "Opening remarks"}
+    # 08:23 is the timestamp the model returned, echoed back as whole seconds.
+    assert doc["chapters"][1] == {"startTime": 503, "title": "The second act"}
+    assert embedded["pairs"][0] == (0.0, "Opening remarks")
+    assert embedded["total"] == 700.0
+
+
+async def test_stage_chapters_llm_failure_returns_none(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+
+    async def _boom(_s, _u, _settings, **_k):
+        raise RuntimeError("llm down")
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _boom)
+    out = await pipeline._stage_chapters(
+        ["one", "two"], [400.0, 400.0], 800.0, Path("/tmp/x.mp3"), get_settings()
+    )
+    assert out is None
+
+
+# --- section 5: model applied per job ----------------------------------------
+
+
+async def test_stage_tts_applies_configured_model(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    from app.services import tts as tts_mod
+
+    selected_models: list[str] = []
+
+    async def _fake_select_model(_settings, model):
+        selected_models.append(model)
+
+    async def _fake_gen(_job, _text, index, _settings, slot=None, pitch_tracker=None):
+        return tts_mod.GenerateResult(
+            wav_path=f"/tmp/c{index}.wav", duration_secs=1.0, sample_rate=24000
+        )
+
+    async def _fake_select_voice(_settings, _slot):
+        pass
+
+    monkeypatch.setattr(tts_mod, "select_model_with_retry", _fake_select_model)
+    monkeypatch.setattr(tts_mod, "select_voice_with_retry", _fake_select_voice)
+    monkeypatch.setattr(pipeline, "_generate_chunk_quality_checked", _fake_gen)
+    monkeypatch.setattr(pipeline, "_set_progress", lambda *a, **k: None)
+    monkeypatch.setenv("TTS_MODEL", "chatterbox-multilingual")
+    get_settings.cache_clear()
+    try:
+        job = _seed_job(env)
+        await pipeline._stage_tts(job, ["one chunk"], get_settings())
+    finally:
+        get_settings.cache_clear()
+    assert selected_models == ["chatterbox-multilingual"]
+
+
+# --- LLM rate-limit backoff -------------------------------------------------
+
+
+def test_retry_wait_honors_provider_retry_after() -> None:
+    """A 429 carrying retry_after waits at least that long, so a 3-attempt
+    budget doesn't burn through a 60 s window in 4 seconds."""
+
+    from app.services import llm as llm_mod
+
+    wait = pipeline._llm_retry_wait
+    state = _retry_state(llm_mod.LLMRateLimitError("slow down", retry_after=60))
+    assert wait(state) == pytest.approx(60.0)
+
+
+def test_retry_wait_caps_absurd_retry_after() -> None:
+    from app.services import llm as llm_mod
+
+    state = _retry_state(llm_mod.LLMRateLimitError("slow down", retry_after=3600))
+    assert pipeline._llm_retry_wait(state) == pytest.approx(pipeline._LLM_RETRY_MAX_WAIT)
+
+
+def test_retry_wait_falls_back_to_exponential_without_hint() -> None:
+    from app.services import llm as llm_mod
+
+    state = _retry_state(llm_mod.LLMProviderError("boom"))
+    assert 0 < pipeline._llm_retry_wait(state) <= pipeline._LLM_RETRY_MAX_WAIT
+
+
+def _retry_state(exc: Exception):
+    """Minimal tenacity RetryCallState carrying ``exc`` as the outcome."""
+
+    from tenacity import Future, RetryCallState
+
+    state = RetryCallState(retry_object=None, fn=None, args=(), kwargs={})
+    state.attempt_number = 1
+    future = Future(1)
+    future.set_exception(exc)
+    state.outcome = future
+    return state
+
+
+async def test_stage_chapters_survives_a_chunk_duration_desync(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Chapters must never be what fails an episode: a desync is the transcript
+    stage's error to raise, not this one's."""
+
+    database.run_migrations(env)
+
+    async def _fake(_system, _user, _settings, **_k):
+        return "00:00 One\n05:00 Two"
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _fake)
+    monkeypatch.setattr(pipeline.audio, "embed_chapters", lambda *a, **k: None)
+    out = await pipeline._stage_chapters(
+        ["a", "b", "c"], [400.0, 400.0], 800.0, Path("/tmp/x.mp3"), get_settings()
+    )
+    assert out is not None
+
+
+# --- title echo: the body repeats its own headline (0.52.5) ----------------
+
+
+def test_strips_a_leading_title_echo_before_the_intro() -> None:
+    """Substack renders headline + subtitle, so the cleaned body opens with the
+    same title the intro read announces. Note the apostrophes differ: the
+    metadata title is curly, the body straight."""
+
+    # \u2019 (curly) here vs a straight quote in the body: the real mismatch.
+    title = "Zillow\u2019s CEO Just Fired 500 People Because He Says The Company is More Efficient Without Them"
+    body = (
+        "Zillow's CEO Just Fired 500 People Because He Says The Company is More Efficient Without Them\n\n"
+        "Zillow just posted the best financial year in its two-decade history, then cut "
+        "seven hundred people.\n\nOn Tuesday morning, August 4, 2026, just over five hundred "
+        "people at Zillow Group learned they no longer had jobs."
+    )
+    out = pipeline._strip_title_echo(body, title)
+    assert not out.startswith("Zillow's CEO Just Fired")
+    assert out.startswith("Zillow just posted the best financial year")
+    assert "learned they no longer had jobs" in out
+
+
+def test_keeps_the_body_when_it_does_not_open_with_the_title() -> None:
+    title = "A Completely Different Headline"
+    body = "The article opens on a scene instead.\n\nThen it continues."
+    assert pipeline._strip_title_echo(body, title) == body
+
+
+def test_keeps_a_paragraph_that_merely_starts_like_the_title() -> None:
+    """Only a heading-shaped echo is dropped; a real opening paragraph that
+    happens to begin with the headline's words is content."""
+
+    title = "Zillow Fired 500 People"
+    body = (
+        "Zillow Fired 500 People, and the timing tells you everything about how the "
+        "company thinks about its own record year and what comes next for the market.\n\n"
+        "More reporting follows."
+    )
+    assert pipeline._strip_title_echo(body, title) == body
+
+
+def test_title_echo_tolerates_punctuation_and_case_drift() -> None:
+    title = "The AI Explanation Nobody Confirms"
+    body = "the ai explanation nobody confirms.\n\nReal content here."
+    assert pipeline._strip_title_echo(body, title) == "Real content here."
+
+
+def test_title_echo_no_title_is_a_noop() -> None:
+    body = "Some article text."
+    assert pipeline._strip_title_echo(body, None) == body
+    assert pipeline._strip_title_echo(body, "") == body

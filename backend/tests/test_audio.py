@@ -241,6 +241,72 @@ def test_normalize_and_encode_produces_valid_mp3(env: Path, tmp_path: Path) -> N
     assert 0.3 <= result.duration_secs <= 1.0
 
 
+def _write_peaky_wav(path: Path, bursts: int = 30) -> None:
+    """Quiet speech-like bursts with sparse loud transients: the material
+    single-pass dynamic loudnorm undershoots on (true-peak-limited gain),
+    like TTS consonants over a low average level."""
+
+    import numpy as np
+    import soundfile as sf
+
+    sr = 24000
+    rng = np.random.default_rng(3)
+    segs = []
+    for _ in range(bursts):
+        t = np.arange(int(1.2 * sr)) / sr
+        env = (0.5 + 0.5 * np.sin(2 * np.pi * 3.5 * t)) * 0.28
+        voiced = np.sin(2 * np.pi * 150 * t) + 0.35 * np.sin(2 * np.pi * 300 * t + 0.7)
+        sig = voiced * env
+        for k in range(4):
+            p = int((0.15 + 0.28 * k) * sr)
+            n = int(0.012 * sr)
+            sig[p : p + n] += 0.75 * rng.standard_normal(n) * np.hanning(n)
+        segs.append(sig.astype("float32"))
+        segs.append(np.zeros(int(0.35 * sr), dtype="float32"))
+    sf.write(str(path), np.concatenate(segs), sr)
+
+
+def _measure_integrated_lufs(mp3_path: Path) -> float:
+    import re
+    import subprocess
+
+    r = subprocess.run(
+        ["ffmpeg", "-i", str(mp3_path), "-af", "ebur128", "-f", "null", "-"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return float(re.findall(r"I:\s+(-?[\d.]+) LUFS", r.stderr)[-1])
+
+
+def test_normalize_and_encode_hits_loudness_target(env: Path, tmp_path: Path) -> None:
+    """2c acceptance: the encoded episode lands within 0.5 LU of
+    LOUDNORM_TARGET_LUFS even on peaky material (two-pass linear loudnorm)."""
+
+    src_wav = tmp_path / "in.wav"
+    out_mp3 = tmp_path / "out.mp3"
+    _write_peaky_wav(src_wav)
+    settings = get_settings()
+    audio.normalize_and_encode(src_wav, out_mp3, settings)
+    measured = _measure_integrated_lufs(out_mp3)
+    assert abs(measured - settings.LOUDNORM_TARGET_LUFS) <= 0.5, measured
+
+
+def test_normalize_and_encode_falls_back_to_single_pass_on_measure_failure(
+    env: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """A broken measurement pass must not become a new failure mode: the encode
+    still happens, single-pass."""
+
+    src_wav = tmp_path / "in.wav"
+    out_mp3 = tmp_path / "out.mp3"
+    _write_tone_wav(src_wav, duration_secs=0.5)
+    monkeypatch.setattr(audio, "_measure_loudness", lambda *_a, **_k: None)
+    result = audio.normalize_and_encode(src_wav, out_mp3, get_settings())
+    assert out_mp3.exists()
+    assert result.duration_secs > 0
+
+
 def test_normalize_and_encode_raises_ffmpeg_error_on_missing_input(
     env: Path, tmp_path: Path
 ) -> None:

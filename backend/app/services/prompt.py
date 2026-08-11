@@ -19,13 +19,14 @@ from app.services import settings_store
 
 logger = logging.getLogger("app.services.prompt")
 
-PromptKind = Literal["cleanup", "summary", "pronunciation"]
+PromptKind = Literal["cleanup", "summary", "pronunciation", "chapters"]
 
 # Per kind: (settings-table key for the override, packaged default filename).
 _PROMPTS: dict[PromptKind, tuple[str, str]] = {
     "cleanup": (settings_store.CLEANUP_PROMPT_KEY, "script.txt"),
     "summary": (settings_store.SUMMARY_PROMPT_KEY, "summary.txt"),
     "pronunciation": (settings_store.PRONUNCIATION_PROMPT_KEY, "pronunciation.txt"),
+    "chapters": (settings_store.CHAPTERS_PROMPT_KEY, "chapters.txt"),
 }
 
 

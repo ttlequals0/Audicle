@@ -50,7 +50,10 @@ jobs:
           # derivation) pulls num2words (LGPL) and pytz (MIT AND ZPL-2.1). LGPL/ZPL
           # are weak-copyleft and do not impose obligations on this project's own
           # source, so they are accepted.
-          allow-licenses: MIT, BSD-2-Clause, BSD-3-Clause, Apache-2.0, ISC, MPL-2.0, PSF-2.0, Python-2.0, Unlicense, CC0-1.0, BlueOak-1.0.0, LGPL-2.1-only, LGPL-3.0-or-later, ZPL-2.1
+          # BSL-1.0 (Boost) added for pyclipper (BSL-1.0 AND MIT), pulled in by
+          # the rapidocr OCR stack; Boost is permissive with no obligations on
+          # this project's source.
+          allow-licenses: MIT, BSD-2-Clause, BSD-3-Clause, Apache-2.0, ISC, MPL-2.0, PSF-2.0, Python-2.0, Unlicense, CC0-1.0, BlueOak-1.0.0, LGPL-2.1-only, LGPL-3.0-or-later, ZPL-2.1, BSL-1.0
           # Packages whose license metadata is absent/NOASSERTION on the registry
           # but is permissive in the project (pysle MIT; hf-xet/praatio/regex are
           # Apache/MIT-family; trafilatura is Apache-2.0) -- exempted by package so
@@ -64,5 +67,10 @@ jobs:
           # standard-* trio publishes no SPDX metadata). They are pulled only on the
           # python>=3.13 marker path, never installed in the 3.11 wrapper image, and are
           # all permissive PSF/BSD-family code -- exempted by package.
-          allow-dependencies-licenses: pkg:pypi/pysle, pkg:pypi/hf-xet, pkg:pypi/praatio, pkg:pypi/regex, pkg:pypi/trafilatura, pkg:pypi/pykakasi, pkg:pypi/audioop-lts, pkg:pypi/standard-aifc, pkg:pypi/standard-chunk, pkg:pypi/standard-sunau
+          # rapidocr publishes no SPDX metadata but is Apache-2.0 (models are
+          # Baidu/PaddleOCR-derived, also Apache); protobuf's SPDX expression
+          # carries Google's LicenseRef-scancode-protobuf tag (a BSD-3-Clause
+          # variant) that the action cannot match against SPDX ids -- both
+          # exempted by package.
+          allow-dependencies-licenses: pkg:pypi/pysle, pkg:pypi/hf-xet, pkg:pypi/praatio, pkg:pypi/regex, pkg:pypi/trafilatura, pkg:pypi/pykakasi, pkg:pypi/audioop-lts, pkg:pypi/standard-aifc, pkg:pypi/standard-chunk, pkg:pypi/standard-sunau, pkg:pypi/rapidocr, pkg:pypi/protobuf
           comment-summary-in-pr: on-failure

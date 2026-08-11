@@ -281,6 +281,46 @@
     color: #1ce783;
   }
 
+  /* Row-action menu. Borders, never shadows: nothing else in this UI casts one.
+     Each row is a shell command being picked, so the hovered item grows an
+     accent prompt marker. */
+  .menu-panel {
+    background: #0a0a0c;
+    border: 1px solid #3a3a45;
+    border-radius: 8px;
+    padding: 0.25rem;
+    min-width: 15rem;
+    max-width: calc(100vw - 3rem);
+  }
+  .menu-item {
+    display: grid;
+    text-decoration: none;
+    grid-template-columns: 0.75rem 1fr;
+    gap: 0.5rem;
+    align-items: baseline;
+    width: 100%;
+    text-align: left;
+    padding: 0.5rem 0.5rem;
+    border-radius: 6px;
+    cursor: pointer;
+    background: transparent;
+  }
+  .menu-item::before {
+    content: ">";
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.75rem;
+    color: transparent;
+  }
+  .menu-item:hover,
+  .menu-item:focus-visible {
+    background: #15151a;
+    outline: none;
+  }
+  .menu-item:hover::before,
+  .menu-item:focus-visible::before {
+    color: #1ce783;
+  }
+
   .card {
     background: #0a0a0c;
     border: 1px solid #26262e;

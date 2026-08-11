@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.50.0
+  version: 0.53.1
 paths:
   /health/live:
     get:
@@ -244,6 +244,7 @@ paths:
           - cleanup
           - summary
           - pronunciation
+          - chapters
           type: string
           description: Which pipeline prompt to act on.
           default: cleanup
@@ -276,6 +277,7 @@ paths:
           - cleanup
           - summary
           - pronunciation
+          - chapters
           type: string
           description: Which pipeline prompt to act on.
           default: cleanup
@@ -314,6 +316,7 @@ paths:
           - cleanup
           - summary
           - pronunciation
+          - chapters
           type: string
           description: Which pipeline prompt to act on.
           default: cleanup
@@ -722,6 +725,21 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/settings/ocr/languages:
+    get:
+      tags:
+      - settings
+      summary: Get Ocr Languages
+      description: Languages the shipped OCR model packs cover; drives the Settings
+        dropdown.
+      operationId: get_ocr_languages_api_v1_settings_ocr_languages_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OcrLanguagesResponse'
   /api/v1/episodes:
     get:
       tags:
@@ -756,6 +774,42 @@ paths:
                 items:
                   $ref: '#/components/schemas/EpisodeListItem'
                 title: Response List Episodes Api V1 Episodes Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/episodes/{episode_id}/chapters:
+    post:
+      tags:
+      - episodes
+      summary: Regenerate Chapters
+      description: 'Rebuild chapters for a finished episode from its stored transcript.
+
+
+        Cues are one per TTS chunk, so the transcript already carries the timeline
+
+        the chapter stage used; no TTS or re-encode is needed. Existing chapters
+
+        survive a failed run, and the episode GUID is left alone because the audio
+
+        does not change.'
+      operationId: regenerate_chapters_api_v1_episodes__episode_id__chapters_post
+      parameters:
+      - name: episode_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Episode Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChaptersRegenResponse'
         '422':
           description: Validation Error
           content:
@@ -1211,6 +1265,19 @@ paths:
           content:
             application/json:
               schema: {}
+  /api/v1/tts/models:
+    get:
+      tags:
+      - tts
+      summary: List Tts Models
+      operationId: list_tts_models_api_v1_tts_models_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TtsModelsResponse'
   /rss/{slug}.xml:
     get:
       tags:
@@ -1439,6 +1506,61 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /media/{episode_id}.chapters.json:
+    get:
+      tags:
+      - media
+      summary: Get Chapters
+      description: 'The Podcasting 2.0 chapters document, served from the ``chapters_json``
+
+        column. 404 for episodes without chapters (short, disabled, or pre-0.51.0).'
+      operationId: get_chapters_media__episode_id__chapters_json_get
+      parameters:
+      - name: episode_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Episode Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    head:
+      tags:
+      - media
+      summary: Get Chapters
+      description: 'The Podcasting 2.0 chapters document, served from the ``chapters_json``
+
+        column. 404 for episodes without chapters (short, disabled, or pre-0.51.0).'
+      operationId: get_chapters_media__episode_id__chapters_json_get
+      parameters:
+      - name: episode_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Episode Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /media/{episode_id}.txt:
     get:
       tags:
@@ -1587,6 +1709,20 @@ components:
       required:
       - voice
       title: Body_upload_slot_api_v1_reference_slots__slot__post
+    ChaptersRegenResponse:
+      properties:
+        episode_id:
+          type: string
+          title: Episode Id
+        chapter_count:
+          type: integer
+          title: Chapter Count
+      additionalProperties: false
+      type: object
+      required:
+      - episode_id
+      - chapter_count
+      title: ChaptersRegenResponse
     DeleteEpisodeResponse:
       properties:
         id:
@@ -1649,6 +1785,9 @@ components:
         has_cleaned_text:
           type: boolean
           title: Has Cleaned Text
+        has_chapters:
+          type: boolean
+          title: Has Chapters
         source_type:
           type: string
           title: Source Type
@@ -1676,6 +1815,7 @@ components:
       - pub_date
       - updated_at
       - has_cleaned_text
+      - has_chapters
       - source_type
       - source_filename
       - voice_label
@@ -1849,6 +1989,22 @@ components:
       - provider
       - models
       title: ModelsResponse
+    OcrLanguagesResponse:
+      properties:
+        languages:
+          items:
+            type: string
+          type: array
+          title: Languages
+        default:
+          type: string
+          title: Default
+      additionalProperties: false
+      type: object
+      required:
+      - languages
+      - default
+      title: OcrLanguagesResponse
     PasswordRequest:
       properties:
         current_password:
@@ -2019,6 +2175,38 @@ components:
       - episode_id
       - status
       title: SubmitResponse
+    TtsModel:
+      properties:
+        name:
+          type: string
+          title: Name
+        languages:
+          items:
+            type: string
+          type: array
+          title: Languages
+      type: object
+      required:
+      - name
+      - languages
+      title: TtsModel
+    TtsModelsResponse:
+      properties:
+        active:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Active
+        models:
+          items:
+            $ref: '#/components/schemas/TtsModel'
+          type: array
+          title: Models
+      type: object
+      required:
+      - active
+      - models
+      title: TtsModelsResponse
     ValidationError:
       properties:
         loc:

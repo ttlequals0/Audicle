@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, Episode, SettingsPayload } from "../lib/api";
 import { fileExt, formatBytes } from "../lib/format";
+import ActionMenu from "../components/ActionMenu";
 import AudioPlayer from "../components/AudioPlayer";
 
 export default function Feed() {
@@ -55,6 +56,19 @@ export default function Feed() {
       qc.invalidateQueries({ queryKey: ["episodes"] });
     },
     onError: onActionError("reprocess"),
+  });
+
+  // Rebuild chapters from the stored transcript. No TTS and no re-encode, so
+  // it is seconds rather than a full reprocess.
+  const chaptersM = useMutation({
+    mutationFn: (id: string) =>
+      api<{ chapter_count: number }>(`/api/v1/episodes/${id}/chapters`, { method: "POST" }),
+    onSuccess: (r) => {
+      setActionMsg(`chapters regenerated (${r.chapter_count})`);
+      setTimeout(() => setActionMsg(null), 5000);
+      qc.invalidateQueries({ queryKey: ["episodes"] });
+    },
+    onError: onActionError("chapter regeneration"),
   });
 
   const copy = async () => {
@@ -146,24 +160,54 @@ export default function Feed() {
               <AudioPlayer src={`/media/${ep.id}.mp3`} />
             </div>
             <div className="flex flex-wrap gap-2 mt-3">
-              <a className="btn-ghost" href={`/media/${ep.id}.vtt`} target="_blank" rel="noreferrer">
-                Transcript
-              </a>
-              {ep.has_cleaned_text && (
-                <a className="btn-ghost" href={`/media/${ep.id}.txt`} target="_blank" rel="noreferrer">
-                  Cleaned text
-                </a>
-              )}
-              <button
-                className="btn-ghost"
-                disabled={reprocessM.isPending}
-                onClick={() => {
-                  if (confirm(`Reprocess "${ep.title ?? ep.source_filename ?? ep.original_url}"?`))
-                    reprocessM.mutate(ep);
-                }}
-              >
-                &#8635; Reprocess
-              </button>
+              <ActionMenu
+                label="View"
+                actions={[
+                  {
+                    label: "Transcript",
+                    hint: "webvtt with cue timings",
+                    href: `/media/${ep.id}.vtt`,
+                  },
+                  ...(ep.has_chapters
+                    ? [
+                        {
+                          label: "Chapters",
+                          hint: "podcasting 2.0 json",
+                          href: `/media/${ep.id}.chapters.json`,
+                        },
+                      ]
+                    : []),
+                  ...(ep.has_cleaned_text
+                    ? [
+                        {
+                          label: "Cleaned text",
+                          hint: "the article as narrated",
+                          href: `/media/${ep.id}.txt`,
+                        },
+                      ]
+                    : []),
+                ]}
+              />
+              <ActionMenu
+                pending={reprocessM.isPending || chaptersM.isPending}
+                actions={[
+                  {
+                    label: "Reprocess article",
+                    hint: "re-runs the whole pipeline",
+                    run: () => {
+                      if (
+                        confirm(`Reprocess "${ep.title ?? ep.source_filename ?? ep.original_url}"?`)
+                      )
+                        reprocessM.mutate(ep);
+                    },
+                  },
+                  {
+                    label: "Regenerate chapters",
+                    hint: "keeps the existing audio",
+                    run: () => chaptersM.mutate(ep.id),
+                  },
+                ]}
+              />
               <button
                 className="btn-ghost btn-danger ml-auto"
                 disabled={deleteM.isPending}

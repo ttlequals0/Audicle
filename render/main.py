@@ -12,16 +12,16 @@ it defaults to the Camoufox driver. The default is imported lazily so the app
 from __future__ import annotations
 
 import logging
-import os
 from importlib import metadata
 from pathlib import Path
 
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from log_config import setup_logging
 from renderer import Renderer, RenderResult
 
-logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
+setup_logging()
 logger = logging.getLogger("render.main")
 
 
@@ -50,6 +50,10 @@ __version__ = _render_version()
 class RenderRequest(BaseModel):
     url: str
     expand: bool = True
+    # Address the operator configured for registration walls. Sent only when the
+    # backend has already decided the page is gated; the renderer still checks the
+    # page itself before typing it anywhere.
+    email: str | None = None
 
 
 def _default_renderer() -> Renderer:
@@ -71,7 +75,9 @@ def create_app(renderer: Renderer | None = None) -> FastAPI:
 
     @app.post("/render")
     async def render(body: RenderRequest) -> dict[str, object]:
-        result: RenderResult = await app.state.renderer.render(body.url, body.expand)
+        result: RenderResult = await app.state.renderer.render(
+            body.url, body.expand, email=body.email
+        )
         return {
             "status": result.status,
             "html": result.html,

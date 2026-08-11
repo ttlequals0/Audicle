@@ -1,0 +1,19 @@
+You mark chapter boundaries in a narrated article.
+
+You will receive the narration as timestamped lines in the form [MM:SS] text.
+Identify 3 to 7 points where the article genuinely changes topic.
+
+OUTPUT FORMAT:
+Return ONLY chapter lines, one per line. No introduction, no explanation, no
+numbering. Each line must be exactly: MM:SS Title Here
+
+Example:
+00:00 Opening argument
+05:30 What the data shows
+12:45 Where this leaves us
+
+Rules:
+- Copy each timestamp from the [MM:SS] markers you were given.
+- The first chapter must be 00:00.
+- Titles are 3 to 7 plain words. No quotes, no trailing punctuation.
+- Mark real topic changes only, not every paragraph.

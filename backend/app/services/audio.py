@@ -12,8 +12,9 @@ Stages (build-plan numbering):
    soundfile (a TorchCodec-free replacement for ``torchaudio.save``; the
    build-plan-mentioned ``torchaudio`` dep is dropped because torchaudio
    2.11 made TorchCodec the default save backend).
-4. Normalize with the ebook2audiobook ffmpeg filter chain (loudnorm, EQ,
-   denoise, gentle compression).
+4. Normalize with the ebook2audiobook-derived ffmpeg filter chain: gate,
+   denoise, gentle compression, then a measured constant gain with an
+   end-of-chain limiter (dynamic loudnorm as the fallback), plus EQ.
 5. Encode to MP3 (libmp3lame, 24000 Hz, stereo upmix via -ac 2, 128k).
 6. Read final MP3 duration via mutagen.
 
@@ -24,7 +25,9 @@ Per-chunk WAVs and the concatenated WAV are removed by the caller in a
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
+import math
 import os
 import shutil
 import subprocess
@@ -35,7 +38,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 import torch
-from mutagen.id3 import APIC, ID3
+from mutagen.id3 import APIC, CHAP, CTOC, ID3, TIT2, CTOCFlags
 from mutagen.mp3 import MP3
 
 from app.config import Settings
@@ -115,24 +118,18 @@ def wav_duration_secs(path: Path) -> float:
     return float(info.duration)
 
 
-def embed_cover(mp3_path: Path, cover_jpg_bytes: bytes) -> None:
-    """Embed ``cover_jpg_bytes`` into the MP3 as an ID3v2.3 front-cover (APIC) frame, so
-    players that read only embedded art (Pocket Casts) show per-episode artwork. Writes
-    ID3v2.3 with a latin-1 description -- the most broadly supported tag version, since v2.4
-    APIC is read inconsistently by podcast clients. Replaces any existing APIC so a reprocess
-    doesn't stack covers. Tags a temp copy and atomically replaces the original, so an
-    interrupted tag write can't corrupt the episode."""
+def _retag_atomic(mp3_path: Path, tmp_prefix: str, mutate) -> None:
+    """Apply ``mutate(tags)`` to a temp copy and atomically replace the original,
+    so an interrupted write can't corrupt the episode. ID3v2.3: podcast clients
+    read v2.4 frames inconsistently."""
 
-    tmp = mp3_path.with_name(f".cover-{mp3_path.name}")
+    tmp = mp3_path.with_name(f".{tmp_prefix}-{mp3_path.name}")
     try:
         shutil.copyfile(mp3_path, tmp)
         tagged = MP3(tmp, ID3=ID3)
         if tagged.tags is None:
             tagged.add_tags()
-        tagged.tags.delall("APIC")
-        tagged.tags.add(
-            APIC(encoding=0, mime="image/jpeg", type=3, desc="Cover", data=cover_jpg_bytes)
-        )
+        mutate(tagged.tags)
         tagged.save(v2_version=3)
         os.replace(tmp, mp3_path)
     finally:
@@ -140,6 +137,59 @@ def embed_cover(mp3_path: Path, cover_jpg_bytes: bytes) -> None:
         # error can't mask the real failure (the pipeline logs that one).
         with contextlib.suppress(OSError):
             tmp.unlink()
+
+
+def embed_cover(mp3_path: Path, cover_jpg_bytes: bytes) -> None:
+    """Embed the episode cover as an ID3v2.3 front-cover (APIC) frame with a
+    latin-1 description, so players that read only embedded art (Pocket Casts)
+    show per-episode artwork. Replaces any existing APIC so a reprocess doesn't
+    stack covers."""
+
+    def _mutate(tags) -> None:
+        tags.delall("APIC")
+        tags.add(APIC(encoding=0, mime="image/jpeg", type=3, desc="Cover", data=cover_jpg_bytes))
+
+    _retag_atomic(mp3_path, "cover", _mutate)
+
+
+def embed_chapters(
+    mp3_path: Path,
+    chapter_starts: list[tuple[float, str]],
+    total_duration_secs: float,
+) -> None:
+    """Embed chapters as ID3 CHAP + CTOC frames (same v2.3 tagging as the
+    cover). Clients like Castro read only the embedded frames, so the feed's
+    ``podcast:chapters`` JSON alone is not enough. Replaces any existing
+    chapter frames so a reprocess doesn't stack them."""
+
+    def _mutate(tags) -> None:
+        tags.delall("CHAP")
+        tags.delall("CTOC")
+        element_ids = [f"chp{i}" for i in range(len(chapter_starts))]
+        for i, (start_secs, title) in enumerate(chapter_starts):
+            end_secs = (
+                chapter_starts[i + 1][0]
+                if i + 1 < len(chapter_starts)
+                else total_duration_secs
+            )
+            tags.add(
+                CHAP(
+                    element_id=element_ids[i],
+                    start_time=int(start_secs * 1000),
+                    end_time=int(end_secs * 1000),
+                    sub_frames=[TIT2(encoding=3, text=[title])],
+                )
+            )
+        tags.add(
+            CTOC(
+                element_id="toc",
+                flags=CTOCFlags.TOP_LEVEL | CTOCFlags.ORDERED,
+                child_element_ids=element_ids,
+                sub_frames=[TIT2(encoding=3, text=["Chapters"])],
+            )
+        )
+
+    _retag_atomic(mp3_path, "chap", _mutate)
 
 
 # --- Stage 1: silence trim --------------------------------------------------
@@ -352,20 +402,23 @@ def _save_wav(path: Path, waveform: torch.Tensor, sample_rate: int) -> None:
 # --- Stage 4 + 5: normalize + MP3 encode ------------------------------------
 
 
-_NORMALIZE_FILTERS = (
+_PRE_LOUDNORM_FILTERS = (
     "agate=threshold=-25dB:ratio=1.4:attack=10:release=250",
     "afftdn=nf=-70",
     "acompressor=threshold=-20dB:ratio=2:attack=80:release=200:makeup=1dB",
-    # loudnorm targets get filled in from settings at call time so operators
-    # can tune the LUFS / true-peak / LRA values via env without a rebuild.
-    #
-    # Note: ``linear=true`` is *not* set. The flag only takes effect when the
-    # five measured_* params from a first-pass measurement are also supplied;
-    # without them, ffmpeg silently uses dynamic single-pass loudnorm anyway,
-    # so claiming ``linear=true`` would lie about what the filter is doing.
-    # A two-pass implementation is a follow-up; for now we accept that the
-    # output level rides program material around LOUDNORM_TARGET_LUFS.
-    "loudnorm=I={lufs}:TP={tp}:LRA={lra}",
+)
+# Loudness targets get filled in from settings at call time so operators can
+# tune the LUFS / true-peak / LRA values via env without a rebuild.
+# Single-pass (dynamic) form: the fallback when the measurement pass fails.
+# Dynamic loudnorm rides program material and undershoots on peaky input, which
+# is why the measured two-pass form below is the primary path.
+_LOUDNORM_DYNAMIC = "loudnorm=I={lufs}:TP={tp}:LRA={lra}"
+# Two-pass form: measured constant gain, then EQ, then a limiter last.
+# loudnorm's linear mode lands 2-4 LU under target on peaky TTS speech (the
+# true-peak ceiling clamps its gain), and the EQ boosts peaks after it.
+_LOUDNORM_GAIN = "volume={gain_db:.2f}dB"
+_LOUDNORM_LIMITER = "alimiter=limit={limit:.6f}:attack=2:release=25:level=false"
+_POST_LOUDNORM_FILTERS = (
     "equalizer=f=150:t=q:w=2:g=1",
     "equalizer=f=250:t=q:w=2:g=-3",
     "equalizer=f=3000:t=q:w=2:g=2",
@@ -373,6 +426,68 @@ _NORMALIZE_FILTERS = (
     "equalizer=f=9000:t=q:w=2:g=-2",
     "highpass=f=63",
 )
+
+
+def _measure_loudness(input_wav: Path, settings: Settings) -> dict[str, float] | None:
+    """First loudnorm pass: measure the input as the loudnorm filter will see
+    it (after the gate/denoise/compressor stages) and return the measured_*
+    values for the linear second pass. Returns None on any failure -- the
+    caller falls back to single-pass, so this can never fail an episode."""
+
+    loudnorm = _LOUDNORM_DYNAMIC.format(
+        lufs=settings.LOUDNORM_TARGET_LUFS,
+        tp=settings.LOUDNORM_TRUE_PEAK_DB,
+        lra=settings.LOUDNORM_LRA,
+    )
+    filters = ",".join([*_PRE_LOUDNORM_FILTERS, loudnorm + ":print_format=json"])
+    cmd = [
+        "ffmpeg",
+        "-i",
+        str(input_wav),
+        "-af",
+        filters,
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        completed = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    except OSError as exc:
+        logger.warning(
+            "loudnorm measurement pass could not run; falling back to single-pass",
+            extra={"event": "audio_loudnorm_measure_failed", "error": str(exc)},
+        )
+        return None
+    if completed.returncode != 0:
+        logger.warning(
+            "loudnorm measurement pass failed; falling back to single-pass",
+            extra={"event": "audio_loudnorm_measure_failed", "code": completed.returncode},
+        )
+        return None
+    start, end = completed.stderr.rfind("{"), completed.stderr.rfind("}")
+    try:
+        stats = json.loads(completed.stderr[start : end + 1])
+        measured = {
+            "measured_i": float(stats["input_i"]),
+            "measured_tp": float(stats["input_tp"]),
+            "measured_lra": float(stats["input_lra"]),
+            "measured_thresh": float(stats["input_thresh"]),
+            "offset": float(stats["target_offset"]),
+        }
+    except (ValueError, KeyError, TypeError):
+        logger.warning(
+            "loudnorm measurement output unparseable; falling back to single-pass",
+            extra={"event": "audio_loudnorm_measure_failed", "code": 0},
+        )
+        return None
+    # A fully silent input measures -inf; linear mode can't use that.
+    if not all(math.isfinite(v) for v in measured.values()):
+        logger.warning(
+            "loudnorm measurement non-finite; falling back to single-pass",
+            extra={"event": "audio_loudnorm_measure_failed", "code": 0},
+        )
+        return None
+    return measured
 
 
 def normalize_and_encode(
@@ -387,14 +502,27 @@ def normalize_and_encode(
     """
 
     output_mp3.parent.mkdir(parents=True, exist_ok=True)
-    filters = ",".join(
-        f.format(
-            lufs=settings.LOUDNORM_TARGET_LUFS,
-            tp=settings.LOUDNORM_TRUE_PEAK_DB,
-            lra=settings.LOUDNORM_LRA,
-        )
-        for f in _NORMALIZE_FILTERS
-    )
+    measured = _measure_loudness(input_wav, settings)
+    if measured:
+        gain_db = settings.LOUDNORM_TARGET_LUFS - measured["measured_i"] + measured["offset"]
+        stages = [
+            *_PRE_LOUDNORM_FILTERS,
+            _LOUDNORM_GAIN.format(gain_db=gain_db),
+            *_POST_LOUDNORM_FILTERS,
+            _LOUDNORM_LIMITER.format(limit=10 ** (settings.LOUDNORM_TRUE_PEAK_DB / 20)),
+        ]
+    else:
+        gain_db = None
+        stages = [
+            *_PRE_LOUDNORM_FILTERS,
+            _LOUDNORM_DYNAMIC.format(
+                lufs=settings.LOUDNORM_TARGET_LUFS,
+                tp=settings.LOUDNORM_TRUE_PEAK_DB,
+                lra=settings.LOUDNORM_LRA,
+            ),
+            *_POST_LOUDNORM_FILTERS,
+        ]
+    filters = ",".join(stages)
 
     cmd = [
         "ffmpeg",
@@ -422,6 +550,8 @@ def normalize_and_encode(
             "event": "audio_encode_start",
             "input": str(input_wav),
             "output": str(output_mp3),
+            "loudnorm_mode": "two_pass_gain" if measured else "single_pass_dynamic",
+            "loudnorm_gain_db": round(gain_db, 2) if gain_db is not None else None,
             "mp3_bitrate": settings.MP3_BITRATE,
             "mp3_sample_rate": settings.MP3_SAMPLE_RATE,
             "mp3_channels": settings.MP3_CHANNELS,

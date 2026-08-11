@@ -78,6 +78,7 @@ async def test_generate_chunk_sends_expected_payload(
         "top_k": 1000,
         "max_chars": 300,
         "seed": 1234,
+        "language": "en",
     }
     # No transcript field in the response => None on the result.
     assert result.transcript is None
@@ -220,6 +221,8 @@ async def test_generate_chunk_network_error_classified_as_provider_error(
         pytest.param(lambda s: tts.generate_chunk("hi", "ep", 0, s), id="generate_chunk"),
         pytest.param(lambda s: tts.reload(s), id="reload"),
         pytest.param(lambda s: tts.select_voice(s, 1), id="select_voice"),
+        pytest.param(lambda s: tts.select_model(s, "chatterbox"), id="select_model"),
+        pytest.param(lambda s: tts.list_models(s), id="list_models"),
     ],
 )
 async def test_server_disconnect_classified_as_provider_error(
@@ -421,3 +424,49 @@ async def test_retry_exhausts_then_raises_provider_error(
     with pytest.raises(tts.TTSProviderError):
         await tts.generate_chunk_with_retry("hi", "ep", 0, get_settings())
     assert attempts["n"] == 3
+
+
+# --- model/language switching (section 5) -----------------------------------
+
+
+async def test_generate_payload_carries_language(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport, captured = _capture_transport(response=_ok_generate())
+    _patch_async_client(monkeypatch, transport)
+    await tts.generate_chunk("hello", "ep1", 0, get_settings())
+    body = json.loads(captured["request"].content)
+    assert body["language"] == get_settings().TTS_LANGUAGE
+
+
+async def test_select_model_posts_model_name(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ok = httpx.Response(
+        200,
+        content=json.dumps({"ok": True, "model": "chatterbox-multilingual"}).encode(),
+        headers={"content-type": "application/json"},
+    )
+    transport, captured = _capture_transport(response=ok)
+    _patch_async_client(monkeypatch, transport)
+    await tts.select_model(get_settings(), "chatterbox-multilingual")
+    request = captured["request"]
+    assert request.url.path == "/select-model"
+    assert json.loads(request.content) == {"model": "chatterbox-multilingual"}
+
+
+async def test_list_models_gets_wrapper_models(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ok = httpx.Response(
+        200,
+        content=json.dumps(
+            {"active": "chatterbox", "models": [{"name": "chatterbox", "languages": ["en"]}]}
+        ).encode(),
+        headers={"content-type": "application/json"},
+    )
+    transport, captured = _capture_transport(response=ok)
+    _patch_async_client(monkeypatch, transport)
+    body = await tts.list_models(get_settings())
+    assert captured["request"].url.path == "/models"
+    assert body["active"] == "chatterbox"

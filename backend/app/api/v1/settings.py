@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import operator
+import re
 import sqlite3
 from typing import Annotated, Any, Literal, get_args, get_origin
 
@@ -19,6 +20,7 @@ from pydantic import BaseModel, ConfigDict
 from app.api.deps import get_conn
 from app.config import RUNTIME_SETTING_BOUNDS, Settings, get_settings
 from app.services import feed, feed_auth, runtime_settings, settings_store, slug
+from app.services.ocr import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES
 
 router = APIRouter(tags=["settings"])
 
@@ -51,6 +53,23 @@ async def get_settings_overrides(
 ) -> SettingsResponse:
     stored = runtime_settings.get_all(conn)
     return _masked_response(stored, settings, _effective_feed_key(conn, settings))
+
+
+class OcrLanguagesResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    languages: list[str]
+    default: str
+
+
+@router.get(
+    "/settings/ocr/languages",
+    response_model=OcrLanguagesResponse,
+)
+async def get_ocr_languages() -> OcrLanguagesResponse:
+    """Languages the shipped OCR model packs cover; drives the Settings dropdown."""
+
+    return OcrLanguagesResponse(languages=list(SUPPORTED_LANGUAGES), default=DEFAULT_LANGUAGE)
 
 
 @router.put(
@@ -89,20 +108,22 @@ async def put_settings_overrides(
     # can't partially apply -- and an invalid enum (e.g. EXTRACTION_ENGINE) is
     # rejected here instead of being stored and crashing/mis-routing at overlay time.
     for key, value in payload.items():
-        if key in runtime_settings.MASKED_KEYS and value in (runtime_settings.MASK_SENTINEL, ""):
-            continue  # sentinel = unchanged; "" = clear (handled in the apply loop)
+        # Re-saving the form sends the mask sentinel back for an unchanged secret,
+        # and "" for any key means clear -- neither is a value to validate.
+        if key in runtime_settings.MASKED_KEYS and value == runtime_settings.MASK_SENTINEL:
+            continue
+        if value == "":
+            continue
         _validate_value(key, value, settings)
 
     for key, value in payload.items():
-        if key in runtime_settings.MASKED_KEYS:
-            # Re-saving the form sends back the mask sentinel for an
-            # unchanged secret -- skip it so the stored value survives.
-            # An explicit empty string clears the override (revert to env).
-            if value == runtime_settings.MASK_SENTINEL:
-                continue
-            if value == "":
-                runtime_settings.delete(conn, key)
-                continue
+        if key in runtime_settings.MASKED_KEYS and value == runtime_settings.MASK_SENTINEL:
+            continue  # unchanged secret: keep what is stored
+        if value == "":
+            # Clearing a field drops the override so the key reverts to its env
+            # value. Storing "" instead would pin an empty FEED_TITLE/language.
+            runtime_settings.delete(conn, key)
+            continue
         runtime_settings.set_value(conn, key, value)
 
     stored = runtime_settings.get_all(conn)
@@ -171,6 +192,17 @@ def _defaults_map(settings: Settings) -> dict[str, Any]:
     return defaults
 
 
+# Shape checks for free-text keys whose value is handed to something else later
+# (the TTS wrapper, a publisher's signup form), so a hand-crafted PUT cannot store
+# one that only fails far from here. The wrapper stays the authority on model names.
+_STRING_SHAPES: dict[str, re.Pattern[str]] = {
+    "TTS_MODEL": re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$"),
+    "TTS_LANGUAGE": re.compile(r"^[a-z]{2,3}$"),
+    # A typo here would be typed into publishers' signup forms, so check the shape.
+    "REGISTRATION_EMAIL": re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$"),
+}
+
+
 def _validate_value(key: str, value: Any, settings: Settings) -> None:
     """Reject a value that doesn't fit its ``Settings`` field, with a 400.
 
@@ -182,6 +214,15 @@ def _validate_value(key: str, value: Any, settings: Settings) -> None:
     CHATTERBOX_TEMPERATURE, to fail far away on every TTS call.
     """
 
+    shape = _STRING_SHAPES.get(key)
+    if shape is not None:
+        # "" never reaches here: the caller treats it as a clear.
+        if not shape.fullmatch(str(value)):
+            raise HTTPException(
+                status_code=400,
+                detail=f"{key} must match {shape.pattern} (or be empty), got {value!r}",
+            )
+        return
     field = settings.__class__.model_fields.get(key)
     if field is None:
         return

@@ -13,8 +13,9 @@ Substitution mechanics:
   match next to whitespace (plain ``\\b`` refuses ``+`` next to space).
 - Case-sensitive (operators add multiple casings when they want every form
   corrected the same way).
-- Longest-key-first: a single regex with all keys joined by ``|`` and ordered
-  by descending length so ``kubectl`` is replaced before ``kube``.
+- Longest-key-first: one compiled regex of all keys joined by ``|`` (two
+  alternation groups, one per boundary policy), ordered by descending length
+  so ``kubectl`` is replaced before ``kube``.
 - Keys are ``re.escape``-d before compile so operators can write ``C++`` or
   ``node.js`` without learning regex.
 """
@@ -177,6 +178,24 @@ def _validate_value(key: str, value: Any) -> list[ValidationFailure]:
     return out
 
 
+def is_acronym_key(key: str) -> bool:
+    """All-caps alphanumeric keys of 2+ chars (AI, PR, CPU, 3D). These match
+    across hyphens; everything else keeps the strict hyphen boundary."""
+
+    return len(key) >= 2 and key.isalnum() and key.isupper()
+
+
+def boundary_wrap(inner: str, *, acronym: bool) -> str:
+    """Wrap regex ``inner`` in the word boundaries for its key shape.
+
+    Single source of the policy: ``apply`` and the pipeline's reference filter
+    both compile from here, so they cannot disagree."""
+
+    if acronym:
+        return rf"(?<!\w){inner}(?!\w)"
+    return rf"(?<![\w-]){inner}(?![\w-])"
+
+
 def apply(text: str, dictionary: dict[str, str], *, case_sensitive: bool = True) -> str:
     """Replace every whole-word match in ``text`` per the dictionary.
 
@@ -193,13 +212,21 @@ def apply(text: str, dictionary: dict[str, str], *, case_sensitive: bool = True)
     if not dictionary:
         return text
     sorted_keys = sorted(dictionary, key=len, reverse=True)
-    # Use lookarounds that treat letters, digits, underscores AND hyphens as
-    # word characters so:
-    # - ``kubectl`` doesn't match inside ``kubectl-helper`` (hyphen counts).
-    # - Keys ending in non-word symbols like ``C++`` still match correctly
-    #   (``\b`` would refuse to match ``+`` next to whitespace).
+    # Two boundary policies by key shape. Default: hyphens count as word
+    # characters, so ``kubectl`` misses ``kubectl-helper`` and ``C++`` still
+    # matches next to whitespace. Acronyms: hyphens don't, so ``AI`` hits
+    # ``anti-AI`` and ``AI-generated``.
+    strict = [k for k in sorted_keys if not is_acronym_key(k)]
+    acronym = [k for k in sorted_keys if is_acronym_key(k)]
+    parts = []
+    if strict:
+        alternation = "(?:" + "|".join(re.escape(k) for k in strict) + ")"
+        parts.append(boundary_wrap(alternation, acronym=False))
+    if acronym:
+        alternation = "(?:" + "|".join(re.escape(k) for k in acronym) + ")"
+        parts.append(boundary_wrap(alternation, acronym=True))
     pattern = re.compile(
-        r"(?<![\w-])(?:" + "|".join(re.escape(k) for k in sorted_keys) + r")(?![\w-])",
+        "|".join(parts),
         0 if case_sensitive else re.IGNORECASE,
     )
     if case_sensitive:

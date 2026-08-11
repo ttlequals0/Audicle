@@ -104,10 +104,14 @@ def test_engine_attributes_and_lazy_construction() -> None:
     assert engine.reference_loaded is False
 
 
-def test_factory_returns_chatterbox_engine() -> None:
-    from main import _default_engine_factory
+def test_registry_factories_return_engine_classes() -> None:
+    from chatterbox_engine import ChatterboxMultilingualEngine
+    from main import ENGINE_REGISTRY
 
-    assert isinstance(_default_engine_factory(), ChatterboxEngine)
+    assert isinstance(ENGINE_REGISTRY["chatterbox"](), ChatterboxEngine)
+    assert isinstance(
+        ENGINE_REGISTRY["chatterbox-multilingual"](), ChatterboxMultilingualEngine
+    )
 
 
 def test_generation_params_defaults() -> None:

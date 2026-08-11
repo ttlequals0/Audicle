@@ -6,6 +6,308 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.53.1] - 2026-08-11
+
+### Changed
+
+- The pitch-drift gate now allows 2.0 semitones instead of 1.25. Production ran
+  the tighter bound and regenerated 26 of 108 chunks in a single job, 48 extra
+  generations, while the corpus sweep put p99 at 1.83 semitones. The gate still
+  catches the episode the bound was built for, which peaked at 1.35 above its
+  own running median.
+- `AUDIO_ANALYSIS_MAX_F0_SEMITONES` is tunable at runtime, in Settings under
+  Audio analysis, like every other threshold in that group. It was the one knob
+  that still needed a redeploy to change.
+
+### Fixed
+
+- The render sidecar logs JSON, so `extra={...}` fields reach the log
+  aggregator. Every structured field was being dropped: "registration gate
+  result" arrived without the `unlocked` flag it exists to report, which is why
+  diagnosing a wall meant driving a browser by hand instead of running one
+  query. Set `LOG_FORMAT=text` for readable local output. uvicorn's access lines
+  share the format.
+
+## [0.53.0] - 2026-08-11
+
+### Added
+
+- `REGISTRATION_EMAIL` answers the free "give us an email to keep reading"
+  walls. When a gated article would otherwise be lost, the render sidecar
+  fills the publisher's signup form with the configured address in its own
+  browser and re-reads the unlocked page. It runs only on a detected wall and
+  only after the ordinary bypasses came up short; blank means nothing is ever
+  submitted. The sidecar picks the form by shape, requiring an email field, no
+  password field, and registration wording, so a login, a comment box, or a
+  footer newsletter signup can never receive the address, and it submits once
+  per article however many times the render retries. Needs `RENDER_URL`.
+  Settable in Settings under Extraction or by env, validated for shape, and
+  logged per host when it fires.
+
+### Changed
+
+- Clearing a settings field now removes the override instead of being ignored,
+  so a key can be returned to its env value from the UI. Previously only
+  secrets could be cleared, and blanking anything else silently did nothing.
+- A render rescue is held to the same doubled floor as every other candidate
+  when the page is gated. The floor was read after the gate marker had already
+  been trimmed away, so it always came out as the ordinary floor, and a
+  render-rule host could publish a teaser between 500 and 1000 characters.
+- The render sidecar's `/render` endpoint accepts an optional `email`. Without
+  one its behavior is unchanged.
+
+## [0.52.6] - 2026-08-11
+
+### Fixed
+
+- The sign-up wall guard added in 0.52.5 only covered the first fetch, so the
+  walled article still shipped as a 37-second episode. The primary scrape was
+  correctly cut to 487 characters and rejected, then a bypass fetched the same
+  walled page and handed back the untrimmed 1202, whose signup form and author
+  bio carried it over the floor. Every candidate now gets the same treatment,
+  including the ones the render sidecar returns, and a page that is gated
+  anywhere in the cascade is judged against the gated bar.
+
+## [0.52.5] - 2026-08-11
+
+### Fixed
+
+- Articles behind a sign-up wall shipped as 40-second episodes. w42st.com
+  serves two paragraphs, then "Continue Reading This Story for FREE!", then a
+  signup form and the author's bio; of 1202 scraped characters only 487 were
+  article, and the furniture carried the total past the 500-character floor so
+  it published. Extraction now cuts the body at the gate, which both keeps the
+  signup text out of the narration and lets the length floor judge what was
+  really recovered. A gated page must also clear twice the floor to be
+  accepted, and when nothing gets past the wall the job fails naming it,
+  rather than publishing a stub that reads out the publisher's biography.
+  The rest of that article is not in the page HTML, so no browser or archive
+  hop can recover it; failing is the honest outcome.
+- Episodes announced their title twice. The intro read added in 0.51.0
+  prepends the headline, and the article body often opens with the same
+  headline (Substack renders title then subtitle), so cue 1 and cue 2 said the
+  same sentence. A leading line that just restates the title is now dropped
+  before the intro is added, comparing with punctuation and case normalized
+  because the metadata title and the body disagree on curly versus straight
+  apostrophes. Only a heading-shaped line is removed, so an opening paragraph
+  that happens to begin with the headline survives.
+
+## [0.52.4] - 2026-08-10
+
+### Added
+
+- A View menu on each Feed episode gathers Transcript, Chapters, and Cleaned
+  text in one place, replacing the separate Transcript and Cleaned text
+  buttons. Chapters had no way to read them from the interface at all. The
+  rows are real links, so middle-click and copy-address still work.
+- The episode list reports `has_chapters`, so the Feed offers the chapters
+  link only for episodes that have one, the same way it already gates the
+  cleaned-text link.
+
+## [0.52.3] - 2026-08-10
+
+### Fixed
+
+- The Redo menu was clipped by its own row. Recents rows and Feed cards use
+  `.card`, which sets `overflow: hidden`, so the menu was cut off at the row's
+  edge and appeared to open behind the next one. It now renders through a
+  portal with fixed coordinates taken from the button, which escapes both the
+  overflow and any stacking context, and it flips above the button near the
+  bottom of the viewport instead of running off screen.
+
+### Added
+
+- The Feed page's Reprocess button is now the same Redo menu, so chapters can
+  be regenerated from the episode list as well as from Recents.
+
+## [0.52.2] - 2026-08-10
+
+### Fixed
+
+- Chapter generation still returned nothing, and the reply preview added in
+  0.52.0 showed why: the model summarized the transcript and asked what to do
+  with it. The instructions were in the system prompt while the user turn
+  carried only the transcript, so the user turn had nothing to act on. The
+  instructions now lead the user message with the transcript after them, which
+  is how MinusPod sends it.
+
+## [0.52.1] - 2026-08-10
+
+### Fixed
+
+- Chapter regeneration failed on a configured server with "LLM base URL is not
+  configured". The endpoint read env-only settings, while the LLM connection
+  is normally stored as runtime settings in the DB. It now applies the same
+  overlay the worker applies per job.
+
+## [0.52.0] - 2026-08-10
+
+### Fixed
+
+- Chapter generation produced nothing on real episodes. The prompt asked the
+  model to return chunk indices against a numbered list, and the first
+  30-minute article came back with no parseable line at all. Following
+  MinusPod, the model now reads the narration as a timestamped transcript
+  (`[MM:SS] text`) and answers with `MM:SS Title` lines, so the timestamps
+  come from the text it is reading rather than an index it has to track.
+  Parsing tolerates the things models actually do: preamble sentences, list
+  numbering, bullets, `H:MM:SS`, minutes past 59, and quoted or
+  punctuated titles.
+- A chunk-to-duration desync failed the whole job at the chapters stage.
+  Chapters are supposed to be unable to fail an episode; the transcript stage
+  is what reports that desync loudly.
+
+### Added
+
+- `POST /api/v1/episodes/{id}/chapters` regenerates chapters for a finished
+  episode from its stored transcript. The transcript carries one cue per TTS
+  chunk, which is the same timeline the chapter stage uses, so this needs no
+  TTS and no re-encode: one LLM call and a few seconds. It rewrites the
+  chapters JSON and re-embeds the ID3 frames in place. A failed run keeps the
+  chapters the episode already had, and the episode GUID is left alone so
+  subscribers do not re-download unchanged audio.
+- Recents rows have a Redo menu with "Reprocess article" and, for finished
+  episodes, "Regenerate chapters". Previously only failed jobs offered a
+  reprocess button.
+
+### Changed
+
+- `startTime` in the chapters document is now whole seconds rather than a
+  float, matching the Podcasting 2.0 documents MinusPod publishes.
+
+## [0.51.2] - 2026-08-10
+
+### Fixed
+
+- A 429 from the LLM provider was treated as a permanent error, so the call
+  was dropped instead of retried and that chunk silently lost its
+  pronunciation pass. Rate limits now raise a retryable error and the backoff
+  waits for the interval the provider asks for (`Retry-After` header or a
+  `retry_after` field in the body), capped at 90 seconds, rather than the
+  exponential 1 to 4 seconds that could never outlast a 60-second window.
+  Latent before 0.51.0; the per-chunk pronunciation pass made it reachable by
+  turning two calls per episode into one per chunk.
+
+### Added
+
+- `LLM_PRONUNCIATION_CONCURRENCY` (default 4, runtime-tunable) caps concurrent
+  per-chunk pronunciation calls, so a provider with a tight rate limit can be
+  accommodated without editing code.
+- Chapter generation logs a preview of the reply when it parses no chapters.
+  The first real episode produced none and the logs recorded only the count,
+  which left nothing to diagnose.
+
+## [0.51.1] - 2026-08-10
+
+### Fixed
+
+- The Settings page rendered blank. The TTS language list was computed above
+  the `draft` state it reads, so as soon as the model list arrived the lookup
+  ran during render and hit the temporal dead zone. It only broke when the
+  wrapper answered: with the wrapper down the optional chain short-circuited
+  and the lookup never ran, which is why the page worked in a local test and
+  failed in production. The lookup now lives where the value is used.
+
+### Changed
+
+- Settings help text is shorter. The per-group notes had grown into
+  paragraphs; each is now one or two lines saying what the operator needs,
+  with the double-hyphen dashes removed throughout the interface.
+- The upload area lists image formats and no longer claims documents only,
+  matching the OCR support added in 0.51.0.
+- The open-mode banner, the reprocess and copy failure messages, and the
+  voice and chime hints are tightened to one line each.
+
+## [0.51.0] - 2026-08-10
+
+### Added
+
+- Chapters. Episodes 10 minutes and over get 3 to 7 chapters: one LLM call
+  over the numbered chunk list picks start points and short titles, and chunk
+  indices convert to exact timestamps from the measured per-chunk durations.
+  Emitted twice, because some clients (Castro) read only embedded frames:
+  as `podcast:chapters` JSON served at `/media/{id}.chapters.json`, and as
+  ID3 CHAP/CTOC frames in the MP3. The prompt is editable via
+  `/api/v1/prompt?kind=chapters`. `CHAPTERS_ENABLED` and
+  `CHAPTERS_MIN_DURATION_SECS` control it; a failed LLM call ships the
+  episode without chapters rather than failing the job.
+- Intro read. Each episode opens with "{title}. By {author}." The line is
+  prepended to the cleaned text before chunking, so it flows through
+  corrections, TTS, the transcript, and chapter timing like any other
+  sentence. `INTRO_READ_ENABLED` turns it off; the author clause is omitted
+  when extraction found none.
+- OCR for uploads. Scanned PDFs fall back to RapidOCR (CPU, ONNX models
+  bundled in the wheel) when pypdf finds less text than
+  `MIN_EXTRACTION_CHARS`; text PDFs never pay for it. Image uploads (`.png`,
+  `.jpg`, `.jpeg`, `.webp`, `.tiff`) are accepted and routed straight to OCR.
+  Pages rasterize via pypdfium2 (bundled pdfium, no system deps), each page
+  beats the job watchdog, and a sweep whose mean confidence is under
+  `OCR_MIN_CONFIDENCE` fails the job with a clear error instead of narrating
+  noise. All five `OCR_*` settings are tunable live; the language dropdown is
+  served by `GET /api/v1/settings/ocr/languages` and lists only languages the
+  shipped models cover (English, for now).
+- TTS model and language switching. The wrapper gains an engine registry
+  (`chatterbox`, `chatterbox-multilingual`), `POST /select-model`,
+  `GET /models`, and a per-request `language` field; a monolingual engine
+  rejects a language it cannot speak with a 422 instead of ignoring it. The
+  backend applies `TTS_MODEL` at the start of each job and sends
+  `TTS_LANGUAGE` on every generate call, so switching either from Settings
+  needs no restart. Both dropdowns lock while a job is running so an episode
+  never switches voice mid-way.
+- The pitch gate metrics (`median_f0_hz`, worst-window envelope values) are
+  logged with every `chunk_quality_bad` event for threshold tuning in Loki.
+
+### Fixed
+
+- Localized drones now fail the audio quality gate. The gate averaged
+  `rms_cv`/crest over the whole chunk, so a 5 s tone inside a 28 s chunk
+  was diluted below every threshold (heard at 0:53 in one production
+  episode; that exact window now trips). The three envelope metrics are also
+  computed over sliding 3 s windows at 50 percent overlap, and one bad
+  window fails the chunk. A 149-episode corpus sweep found zero false
+  positives at the existing thresholds.
+- Audible pitch wander inside an episode is now bounded. Each chunk's median
+  F0 (autocorrelation over voiced frames) is compared against the running
+  median of the episode's accepted chunks; a deviation over
+  `AUDIO_ANALYSIS_MAX_F0_SEMITONES` (1.25, set from the corpus sweep: p95 of
+  bucket deviations was 1.21 while the complaint episode peaked at 1.35)
+  regenerates the chunk on the existing regen budget. When every attempt
+  drifts, the take closest to the reference pitch is kept, not the last one.
+  The gate arms after `AUDIO_ANALYSIS_F0_WARMUP_CHUNKS` accepted chunks so a
+  bad first chunk cannot anchor the reference.
+- Episodes now land on `LOUDNORM_TARGET_LUFS` instead of 2 to 4 LU under it.
+  Single-pass dynamic loudnorm undershoots on peaky TTS speech because the
+  true-peak ceiling clamps its gain. The encode now runs a measurement pass
+  first, applies the measured constant gain, and caps peaks with a limiter at
+  the end of the filter chain (after the EQ boosts, which previously pushed
+  peaks past the ceiling). Measured on synthetic peaky speech: dynamic was
+  2.3 LU under target, the new chain 0.3 LU. Falls back to the old
+  single-pass behavior if the measurement pass fails.
+- Hyphenated acronym compounds are pronounced correctly. `anti-AI`, `pre-AI`,
+  `pro-AI`, `AI-ridden`, `AI-generated`, and `AI-critical` were skipped by
+  the corrections regex because its word boundary treated `-` as a word
+  character. All-caps alphanumeric keys of 2+ characters now match across
+  hyphens; `kubectl` still does not match inside `kubectl-helper`. No schema
+  change: the policy derives from the key's shape.
+- The transcript reads as English again. The served VTT carried TTS
+  respellings ("the major A-eye corporations"). Chunking now splits the
+  cleaned text and normalization runs per chunk afterward, so the transcript
+  and stored article text keep the original words while TTS receives the
+  respelled narration, 1:1 by construction. The per-chunk pronunciation call
+  sends only the reference terms present in that chunk, and chunks with no
+  matching terms skip the LLM call entirely, which makes the pass cheaper
+  than the old whole-document windows despite more calls.
+
+### Changed
+
+- `pypdf` 6.15.0, `fast-uri` 3.1.5, `react-router-dom` 7.18.2, `astral-sh/uv`
+  image 0.12.2, plus `npm audit` fixes for `brace-expansion` and `nanoid`.
+  Clears all four open Dependabot alerts.
+- Deploy note: the backend now sends `language` on every `/generate` call and
+  the wrapper rejects unknown fields, so the 0.51.0 app image requires the
+  0.51.0 wrapper image. Push both before redeploying, per the standard
+  release procedure.
+
 ## [0.50.1] - 2026-08-02
 
 ### Fixed

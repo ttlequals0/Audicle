@@ -27,6 +27,7 @@ def _episode(
     summary: str | None = None,
     revision: int = 1,
     updated_at: str | None = None,
+    chapters_json: str | None = None,
 ) -> Episode:
     return Episode(
         id=id,
@@ -43,6 +44,7 @@ def _episode(
         updated_at=updated_at or pub_date,
         summary=summary,
         revision=revision,
+        chapters_json=chapters_json,
     )
 
 
@@ -432,3 +434,43 @@ def test_parse_iso_returns_none_for_garbage(caplog: pytest.LogCaptureFixture) ->
     with caplog.at_level(logging.WARNING, logger="app.services.feed"):
         assert feed._parse_iso("not-a-date") is None
     assert any(getattr(rec, "event", "") == "feed_timestamp_parse_failed" for rec in caplog.records)
+
+
+# --- 3b: podcast:chapters per item ------------------------------------------
+
+
+def test_item_includes_podcast_chapters_when_present(env: Path) -> None:
+    ep = _episode(
+        audio_path="/data/media/abc123.mp3",
+        chapters_json='{"version": "1.2.0", "chapters": [{"startTime": 0, "title": "One"}]}',
+    )
+    xml = _render([ep], env=env).decode()
+    assert "podcast:chapters" in xml
+    assert "abc123.chapters.json" in xml
+    assert "application/json+chapters" in xml
+
+
+def test_item_omits_podcast_chapters_when_absent(env: Path) -> None:
+    ep = _episode(audio_path="/data/media/abc123.mp3")
+    xml = _render([ep], env=env).decode()
+    assert "podcast:chapters" not in xml
+
+
+def test_chapters_element_matches_the_podcasting2_spec(env: Path) -> None:
+    """url + type attributes, podcastindex namespace, inside the item."""
+
+    import xml.etree.ElementTree as ET
+
+    ep = _episode(
+        audio_path="/data/media/abc123.mp3",
+        chapters_json='{"version": "1.2.0", "chapters": [{"startTime": 0, "title": "One"}]}',
+    )
+    root = ET.fromstring(_render([ep], env=env))
+    ns = "https://podcastindex.org/namespace/1.0"
+    item = root.find("channel/item")
+    element = item.find(f"{{{ns}}}chapters")
+    assert element is not None
+    assert element.get("type") == "application/json+chapters"
+    assert element.get("url", "").endswith(".chapters.json") or ".chapters.json?" in element.get(
+        "url", ""
+    )

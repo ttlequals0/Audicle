@@ -43,6 +43,12 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "RETENTION_DAYS",
         # Per-file upload size ceiling in MB; tunable live for image-heavy PDFs.
         "UPLOAD_MAX_MB",
+        # OCR for scanned/image uploads (0.51.0).
+        "OCR_ENABLED",
+        "OCR_MAX_PAGES",
+        "OCR_DPI",
+        "OCR_MIN_CONFIDENCE",
+        "OCR_LANGUAGE",
         # Watchdog policy: the base + per-chunk budget size the absolute ceiling,
         # the stall window is what actually kills a job. Tunable live so long-form
         # documents and slower hardware get proportional synthesis time.
@@ -54,6 +60,8 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "WEBHOOK_URL",
         # Arc XP static body extractor toggle.
         "EXTRACTION_ARC_ENABLED",
+        # Address used to answer free registration walls; empty disables it.
+        "REGISTRATION_EMAIL",
         # Primary extraction engine (direct | firecrawl) + the direct fetch timeout,
         # tunable live so an operator can switch engines without an env edit + restart.
         "EXTRACTION_ENGINE",
@@ -63,6 +71,10 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "FIRECRAWL_URL",
         "FIRECRAWL_API_KEY",
         "TTS_URL",
+        # TTS model + narration language (0.51.0): model applied per job start,
+        # language rides every /generate call.
+        "TTS_MODEL",
+        "TTS_LANGUAGE",
         # FlareSolverr endpoint for the flaresolverr paywall strategy; operator-
         # tunable so they can point at their own solver without an env edit.
         "FLARESOLVERR_URL",
@@ -100,6 +112,7 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "AUDIO_ANALYSIS_MIN_RMS_CV",
         "AUDIO_ANALYSIS_MIN_CREST",
         "AUDIO_ANALYSIS_MAX_ZCR",
+        "AUDIO_ANALYSIS_MAX_F0_SEMITONES",
         "AUDIO_ANALYSIS_MAX_SILENT_FRACTION",
         "AUDIO_ANALYSIS_WORDS_PER_SEC",
         "AUDIO_ANALYSIS_DURATION_OVERHEAD_SECS",
@@ -136,6 +149,7 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "LLM_CLEANUP_WINDOW_CHARS",
         "LLM_TIMEOUT_SECONDS",
         "LLM_RETRY_COUNT",
+        "LLM_PRONUNCIATION_CONCURRENCY",
     }
 )
 

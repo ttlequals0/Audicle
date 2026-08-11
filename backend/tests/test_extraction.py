@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 from app.config import get_settings
-from app.services import extraction, flaresolverr
+from app.services import extraction, flaresolverr, render
 
 
 @pytest.fixture(autouse=True)
@@ -1051,7 +1051,9 @@ async def test_render_enrichment_replaces_with_longer_body(
     partial = extraction.ExtractionResult(markdown="short " * 10, metadata={})
     full = extraction.ExtractionResult(markdown="full " * 200, metadata={"title": "T"})
 
-    async def fake_fetch(url: str, _settings) -> extraction.ExtractionResult:
+    async def fake_fetch(
+        url: str, _settings, email: str | None = None
+    ) -> extraction.ExtractionResult:
         return full
 
     monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
@@ -1067,7 +1069,9 @@ async def test_render_enrichment_keeps_partial_when_render_is_shorter(
     settings = _render_settings(monkeypatch)
     partial = extraction.ExtractionResult(markdown="long " * 200, metadata={})
 
-    async def fake_fetch(url: str, _settings) -> extraction.ExtractionResult:
+    async def fake_fetch(
+        url: str, _settings, email: str | None = None
+    ) -> extraction.ExtractionResult:
         return extraction.ExtractionResult(markdown="short", metadata={})
 
     monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
@@ -1083,7 +1087,7 @@ async def test_render_enrichment_keeps_partial_on_none(
     settings = _render_settings(monkeypatch)
     partial = extraction.ExtractionResult(markdown="x " * 100, metadata={})
 
-    async def fake_fetch(url: str, _settings) -> None:
+    async def fake_fetch(url: str, _settings, email: str | None = None) -> None:
         return None
 
     monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
@@ -1099,7 +1103,7 @@ async def test_render_enrichment_noop_when_url_empty(
     settings = _render_settings(monkeypatch, url="")
     partial = extraction.ExtractionResult(markdown="x " * 100, metadata={})
 
-    async def boom(url: str, _settings):
+    async def boom(url: str, _settings, email: str | None = None):
         raise AssertionError("render.fetch must not run when RENDER_URL is empty")
 
     monkeypatch.setattr(extraction.render, "fetch", boom)
@@ -1115,7 +1119,7 @@ async def test_render_enrichment_noop_for_non_render_untruncated_host(
     settings = _render_settings(monkeypatch)
     partial = extraction.ExtractionResult(markdown="A complete article body.", metadata={})
 
-    async def boom(url: str, _settings):
+    async def boom(url: str, _settings, email: str | None = None):
         raise AssertionError("render.fetch must not run without a render rule or truncation")
 
     monkeypatch.setattr(extraction.render, "fetch", boom)
@@ -1131,7 +1135,9 @@ async def test_render_enrichment_triggers_on_truncation_without_rule(
     full = extraction.ExtractionResult(markdown="full " * 200, metadata={})
     calls: list[str] = []
 
-    async def fake_fetch(url: str, _settings) -> extraction.ExtractionResult:
+    async def fake_fetch(
+        url: str, _settings, email: str | None = None
+    ) -> extraction.ExtractionResult:
         calls.append(url)
         return full
 
@@ -1147,7 +1153,9 @@ async def test_render_rescue_returns_when_cascade_failed(
     settings = _render_settings(monkeypatch)
     full = extraction.ExtractionResult(markdown="full " * 200, metadata={})
 
-    async def fake_fetch(url: str, _settings) -> extraction.ExtractionResult:
+    async def fake_fetch(
+        url: str, _settings, email: str | None = None
+    ) -> extraction.ExtractionResult:
         return full
 
     monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
@@ -1160,7 +1168,7 @@ async def test_render_rescue_none_for_non_render_rule(
 ) -> None:
     settings = _render_settings(monkeypatch)
 
-    async def boom(url: str, _settings):
+    async def boom(url: str, _settings, email: str | None = None):
         raise AssertionError("render.fetch must not run without a render rule")
 
     monkeypatch.setattr(extraction.render, "fetch", boom)
@@ -1172,8 +1180,29 @@ async def test_render_rescue_none_when_below_floor(
 ) -> None:
     settings = _render_settings(monkeypatch)
 
-    async def fake_fetch(url: str, _settings) -> extraction.ExtractionResult:
+    async def fake_fetch(
+        url: str, _settings, email: str | None = None
+    ) -> extraction.ExtractionResult:
         return extraction.ExtractionResult(markdown="too short", metadata={})
+
+    monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
+    assert await extraction._render_rescue("https://www.inc.com/a", settings, _render_rule()) is None
+
+
+async def test_render_rescue_rejects_gated_body_below_doubled_floor(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A gated page owes twice the floor, so a 700-char teaser that stops at the
+    # signup prompt cannot pass as a rescue.
+    settings = _render_settings(monkeypatch)
+    teaser = extraction.ExtractionResult(
+        markdown="word " * 140 + "Continue reading this story for FREE!", metadata={}
+    )
+
+    async def fake_fetch(
+        url: str, _settings, email: str | None = None
+    ) -> extraction.ExtractionResult:
+        return teaser
 
     monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
     assert await extraction._render_rescue("https://www.inc.com/a", settings, _render_rule()) is None
@@ -1194,7 +1223,9 @@ async def test_extract_render_rescue_end_to_end(
     _patch_async_client(monkeypatch, transport)
     full = extraction.ExtractionResult(markdown="full " * 200, metadata={"title": "Inc"})
 
-    async def fake_fetch(url: str, _settings) -> extraction.ExtractionResult:
+    async def fake_fetch(
+        url: str, _settings, email: str | None = None
+    ) -> extraction.ExtractionResult:
         return full
 
     monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
@@ -1217,9 +1248,215 @@ async def test_extract_render_host_raises_when_everything_fails(
     )
     _patch_async_client(monkeypatch, transport)
 
-    async def fail_fetch(url: str, _settings) -> None:
+    async def fail_fetch(url: str, _settings, email: str | None = None) -> None:
         return None
 
     monkeypatch.setattr(extraction.render, "fetch", fail_fetch)
     with pytest.raises(extraction.ExtractionTooShortError):
         await extraction.extract("https://www.inc.com/a", settings)
+
+
+# --- registration walls (0.52.5) -------------------------------------------
+#
+# w42st.com serves two paragraphs then "Continue Reading This Story for FREE!"
+# followed by a signup form and the author's bio. The body cleared the 500-char
+# floor on chrome alone and shipped as a 40-second episode.
+
+_GATED_BODY = (
+    "Amazon-branded delivery workers are a daily sight in Hell's Kitchen, pushing "
+    "large blue carts along 9th Avenue and riding Prime-branded electric cargo bikes.\n\n"
+    "But despite the uniforms, carts, bikes, vans and packages bearing Amazon's name, "
+    "those workers are generally employed by independent delivery contractors rather "
+    "than Amazon itself.\n\n"
+    "Continue Reading This Story for FREE!\n\n"
+    "Sign me up for the newsletter\n\nTerms and Privacy\n\n"
+    "Success! Your account was created and you're signed in. Please visit My Account "
+    "to manage your account. Want more Hell's Kitchen stories like this in your Google "
+    "results? Add us as a Preferred Source on Google. Tagged: delivery. Phil O'Brien is "
+    "an entrepreneur and journalist who founded W42ST in 2014 and has lived in New York "
+    "since 2012, after building an international sports photography agency.\n"
+)
+
+
+def test_trim_at_gate_cuts_the_signup_boilerplate() -> None:
+    from app.services.extraction_types import ExtractionResult
+
+    result = ExtractionResult(markdown=_GATED_BODY, metadata={"title": "Amazon workers"})
+    trimmed = extraction.trim_at_gate(result)
+    assert "Continue Reading This Story" not in trimmed.markdown
+    assert "Sign me up for the newsletter" not in trimmed.markdown
+    assert "Phil O'Brien" not in trimmed.markdown
+    assert "independent delivery contractors" in trimmed.markdown
+
+
+def test_trim_at_gate_leaves_an_ungated_article_alone() -> None:
+    from app.services.extraction_types import ExtractionResult
+
+    body = "A real article. " * 200
+    result = ExtractionResult(markdown=body, metadata={"title": "fine"})
+    assert extraction.trim_at_gate(result).markdown == body
+
+
+def test_trim_at_gate_ignores_a_bare_read_more_link() -> None:
+    """"read more" is ordinary related-link chrome; only explicit gate wording counts,
+    because this decision now fails jobs."""
+
+    from app.services.extraction_types import ExtractionResult
+
+    body = "A real article. " * 200 + "\n\nRead more\n\nRelated stories"
+    result = ExtractionResult(markdown=body, metadata={"title": "fine"})
+    assert extraction.trim_at_gate(result).markdown == body
+
+
+async def test_gated_article_fails_instead_of_shipping_a_stub(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr: None
+) -> None:
+    """The real w42st shape: 1202 chars of which only 487 are article."""
+
+    # No archive hop: this test is about the gate decision, not the cascade.
+    monkeypatch.setenv("ARCHIVE_FALLBACK_ENABLED", "false")
+    get_settings.cache_clear()
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response(_GATED_BODY)))
+
+    with pytest.raises(extraction.ExtractionTooShortError) as exc:
+        await extraction.extract("https://w42st.com/post/amazon", get_settings())
+    assert "sign-up" in str(exc.value).lower() or "registration" in str(exc.value).lower()
+
+
+async def test_gated_article_over_the_bar_is_kept_without_the_boilerplate(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr: None
+) -> None:
+    """A gated page that still yielded a real article keeps it, minus the signup
+    furniture -- narrating "Success! Your account was created" is the bug."""
+
+    long_body = (
+        "Real reporting continues at length. " * 120
+        + "\n\nContinue Reading This Story for FREE!\n\nSign me up for the newsletter\n"
+    )
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response(long_body)))
+
+    result = await extraction.extract("https://w42st.com/post/amazon", get_settings())
+    assert "Real reporting continues" in result.markdown
+    assert "Continue Reading This Story" not in result.markdown
+    assert "Sign me up" not in result.markdown
+
+
+async def test_gated_page_returned_by_a_fallback_is_also_rejected(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: 0.52.5 trimmed only the primary. A bypass that fetched the very
+    same walled page handed back the untrimmed body, whose signup furniture carried
+    it over the floor, and a 37-second episode shipped."""
+
+    monkeypatch.setenv("ARCHIVE_FALLBACK_ENABLED", "false")
+    monkeypatch.setenv("FLARESOLVERR_URL", "http://solver.test:8191")
+    get_settings.cache_clear()
+
+    async def _same_walled_page(*_args, **_kwargs):
+        from app.services.extraction_types import ExtractionResult
+
+        return ExtractionResult(markdown=_GATED_BODY, metadata={"title": "Amazon workers"})
+
+    monkeypatch.setattr(flaresolverr, "fetch", _same_walled_page)
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response(_GATED_BODY)))
+
+    with pytest.raises(extraction.ExtractionTooShortError) as exc:
+        await extraction.extract("https://w42st.com/post/amazon", get_settings())
+    assert "sign-up" in str(exc.value).lower()
+
+
+async def test_registration_email_unlocks_a_gated_article(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr: None
+) -> None:
+    """With an address configured, the sidecar is asked to complete the signup and
+    the unlocked body is used."""
+
+    monkeypatch.setenv("ARCHIVE_FALLBACK_ENABLED", "false")
+    monkeypatch.setenv("RENDER_URL", "http://render.test:8000")
+    monkeypatch.setenv("REGISTRATION_EMAIL", "reader@example.test")
+    get_settings.cache_clear()
+
+    seen: dict = {}
+
+    async def _fake_render(url, settings, email=None):
+        seen["email"] = email
+        return extraction.ExtractionResult(
+            markdown="The full article continues at length. " * 80, metadata={"title": "ok"}
+        )
+
+    monkeypatch.setattr(render, "fetch", _fake_render)
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response(_GATED_BODY)))
+
+    result = await extraction.extract("https://w42st.com/post/amazon", get_settings())
+    assert seen["email"] == "reader@example.test"
+    assert "The full article continues" in result.markdown
+
+
+async def test_registration_needs_a_render_sidecar(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr: None
+) -> None:
+    """An address with no sidecar configured is a no-op, not a crash."""
+
+    monkeypatch.setenv("ARCHIVE_FALLBACK_ENABLED", "false")
+    monkeypatch.setenv("RENDER_URL", "")
+    monkeypatch.setenv("REGISTRATION_EMAIL", "reader@example.test")
+    get_settings.cache_clear()
+
+    async def _boom(url, settings, email=None):
+        raise AssertionError("render.fetch must not run without RENDER_URL")
+
+    monkeypatch.setattr(render, "fetch", _boom)
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response(_GATED_BODY)))
+
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://w42st.com/post/amazon", get_settings())
+
+
+async def test_registration_that_does_not_open_still_fails_the_job(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr: None, caplog
+) -> None:
+    """A wall that takes the address and stays shut must not publish the teaser."""
+
+    monkeypatch.setenv("ARCHIVE_FALLBACK_ENABLED", "false")
+    monkeypatch.setenv("RENDER_URL", "http://render.test:8000")
+    monkeypatch.setenv("REGISTRATION_EMAIL", "reader@example.test")
+    get_settings.cache_clear()
+
+    async def _still_gated(url, settings, email=None):
+        return extraction.ExtractionResult(
+            markdown="Two paragraphs only. " * 10 + "Continue reading this story for FREE!",
+            metadata={"title": "ok"},
+        )
+
+    monkeypatch.setattr(render, "fetch", _still_gated)
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response(_GATED_BODY)))
+
+    with caplog.at_level(logging.INFO), pytest.raises(
+        extraction.ExtractionTooShortError, match="sign-up wall"
+    ):
+        await extraction.extract("https://w42st.com/post/amazon", get_settings())
+    assert any(r.__dict__.get("event") == "registration_failed" for r in caplog.records)
+
+
+async def test_no_registration_email_never_sends_one(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr: None
+) -> None:
+    """Unset means the address is never typed into anyone's form."""
+
+    monkeypatch.setenv("ARCHIVE_FALLBACK_ENABLED", "false")
+    monkeypatch.setenv("RENDER_URL", "http://render.test:8000")
+    monkeypatch.setenv("REGISTRATION_EMAIL", "")
+    get_settings.cache_clear()
+
+    calls: list[str | None] = []
+
+    async def _fake_render(url, settings, email=None):
+        calls.append(email)
+        return None
+
+    monkeypatch.setattr(render, "fetch", _fake_render)
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response(_GATED_BODY)))
+
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://w42st.com/post/amazon", get_settings())
+    assert calls == []  # no render rule and no address: the sidecar is never called

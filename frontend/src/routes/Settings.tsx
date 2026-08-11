@@ -39,6 +39,7 @@ const GROUPS: Record<string, string[]> = {
     "LLM_MAX_TOKENS",
     "LLM_TIMEOUT_SECONDS",
     "LLM_RETRY_COUNT",
+    "LLM_PRONUNCIATION_CONCURRENCY",
   ],
   Feed: [
     "FEED_TITLE",
@@ -64,9 +65,12 @@ const GROUPS: Record<string, string[]> = {
     "EXTRACTION_DIRECT_TIMEOUT_SECONDS",
     "EXTRACTION_ARC_ENABLED",
     "ARCHIVE_FALLBACK_ENABLED",
+    "REGISTRATION_EMAIL",
   ],
   Webhooks: ["WEBHOOK_URL"],
   TTS: [
+    "TTS_MODEL",
+    "TTS_LANGUAGE",
     "TTS_CHUNK_TARGET_WORDS",
     "TTS_CHUNK_MAX_WORDS",
     "TTS_CHUNK_MAX_CHARS",
@@ -93,6 +97,7 @@ const GROUPS: Record<string, string[]> = {
     "AUDIO_ANALYSIS_MIN_RMS_CV",
     "AUDIO_ANALYSIS_MIN_CREST",
     "AUDIO_ANALYSIS_MAX_ZCR",
+    "AUDIO_ANALYSIS_MAX_F0_SEMITONES",
     "AUDIO_ANALYSIS_MAX_SILENT_FRACTION",
     "AUDIO_ANALYSIS_WORDS_PER_SEC",
     "AUDIO_ANALYSIS_DURATION_OVERHEAD_SECS",
@@ -103,7 +108,14 @@ const GROUPS: Record<string, string[]> = {
     "AUDIO_ANALYSIS_REGEN_PENALTY_STEP",
   ],
   Cleanup: ["MIN_CLEANUP_CHARS", "MAX_PROMPT_LENGTH_BYTES"],
-  Uploads: ["UPLOAD_MAX_MB"],
+  Uploads: [
+    "UPLOAD_MAX_MB",
+    "OCR_ENABLED",
+    "OCR_MAX_PAGES",
+    "OCR_DPI",
+    "OCR_MIN_CONFIDENCE",
+    "OCR_LANGUAGE",
+  ],
   Pipeline: [
     "JOB_STALL_SECONDS",
     "JOB_TIMEOUT_SECONDS",
@@ -118,40 +130,38 @@ const GROUPS: Record<string, string[]> = {
 const GROUP_NOTES: Record<string, string> = {
   Feed: "applies on the next podcast-app refresh",
   Connections:
-    "firecrawl key optional (blank for self-hosted). reader_api_key = jina key, " +
-    "free at jina.ai/reader -- the keyless endpoint is rate limited",
+    "firecrawl key optional when self-hosting. reader key is a jina key, " +
+    "free at jina.ai/reader; the keyless endpoint is rate limited",
+  Extraction:
+    "registration_email answers free \"email to keep reading\" walls: the sidecar " +
+    "types it into the signup form rather than lose the article. needs render_url. " +
+    "clearing it here falls back to the env value; the address does reach the publisher",
   Webhooks:
-    "POSTs episode.processed / episode.failed to this URL on every finished or " +
-    "failed job. blank disables. the test sends a sample to the saved URL -- save first",
-  TTS: "chunking: target/max words per chunk, max chars hard ceiling, silence between chunks in ms",
+    "posts episode.processed and episode.failed to this url. blank disables. " +
+    "test sends to the saved url, so save first",
+  TTS:
+    "model and language apply to the next episode, and lock while a job runs. " +
+    "the rest sizes chunks: words, char ceiling, silence between them",
   "TTS generation":
-    "chatterbox sampling knobs -- apply to the next job (auditions: immediately), " +
-    "no restart. temperature: lower = steadier pronunciation, flatter read. " +
-    "repetition_penalty: raise if words repeat or loop. top_p/top_k: sampling " +
-    "variety caps, lower = safer. seed: fixed = reproducible takes, 0 = random. " +
-    "max_chars: text per model call, larger = fewer splice points",
+    "chatterbox sampling, applied to the next job. lower temperature reads " +
+    "steadier. raise repetition_penalty if words loop. lower top_p/top_k is " +
+    "safer. seed 0 is random",
   Verification:
-    "regenerates chunks when audio drifts from the text. needs WHISPER_ENABLED " +
-    "on the wrapper. threshold 0-1, lower = stricter. max_divergent_run: a " +
-    "wrong-word stretch this long or longer regenerates (catches short garbage " +
-    "inside a long chunk). short_chunk_divergence: gross-mismatch bar for " +
-    "chunks under min_words",
+    "regenerates a chunk when the audio drifts from the text. needs " +
+    "WHISPER_ENABLED on the wrapper. lower threshold is stricter",
   "Audio analysis":
-    "signal-level checks on every chunk (drone, noise, dead air, bad pacing); " +
-    "a failing take regenerates with a fresh seed, a shorter text window, and a " +
-    "higher repetition penalty. max_regen is the shared regen budget for these " +
-    "checks AND the whisper checks above. the regen_* keys set how hard each " +
-    "retry escalates -- lower chars_factor or raise penalty_step when chunks " +
-    "keep failing after every attempt. the rest are detector thresholds -- " +
-    "leave them alone unless chunks are being flagged or missed consistently",
-  Uploads: "max direct-upload size in MB -- applies immediately, no restart",
+    "signal checks on every chunk: drone, noise, dead air, pacing. a failing " +
+    "take regenerates with a new seed and stiffer settings, up to max_regen " +
+    "(shared with the whisper checks). leave the thresholds alone unless " +
+    "chunks are being flagged wrongly",
+  Uploads:
+    "upload size cap, applied immediately. scanned pdfs and images are read " +
+    "with built-in ocr when there is no text layer. min_confidence rejects " +
+    "unreadable scans",
   Pipeline:
-    "a job is stopped when it goes stall_seconds without finishing a stage or a " +
-    "chunk -- not for simply taking a long time. raise stall_seconds if slow " +
-    "hardware makes single chunks take longer than the window. the other three " +
-    "set the ceiling a job can never pass even while progressing: " +
-    "max(timeout_seconds, chunks x per_chunk) x ceiling_multiplier. applies to " +
-    "the next job",
+    "a job is stopped after stall_seconds with no progress, not for running " +
+    "long. raise it if single chunks take longer on slow hardware. the other " +
+    "three cap total runtime",
 };
 
 // Secret fields: rendered as password inputs. The backend masks them on read
@@ -275,9 +285,30 @@ export default function SettingsRoute() {
     queryKey: ["source-fallbacks"],
     queryFn: () => api<SourceFallbacksConfig>("/api/v1/source-fallbacks"),
   });
+  const ocrLangsQ = useQuery({
+    queryKey: ["ocr-languages"],
+    queryFn: () =>
+      api<{ languages: string[]; default: string }>(
+        "/api/v1/settings/ocr/languages"
+      ),
+  });
+  const ttsModelsQ = useQuery({
+    queryKey: ["tts-models"],
+    queryFn: () =>
+      api<{ active: string | null; models: { name: string; languages: string[] }[] }>(
+        "/api/v1/tts/models"
+      ),
+  });
+  const activeJobsQ = useQuery({
+    queryKey: ["jobs-processing"],
+    queryFn: () => api<unknown[]>("/api/v1/jobs?status=processing&per_page=1"),
+    refetchInterval: 15000,
+  });
+  const jobRunning = (activeJobsQ.data?.length ?? 0) > 0;
   const healthQ = useHealthLive();
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
   const seeded = useRef(false);
   // The seeded values (override-or-default) so save() can send only the keys
   // the operator actually changed -- otherwise every default would be written
@@ -314,6 +345,14 @@ export default function SettingsRoute() {
       qc.invalidateQueries({ queryKey: ["settings"] });
       // A saved provider/base-URL change means the model list may differ.
       qc.invalidateQueries({ queryKey: ["llm-models"] });
+      setSaveErr(null);
+    },
+    onError: (e) => {
+      // Show the server's reason (a rejected value names the key and the shape
+      // it wants); a silent no-op reads as a successful save.
+      const body = e instanceof ApiError ? (e.detail as { error?: string; detail?: string }) : null;
+      setSavedMsg(null);
+      setSaveErr(body?.error || body?.detail || "save failed");
     },
   });
 
@@ -330,7 +369,15 @@ export default function SettingsRoute() {
         payload[key] = value;
         continue;
       }
-      if (value === "") continue;
+      if (value === "") {
+        // Blanking a text field drops the override, so the key reverts to its
+        // env value. Numbers and bools have no empty form, so an emptied one is
+        // a stray edit, not an intent.
+        const def = settingsQ.data?.defaults[key];
+        if (typeof def === "number" || typeof def === "boolean") continue;
+        payload[key] = "";
+        continue;
+      }
       if (value === "true") payload[key] = true;
       else if (value === "false") payload[key] = false;
       else if (!Number.isNaN(Number(value)) && value.trim() !== "")
@@ -368,6 +415,23 @@ export default function SettingsRoute() {
             )}
             {visible.map((key) => {
               const isBool = boolKeys.has(key);
+              // Fixed-choice settings render as a dropdown; keys with dynamic
+              // options or extra behavior (TTS model/language lock) keep their
+              // own branch below.
+              const selectOptions =
+                key === "LLM_PROVIDER"
+                  ? PROVIDER_OPTIONS
+                  : key === "EXTRACTION_ENGINE"
+                    ? EXTRACTION_ENGINE_OPTIONS
+                    : key === "OCR_LANGUAGE"
+                      ? (ocrLangsQ.data?.languages ?? ["en"])
+                      : null;
+              // Languages follow the model picked in the form, not just the
+              // loaded one.
+              const ttsLanguages =
+                ttsModelsQ.data?.models.find(
+                  (m) => m.name === (draft["TTS_MODEL"] || ttsModelsQ.data?.active)
+                )?.languages ?? ["en"];
               return (
                 <div
                   key={key}
@@ -376,7 +440,39 @@ export default function SettingsRoute() {
                   <label className={`label ${isBool ? "mb-0" : ""}`} htmlFor={key}>
                     {key}
                   </label>
-                  {key === "LLM_PROVIDER" || key === "EXTRACTION_ENGINE" ? (
+                  {key === "TTS_MODEL" || key === "TTS_LANGUAGE" ? (
+                    <select
+                      id={key}
+                      className="field"
+                      value={draft[key] ?? ""}
+                      disabled={jobRunning}
+                      title={
+                        jobRunning
+                          ? "locked while a job is running"
+                          : undefined
+                      }
+                      onChange={(e) =>
+                        setDraft((p) => ({ ...p, [key]: e.target.value }))
+                      }
+                    >
+                      {key === "TTS_MODEL" ? (
+                        <>
+                          <option value="">wrapper default</option>
+                          {(ttsModelsQ.data?.models ?? []).map((m) => (
+                            <option key={m.name} value={m.name}>
+                              {m.name}
+                            </option>
+                          ))}
+                        </>
+                      ) : (
+                        ttsLanguages.map((opt) => (
+                          <option key={opt} value={opt}>
+                            {opt}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  ) : selectOptions ? (
                     <select
                       id={key}
                       className="field"
@@ -385,10 +481,7 @@ export default function SettingsRoute() {
                         setDraft((p) => ({ ...p, [key]: e.target.value }))
                       }
                     >
-                      {(key === "EXTRACTION_ENGINE"
-                        ? EXTRACTION_ENGINE_OPTIONS
-                        : PROVIDER_OPTIONS
-                      ).map((opt) => (
+                      {selectOptions.map((opt) => (
                         <option key={opt} value={opt}>
                           {opt}
                         </option>
@@ -436,6 +529,7 @@ export default function SettingsRoute() {
         {savedMsg && (
           <span className="font-mono text-xs text-accent">{savedMsg}</span>
         )}
+        {saveErr && <span className="font-mono text-xs text-danger">{saveErr}</span>}
       </div>
 
       {promptQ.data !== undefined && (
@@ -1403,9 +1497,8 @@ function VoicesWidget() {
   return (
     <div className="space-y-3">
       <p className="mono-xs text-mute">
-        // a random filled slot narrates each episode unless you pick one at submit. at
-        least one slot must stay loaded. uploads take wav/mp3/m4a/flac/ogg -- converted to
-        wav on the server
+        // a random filled slot narrates each episode unless you pick one at submit.
+        at least one slot must stay loaded. uploads take wav, mp3, m4a, flac, or ogg
       </p>
       <div>
         <label className="label" htmlFor="voice-sample">
@@ -1524,12 +1617,12 @@ function ChimeWidget() {
       </div>
       {data?.present && !enabled && (
         <p className="mono-xs text-danger">
-          // a clip is uploaded but the chime is OFF -- enable it above or it will not play
+          // a clip is uploaded but the chime is off. enable it above to hear it
         </p>
       )}
       {!data?.present && enabled && (
         <p className="mono-xs text-mute">
-          // enabled, but no clip uploaded yet -- nothing plays until you upload one
+          // enabled, but no clip uploaded yet. nothing plays until you add one
         </p>
       )}
       {msg && <p className="mono-xs text-accent">{msg}</p>}
@@ -1627,7 +1720,7 @@ function AuthenticatedFeedsWidget() {
     onSuccess: (d) => {
       qc.setQueryData(["feed-auth"], d);
       qc.invalidateQueries({ queryKey: ["settings"] });
-      setMsg("key rotated -- re-subscribe every app with the new url");
+      setMsg("key rotated. re-subscribe every app with the new url");
     },
     onError: (e) => setMsg(`rotate failed${e instanceof ApiError ? ` (${e.status})` : ""}`),
   });
@@ -1638,7 +1731,7 @@ function AuthenticatedFeedsWidget() {
       setCopied(field);
       setTimeout(() => setCopied((c) => (c === field ? null : c)), 1500);
     } catch {
-      setMsg("copy failed -- select the field and copy manually");
+      setMsg("copy failed. select the field and copy manually");
     }
   };
 

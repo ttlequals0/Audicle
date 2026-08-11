@@ -58,6 +58,16 @@ class LLMRequestError(LLMError):
     """4xx response, malformed JSON, or any non-retryable failure."""
 
 
+class LLMRateLimitError(LLMProviderError):
+    """429 from the provider. Subclasses the retryable error on purpose: a rate
+    limit is transient, so callers retry it instead of dropping the call.
+    ``retry_after`` carries the provider's hint in seconds when it sends one."""
+
+    def __init__(self, message: str, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
 async def generate(
     system_prompt: str,
     user_message: str,
@@ -245,6 +255,32 @@ async def _call_anthropic(
     return "".join(texts)
 
 
+def _retry_after_seconds(response: httpx.Response) -> float | None:
+    """The provider's wait hint: the ``Retry-After`` header, else a
+    ``retry_after`` field in the JSON body. None when it sends neither."""
+
+    header = response.headers.get("Retry-After")
+    if header:
+        try:
+            return float(header)
+        except ValueError:
+            pass  # HTTP-date form; fall through to the body hint
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict):
+        return None
+    scopes = [body]
+    if isinstance(body.get("error"), dict):
+        scopes.append(body["error"])
+    for scope in scopes:
+        value = scope.get("retry_after")
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            return float(value)
+    return None
+
+
 async def _post(
     endpoint: str,
     headers: dict[str, str],
@@ -266,6 +302,11 @@ async def _post(
 
     if response.is_server_error:
         raise LLMProviderError(f"LLM returned {response.status_code}: {response.text[:200]}")
+    if response.status_code == 429:
+        raise LLMRateLimitError(
+            f"LLM rate limited the request: {response.text[:200]}",
+            _retry_after_seconds(response),
+        )
     if response.is_client_error:
         raise LLMRequestError(
             f"LLM rejected request ({response.status_code}): {response.text[:200]}"

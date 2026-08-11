@@ -6,7 +6,7 @@
 
 Self-hosted Podcasting 2.0 service that turns saved articles into a personal podcast feed.
 
-Paste a URL or upload a document (PDF, DOCX, Markdown, text, or HTML), wait a few minutes, and get an episode with cloned-voice narration, artwork, an LLM-written episode summary, and a WebVTT transcript. Subscribe in Pocket Casts, Overcast, or Apple Podcasts like any other show.
+Paste a URL or upload a document (PDF including scanned, DOCX, Markdown, text, HTML, or an image), wait a few minutes, and get an episode with cloned-voice narration, chapters, artwork, an LLM-written episode summary, and a WebVTT transcript. Subscribe in Pocket Casts, Overcast, or Apple Podcasts like any other show.
 
 *Your reading list, as a podcast you own.*
 
@@ -23,6 +23,8 @@ Paste a URL or upload a document (PDF, DOCX, Markdown, text, or HTML), wait a fe
 - [Voices](#voices)
 - [End-of-episode chime](#end-of-episode-chime)
 - [Episode artwork](#episode-artwork)
+- [Chapters](#chapters)
+- [Scanned documents and images](#scanned-documents-and-images)
 - [Pronunciation corrections](#pronunciation-corrections)
 - [Webhooks](#webhooks)
 - [Paywalled articles](#paywalled-articles)
@@ -181,6 +183,8 @@ Recommended clip: mono, 24 kHz, 8-12 seconds, ~250 kB to 1 MB. Upload limits are
 
 Output quality mostly tracks clip quality. Cleaning the source (noise reduction, leveling) helps more than any TTS knob.
 
+The TTS model and narration language are switchable in Settings under TTS: `chatterbox` (English, the default) or `chatterbox-multilingual`. Both apply on the next episode with no restart, and the dropdowns lock while a job is running so an episode never changes voice partway through.
+
 ## End-of-episode chime
 
 Settings has an "end chime" section: upload one short clip that plays at the end of every episode, so back-to-back episodes are easy to tell apart on autoplay. Turn it on with the toggle in that same section (`CHIME_ENABLED`); the clip is transcoded and loudness-matched to the narration. Upload WAV/MP3/M4A/FLAC/OGG, trimmed to about 15 seconds. Delete it to stop.
@@ -188,6 +192,14 @@ Settings has an "end chime" section: upload one short clip that plays at the end
 ## Episode artwork
 
 Each episode's cover goes into the feed (`itunes:image`) and is embedded in the MP3, because some players (Pocket Casts among them) read only embedded art and ignore the feed tag. Episodes without their own cover fall back to the show image. The embedded copy is a 1400px JPEG (`EMBED_ARTWORK_SIZE_PX`) to keep file size down; the feed still serves the full 3000px master.
+
+## Chapters
+
+Episodes 10 minutes and over get 3 to 7 chapters. One LLM call over the episode's chunk list picks the start points and short titles; timestamps come from the measured audio, so they line up with the transcript. Chapters ship two ways, because clients differ in what they read: a Podcasting 2.0 `podcast:chapters` JSON document in the feed, and ID3 chapter frames embedded in the MP3. `CHAPTERS_ENABLED` and `CHAPTERS_MIN_DURATION_SECS` control the feature; the prompt is editable via `/api/v1/prompt?kind=chapters`. Episodes also open with a spoken "{title}. By {author}." line (`INTRO_READ_ENABLED`).
+
+## Scanned documents and images
+
+A PDF with no usable text layer falls back to on-device OCR (RapidOCR on CPU; models ship in the image, nothing is downloaded). Direct image uploads (PNG, JPG, WEBP, TIFF) go straight to OCR. Text PDFs never pay the OCR cost, and a scan too blurry to read fails the job with a clear error instead of narrating noise. The `OCR_*` knobs (page cap, DPI, confidence floor, language) are in Settings under Uploads.
 
 ## Pronunciation corrections
 
@@ -279,6 +291,8 @@ A Medium-to-Freedium rule ships on by default; your own rules layer on top and w
 Some sites pad a one-paragraph teaser with "Recommended For You" and "Latest News" rails, so the scraped text clears the threshold on chrome alone. For a host with a rule, Audicle measures the page's JSON-LD `articleBody` length instead, so the lede is caught and routed to the bypass. The "test a URL" button runs your rules against one link and reports the character count and matched strategy -- the quickest way to confirm a cookie jar still works.
 
 Hard blocks are handled automatically, not as a per-host strategy. With `FLARESOLVERR_URL` set (env or live in Settings), Audicle re-fetches any host through your [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) -- a real browser from a residential IP -- and pulls the article from the solved HTML. It fires on a scrape that looks like a Cloudflare challenge ("Just a moment...", a Ray ID), or a near-empty scrape (a 403/IP block). A real article or a partial teaser never triggers a solve. Audicle doesn't bundle a solver. As a last resort it tries a Wayback capture before failing (`ARCHIVE_FALLBACK_ENABLED`, on by default).
+
+Some walls only want an email. A publisher shows two paragraphs, then "Continue Reading This Story for FREE!" and a signup form, and an anonymous reader never gets the rest. Audicle cuts the body at that prompt, so the signup furniture and the author bio are not narrated, and holds what remains to twice the usual floor; an article that does not survive that fails the job with a message saying so, instead of publishing a 40-second stub. Set `REGISTRATION_EMAIL` (Settings -> Extraction, or env) and the render sidecar answers the form with that address in its own browser, then re-reads the unlocked page. It needs `RENDER_URL`, runs only on a detected wall, and only after the ordinary bypasses came up short. The form has to ask for an email, ask for no password, and carry registration wording, so a login, a comment box, or a footer newsletter signup never receives the address. One submission per article, however many times the render retries. With no address set anywhere, nothing is ever submitted; clearing the field in Settings drops the override and falls back to whatever `REGISTRATION_EMAIL` holds in the environment, so blank both to switch it off. The address does reach the publisher, and a site that confirms by email before unlocking still will not open, so treat it as best effort.
 
 Some sites hide the second half behind an "EXPAND TO CONTINUE READING" click (inc.com and others behind DataDome). FlareSolverr clears the challenge but its headless browser can't click, so it returns only the front half. The bundled `audicle-render` sidecar loads the page in a headful Camoufox browser, clicks the expander until the body stops growing, and returns the full HTML. Give a host the `render` strategy in Site overrides (inc.com ships with it; the defaults live in `config.RENDER_BUILTIN_HOSTS`). Render runs after the cascade -- as enrichment when FlareSolverr got a partial, and as a rescue when the cascade was blocked entirely -- and a page that still looks truncated triggers it even without a rule. Set `RENDER_URL` (empty disables it); the sidecar is internal-only. DataDome is probabilistic, so a render that hits a CAPTCHA falls back to the front-half partial and logs it.
 

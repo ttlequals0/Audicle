@@ -1,7 +1,7 @@
 """Job processing pipeline orchestrator.
 
-The full chain: extract -> cleanup -> normalize -> summary -> chunk ->
-tts -> audio -> artwork -> transcript -> finalize. Finalize upserts the
+The full chain: extract -> cleanup -> summary -> chunk -> normalize ->
+tts -> audio -> artwork -> chapters -> transcript -> finalize. Finalize upserts the
 ``episodes`` row that the RSS feed and ``/media/{id}.{mp3,jpg,vtt}``
 handlers serve.
 
@@ -25,10 +25,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import shutil
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +58,9 @@ from app.services import (
     tts,
     voices,
     webhooks,
+)
+from app.services import (
+    chapters as chapters_service,
 )
 from app.services import prompt as prompt_service
 from app.services.atomic_write import write_bytes_atomic
@@ -391,12 +396,17 @@ async def _run_stages(
     *,
     on_chunk_count: Callable[[int], None] | None = None,
 ) -> None:
-    """Run the stages in order: extract -> cleanup -> normalize -> summary ->
-    chunk -> tts -> audio -> artwork -> transcript -> finalize (finalize
+    """Run the stages in order: extract -> cleanup -> summary -> chunk ->
+    normalize -> tts -> audio -> artwork -> transcript -> finalize (finalize
     inserts/updates the episodes row).
 
+    Chunking splits the *cleaned* text and normalization then runs per chunk
+    (2e), so the transcript can show the original text while TTS speaks the
+    respelled narration, 1:1 by construction.
+
     ``on_chunk_count`` is invoked with the chunk count right after chunking so
-    the caller can rescale the job timeout before the (longest) TTS stage runs."""
+    the caller can rescale the job timeout before the LLM-per-chunk normalize
+    and (longest) TTS stages run."""
 
     extraction_result = await _run_stage(
         "extract", lambda: _stage_extract(job, settings), job.id, settings
@@ -407,31 +417,35 @@ async def _run_stages(
         job.id,
         settings,
     )
-    normalized = await _run_stage(
-        "normalize",
-        lambda: _stage_normalize(job, cleaned, settings),
-        job.id,
-        settings,
-    )
+    intro = _intro_read_line(extraction_result.metadata, settings)
+    if intro:
+        cleaned = _strip_title_echo(cleaned, _coerce_str(extraction_result.metadata.get("title")))
+        cleaned = f"{intro}\n\n{cleaned}"
     summary = await _run_stage(
         "summary",
-        lambda: _stage_summary(normalized, settings),
+        lambda: _stage_summary(cleaned, settings),
         job.id,
         settings,
     )
     chunks = await _run_stage(
         "chunk",
-        lambda: _stage_chunk(normalized, settings),
+        lambda: _stage_chunk(cleaned, settings),
         job.id,
         settings,
     )
     # Rescale the job timeout now that the workload (chunk count) is known, before
-    # the TTS stage -- the longest stage -- begins.
+    # the per-chunk normalize and TTS stages -- the longest stages -- begin.
     if on_chunk_count is not None:
         on_chunk_count(len(chunks))
+    narrations = await _run_stage(
+        "normalize",
+        lambda: _stage_normalize(job, chunks, settings),
+        job.id,
+        settings,
+    )
     chunk_results = await _run_stage(
         "tts",
-        lambda: _stage_tts(job, chunks, settings),
+        lambda: _stage_tts(job, narrations, settings),
         job.id,
         settings,
     )
@@ -453,6 +467,18 @@ async def _run_stages(
     # which those players already display correctly, so embedding would just bloat the file.
     if artwork_result is not None:
         _embed_episode_cover(audio_result.mp3_path, artwork_result.embed_jpg_bytes)
+    chapters_json = await _run_stage(
+        "chapters",
+        lambda: _stage_chapters(
+            chunks,
+            chunk_durations,
+            audio_result.duration_secs,
+            audio_result.mp3_path,
+            settings,
+        ),
+        job.id,
+        settings,
+    )
     vtt = await _run_stage(
         "transcript",
         lambda: _stage_transcript(chunks, chunk_durations, settings),
@@ -468,7 +494,8 @@ async def _run_stages(
             artwork_result=artwork_result,
             vtt=vtt,
             summary=summary,
-            cleaned_text=normalized,
+            cleaned_text=cleaned,
+            chapters_json=chapters_json,
             settings=settings,
         ),
         job.id,
@@ -514,11 +541,67 @@ async def _run_stage(
         return result
 
 
+# Quote/dash variants that differ between the extraction metadata title and the
+# cleaned body (curly vs straight), which would otherwise defeat the comparison.
+_TITLE_PUNCT = str.maketrans({"\u2019": "'", "\u2018": "'", "\u201c": '"', "\u201d": '"',
+                              "\u2014": "-", "\u2013": "-"})
+
+
+def _title_key(text: str) -> str:
+    """Comparison form of a title: punctuation unified, case folded, spaces
+    collapsed, trailing punctuation dropped."""
+
+    flat = " ".join(text.translate(_TITLE_PUNCT).split()).casefold()
+    return flat.strip(" .:;,-!?\"'")
+
+
+def _strip_title_echo(cleaned: str, title: str | None) -> str:
+    """Drop a leading line that just repeats the article's own headline.
+
+    Substack and similar render headline + subtitle, so the body opens with the
+    same words the intro read is about to announce and the episode says the title
+    twice. Only a heading-shaped first line is dropped: a real opening paragraph
+    that happens to begin with the headline stays."""
+
+    if not title:
+        return cleaned
+    head, sep, rest = cleaned.partition("\n\n")
+    candidate = head.strip()
+    if not candidate or not rest.strip():
+        return cleaned
+    key, title_key = _title_key(candidate), _title_key(title)
+    if not title_key:
+        return cleaned
+    # A heading restates the title and stops; a paragraph keeps going.
+    if len(key) > len(title_key) * 1.3:
+        return cleaned
+    if key != title_key and SequenceMatcher(None, key, title_key).ratio() < 0.9:
+        return cleaned
+    return rest.strip() if sep else cleaned
+
+
+def _intro_read_line(metadata: dict[str, Any] | None, settings: Settings) -> str | None:
+    """The "{title}. By {author}." opener (3a), or None when disabled or the
+    extraction carried no title. The author clause is omitted when absent, and
+    a title already ending in terminal punctuation gets no extra period."""
+
+    if not settings.INTRO_READ_ENABLED:
+        return None
+    metadata = metadata or {}
+    title = str(metadata.get("title") or "").strip()
+    if not title:
+        return None
+    if title[-1] not in ".!?":
+        title += "."
+    author = str(metadata.get("author") or "").strip()
+    return f"{title} By {author}." if author else title
+
+
 async def _stage_extract(job: jobs.Job, settings: Settings) -> extraction.ExtractionResult:
     # Uploaded documents carry a synthetic ``upload://`` source: read and parse the
     # stored file instead of fetching a URL. Everything downstream is identical.
     if file_extraction.is_upload_source(job.url):
-        return await file_extraction.extract_file(job, settings)
+        return await file_extraction.extract_file(job, settings, beat=_beat)
     # Build the effective paywall-fallback registry (operator rules over built-ins, plus
     # a global-default catch-all) so extraction routes known paywall hosts through the
     # configured bypass. Shared with the /source-fallbacks/test endpoint.
@@ -1029,6 +1112,9 @@ _REGEN_SEED_BASE = 0x9E3779B1
 # bearing because CHATTERBOX_MAX_CHARS deliberately carries no pydantic Field
 # constraint (a stale env var must not fail startup).
 _MAX_CHARS_BOUNDS = RUNTIME_SETTING_BOUNDS["CHATTERBOX_MAX_CHARS"]
+# Wrapper's /generate text cap (GenerateRequest.text max_length). Not
+# CHATTERBOX_MAX_CHARS, which only sizes its internal inference pieces.
+_WRAPPER_TEXT_CAP = 4000
 _PENALTY_BOUNDS = RUNTIME_SETTING_BOUNDS["CHATTERBOX_REPETITION_PENALTY"]
 
 
@@ -1073,6 +1159,7 @@ async def _generate_chunk_quality_checked(
     index: int,
     settings: Settings,
     slot: int | None = None,
+    pitch_tracker: audio_analysis.PitchTracker | None = None,
 ) -> tts.GenerateResult:
     """Synthesize one chunk, then (if enabled) check the audio and regenerate it
     when it came back degraded.
@@ -1091,8 +1178,10 @@ async def _generate_chunk_quality_checked(
     as well as the seed (``_regen_params``). The wrapper overwrites the same
     ``{episode_id}_chunk_{index}.wav`` each call, so on persistent failure we
     keep the *last* attempt (earlier ones are gone from disk) and log a WARN --
-    a degraded chunk never fails the whole episode. Analysis errors are
-    swallowed: they must never become a new failure mode."""
+    except when the only defect was pitch, where the attempt closest to the
+    reference pitch is preserved in a sidecar and restored. A degraded chunk
+    never fails the whole episode. Analysis errors are swallowed: they must
+    never become a new failure mode."""
 
     word_count = len(text.split())
     audio_enabled = settings.AUDIO_ANALYSIS_ENABLED
@@ -1111,6 +1200,9 @@ async def _generate_chunk_quality_checked(
 
     result = None
     last_reasons: list[str] = []
+    # Closest-to-reference pitch attempt so far, kept in a sidecar because each
+    # regen overwrites the canonical WAV. Restored on exhaustion.
+    best_pitch: tuple[float, tts.GenerateResult] | None = None
     for attempt in range(max_extra + 1):  # 1 baseline + up to max_extra regenerations
         max_chars, penalty = _regen_params(settings, attempt)
         result = await tts.generate_chunk_with_retry(
@@ -1146,6 +1238,14 @@ async def _generate_chunk_quality_checked(
             if not verdict.ok:
                 reasons.extend(verdict.reasons)
 
+        # Pitch gate: this chunk's median F0 vs the running median of accepted
+        # chunks. Silent until warmup is done or when the chunk has no pitch.
+        pitch_dev: float | None = None
+        if pitch_tracker is not None and verdict is not None:
+            pitch_dev = pitch_tracker.deviation_semitones(verdict.metrics.median_f0_hz)
+            if pitch_dev is not None and pitch_dev > settings.AUDIO_ANALYSIS_MAX_F0_SEMITONES:
+                reasons.append("pitch_drift")
+
         asr_div: float | None = None
         asr_run: int | None = None
         if verify_enabled:
@@ -1170,6 +1270,10 @@ async def _generate_chunk_quality_checked(
 
         last_reasons = reasons
         if not reasons:
+            if pitch_tracker is not None and verdict is not None:
+                pitch_tracker.accept(verdict.metrics.median_f0_hz)
+            if best_pitch is not None:
+                Path(best_pitch[1].wav_path + ".pitchbest").unlink(missing_ok=True)
             if asr_div is not None:
                 logger.debug(
                     "Chunk ASR check passed",
@@ -1213,16 +1317,43 @@ async def _generate_chunk_quality_checked(
                 zero_crossing_rate=verdict.metrics.zero_crossing_rate,
                 silent_fraction=verdict.metrics.silent_fraction,
                 duration_ratio=verdict.metrics.duration_ratio,
+                worst_window_rms_cv=verdict.metrics.worst_window_rms_cv,
+                worst_window_crest=verdict.metrics.worst_window_crest,
+                worst_window_zcr=verdict.metrics.worst_window_zcr,
+                median_f0_hz=verdict.metrics.median_f0_hz,
+                pitch_deviation_semitones=pitch_dev,
             )
         logger.warning("Bad chunk audio detected", extra=log_extra)
 
+        # A pitch-only failure is still a usable take; keep the closest one.
+        # Best-effort: keeping the last attempt stays the fallback.
+        if (
+            reasons == ["pitch_drift"]
+            and pitch_dev is not None
+            and (best_pitch is None or pitch_dev < best_pitch[0])
+        ):
+            try:
+                shutil.copyfile(result.wav_path, result.wav_path + ".pitchbest")
+                best_pitch = (pitch_dev, result)
+            except OSError:
+                pass
+
+    kept = "last"
+    if best_pitch is not None:
+        try:
+            shutil.move(best_pitch[1].wav_path + ".pitchbest", best_pitch[1].wav_path)
+            result = best_pitch[1]
+            kept = "closest_pitch"
+        except OSError:
+            pass
     logger.warning(
-        "Chunk still degraded after max regenerations; keeping last attempt",
+        "Chunk still degraded after max regenerations",
         extra={
             "event": "chunk_quality_unresolved",
             "chunk_index": index,
             "attempts": max_extra + 1,
             "reasons": last_reasons,
+            "kept": kept,
         },
     )
     return result
@@ -1244,6 +1375,16 @@ async def _stage_tts(
     # ``target_slot`` is the slot selection settled on; every /generate below carries it,
     # so the wrapper re-selects inside the same GPU lock that guards inference and a
     # concurrent audition cannot slip between choosing the voice and using it.
+    # A failed model select keeps the wrapper's current model, not a dead job.
+    if settings.TTS_MODEL:
+        try:
+            await tts.select_model_with_retry(settings, settings.TTS_MODEL)
+        except tts.TTSError:
+            logger.warning(
+                "Model select failed; using the wrapper's current model",
+                extra={"event": "tts_select_model_failed", "model": settings.TTS_MODEL},
+            )
+
     target_slot: int | None = None
     if job.voice_id:
         try:
@@ -1269,9 +1410,14 @@ async def _stage_tts(
 
     results: list[tts.GenerateResult] = []
     total = len(chunks)
+    pitch_tracker = (
+        audio_analysis.PitchTracker(settings) if settings.AUDIO_ANALYSIS_ENABLED else None
+    )
     for index, text in enumerate(chunks):
         _raise_if_cancelled(job.id, settings)
-        result = await _generate_chunk_quality_checked(job, text, index, settings, target_slot)
+        result = await _generate_chunk_quality_checked(
+            job, text, index, settings, target_slot, pitch_tracker
+        )
         results.append(result)
         _set_progress(job.id, index + 1, total, settings)
         logger.info(
@@ -1380,6 +1526,101 @@ async def _stage_artwork(
     return result
 
 
+# The editable prompt carries the real instructions; this is only a role line,
+# because an empty system string is rejected by some providers.
+_CHAPTERS_ROLE = (
+    "You mark chapter boundaries in narrated articles. "
+    "Follow the instructions in the message exactly and output only the requested lines."
+)
+
+
+async def generate_chapters_document(
+    cues: list[tuple[float, str]],
+    duration_secs: float,
+    mp3_path: Path | None,
+    settings: Settings,
+) -> str | None:
+    """Chapters document for a finished episode, or None.
+
+    Shared by the pipeline stage and the regenerate endpoint: both supply
+    ``(start_secs, text)`` cues, which is what the transcript already stores.
+    Never raises: chapters are non-essential, so any failure returns None and
+    the caller keeps whatever it had.
+    """
+
+    if not settings.CHAPTERS_ENABLED or duration_secs < settings.CHAPTERS_MIN_DURATION_SECS:
+        logger.info(
+            "Chapters skipped",
+            extra={
+                "event": "chapters_skipped",
+                "enabled": settings.CHAPTERS_ENABLED,
+                "duration_secs": duration_secs,
+            },
+        )
+        return None
+    try:
+        with database.connection(settings.DATA_DIR) as conn:
+            instructions = prompt_service.load_effective(conn, "chapters")
+        body = chapters_service.timestamped_transcript(cues)
+        # Instructions ride in the user turn, ahead of the transcript. With them
+        # in the system prompt and only the transcript as the user message, the
+        # model read the transcript and asked what to do with it.
+        raw = await _llm_with_retry(
+            _CHAPTERS_ROLE, f"{instructions}\n\nTranscript:\n\n{body}", settings
+        )
+        timed = chapters_service.parse_llm_chapters(raw, duration_secs)
+        if len(timed) < 2:
+            # A lone forced "Introduction" chapter is noise, not navigation.
+            # The preview makes a zero-parse reply diagnosable.
+            logger.info(
+                "Chapters skipped: too few parsed from the LLM reply",
+                extra={
+                    "event": "chapters_too_few",
+                    "parsed": len(timed),
+                    "reply_preview": raw[:300],
+                },
+            )
+            return None
+        if mp3_path is not None:
+            try:
+                audio.embed_chapters(mp3_path, timed, duration_secs)
+            except Exception:
+                logger.warning(
+                    "Chapter ID3 embed failed; feed JSON still served",
+                    extra={"event": "chapters_embed_failed"},
+                    exc_info=True,
+                )
+        logger.info(
+            "Chapters generated",
+            extra={"event": "chapters_complete", "chapter_count": len(timed)},
+        )
+        return chapters_service.build_chapters_json(timed)
+    except Exception:
+        logger.error(
+            "Chapter generation failed; episode ships without chapters",
+            extra={"event": "chapters_failed"},
+            exc_info=True,
+        )
+        return None
+
+
+async def _stage_chapters(
+    chunks: list[str],
+    chunk_durations: list[float],
+    duration_secs: float,
+    mp3_path: Path,
+    settings: Settings,
+) -> str | None:
+    """Chapters stage: build the cue timeline from the measured per-chunk
+    durations, then hand off to the shared generator."""
+
+    starts_ms = transcript.chunk_start_ms(chunk_durations, settings.TTS_CHUNK_SILENCE_MS)
+    # zip, not index: a chunk/duration desync is the transcript stage's job to
+    # report loudly, and chapters must never be what fails an episode.
+    cues = [(start / 1000, text) for start, text in zip(starts_ms, chunks, strict=False)]
+    return await generate_chapters_document(cues, duration_secs, mp3_path, settings)
+
+
 async def _stage_transcript(
     chunks: list[str],
     chunk_durations: list[float],
@@ -1424,6 +1665,7 @@ async def _stage_finalize(
     vtt: str,
     summary: str | None,
     cleaned_text: str | None,
+    chapters_json: str | None,
     settings: Settings,
 ) -> None:
     """Upsert the ``episodes`` row that the RSS feed and media handlers read.
@@ -1431,10 +1673,11 @@ async def _stage_finalize(
     Title and author come from the extraction metadata (Firecrawl populates
     both when the article has them); ``original_url`` is the job's input
     URL; durations come from the audio stage; ``transcript_vtt`` is the
-    in-memory VTT rendered in the prior stage. ``cleaned_text`` is the
-    post-corrections article (the exact text fed to chunking/TTS), persisted so
-    the API can serve it; ``audio_size_bytes`` is stamped here to avoid stat()
-    per request on the feed/episodes hot paths.
+    in-memory VTT rendered in the prior stage. ``cleaned_text`` is the cleaned
+    article (the exact text fed to chunking and shown in the transcript; TTS
+    speaks the per-chunk respelled narration), persisted so the API can serve
+    it; ``audio_size_bytes`` is stamped here to avoid stat() per request on the
+    feed/episodes hot paths.
     """
 
     title = _coerce_str(metadata.get("title"))
@@ -1475,6 +1718,7 @@ async def _stage_finalize(
             source_type=source_type,
             source_filename=source_filename,
             voice_label=voice_label,
+            chapters_json=chapters_json,
         )
     finally:
         conn.close()
@@ -1532,41 +1776,49 @@ def _apply_base_lexicon(text: str, conn, settings: Settings) -> str:
     return lexicon.WORD_TOKEN_RE.sub(repl, text)
 
 
-async def _apply_corrections(text: str, settings: Settings) -> str:
+async def _apply_corrections_batch(texts: list[str], settings: Settings) -> list[str]:
     """Deterministic normalization backstop, run after the LLM pronunciation pass.
 
-    Order: regex fixups (``_normalize_for_tts``), the user+seed pronunciation
+    Per text: regex fixups (``_normalize_for_tts``), the user+seed pronunciation
     dictionary (longest-key-first regex), the aggressive per-token base-lexicon
     pass, then the snake_case sweep. All pronunciation data is sourced from the
-    ``lexicon`` table. This is the guaranteed coverage layer: anything the LLM pass
-    missed is corrected here.
+    ``lexicon`` table, loaded once for the whole batch (one connection, one
+    lexicon read for the episode instead of one per chunk). This is the
+    guaranteed coverage layer: anything the LLM pass missed is corrected here.
     """
 
-    normalized = _normalize_for_tts(text)
     with database.connection(settings.DATA_DIR) as conn:
         cs_pairs, ci_pairs = lexicon.apply_pairs_by_case(conn)
-        # Acronyms get no automatic letter-spelling: Chatterbox (BPE/char-based, no g2p)
-        # pronounces common ones natively, and forcing "C E O" makes it choppy. A dictionary
-        # entry (seed or user) is the escape hatch for any acronym it should say differently.
-        # Explicit pronunciations from the dictionary apply here: exact-case keys first,
-        # then the case-insensitive group folds so "404 media" hits "404 Media". Then the
-        # aggressive base-lexicon pass and the snake_case sweep.
-        applied = corrections.apply(normalized, cs_pairs)
-        applied = corrections.apply(applied, ci_pairs, case_sensitive=False)
-        applied = _apply_base_lexicon(applied, conn, settings)
-    # Strip periods from dotted acronyms LAST -- catches both article text ("U.S.")
-    # and any dotted respelling a correction injected ("A.I.") -- so the engine
-    # never pauses mid-acronym.
-    result = _normalize_dotted_acronyms(_normalize_identifiers(applied))
+        results: list[str] = []
+        for text in texts:
+            # Acronyms get no automatic letter-spelling: Chatterbox (BPE/char-based, no g2p)
+            # pronounces common ones natively, and forcing "C E O" makes it choppy. A
+            # dictionary entry (seed or user) is the escape hatch for any acronym it should
+            # say differently. Exact-case keys first, then the case-insensitive group folds
+            # so "404 media" hits "404 Media". Then the aggressive base-lexicon pass.
+            applied = corrections.apply(_normalize_for_tts(text), cs_pairs)
+            applied = corrections.apply(applied, ci_pairs, case_sensitive=False)
+            applied = _apply_base_lexicon(applied, conn, settings)
+            # Strip periods from dotted acronyms LAST -- catches both article text ("U.S.")
+            # and any dotted respelling a correction injected ("A.I.") -- so the engine
+            # never pauses mid-acronym.
+            results.append(_normalize_dotted_acronyms(_normalize_identifiers(applied)))
     logger.info(
         "Corrections applied",
         extra={
             "event": "corrections_complete",
             "entries_pairs": len(cs_pairs) + len(ci_pairs),
-            "delta_chars": len(result) - len(text),
+            "text_count": len(texts),
+            "delta_chars": sum(len(r) for r in results) - sum(len(t) for t in texts),
         },
     )
-    return result
+    return results
+
+
+async def _apply_corrections(text: str, settings: Settings) -> str:
+    """Single-text convenience over the batch form."""
+
+    return (await _apply_corrections_batch([text], settings))[0]
 
 
 # A pronunciation pass only respells terms, so each window's output should be
@@ -1576,115 +1828,176 @@ async def _apply_corrections(text: str, settings: Settings) -> str:
 _PRONUNCIATION_MIN_RATIO = 0.5
 
 
-async def _pronounce_with_llm(job_id: str, text: str, settings: Settings) -> str:
-    """LLM pronunciation pass: respell terms from the full correction set (seed +
-    user dictionary) by context, leaving everything else verbatim.
 
-    Per-window like cleanup so a long article never hits the output-token cap.
-    Degrades safely: a failed reference load or a failed/short window passes that
-    text through unchanged. The deterministic backstop in ``_apply_corrections``
-    still runs after, so a skipped window is never left uncorrected.
+
+def _reference_matchers(
+    entries: list[tuple[str, str]],
+) -> list[tuple[re.Pattern[str], str]]:
+    """Compile a word-boundary matcher per reference term, so a chunk's prompt
+    carries only the terms the chunk actually contains. Acronym-shaped terms
+    match across hyphens, mirroring the corrections boundary policy."""
+
+    matchers: list[tuple[re.Pattern[str], str]] = []
+    for term, line in entries:
+        pattern = corrections.boundary_wrap(
+            re.escape(term), acronym=corrections.is_acronym_key(term)
+        )
+        matchers.append((re.compile(pattern, re.IGNORECASE), line))
+    return matchers
+
+
+async def _pronounce_chunks_with_llm(
+    job_id: str, chunks: list[str], settings: Settings
+) -> list[str]:
+    """LLM pronunciation pass, one call per chunk that contains reference terms.
+
+    Runs after chunking (2e), so each chunk's respelled narration stays 1:1
+    with the transcript text. The reference sent with a call is filtered to the
+    terms present in that chunk -- a few lines instead of the full set -- and a
+    chunk with no matching terms skips the LLM entirely. Degrades safely: a
+    failed reference load returns every chunk unchanged, and a failed or short
+    reply keeps that chunk verbatim. The deterministic backstop in
+    ``_apply_corrections`` still runs after, so a skipped chunk is never left
+    uncorrected.
     """
 
     with database.connection(settings.DATA_DIR) as conn:
-        system_prompt = prompt_service.load_effective(conn, "pronunciation")
+        base_prompt = prompt_service.load_effective(conn, "pronunciation")
         try:
-            reference = lexicon.reference_text(conn)
+            entries = lexicon.reference_entries(conn)
         except Exception:
             logger.error(
                 "Pronunciation reference failed to load; skipping LLM pass",
                 extra={"event": "pronunciation_reference_load_failed"},
                 exc_info=True,
             )
-            return text
-    if not reference:
-        return text
-    system_prompt = (
-        f"{system_prompt}\n\nPRONUNCIATION REFERENCE (term -> respelling):\n{reference}"
+            return list(chunks)
+    if not entries:
+        return list(chunks)
+    matchers = _reference_matchers(entries)
+
+    # Chunks are independent, so run the calls concurrently under a small cap.
+    semaphore = asyncio.Semaphore(max(1, settings.LLM_PRONUNCIATION_CONCURRENCY))
+    done_count = 0
+
+    async def _pronounce_one(index: int, window: str) -> str:
+        nonlocal done_count
+        lines = [line for pattern, line in matchers if pattern.search(window)]
+        try:
+            if not lines:
+                return window
+            system_prompt = (
+                f"{base_prompt}\n\nPRONUNCIATION REFERENCE (term -> respelling):\n"
+                + "\n".join(lines)
+            )
+            async with semaphore:
+                part = await _pronounce_window(system_prompt, window, index, settings)
+            return part
+        finally:
+            done_count += 1
+            _set_progress(job_id, done_count, len(chunks), settings)
+
+    return list(
+        await asyncio.gather(
+            *(_pronounce_one(index, window) for index, window in enumerate(chunks))
+        )
     )
 
-    windows = chunker.pack_paragraphs(text, settings.LLM_CLEANUP_WINDOW_CHARS) or [text]
-    out_parts: list[str] = []
-    for index, window in enumerate(windows):
-        # Same marker contract as cleanup: wrap the output so any preamble the
-        # model glues on ("...here is the text reproduced in full:") lands outside
-        # the markers and is sliced off by extract_clean_output -- the min-ratio
-        # guard below only catches short output, not preamble-bloated output.
-        user_message = (
-            "Reproduce the text below in full, copying every sentence in order and "
-            "changing only the spelled form of terms that match the pronunciation "
-            f"reference. Output ONLY the text between a line {cleanup_output.BEGIN_MARKER} "
-            f"and a line {cleanup_output.END_MARKER} -- no commentary outside the markers."
-            f"\n\n<text>\n{window}\n</text>"
+
+async def _pronounce_window(
+    system_prompt: str, window: str, index: int, settings: Settings
+) -> str:
+    """One chunk's LLM pronunciation call, with the marker contract and the
+    keep-verbatim fallbacks."""
+
+    # Same marker contract as cleanup: wrap the output so any preamble the
+    # model glues on ("...here is the text reproduced in full:") lands outside
+    # the markers and is sliced off by extract_clean_output -- the min-ratio
+    # guard below only catches short output, not preamble-bloated output.
+    user_message = (
+        "Reproduce the text below in full, copying every sentence in order and "
+        "changing only the spelled form of terms that match the pronunciation "
+        f"reference. Output ONLY the text between a line {cleanup_output.BEGIN_MARKER} "
+        f"and a line {cleanup_output.END_MARKER} -- no commentary outside the markers."
+        f"\n\n<text>\n{window}\n</text>"
+    )
+    try:
+        raw = await _llm_with_retry(system_prompt, user_message, settings)
+        if cleanup_output.BEGIN_MARKER not in raw:
+            # Model ignored the marker contract; one stern retry to force it.
+            raw = await _llm_with_retry(
+                system_prompt,
+                "Your previous reply was rejected. Output ONLY the reproduced "
+                f"text between {cleanup_output.BEGIN_MARKER} and "
+                f"{cleanup_output.END_MARKER}, with no other words.\n\n" + user_message,
+                settings,
+            )
+        # Trust only marker-delimited output. If the model defied the contract
+        # twice, keep the window verbatim rather than run extract_clean_output's
+        # preamble heuristic, which is tuned for cleanup and could drop a real
+        # paragraph opening like a preamble ("Here is...") or miss an unrecognized
+        # one; the deterministic backstop still respells this window afterward.
+        part = (
+            cleanup_output.extract_clean_output(raw)
+            if cleanup_output.BEGIN_MARKER in raw
+            else window
         )
-        try:
-            raw = await _llm_with_retry(system_prompt, user_message, settings)
-            if cleanup_output.BEGIN_MARKER not in raw:
-                # Model ignored the marker contract; one stern retry to force it.
-                raw = await _llm_with_retry(
-                    system_prompt,
-                    "Your previous reply was rejected. Output ONLY the reproduced "
-                    f"text between {cleanup_output.BEGIN_MARKER} and "
-                    f"{cleanup_output.END_MARKER}, with no other words.\n\n" + user_message,
-                    settings,
-                )
-            # Trust only marker-delimited output. If the model defied the contract
-            # twice, keep the window verbatim rather than run extract_clean_output's
-            # preamble heuristic, which is tuned for cleanup and could drop a real
-            # paragraph opening like a preamble ("Here is...") or miss an unrecognized
-            # one; the deterministic backstop still respells this window afterward.
-            part = (
-                cleanup_output.extract_clean_output(raw)
-                if cleanup_output.BEGIN_MARKER in raw
-                else window
-            )
-        except Exception:
-            logger.warning(
-                "Pronunciation window failed; passing it through unchanged",
-                extra={"event": "pronunciation_window_failed", "window_index": index},
-                exc_info=True,
-            )
-            part = window
-        if len(part) < len(window) * _PRONUNCIATION_MIN_RATIO:
-            logger.warning(
-                "Pronunciation window output too short; keeping original",
-                extra={
-                    "event": "pronunciation_window_short",
-                    "window_index": index,
-                    "input_chars": len(window),
-                    "output_chars": len(part),
-                    # Snippet of what the model returned, to diagnose a short reply
-                    # (e.g. a refusal or "nothing to respell") vs a real respelling.
-                    "output_preview": part[:200],
-                },
-            )
-            part = window
-        out_parts.append(part)
-        _set_progress(job_id, index + 1, len(windows), settings)
-    return "\n\n".join(out_parts)
+    except Exception:
+        logger.warning(
+            "Pronunciation window failed; passing it through unchanged",
+            extra={"event": "pronunciation_window_failed", "window_index": index},
+            exc_info=True,
+        )
+        return window
+    if len(part) < len(window) * _PRONUNCIATION_MIN_RATIO:
+        logger.warning(
+            "Pronunciation window output too short; keeping original",
+            extra={
+                "event": "pronunciation_window_short",
+                "window_index": index,
+                "input_chars": len(window),
+                "output_chars": len(part),
+                # Snippet of what the model returned, to diagnose a short reply
+                # (e.g. a refusal or "nothing to respell") vs a real respelling.
+                "output_preview": part[:200],
+            },
+        )
+        return window
+    return part
 
 
-async def _stage_normalize(job: jobs.Job, cleaned: str, settings: Settings) -> str:
-    """Dedicated pronunciation + normalization phase (post-cleanup, pre-chunk).
+async def _stage_normalize(job: jobs.Job, chunks: list[str], settings: Settings) -> list[str]:
+    """Per-chunk pronunciation + normalization phase (post-chunk, pre-TTS).
 
-    Two layers: an LLM pronunciation pass that respells terms from the full
-    correction set by context, then the deterministic ``_apply_corrections``
-    backstop (regex fixups + seed/user dictionary) that guarantees coverage for
-    anything the LLM missed.
+    Chunk boundaries come from the cleaned text, so each narration returned
+    here stays 1:1 with the chunk the transcript will show (2e). Two layers per
+    chunk: the LLM pronunciation pass (reference filtered to the chunk's own
+    terms), then the deterministic ``_apply_corrections`` backstop that
+    guarantees coverage for anything the LLM missed.
     """
 
-    pronounced = await _pronounce_with_llm(job.id, cleaned, settings)
-    result = await _apply_corrections(pronounced, settings)
-    _persist_narration(job.episode_id, result, settings)
+    pronounced = await _pronounce_chunks_with_llm(job.id, chunks, settings)
+    narrations = await _apply_corrections_batch(pronounced, settings)
+    # Respelling expands text ("PR" -> "P R"); the chunker's cap leaves ~3.6x
+    # headroom against the wrapper's request bound, but check rather than assume.
+    cap = _WRAPPER_TEXT_CAP
+    for index, narration in enumerate(narrations):
+        if len(narration) > cap:
+            raise ValueError(
+                f"normalize stage: chunk {index} narration grew to "
+                f"{len(narration)} chars, over the wrapper's {cap}-char request cap"
+            )
+    _persist_narration(job.episode_id, "\n\n".join(narrations), settings)
     logger.info(
         "Normalize stage complete",
         extra={
             "event": "normalize_complete",
-            "input_chars": len(cleaned),
-            "output_chars": len(result),
+            "chunk_count": len(chunks),
+            "input_chars": sum(len(c) for c in chunks),
+            "output_chars": sum(len(n) for n in narrations),
         },
     )
-    return result
+    return narrations
 
 
 def _persist_narration(episode_id: str, text: str, settings: Settings) -> None:
@@ -1747,6 +2060,26 @@ async def _stage_summary(text: str, settings: Settings) -> str | None:
     return summary or None
 
 
+# Ceiling on a single retry wait. A provider can ask for minutes; the job
+# watchdog would kill the stage long before that, so cap and move on.
+_LLM_RETRY_MAX_WAIT = 90.0
+
+
+def _llm_retry_wait(retry_state) -> float:
+    """Backoff for one retry: the provider's own ``retry_after`` when it sent
+    one (a 429 window is not something exponential backoff can guess), else
+    exponential. Capped either way."""
+
+    from tenacity import wait_exponential
+
+    outcome = retry_state.outcome
+    exc = outcome.exception() if outcome is not None else None
+    hinted = getattr(exc, "retry_after", None)
+    if isinstance(hinted, int | float) and hinted > 0:
+        return min(float(hinted), _LLM_RETRY_MAX_WAIT)
+    return min(wait_exponential(multiplier=1, min=1)(retry_state), _LLM_RETRY_MAX_WAIT)
+
+
 async def _llm_with_retry(system: str, user: str, settings: Settings) -> str:
     """Call llm.generate with tenacity retry on transient errors only."""
 
@@ -1755,12 +2088,11 @@ async def _llm_with_retry(system: str, user: str, settings: Settings) -> str:
         RetryError,
         retry_if_exception_type,
         stop_after_attempt,
-        wait_exponential,
     )
 
     retrying = AsyncRetrying(
         stop=stop_after_attempt(settings.LLM_RETRY_COUNT),
-        wait=wait_exponential(multiplier=1, min=1),
+        wait=_llm_retry_wait,
         retry=retry_if_exception_type((llm.LLMProviderError, llm.LLMTimeoutError)),
         reraise=False,
     )

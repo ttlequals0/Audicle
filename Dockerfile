@@ -13,7 +13,7 @@ RUN npm run build
 
 # ---- Stage 2: uv builder ----
 # Pin uv to a single tag for reproducibility; bump deliberately.
-FROM ghcr.io/astral-sh/uv:0.11.29 AS uv
+FROM ghcr.io/astral-sh/uv:0.12.2 AS uv
 
 # ---- Stage 2b: static ffmpeg ----
 # Pinned BtbN GPL static build, sha256-verified. Audicle only subprocesses the
@@ -56,7 +56,11 @@ RUN apt-get update \
          ca-certificates \
          libsndfile1 \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --create-home --uid 1000 audicle
+    && useradd --create-home --uid 1000 audicle \
+    # The runtime venv is built by uv; the base image's pip (whose vendored
+    # msgpack/pkg_resources copies keep sprouting CVEs) is unused -- remove it.
+    && rm -rf /usr/local/lib/python3.14/site-packages/pip* \
+       /usr/local/lib/python3.14/ensurepip
 
 COPY --from=ffmpeg /ffmpeg /usr/local/bin/ffmpeg
 COPY --from=uv /uv /usr/local/bin/uv

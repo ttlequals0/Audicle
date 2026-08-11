@@ -120,6 +120,9 @@ class GenerateRequest(BaseModel):
     # between them and narrate a chunk in the wrong voice. Omitted = use
     # whatever voice is already loaded (the pre-0.49.0 behaviour).
     slot: int | None = Field(default=None, ge=1, le=NUM_SLOTS)
+    # Narration language; omitted keeps the engine default. A monolingual
+    # engine 422s anything it cannot speak rather than ignoring it.
+    language: str | None = Field(default=None, min_length=2, max_length=8)
 
 
 class GenerateResponse(BaseModel):
@@ -144,11 +147,24 @@ class HealthResponse(BaseModel):
     whisper_loaded: bool | None = None
 
 
-def _default_engine_factory() -> Engine:
-    cfg = Config.from_env()
+def _turbo_factory() -> Engine:
     from chatterbox_engine import ChatterboxEngine  # lazy: heavy deps
 
-    return ChatterboxEngine(cfg)
+    return ChatterboxEngine(Config.from_env())
+
+
+def _multilingual_factory() -> Engine:
+    from chatterbox_engine import ChatterboxMultilingualEngine  # lazy: heavy deps
+
+    return ChatterboxMultilingualEngine(Config.from_env())
+
+
+# name -> factory. Language tables come from the engine classes; constructing
+# an engine is cheap, weights load in load().
+ENGINE_REGISTRY: dict[str, Any] = {
+    "chatterbox": _turbo_factory,
+    "chatterbox-multilingual": _multilingual_factory,
+}
 
 
 class SelectVoiceRequest(BaseModel):
@@ -157,17 +173,25 @@ class SelectVoiceRequest(BaseModel):
     slot: int = Field(ge=1, le=NUM_SLOTS)
 
 
+class SelectModelRequest(BaseModel):
+    """Swap the loaded TTS model. Loading holds GPU memory, so unlike
+    language it cannot ride per request."""
+
+    model: str = Field(min_length=1, max_length=64)
+
+
 def create_app(
     *,
     engine: Engine | None = None,
     data_dir: Path | None = None,
     verifier: WhisperVerifier | None = None,
+    engine_registry: dict[str, Any] | None = None,
 ) -> FastAPI:
     """Build a FastAPI instance backed by ``engine``.
 
     Tests pass a fake :class:`Engine` so they exercise the HTTP contract
     without importing the TTS model library. Production calls this with no args
-    and gets the :class:`ChatterboxEngine` via :func:`_default_engine_factory`.
+    and gets the :class:`ChatterboxEngine` via ``_turbo_factory``.
 
     ``verifier`` is the optional faster-whisper transcriber; when omitted it is
     built from the environment only if ``WHISPER_ENABLED`` is set, so the
@@ -175,7 +199,16 @@ def create_app(
     """
 
     cfg = Config.from_env()
-    chosen_engine = engine if engine is not None else _default_engine_factory()
+    chosen_engine = engine if engine is not None else _turbo_factory()
+    # Tests inject {name: factory}; production uses ENGINE_REGISTRY.
+    registry: dict[str, Any] = (
+        engine_registry if engine_registry is not None else dict(ENGINE_REGISTRY)
+    )
+    # Advertised language table per selectable model, read once from the
+    # (unloaded) engines so /models answers without loading weights.
+    registry_languages: dict[str, tuple[str, ...]] = {
+        name: tuple(factory().languages) for name, factory in registry.items()
+    }
     chosen_data_dir = data_dir or Path(os.environ.get("DATA_DIR", "/data"))
     chosen_verifier = verifier
     if chosen_verifier is None and cfg.whisper_enabled:
@@ -274,6 +307,7 @@ def create_app(
     @app.post("/generate", response_model=GenerateResponse)
     async def generate(
         body: GenerateRequest,
+        request: Request,
         engine: Engine = Depends(get_engine),
         lock: asyncio.Lock = Depends(get_lock),
     ) -> GenerateResponse:
@@ -296,6 +330,19 @@ def create_app(
         # The lock serializes GPU inference; /health never takes it, and
         # synthesize offloads the blocking call, so /health stays responsive.
         async with lock:
+            # Re-resolve under the lock: a /select-model that won the lock first
+            # may have unloaded and replaced the engine this request captured at
+            # dispatch time.
+            engine = request.app.state.engine
+            if body.language is not None and body.language not in engine.languages:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"language {body.language!r} is not supported by the "
+                        f"{getattr(engine, 'name', 'active')} engine; "
+                        f"supported: {sorted(engine.languages)}"
+                    ),
+                )
             if body.slot is not None:
                 # Inside the lock, so /select-voice and /reload (which take the
                 # same lock) cannot interleave between the switch and the
@@ -437,10 +484,13 @@ def create_app(
 
     @app.post("/reload")
     async def reload(
-        engine: Engine = Depends(get_engine),
+        request: Request,
         lock: asyncio.Lock = Depends(get_lock),
     ) -> dict[str, Any]:
         async with lock:
+            # Re-resolve under the lock: /select-model may have swapped the
+            # engine after this request was dispatched.
+            engine = request.app.state.engine
             try:
                 await engine.reload_reference()
             except FileNotFoundError as exc:
@@ -458,15 +508,88 @@ def create_app(
         # { ok: true }.
         return {"ok": True}
 
+    @app.get("/models")
+    async def models(engine: Engine = Depends(get_engine)) -> dict[str, Any]:
+        active = getattr(engine, "name", None)
+        listed: list[dict[str, Any]] = []
+        for name, languages in registry_languages.items():
+            if name == active:
+                # The loaded engine may have refined its language table.
+                languages = tuple(getattr(engine, "languages", languages))
+            listed.append({"name": name, "languages": sorted(languages)})
+        if active is not None and active not in registry_languages:
+            listed.append(
+                {"name": active, "languages": sorted(getattr(engine, "languages", ()))}
+            )
+        return {"active": active, "models": listed}
+
+    @app.post("/select-model")
+    async def select_model(
+        body: SelectModelRequest,
+        request: Request,
+        lock: asyncio.Lock = Depends(get_lock),
+    ) -> dict[str, Any]:
+        async with lock:
+            current: Engine = request.app.state.engine
+            if getattr(current, "name", None) == body.model:
+                return {"ok": True, "model": body.model}
+            factory = registry.get(body.model)
+            if factory is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"unknown model {body.model!r}; available: {sorted(registry)}",
+                )
+            logger.info(
+                "Switching TTS model",
+                extra={
+                    "event": "tts_model_switch",
+                    "from": getattr(current, "name", None),
+                    "to": body.model,
+                },
+            )
+            # Free the old engine first: two loaded models cannot share the GPU.
+            unload = getattr(current, "unload", None)
+            if callable(unload):
+                try:
+                    unload()
+                except InferenceBusyError as exc:
+                    raise HTTPException(
+                        status_code=503, detail={"error": "inference busy"}
+                    ) from exc
+            new_engine = factory()
+            try:
+                await asyncio.to_thread(new_engine.load)
+            except Exception as exc:
+                logger.exception(
+                    "Model switch failed", extra={"event": "tts_model_switch_failed"}
+                )
+                # Rollback so the wrapper isn't left with a dead engine; if
+                # this also fails, /health 503s and the healthcheck catches it.
+                try:
+                    await asyncio.to_thread(current.load)
+                except Exception:
+                    logger.exception(
+                        "Rollback reload of the previous model failed",
+                        extra={"event": "tts_model_rollback_failed"},
+                    )
+                raise HTTPException(
+                    status_code=500, detail=f"model load failed: {exc}"
+                ) from exc
+            request.app.state.engine = new_engine
+        return {"ok": True, "model": body.model}
+
     @app.post("/select-voice")
     async def select_voice(
         body: SelectVoiceRequest,
-        engine: Engine = Depends(get_engine),
+        request: Request,
         lock: asyncio.Lock = Depends(get_lock),
     ) -> dict[str, Any]:
         # Slots live under voices/ next to reference_path, mounted read-only.
         ref_path = cfg.slot_path(body.slot)
         async with lock:
+            # Re-resolve under the lock: /select-model may have swapped the
+            # engine after this request was dispatched.
+            engine = request.app.state.engine
             try:
                 await engine.select_voice(ref_path)
             except FileNotFoundError as exc:

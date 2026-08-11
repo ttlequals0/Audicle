@@ -10,16 +10,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from urllib.parse import urlsplit
 
 from camoufox.async_api import AsyncCamoufox
 
 from renderer import (
+    EMAIL_INPUT_SELECTOR as _EMAIL_INPUT_SELECTOR,
     EXPAND_CLICK_CAP,
     MAX_HTML_CHARS,
     RenderResult,
     expandable_targets,
     is_captcha_wall,
     is_public_url,
+    looks_registration_gated,
+    registration_form_index,
     word_estimate,
 )
 
@@ -88,13 +92,51 @@ async def _run_expand(page) -> int:
     return clicks
 
 
+async def _submit_registration(page, email: str) -> bool:
+    """Fill the article's unlock form with ``email`` and submit it.
+
+    Returns True when the address was typed and sent, whatever the outcome, so the
+    caller can keep it to one submission per URL. ``unlocked`` on the returned page
+    is judged separately by the caller. Best effort throughout: any failure leaves
+    the page as it was, because a gated article is still worth what it already showed."""
+
+    try:
+        forms = await page.locator("form").all()
+        described = []
+        for form in forms:
+            names = await form.locator("input").evaluate_all(
+                "els => els.map(e => e.name || e.type || '')"
+            )
+            described.append({"fields": names, "text": await form.inner_text()})
+        index = registration_form_index(described)
+        if index is None:
+            return False
+        email_input = forms[index].locator(_EMAIL_INPUT_SELECTOR).first
+        await email_input.fill(email, timeout=_CLICK_TIMEOUT_MS)
+        logger.info(
+            "submitting a registration gate",
+            extra={"event": "render_registration_submit", "host": urlsplit(page.url).hostname},
+        )
+        await email_input.press("Enter")
+        await page.wait_for_load_state("networkidle", timeout=_NAV_TIMEOUT_MS)
+        # An AJAX unlock swaps the body in after the network goes idle, so settle
+        # before the caller re-reads the page.
+        await page.wait_for_timeout(_GROW_WAIT_MS)
+        return True
+    except Exception:
+        logger.warning(
+            "registration gate submit failed", extra={"event": "render_registration_failed"}
+        )
+        return False
+
+
 class CamoufoxRenderer:
     """Loads a page in a fresh headful Camoufox context, clicks the expander, and
     returns the final HTML. A new context per attempt keeps each render stateless
     (fresh fingerprint, no carried session) -- which is also what lets a retry clear a
     probabilistic DataDome wall."""
 
-    async def render(self, url: str, expand: bool) -> RenderResult:
+    async def render(self, url: str, expand: bool, email: str | None = None) -> RenderResult:
         if not is_public_url(url):
             logger.warning("refused non-public render target", extra={"event": "render_blocked_host"})
             return RenderResult(status="error")
@@ -103,23 +145,34 @@ class CamoufoxRenderer:
         # the same outcome as a render that stayed blocked.
         try:
             return await asyncio.wait_for(
-                self._render_with_retries(url, expand), timeout=_RENDER_BUDGET_SECONDS
+                self._render_with_retries(url, expand, email), timeout=_RENDER_BUDGET_SECONDS
             )
         except asyncio.TimeoutError:
             logger.warning("render exceeded its time budget", extra={"event": "render_timeout"})
             return RenderResult(status="captcha")
 
-    async def _render_with_retries(self, url: str, expand: bool) -> RenderResult:
+    async def _render_with_retries(
+        self, url: str, expand: bool, email: str | None = None
+    ) -> RenderResult:
         # Retry anything short of a usable article: a fresh fingerprint re-rolls DataDome's
         # probabilistic challenge, whether it surfaced as a CAPTCHA shell or a stalled load.
         result = RenderResult(status="error")
         for attempt in range(1, _RENDER_ATTEMPTS + 1):
-            result = await self._render_once(url, expand, attempt)
+            result, submitted = await self._render_once(url, expand, attempt, email)
+            if submitted:
+                # One submission per URL, however many fingerprints the retry loop
+                # burns: the publisher gets the address once, not once an attempt.
+                email = None
             if result.status == "ok":
                 return result
         return result
 
-    async def _render_once(self, url: str, expand: bool, attempt: int) -> RenderResult:
+    async def _render_once(
+        self, url: str, expand: bool, attempt: int, email: str | None = None
+    ) -> tuple[RenderResult, bool]:
+        """The render, plus whether the address was submitted on this attempt."""
+
+        submitted = False
         try:
             async with AsyncCamoufox(headless=False) as browser:
                 page = await browser.new_page()
@@ -127,6 +180,25 @@ class CamoufoxRenderer:
                 clicks = await _run_expand(page) if expand else 0
                 body_text = await page.inner_text("body")
                 html = await page.content()
+                # Only now, with the page in front of us and the gate visible, is the
+                # operator's address typed anywhere.
+                if email and looks_registration_gated(body_text):
+                    submitted = await _submit_registration(page, email)
+                    if submitted:
+                        after_text = await page.inner_text("body")
+                        # Take the post-submit page only when it opened. A longer body,
+                        # or the gate copy gone, means the article; anything else is a
+                        # "check your inbox" page, and the teaser is worth more.
+                        unlocked = len(after_text) > len(body_text) or not looks_registration_gated(
+                            after_text
+                        )
+                        if unlocked:
+                            body_text = after_text
+                            html = await page.content()
+                        logger.info(
+                            "registration gate result",
+                            extra={"event": "render_registration_done", "unlocked": unlocked},
+                        )
                 if len(html) > MAX_HTML_CHARS:
                     html = html[:MAX_HTML_CHARS]
                 words = word_estimate(body_text)
@@ -135,7 +207,7 @@ class CamoufoxRenderer:
                         "render reached a CAPTCHA gate",
                         extra={"event": "render_captcha", "clicks": clicks, "attempt": attempt},
                     )
-                    return RenderResult(status="captcha", clicks=clicks, word_estimate=words)
+                    return RenderResult(status="captcha", clicks=clicks, word_estimate=words), submitted
                 logger.info(
                     "render complete",
                     extra={
@@ -146,10 +218,13 @@ class CamoufoxRenderer:
                         "html_chars": len(html),
                     },
                 )
-                return RenderResult(status="ok", html=html, clicks=clicks, word_estimate=words)
+                return (
+                    RenderResult(status="ok", html=html, clicks=clicks, word_estimate=words),
+                    submitted,
+                )
         except Exception as exc:
             logger.warning(
                 "render failed",
                 extra={"event": "render_error", "error": str(exc), "attempt": attempt},
             )
-            return RenderResult(status="error")
+            return RenderResult(status="error"), submitted

@@ -100,6 +100,9 @@ class Settings(BaseSettings):
     LLM_CLEANUP_WINDOW_CHARS: int = 12000
     LLM_TIMEOUT_SECONDS: int = 300
     LLM_RETRY_COUNT: int = 3
+    # Concurrent per-chunk pronunciation calls. Lower it if the provider rate
+    # limits a long article (each chunk with reference terms is one call).
+    LLM_PRONUNCIATION_CONCURRENCY: int = Field(default=4, ge=1, le=16)
 
     # Episode webhooks (0.31.0). Fire-and-forget POST to this URL on every terminal
     # job transition (episode.processed / episode.failed). Empty disables. A dead or
@@ -125,6 +128,20 @@ class Settings(BaseSettings):
     FIRECRAWL_BACKOFF_BASE_SECONDS: int = 1
     FIRECRAWL_TIMEOUT_SECONDS: int = 30
     MIN_EXTRACTION_CHARS: int = 500
+    # Address the render sidecar types into free registration walls, after the
+    # cascade came up short. Needs RENDER_URL; empty means nothing is submitted.
+    REGISTRATION_EMAIL: str = ""
+
+    # OCR fallback for scanned/image uploads (0.51.0). Engages only when a PDF's
+    # extractable text is under MIN_EXTRACTION_CHARS, or for direct image
+    # uploads. All five are runtime-tunable. OCR_LANGUAGE is validated against
+    # the model packs the image ships (services.ocr.SUPPORTED_LANGUAGES).
+    OCR_ENABLED: bool = True
+    OCR_MAX_PAGES: int = Field(default=40, ge=1, le=500)
+    OCR_DPI: int = Field(default=200, ge=72, le=600)
+    OCR_MIN_CONFIDENCE: float = Field(default=0.5, ge=0.0, le=1.0)
+    # Keep in sync with services.ocr.SUPPORTED_LANGUAGES (drift test pins it).
+    OCR_LANGUAGE: Literal["en"] = "en"
     MIN_CLEANUP_CHARS: int = 200
     # When a direct scrape of a known paywall/JS-gated host (see source_fallbacks)
     # comes back below that source's bar, retry via a reader-proxy rewrite (e.g.
@@ -235,6 +252,9 @@ class Settings(BaseSettings):
 
     # TTS wrapper.
     TTS_LANGUAGE: str = "en"
+    # Wrapper TTS model, applied at the start of each job's TTS stage via
+    # /select-model. Empty keeps whatever the wrapper booted with.
+    TTS_MODEL: str = ""
     TTS_DEVICE: Literal["cuda", "cpu"] = "cuda"
     TTS_HTTP_TIMEOUT_SECONDS: float = 120
     # Used by the per-chunk pipeline call site; defined here so
@@ -302,10 +322,29 @@ class Settings(BaseSettings):
     # drone / steady noise / repetition and regenerate it (Chatterbox is
     # non-deterministic, so a re-gen usually fixes it). Thresholds are starting
     # points and need empirical tuning against real failures.
+    # Chapters (3b): one LLM call after the audio stage names 3-7 chapters;
+    # emitted as podcast:chapters JSON and embedded ID3 CHAP/CTOC frames.
+    # Episodes under the duration floor get none (navigation noise).
+    CHAPTERS_ENABLED: bool = True
+    CHAPTERS_MIN_DURATION_SECS: int = 600
+
+    # Read "{title}. By {author}." at the top of each episode (3a). The line is
+    # prepended to the cleaned text before chunking so it flows through
+    # corrections, TTS, the transcript, and chapter timing with no special case.
+    INTRO_READ_ENABLED: bool = True
+
     AUDIO_ANALYSIS_ENABLED: bool = True
     AUDIO_ANALYSIS_MAX_REGEN: int = 2  # extra attempts on a bad chunk
     AUDIO_ANALYSIS_FRAME_MS: int = 25
     AUDIO_ANALYSIS_HOP_MS: int = 10
+    AUDIO_ANALYSIS_WINDOW_SECS: float = 3.0  # sliding-window size for localized checks
+    # Pitch-drift gate (2b): a chunk whose median F0 deviates from the running
+    # median of accepted chunks by more than this many semitones is regenerated.
+    # The 0.51.0 corpus sweep (149 episodes) put p95 of 30s-bucket deviations at
+    # 1.21 st and p99 at 1.83. Production ran 1.25 and flagged 26 of 108 chunks
+    # in one job, so the bound sits above p99 instead.
+    AUDIO_ANALYSIS_MAX_F0_SEMITONES: float = 2.0
+    AUDIO_ANALYSIS_F0_WARMUP_CHUNKS: int = 3  # accepted chunks before the gate arms
     AUDIO_ANALYSIS_MIN_RMS_CV: float = 0.35  # below = flat envelope (drone/noise)
     AUDIO_ANALYSIS_MIN_CREST: float = 3.0  # below = non-peaky (tone), linear ratio
     AUDIO_ANALYSIS_MAX_ZCR: float = 0.35  # above = broadband noise (with low rms_cv)
@@ -433,9 +472,15 @@ RUNTIME_SETTING_BOUNDS: dict[str, dict[str, float]] = {
     "JOB_TIMEOUT_CEILING_MULTIPLIER": {"ge": 1.0},
     # Regen escalation. The chars floor mirrors the wrapper's max_chars bounds
     # so a floored value is still a legal request.
+    "LLM_PRONUNCIATION_CONCURRENCY": {"ge": 1, "le": 16},
+    "OCR_MAX_PAGES": {"ge": 1, "le": 500},
+    "OCR_DPI": {"ge": 72, "le": 600},
+    "OCR_MIN_CONFIDENCE": {"ge": 0.0, "le": 1.0},
     "AUDIO_ANALYSIS_REGEN_CHARS_FACTOR": {"gt": 0, "le": 1.0},
     "AUDIO_ANALYSIS_REGEN_MIN_CHARS": {"ge": 100, "le": 2000},
     "AUDIO_ANALYSIS_REGEN_PENALTY_STEP": {"ge": 0, "le": 1.0},
+    # An octave of drift is not drift, it is a different voice.
+    "AUDIO_ANALYSIS_MAX_F0_SEMITONES": {"gt": 0, "le": 12.0},
 }
 
 

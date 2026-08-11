@@ -1,12 +1,15 @@
 """Client for the tts-wrapper container.
 
-The wrapper exposes three endpoints (build-plan TTS section):
+The wrapper exposes endpoints (build-plan TTS section):
 
 - ``POST /generate`` - synthesize a single chunk; returns ``wav_path`` (in the
   shared ``/data`` volume), ``duration_secs`` and ``sample_rate``.
 - ``GET /health`` - reports ``ok``, ``model_loaded``, ``reference_loaded``.
 - ``POST /reload`` - re-reads the wrapper's resting voice (its lowest filled slot)
   and recomputes embeddings.
+- ``POST /select-voice`` / ``POST /select-model`` - switch the reference voice
+  slot / the loaded TTS model.
+- ``GET /models`` - the engines the wrapper can construct, plus the active one.
 
 Typed errors mirror the LLM client so the cleanup-stage retry classification
 extends naturally to the per-chunk TTS calls:
@@ -82,6 +85,9 @@ def generation_params(
         "top_k": settings.CHATTERBOX_TOP_K,
         "max_chars": settings.CHATTERBOX_MAX_CHARS if max_chars is None else max_chars,
         "seed": settings.CHATTERBOX_SEED if seed is None else seed,
+        # Narration language rides every call; a monolingual engine 422s a
+        # value it can't speak rather than ignoring it.
+        "language": settings.TTS_LANGUAGE,
     }
 
 
@@ -250,6 +256,54 @@ async def select_voice_with_retry(settings: Settings, slot: int) -> None:
     """
 
     await _retry_transients(lambda: select_voice(settings, slot), settings)
+
+
+async def _get(path: str, settings: Settings, what: str) -> httpx.Response:
+    """GET from the wrapper with the same transport-error mapping as ``_post``."""
+
+    endpoint = f"{settings.TTS_URL.rstrip('/')}{path}"
+    timeout = httpx.Timeout(settings.TTS_HTTP_TIMEOUT_SECONDS)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        try:
+            return await client.get(endpoint)
+        except httpx.TimeoutException as exc:
+            raise TTSTimeoutError(f"{what} timed out: {exc}") from exc
+        except (httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+            raise TTSProviderError(f"TTS unreachable: {exc}") from exc
+
+
+async def select_model(settings: Settings, model: str) -> None:
+    """POST /select-model: swap the wrapper's loaded TTS model."""
+
+    response = await _post("/select-model", settings, {"model": model}, "TTS model select")
+    if response.is_server_error:
+        raise TTSProviderError(
+            f"model select returned {response.status_code}: {response.text[:200]}"
+        )
+    if response.is_client_error:
+        raise TTSRequestError(
+            f"model select rejected ({response.status_code}): {response.text[:200]}"
+        )
+
+
+async def select_model_with_retry(settings: Settings, model: str) -> None:
+    """Model select with the same transient-failure retry as voice select."""
+
+    await _retry_transients(lambda: select_model(settings, model), settings)
+
+
+async def list_models(settings: Settings) -> dict[str, Any]:
+    """GET /models: the engines the wrapper can construct, plus the active one."""
+
+    response = await _get("/models", settings, "model list")
+    if not response.is_success:
+        raise TTSProviderError(
+            f"model list returned {response.status_code}: {response.text[:200]}"
+        )
+    body = response.json()
+    if not isinstance(body, dict):
+        raise TTSRequestError(f"model list returned non-object JSON: {type(body).__name__}")
+    return body
 
 
 async def reload(settings: Settings) -> dict[str, Any]:

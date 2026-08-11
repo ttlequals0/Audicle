@@ -5,6 +5,8 @@ from renderer import (
     expandable_targets,
     is_captcha_wall,
     is_public_url,
+    looks_registration_gated,
+    registration_form_index,
     word_estimate,
 )
 
@@ -84,3 +86,73 @@ def test_is_public_url_rejects_private_and_loopback() -> None:
 def test_is_public_url_allows_public_literal() -> None:
     # A public literal IP resolves offline (no DNS), so this is deterministic.
     assert is_public_url("https://93.184.216.34/article")
+
+
+# --- registration gates (0.53.0) -------------------------------------------
+
+
+def test_registration_gate_detected_from_visible_copy() -> None:
+    assert looks_registration_gated("Continue Reading This Story for FREE! Sign me up")
+    assert looks_registration_gated("Create your free account to keep reading")
+    assert looks_registration_gated("SUBSCRIBE TO CONTINUE reading this article")
+
+
+def test_ordinary_article_is_not_a_registration_gate() -> None:
+    assert not looks_registration_gated(
+        "The council debated the bill for hours. Read more coverage below."
+    )
+    assert not looks_registration_gated("")
+
+
+def test_picks_the_registration_form_not_the_search_box() -> None:
+    """A page has several forms; only the one asking for an email to unlock the
+    article should ever receive the operator's address."""
+
+    forms = [
+        {"fields": ["s"], "text": "Search"},
+        {"fields": ["npe", "newspack_reader_registration"], "text": "Continue Reading for FREE"},
+    ]
+    assert registration_form_index(forms) == 1
+
+
+def test_no_registration_form_returns_none() -> None:
+    forms = [
+        {"fields": ["s"], "text": "Search"},
+        {"fields": ["comment", "author"], "text": "Leave a comment"},
+    ]
+    assert registration_form_index(forms) is None
+
+
+def test_newsletter_signup_without_an_email_field_is_skipped() -> None:
+    forms = [{"fields": ["name"], "text": "Continue reading"}]
+    assert registration_form_index(forms) is None
+
+
+def test_prefers_a_registration_marker_over_a_bare_email_field() -> None:
+    forms = [
+        {"fields": ["email"], "text": "Get our weekly roundup in your inbox"},
+        {"fields": ["npe", "newspack_newsletters_subscribe"], "text": "Continue reading this story"},
+    ]
+    assert registration_form_index(forms) == 1
+
+
+def test_login_form_never_receives_the_address() -> None:
+    """Login copy ("sign in to continue reading") matches the gate wording, so the
+    password field is what keeps the address out of it."""
+
+    forms = [
+        {"fields": ["email", "password"], "text": "Sign in to continue reading. Log in"},
+        {"fields": ["npe", "newspack_reader_registration"], "text": "Enter your email"},
+    ]
+    assert registration_form_index(forms) == 1
+
+
+def test_bare_newsletter_box_is_not_a_fallback() -> None:
+    """No registration wording anywhere means no unlock form was found; submitting
+    to the footer newsletter box would hand over the address for nothing."""
+
+    forms = [
+        {"fields": ["s"], "text": "Search"},
+        {"fields": ["email"], "text": "Get our newsletter"},
+    ]
+    assert registration_form_index(forms) is None
