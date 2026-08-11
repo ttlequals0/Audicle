@@ -74,3 +74,13 @@ CVE-2026-57433
 # healthcheck; article fetching uses httpx, never libcurl. Re-check each
 # release and drop this entry when deb13u ships a fixed curl.
 CVE-2026-8458
+
+# CVE-2026-58050 (libssh2-1t64, HIGH): heap buffer overflow via integer
+# overflow in publickey attribute allocation. No fixed package in Debian trixie
+# as of 2026-08-11 (trivy status: affected, empty fixed-version). Present in all
+# three images as a transitive dependency of libcurl4t64, which is installed
+# only for the localhost healthcheck. The bug sits in libssh2's SSH
+# authentication path, reachable only through an scp:// or sftp:// transfer;
+# no image ships git or ssh, and the HTTP stack is httpx, never libcurl.
+# Re-check each release and drop this entry when deb13u ships a fixed libssh2.
+CVE-2026-58050

@@ -1,3 +1,7 @@
+.git
+.env
+.env.*
+.ruff_cache
 .venv
 venv
 __pycache__
