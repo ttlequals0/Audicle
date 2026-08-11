@@ -6,6 +6,18 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.52.6] - 2026-08-11
+
+### Fixed
+
+- The sign-up wall guard added in 0.52.5 only covered the first fetch, so the
+  walled article still shipped as a 37-second episode. The primary scrape was
+  correctly cut to 487 characters and rejected, then a bypass fetched the same
+  walled page and handed back the untrimmed 1202, whose signup form and author
+  bio carried it over the floor. Every candidate now gets the same treatment,
+  including the ones the render sidecar returns, and a page that is gated
+  anywhere in the cascade is judged against the gated bar.
+
 ## [0.52.5] - 2026-08-11
 
 ### Fixed

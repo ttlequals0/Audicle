@@ -1308,3 +1308,27 @@ async def test_gated_article_over_the_bar_is_kept_without_the_boilerplate(
     assert "Real reporting continues" in result.markdown
     assert "Continue Reading This Story" not in result.markdown
     assert "Sign me up" not in result.markdown
+
+
+async def test_gated_page_returned_by_a_fallback_is_also_rejected(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: 0.52.5 trimmed only the primary. A bypass that fetched the very
+    same walled page handed back the untrimmed body, whose signup furniture carried
+    it over the floor, and a 37-second episode shipped."""
+
+    monkeypatch.setenv("ARCHIVE_FALLBACK_ENABLED", "false")
+    monkeypatch.setenv("FLARESOLVERR_URL", "http://solver.test:8191")
+    get_settings.cache_clear()
+
+    async def _same_walled_page(*_args, **_kwargs):
+        from app.services.extraction_types import ExtractionResult
+
+        return ExtractionResult(markdown=_GATED_BODY, metadata={"title": "Amazon workers"})
+
+    monkeypatch.setattr(flaresolverr, "fetch", _same_walled_page)
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response(_GATED_BODY)))
+
+    with pytest.raises(extraction.ExtractionTooShortError) as exc:
+        await extraction.extract("https://w42st.com/post/amazon", get_settings())
+    assert "sign-up" in str(exc.value).lower()

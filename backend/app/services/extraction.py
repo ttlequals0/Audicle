@@ -315,12 +315,18 @@ async def extract(
                     continue
             if alt is None:
                 continue
+            # Every candidate gets the same gate treatment as the primary: a bypass
+            # that fetches the identical walled page must not pass on the signup
+            # furniture's length.
+            if gate_offset(alt.markdown) is not None:
+                gated = True
+                alt = trim_at_gate(alt)
             alt_chars = _effective_chars(alt, rule, accept_floor)
             best_chars = max(best_chars, alt_chars)
-            if alt_chars >= accept_floor:
+            if alt_chars >= _accept_floor(gated, accept_floor, settings):
                 _log_fallback_used(attempt.label, result.markdown, alt.markdown)
                 return await _maybe_render_full(alt, url, settings, rule)
-            _log_fallback_short(attempt.label, alt_chars, accept_floor)
+            _log_fallback_short(attempt.label, alt_chars, _accept_floor(gated, accept_floor, settings))
 
     # Every other strategy came up short. For a render-rule host, give the render
     # sidecar's own browser a last shot before failing -- its Camoufox can clear a
@@ -516,6 +522,8 @@ async def _maybe_render_full(
     if not (_is_render_rule(rule) or looks_truncated(result)):
         return result
     alt = await render.fetch(url, settings)
+    if alt is not None:
+        alt = trim_at_gate(alt)  # the sidecar sees the same wall; don't re-import it
     if alt is None or len(alt.markdown) <= len(result.markdown):
         return result
     logger.info(
@@ -542,7 +550,13 @@ async def _render_rescue(
     if not settings.RENDER_URL.strip() or not _is_render_rule(rule):
         return None
     alt = await render.fetch(url, settings)
-    if alt is None or len(alt.markdown) < settings.MIN_EXTRACTION_CHARS:
+    if alt is not None:
+        alt = trim_at_gate(alt)
+    if alt is None or len(alt.markdown) < _accept_floor(
+        alt is not None and gate_offset(alt.markdown) is not None,
+        settings.MIN_EXTRACTION_CHARS,
+        settings,
+    ):
         return None
     logger.info(
         "Render rescued a blocked extraction",
