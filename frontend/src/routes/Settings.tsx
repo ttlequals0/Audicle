@@ -65,6 +65,7 @@ const GROUPS: Record<string, string[]> = {
     "EXTRACTION_DIRECT_TIMEOUT_SECONDS",
     "EXTRACTION_ARC_ENABLED",
     "ARCHIVE_FALLBACK_ENABLED",
+    "REGISTRATION_EMAIL",
   ],
   Webhooks: ["WEBHOOK_URL"],
   TTS: [
@@ -130,6 +131,10 @@ const GROUP_NOTES: Record<string, string> = {
   Connections:
     "firecrawl key optional when self-hosting. reader key is a jina key, " +
     "free at jina.ai/reader; the keyless endpoint is rate limited",
+  Extraction:
+    "registration_email answers free \"email to keep reading\" walls: the sidecar " +
+    "types it into the signup form rather than lose the article. blank disables " +
+    "it; the address does reach the publisher",
   Webhooks:
     "posts episode.processed and episode.failed to this url. blank disables. " +
     "test sends to the saved url, so save first",
@@ -302,6 +307,7 @@ export default function SettingsRoute() {
   const healthQ = useHealthLive();
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
   const seeded = useRef(false);
   // The seeded values (override-or-default) so save() can send only the keys
   // the operator actually changed -- otherwise every default would be written
@@ -338,6 +344,14 @@ export default function SettingsRoute() {
       qc.invalidateQueries({ queryKey: ["settings"] });
       // A saved provider/base-URL change means the model list may differ.
       qc.invalidateQueries({ queryKey: ["llm-models"] });
+      setSaveErr(null);
+    },
+    onError: (e) => {
+      // Show the server's reason (a rejected value names the key and the shape
+      // it wants); a silent no-op reads as a successful save.
+      const body = e instanceof ApiError ? (e.detail as { error?: string; detail?: string }) : null;
+      setSavedMsg(null);
+      setSaveErr(body?.error || body?.detail || "save failed");
     },
   });
 
@@ -354,7 +368,15 @@ export default function SettingsRoute() {
         payload[key] = value;
         continue;
       }
-      if (value === "") continue;
+      if (value === "") {
+        // Blanking a text field drops the override, so the key reverts to its
+        // env value. Numbers and bools have no empty form, so an emptied one is
+        // a stray edit, not an intent.
+        const def = settingsQ.data?.defaults[key];
+        if (typeof def === "number" || typeof def === "boolean") continue;
+        payload[key] = "";
+        continue;
+      }
       if (value === "true") payload[key] = true;
       else if (value === "false") payload[key] = false;
       else if (!Number.isNaN(Number(value)) && value.trim() !== "")
@@ -506,6 +528,7 @@ export default function SettingsRoute() {
         {savedMsg && (
           <span className="font-mono text-xs text-accent">{savedMsg}</span>
         )}
+        {saveErr && <span className="font-mono text-xs text-danger">{saveErr}</span>}
       </div>
 
       {promptQ.data !== undefined && (

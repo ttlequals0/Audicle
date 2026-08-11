@@ -1051,7 +1051,9 @@ async def test_render_enrichment_replaces_with_longer_body(
     partial = extraction.ExtractionResult(markdown="short " * 10, metadata={})
     full = extraction.ExtractionResult(markdown="full " * 200, metadata={"title": "T"})
 
-    async def fake_fetch(url: str, _settings) -> extraction.ExtractionResult:
+    async def fake_fetch(
+        url: str, _settings, email: str | None = None
+    ) -> extraction.ExtractionResult:
         return full
 
     monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
@@ -1067,7 +1069,9 @@ async def test_render_enrichment_keeps_partial_when_render_is_shorter(
     settings = _render_settings(monkeypatch)
     partial = extraction.ExtractionResult(markdown="long " * 200, metadata={})
 
-    async def fake_fetch(url: str, _settings) -> extraction.ExtractionResult:
+    async def fake_fetch(
+        url: str, _settings, email: str | None = None
+    ) -> extraction.ExtractionResult:
         return extraction.ExtractionResult(markdown="short", metadata={})
 
     monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
@@ -1083,7 +1087,7 @@ async def test_render_enrichment_keeps_partial_on_none(
     settings = _render_settings(monkeypatch)
     partial = extraction.ExtractionResult(markdown="x " * 100, metadata={})
 
-    async def fake_fetch(url: str, _settings) -> None:
+    async def fake_fetch(url: str, _settings, email: str | None = None) -> None:
         return None
 
     monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
@@ -1099,7 +1103,7 @@ async def test_render_enrichment_noop_when_url_empty(
     settings = _render_settings(monkeypatch, url="")
     partial = extraction.ExtractionResult(markdown="x " * 100, metadata={})
 
-    async def boom(url: str, _settings):
+    async def boom(url: str, _settings, email: str | None = None):
         raise AssertionError("render.fetch must not run when RENDER_URL is empty")
 
     monkeypatch.setattr(extraction.render, "fetch", boom)
@@ -1115,7 +1119,7 @@ async def test_render_enrichment_noop_for_non_render_untruncated_host(
     settings = _render_settings(monkeypatch)
     partial = extraction.ExtractionResult(markdown="A complete article body.", metadata={})
 
-    async def boom(url: str, _settings):
+    async def boom(url: str, _settings, email: str | None = None):
         raise AssertionError("render.fetch must not run without a render rule or truncation")
 
     monkeypatch.setattr(extraction.render, "fetch", boom)
@@ -1131,7 +1135,9 @@ async def test_render_enrichment_triggers_on_truncation_without_rule(
     full = extraction.ExtractionResult(markdown="full " * 200, metadata={})
     calls: list[str] = []
 
-    async def fake_fetch(url: str, _settings) -> extraction.ExtractionResult:
+    async def fake_fetch(
+        url: str, _settings, email: str | None = None
+    ) -> extraction.ExtractionResult:
         calls.append(url)
         return full
 
@@ -1147,7 +1153,9 @@ async def test_render_rescue_returns_when_cascade_failed(
     settings = _render_settings(monkeypatch)
     full = extraction.ExtractionResult(markdown="full " * 200, metadata={})
 
-    async def fake_fetch(url: str, _settings) -> extraction.ExtractionResult:
+    async def fake_fetch(
+        url: str, _settings, email: str | None = None
+    ) -> extraction.ExtractionResult:
         return full
 
     monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
@@ -1160,7 +1168,7 @@ async def test_render_rescue_none_for_non_render_rule(
 ) -> None:
     settings = _render_settings(monkeypatch)
 
-    async def boom(url: str, _settings):
+    async def boom(url: str, _settings, email: str | None = None):
         raise AssertionError("render.fetch must not run without a render rule")
 
     monkeypatch.setattr(extraction.render, "fetch", boom)
@@ -1172,8 +1180,29 @@ async def test_render_rescue_none_when_below_floor(
 ) -> None:
     settings = _render_settings(monkeypatch)
 
-    async def fake_fetch(url: str, _settings) -> extraction.ExtractionResult:
+    async def fake_fetch(
+        url: str, _settings, email: str | None = None
+    ) -> extraction.ExtractionResult:
         return extraction.ExtractionResult(markdown="too short", metadata={})
+
+    monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
+    assert await extraction._render_rescue("https://www.inc.com/a", settings, _render_rule()) is None
+
+
+async def test_render_rescue_rejects_gated_body_below_doubled_floor(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A gated page owes twice the floor, so a 700-char teaser that stops at the
+    # signup prompt cannot pass as a rescue.
+    settings = _render_settings(monkeypatch)
+    teaser = extraction.ExtractionResult(
+        markdown="word " * 140 + "Continue reading this story for FREE!", metadata={}
+    )
+
+    async def fake_fetch(
+        url: str, _settings, email: str | None = None
+    ) -> extraction.ExtractionResult:
+        return teaser
 
     monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
     assert await extraction._render_rescue("https://www.inc.com/a", settings, _render_rule()) is None
@@ -1194,7 +1223,9 @@ async def test_extract_render_rescue_end_to_end(
     _patch_async_client(monkeypatch, transport)
     full = extraction.ExtractionResult(markdown="full " * 200, metadata={"title": "Inc"})
 
-    async def fake_fetch(url: str, _settings) -> extraction.ExtractionResult:
+    async def fake_fetch(
+        url: str, _settings, email: str | None = None
+    ) -> extraction.ExtractionResult:
         return full
 
     monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
@@ -1217,7 +1248,7 @@ async def test_extract_render_host_raises_when_everything_fails(
     )
     _patch_async_client(monkeypatch, transport)
 
-    async def fail_fetch(url: str, _settings) -> None:
+    async def fail_fetch(url: str, _settings, email: str | None = None) -> None:
         return None
 
     monkeypatch.setattr(extraction.render, "fetch", fail_fetch)
@@ -1332,3 +1363,60 @@ async def test_gated_page_returned_by_a_fallback_is_also_rejected(
     with pytest.raises(extraction.ExtractionTooShortError) as exc:
         await extraction.extract("https://w42st.com/post/amazon", get_settings())
     assert "sign-up" in str(exc.value).lower()
+
+
+async def test_registration_email_unlocks_a_gated_article(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr: None
+) -> None:
+    """With an address configured, the sidecar is asked to complete the signup and
+    the unlocked body is used."""
+
+    from app.services import render
+
+    monkeypatch.setenv("ARCHIVE_FALLBACK_ENABLED", "false")
+    monkeypatch.setenv("RENDER_URL", "http://render.test:8000")
+    monkeypatch.setenv("REGISTRATION_EMAIL", "reader@example.test")
+    get_settings.cache_clear()
+
+    seen: dict = {}
+
+    async def _fake_render(url, settings, email=None):
+        from app.services.extraction_types import ExtractionResult
+
+        seen["email"] = email
+        return ExtractionResult(
+            markdown="The full article continues at length. " * 80, metadata={"title": "ok"}
+        )
+
+    monkeypatch.setattr(render, "fetch", _fake_render)
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response(_GATED_BODY)))
+
+    result = await extraction.extract("https://w42st.com/post/amazon", get_settings())
+    assert seen["email"] == "reader@example.test"
+    assert "The full article continues" in result.markdown
+
+
+async def test_no_registration_email_never_sends_one(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr: None
+) -> None:
+    """Unset means the address is never typed into anyone's form."""
+
+    from app.services import render
+
+    monkeypatch.setenv("ARCHIVE_FALLBACK_ENABLED", "false")
+    monkeypatch.setenv("RENDER_URL", "http://render.test:8000")
+    monkeypatch.setenv("REGISTRATION_EMAIL", "")
+    get_settings.cache_clear()
+
+    seen: dict = {"email": "sentinel"}
+
+    async def _fake_render(url, settings, email=None):
+        seen["email"] = email
+        return None
+
+    monkeypatch.setattr(render, "fetch", _fake_render)
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response(_GATED_BODY)))
+
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://w42st.com/post/amazon", get_settings())
+    assert seen["email"] in (None, "sentinel")

@@ -338,6 +338,12 @@ async def extract(
     # Only claim "your cookies look expired" when a solver attempt actually carried
     # cookies -- an auto-escalation solver runs without them, so the rule merely having
     # cookies isn't enough.
+    # Last resort on a wall that only wants an email: let the sidecar answer it.
+    if gated and settings.REGISTRATION_EMAIL.strip():
+        unlocked = await _try_registration(url, settings)
+        if unlocked is not None:
+            return unlocked
+
     if gated:
         raise ExtractionTooShortError(
             "This article sits behind a sign-up wall: only "
@@ -347,6 +353,48 @@ async def extract(
     raise ExtractionTooShortError(
         _too_short_message(best_chars, solver_tried, settings, solver_sent_cookies)
     )
+
+
+async def _render_above_floor(
+    url: str, settings: Settings, email: str | None = None
+) -> ExtractionResult | None:
+    """Drive the render sidecar and return its body only when it clears the floor.
+
+    Gatedness is read before the trim, because trimming removes the marker it keys on."""
+
+    alt = await render.fetch(url, settings, email=email)
+    if alt is None:
+        return None
+    gated = gate_offset(alt.markdown) is not None
+    alt = trim_at_gate(alt)
+    if len(alt.markdown) < _accept_floor(gated, settings.MIN_EXTRACTION_CHARS, settings):
+        return None
+    return alt
+
+
+async def _try_registration(url: str, settings: Settings) -> ExtractionResult | None:
+    """Have the render sidecar complete a free registration wall, or None.
+
+    Only reached when the page is gated, the cascade already failed, and the
+    operator configured an address -- so the address is offered to a publisher
+    exactly when the alternative is losing the article. The unlocked body still has
+    to clear the floor to be used."""
+
+    if not settings.RENDER_URL.strip():
+        return None
+    logger.info(
+        "Answering a registration wall with the configured address",
+        extra={"event": "registration_attempt", "host": urlsplit(url).hostname or ""},
+    )
+    alt = await _render_above_floor(url, settings, email=settings.REGISTRATION_EMAIL.strip())
+    if alt is None:
+        logger.info("Registration wall did not open", extra={"event": "registration_failed"})
+        return None
+    logger.info(
+        "Registration wall opened",
+        extra={"event": "registration_unlocked", "chars": len(alt.markdown)},
+    )
+    return alt
 
 
 def _too_short_message(
@@ -549,14 +597,8 @@ async def _render_rescue(
 
     if not settings.RENDER_URL.strip() or not _is_render_rule(rule):
         return None
-    alt = await render.fetch(url, settings)
-    if alt is not None:
-        alt = trim_at_gate(alt)
-    if alt is None or len(alt.markdown) < _accept_floor(
-        alt is not None and gate_offset(alt.markdown) is not None,
-        settings.MIN_EXTRACTION_CHARS,
-        settings,
-    ):
+    alt = await _render_above_floor(url, settings)
+    if alt is None:
         return None
     logger.info(
         "Render rescued a blocked extraction",

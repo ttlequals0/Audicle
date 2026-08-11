@@ -108,20 +108,22 @@ async def put_settings_overrides(
     # can't partially apply -- and an invalid enum (e.g. EXTRACTION_ENGINE) is
     # rejected here instead of being stored and crashing/mis-routing at overlay time.
     for key, value in payload.items():
-        if key in runtime_settings.MASKED_KEYS and value in (runtime_settings.MASK_SENTINEL, ""):
-            continue  # sentinel = unchanged; "" = clear (handled in the apply loop)
+        # Re-saving the form sends the mask sentinel back for an unchanged secret,
+        # and "" for any key means clear -- neither is a value to validate.
+        if key in runtime_settings.MASKED_KEYS and value == runtime_settings.MASK_SENTINEL:
+            continue
+        if value == "":
+            continue
         _validate_value(key, value, settings)
 
     for key, value in payload.items():
-        if key in runtime_settings.MASKED_KEYS:
-            # Re-saving the form sends back the mask sentinel for an
-            # unchanged secret -- skip it so the stored value survives.
-            # An explicit empty string clears the override (revert to env).
-            if value == runtime_settings.MASK_SENTINEL:
-                continue
-            if value == "":
-                runtime_settings.delete(conn, key)
-                continue
+        if key in runtime_settings.MASKED_KEYS and value == runtime_settings.MASK_SENTINEL:
+            continue  # unchanged secret: keep what is stored
+        if value == "":
+            # Clearing a field drops the override so the key reverts to its env
+            # value. Storing "" instead would pin an empty FEED_TITLE/language.
+            runtime_settings.delete(conn, key)
+            continue
         runtime_settings.set_value(conn, key, value)
 
     stored = runtime_settings.get_all(conn)
@@ -196,6 +198,8 @@ def _defaults_map(settings: Settings) -> dict[str, Any]:
 _TTS_STRING_SHAPES: dict[str, re.Pattern[str]] = {
     "TTS_MODEL": re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$"),
     "TTS_LANGUAGE": re.compile(r"^[a-z]{2,3}$"),
+    # A typo here would be typed into publishers' signup forms, so check the shape.
+    "REGISTRATION_EMAIL": re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$"),
 }
 
 

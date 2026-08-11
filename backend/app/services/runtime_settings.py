@@ -60,6 +60,8 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "WEBHOOK_URL",
         # Arc XP static body extractor toggle.
         "EXTRACTION_ARC_ENABLED",
+        # Address used to answer free registration walls; empty disables it.
+        "REGISTRATION_EMAIL",
         # Primary extraction engine (direct | firecrawl) + the direct fetch timeout,
         # tunable live so an operator can switch engines without an env edit + restart.
         "EXTRACTION_ENGINE",

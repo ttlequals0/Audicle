@@ -50,6 +50,10 @@ __version__ = _render_version()
 class RenderRequest(BaseModel):
     url: str
     expand: bool = True
+    # Address the operator configured for registration walls. Sent only when the
+    # backend has already decided the page is gated; the renderer still checks the
+    # page itself before typing it anywhere.
+    email: str | None = None
 
 
 def _default_renderer() -> Renderer:
@@ -71,7 +75,9 @@ def create_app(renderer: Renderer | None = None) -> FastAPI:
 
     @app.post("/render")
     async def render(body: RenderRequest) -> dict[str, object]:
-        result: RenderResult = await app.state.renderer.render(body.url, body.expand)
+        result: RenderResult = await app.state.renderer.render(
+            body.url, body.expand, email=body.email
+        )
         return {
             "status": result.status,
             "html": result.html,

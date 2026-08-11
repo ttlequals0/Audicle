@@ -26,7 +26,7 @@ from app.services.html_markdown import html_to_markdown
 logger = logging.getLogger("app.services.render")
 
 
-async def fetch(url: str, settings: Settings) -> ExtractionResult | None:
+async def fetch(url: str, settings: Settings, email: str | None = None) -> ExtractionResult | None:
     """Render ``url`` through the sidecar and return the expanded article markdown.
 
     Returns ``None`` (never raises) on any failure -- unset URL, sidecar error,
@@ -43,6 +43,8 @@ async def fetch(url: str, settings: Settings) -> ExtractionResult | None:
     # connect stays short so an unreachable sidecar fails fast.
     timeout = httpx.Timeout(settings.RENDER_TIMEOUT_SECONDS, connect=10.0)
     payload: dict[str, Any] = {"url": url, "expand": True}
+    if email:
+        payload["email"] = email
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(endpoint, json=payload)

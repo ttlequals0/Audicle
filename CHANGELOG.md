@@ -6,6 +6,32 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.53.0] - 2026-08-11
+
+### Added
+
+- `REGISTRATION_EMAIL` answers the free "give us an email to keep reading"
+  walls. When a gated article would otherwise be lost, the render sidecar
+  fills the publisher's signup form with the configured address in its own
+  browser and re-reads the unlocked page. It runs only on a detected wall and
+  only after the ordinary bypasses came up short; blank means nothing is ever
+  submitted. The sidecar picks the form by shape, requiring an email field and
+  registration wording, so a search box or comment form can never receive the
+  address. Settable in Settings under Extraction or by env, validated for
+  shape, and logged per host when it fires.
+
+### Changed
+
+- Clearing a settings field now removes the override instead of being ignored,
+  so a key can be returned to its env value from the UI. Previously only
+  secrets could be cleared, and blanking anything else silently did nothing.
+- A render rescue is held to the same doubled floor as every other candidate
+  when the page is gated. The floor was read after the gate marker had already
+  been trimmed away, so it always came out as the ordinary floor, and a
+  render-rule host could publish a teaser between 500 and 1000 characters.
+- The render sidecar's `/render` endpoint accepts an optional `email`. Without
+  one its behavior is unchanged.
+
 ## [0.52.6] - 2026-08-11
 
 ### Fixed
