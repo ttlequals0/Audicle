@@ -340,10 +340,10 @@ class Settings(BaseSettings):
     AUDIO_ANALYSIS_WINDOW_SECS: float = 3.0  # sliding-window size for localized checks
     # Pitch-drift gate (2b): a chunk whose median F0 deviates from the running
     # median of accepted chunks by more than this many semitones is regenerated.
-    # Set by the 0.51.0 corpus sweep (149 episodes): p95 of 30s-bucket
-    # deviations was 1.21 st while the pitch-complaint episode peaked at 1.35,
-    # so 1.25 flags the complaint without churning on normal variation.
-    AUDIO_ANALYSIS_MAX_F0_SEMITONES: float = 1.25
+    # The 0.51.0 corpus sweep (149 episodes) put p95 of 30s-bucket deviations at
+    # 1.21 st and p99 at 1.83. Production ran 1.25 and flagged 26 of 108 chunks
+    # in one job, so the bound sits above p99 instead.
+    AUDIO_ANALYSIS_MAX_F0_SEMITONES: float = 2.0
     AUDIO_ANALYSIS_F0_WARMUP_CHUNKS: int = 3  # accepted chunks before the gate arms
     AUDIO_ANALYSIS_MIN_RMS_CV: float = 0.35  # below = flat envelope (drone/noise)
     AUDIO_ANALYSIS_MIN_CREST: float = 3.0  # below = non-peaky (tone), linear ratio
@@ -479,6 +479,8 @@ RUNTIME_SETTING_BOUNDS: dict[str, dict[str, float]] = {
     "AUDIO_ANALYSIS_REGEN_CHARS_FACTOR": {"gt": 0, "le": 1.0},
     "AUDIO_ANALYSIS_REGEN_MIN_CHARS": {"ge": 100, "le": 2000},
     "AUDIO_ANALYSIS_REGEN_PENALTY_STEP": {"ge": 0, "le": 1.0},
+    # An octave of drift is not drift, it is a different voice.
+    "AUDIO_ANALYSIS_MAX_F0_SEMITONES": {"gt": 0, "le": 12.0},
 }
 
 

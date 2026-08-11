@@ -12,16 +12,16 @@ it defaults to the Camoufox driver. The default is imported lazily so the app
 from __future__ import annotations
 
 import logging
-import os
 from importlib import metadata
 from pathlib import Path
 
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from log_config import setup_logging
 from renderer import Renderer, RenderResult
 
-logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
+setup_logging()
 logger = logging.getLogger("render.main")
 
 

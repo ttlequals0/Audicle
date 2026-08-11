@@ -18,7 +18,7 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY pyproject.toml ./
-COPY main.py renderer.py camoufox_renderer.py entrypoint.sh ./
+COPY main.py renderer.py camoufox_renderer.py log_config.py entrypoint.sh ./
 
 # Install the app + the browser extra, then let Playwright pull Firefox's OS
 # dependencies (it maintains the correct per-distro package list, so we don't

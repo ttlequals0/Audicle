@@ -6,6 +6,28 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.53.1] - 2026-08-11
+
+### Changed
+
+- The pitch-drift gate now allows 2.0 semitones instead of 1.25. Production ran
+  the tighter bound and regenerated 26 of 108 chunks in a single job, 48 extra
+  generations, while the corpus sweep put p99 at 1.83 semitones. The gate still
+  catches the episode the bound was built for, which peaked at 1.35 above its
+  own running median.
+- `AUDIO_ANALYSIS_MAX_F0_SEMITONES` is tunable at runtime, in Settings under
+  Audio analysis, like every other threshold in that group. It was the one knob
+  that still needed a redeploy to change.
+
+### Fixed
+
+- The render sidecar logs JSON, so `extra={...}` fields reach the log
+  aggregator. Every structured field was being dropped: "registration gate
+  result" arrived without the `unlocked` flag it exists to report, which is why
+  diagnosing a wall meant driving a browser by hand instead of running one
+  query. Set `LOG_FORMAT=text` for readable local output. uvicorn's access lines
+  share the format.
+
 ## [0.53.0] - 2026-08-11
 
 ### Added
