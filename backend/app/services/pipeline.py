@@ -30,6 +30,7 @@ import time
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
@@ -418,6 +419,7 @@ async def _run_stages(
     )
     intro = _intro_read_line(extraction_result.metadata, settings)
     if intro:
+        cleaned = _strip_title_echo(cleaned, _coerce_str(extraction_result.metadata.get("title")))
         cleaned = f"{intro}\n\n{cleaned}"
     summary = await _run_stage(
         "summary",
@@ -537,6 +539,45 @@ async def _run_stage(
             extra={"event": "stage_end", "duration_ms": duration_ms},
         )
         return result
+
+
+# Quote/dash variants that differ between the extraction metadata title and the
+# cleaned body (curly vs straight), which would otherwise defeat the comparison.
+_TITLE_PUNCT = str.maketrans({"\u2019": "'", "\u2018": "'", "\u201c": '"', "\u201d": '"',
+                              "\u2014": "-", "\u2013": "-"})
+
+
+def _title_key(text: str) -> str:
+    """Comparison form of a title: punctuation unified, case folded, spaces
+    collapsed, trailing punctuation dropped."""
+
+    flat = " ".join(text.translate(_TITLE_PUNCT).split()).casefold()
+    return flat.strip(" .:;,-!?\"'")
+
+
+def _strip_title_echo(cleaned: str, title: str | None) -> str:
+    """Drop a leading line that just repeats the article's own headline.
+
+    Substack and similar render headline + subtitle, so the body opens with the
+    same words the intro read is about to announce and the episode says the title
+    twice. Only a heading-shaped first line is dropped: a real opening paragraph
+    that happens to begin with the headline stays."""
+
+    if not title:
+        return cleaned
+    head, sep, rest = cleaned.partition("\n\n")
+    candidate = head.strip()
+    if not candidate or not rest.strip():
+        return cleaned
+    key, title_key = _title_key(candidate), _title_key(title)
+    if not title_key:
+        return cleaned
+    # A heading restates the title and stops; a paragraph keeps going.
+    if len(key) > len(title_key) * 1.3:
+        return cleaned
+    if key != title_key and SequenceMatcher(None, key, title_key).ratio() < 0.9:
+        return cleaned
+    return rest.strip() if sep else cleaned
 
 
 def _intro_read_line(metadata: dict[str, Any] | None, settings: Settings) -> str | None:

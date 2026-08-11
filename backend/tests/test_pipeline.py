@@ -2381,3 +2381,56 @@ async def test_stage_chapters_survives_a_chunk_duration_desync(
         ["a", "b", "c"], [400.0, 400.0], 800.0, Path("/tmp/x.mp3"), get_settings()
     )
     assert out is not None
+
+
+# --- title echo: the body repeats its own headline (0.52.5) ----------------
+
+
+def test_strips_a_leading_title_echo_before_the_intro() -> None:
+    """Substack renders headline + subtitle, so the cleaned body opens with the
+    same title the intro read announces. Note the apostrophes differ: the
+    metadata title is curly, the body straight."""
+
+    # \u2019 (curly) here vs a straight quote in the body: the real mismatch.
+    title = "Zillow\u2019s CEO Just Fired 500 People Because He Says The Company is More Efficient Without Them"
+    body = (
+        "Zillow's CEO Just Fired 500 People Because He Says The Company is More Efficient Without Them\n\n"
+        "Zillow just posted the best financial year in its two-decade history, then cut "
+        "seven hundred people.\n\nOn Tuesday morning, August 4, 2026, just over five hundred "
+        "people at Zillow Group learned they no longer had jobs."
+    )
+    out = pipeline._strip_title_echo(body, title)
+    assert not out.startswith("Zillow's CEO Just Fired")
+    assert out.startswith("Zillow just posted the best financial year")
+    assert "learned they no longer had jobs" in out
+
+
+def test_keeps_the_body_when_it_does_not_open_with_the_title() -> None:
+    title = "A Completely Different Headline"
+    body = "The article opens on a scene instead.\n\nThen it continues."
+    assert pipeline._strip_title_echo(body, title) == body
+
+
+def test_keeps_a_paragraph_that_merely_starts_like_the_title() -> None:
+    """Only a heading-shaped echo is dropped; a real opening paragraph that
+    happens to begin with the headline's words is content."""
+
+    title = "Zillow Fired 500 People"
+    body = (
+        "Zillow Fired 500 People, and the timing tells you everything about how the "
+        "company thinks about its own record year and what comes next for the market.\n\n"
+        "More reporting follows."
+    )
+    assert pipeline._strip_title_echo(body, title) == body
+
+
+def test_title_echo_tolerates_punctuation_and_case_drift() -> None:
+    title = "The AI Explanation Nobody Confirms"
+    body = "the ai explanation nobody confirms.\n\nReal content here."
+    assert pipeline._strip_title_echo(body, title) == "Real content here."
+
+
+def test_title_echo_no_title_is_a_noop() -> None:
+    body = "Some article text."
+    assert pipeline._strip_title_echo(body, None) == body
+    assert pipeline._strip_title_echo(body, "") == body

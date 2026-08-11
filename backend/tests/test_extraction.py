@@ -1223,3 +1223,88 @@ async def test_extract_render_host_raises_when_everything_fails(
     monkeypatch.setattr(extraction.render, "fetch", fail_fetch)
     with pytest.raises(extraction.ExtractionTooShortError):
         await extraction.extract("https://www.inc.com/a", settings)
+
+
+# --- registration walls (0.52.5) -------------------------------------------
+#
+# w42st.com serves two paragraphs then "Continue Reading This Story for FREE!"
+# followed by a signup form and the author's bio. The body cleared the 500-char
+# floor on chrome alone and shipped as a 40-second episode.
+
+_GATED_BODY = (
+    "Amazon-branded delivery workers are a daily sight in Hell's Kitchen, pushing "
+    "large blue carts along 9th Avenue and riding Prime-branded electric cargo bikes.\n\n"
+    "But despite the uniforms, carts, bikes, vans and packages bearing Amazon's name, "
+    "those workers are generally employed by independent delivery contractors rather "
+    "than Amazon itself.\n\n"
+    "Continue Reading This Story for FREE!\n\n"
+    "Sign me up for the newsletter\n\nTerms and Privacy\n\n"
+    "Success! Your account was created and you're signed in. Please visit My Account "
+    "to manage your account. Want more Hell's Kitchen stories like this in your Google "
+    "results? Add us as a Preferred Source on Google. Tagged: delivery. Phil O'Brien is "
+    "an entrepreneur and journalist who founded W42ST in 2014 and has lived in New York "
+    "since 2012, after building an international sports photography agency.\n"
+)
+
+
+def test_trim_at_gate_cuts_the_signup_boilerplate() -> None:
+    from app.services.extraction_types import ExtractionResult
+
+    result = ExtractionResult(markdown=_GATED_BODY, metadata={"title": "Amazon workers"})
+    trimmed = extraction.trim_at_gate(result)
+    assert "Continue Reading This Story" not in trimmed.markdown
+    assert "Sign me up for the newsletter" not in trimmed.markdown
+    assert "Phil O'Brien" not in trimmed.markdown
+    assert "independent delivery contractors" in trimmed.markdown
+
+
+def test_trim_at_gate_leaves_an_ungated_article_alone() -> None:
+    from app.services.extraction_types import ExtractionResult
+
+    body = "A real article. " * 200
+    result = ExtractionResult(markdown=body, metadata={"title": "fine"})
+    assert extraction.trim_at_gate(result).markdown == body
+
+
+def test_trim_at_gate_ignores_a_bare_read_more_link() -> None:
+    """"read more" is ordinary related-link chrome; only explicit gate wording counts,
+    because this decision now fails jobs."""
+
+    from app.services.extraction_types import ExtractionResult
+
+    body = "A real article. " * 200 + "\n\nRead more\n\nRelated stories"
+    result = ExtractionResult(markdown=body, metadata={"title": "fine"})
+    assert extraction.trim_at_gate(result).markdown == body
+
+
+async def test_gated_article_fails_instead_of_shipping_a_stub(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr: None
+) -> None:
+    """The real w42st shape: 1202 chars of which only 487 are article."""
+
+    # No archive hop: this test is about the gate decision, not the cascade.
+    monkeypatch.setenv("ARCHIVE_FALLBACK_ENABLED", "false")
+    get_settings.cache_clear()
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response(_GATED_BODY)))
+
+    with pytest.raises(extraction.ExtractionTooShortError) as exc:
+        await extraction.extract("https://w42st.com/post/amazon", get_settings())
+    assert "sign-up" in str(exc.value).lower() or "registration" in str(exc.value).lower()
+
+
+async def test_gated_article_over_the_bar_is_kept_without_the_boilerplate(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr: None
+) -> None:
+    """A gated page that still yielded a real article keeps it, minus the signup
+    furniture -- narrating "Success! Your account was created" is the bug."""
+
+    long_body = (
+        "Real reporting continues at length. " * 120
+        + "\n\nContinue Reading This Story for FREE!\n\nSign me up for the newsletter\n"
+    )
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response(long_body)))
+
+    result = await extraction.extract("https://w42st.com/post/amazon", get_settings())
+    assert "Real reporting continues" in result.markdown
+    assert "Continue Reading This Story" not in result.markdown
+    assert "Sign me up" not in result.markdown

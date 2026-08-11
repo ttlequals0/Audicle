@@ -6,6 +6,30 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.52.5] - 2026-08-11
+
+### Fixed
+
+- Articles behind a sign-up wall shipped as 40-second episodes. w42st.com
+  serves two paragraphs, then "Continue Reading This Story for FREE!", then a
+  signup form and the author's bio; of 1202 scraped characters only 487 were
+  article, and the furniture carried the total past the 500-character floor so
+  it published. Extraction now cuts the body at the gate, which both keeps the
+  signup text out of the narration and lets the length floor judge what was
+  really recovered. A gated page must also clear twice the floor to be
+  accepted, and when nothing gets past the wall the job fails naming it,
+  rather than publishing a stub that reads out the publisher's biography.
+  The rest of that article is not in the page HTML, so no browser or archive
+  hop can recover it; failing is the honest outcome.
+- Episodes announced their title twice. The intro read added in 0.51.0
+  prepends the headline, and the article body often opens with the same
+  headline (Substack renders title then subtitle), so cue 1 and cue 2 said the
+  same sentence. A leading line that just restates the title is now dropped
+  before the intro is added, comparing with punctuation and case normalized
+  because the metadata title and the body disagree on curly versus straight
+  apostrophes. Only a heading-shaped line is removed, so an opening paragraph
+  that happens to begin with the headline survives.
+
 ## [0.52.4] - 2026-08-10
 
 ### Added

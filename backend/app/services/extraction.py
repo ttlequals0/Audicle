@@ -161,7 +161,11 @@ async def extract(
                     },
                 )
                 result = ExtractionResult(markdown=arc_md, metadata=result.metadata)
-        if _effective_chars(result, rule, floor) >= floor:
+        # A registration gate ends the article; cut the signup furniture off before
+        # any length decision so the floor judges real text.
+        gated = gate_offset(result.markdown) is not None
+        result = trim_at_gate(result)
+        if _effective_chars(result, rule, floor) >= _accept_floor(gated, floor, settings):
             return await _maybe_render_full(result, url, settings, rule)
         # Best result seen across direct + every bypass, and whether the browser
         # solver was attempted -- together they classify the failure message.
@@ -328,6 +332,12 @@ async def extract(
     # Only claim "your cookies look expired" when a solver attempt actually carried
     # cookies -- an auto-escalation solver runs without them, so the rule merely having
     # cookies isn't enough.
+    if gated:
+        raise ExtractionTooShortError(
+            "This article sits behind a sign-up wall: only "
+            f"{best_chars} characters were readable before the registration prompt. "
+            "Add a per-host bypass with your cookies in Settings, or skip this one."
+        )
     raise ExtractionTooShortError(
         _too_short_message(best_chars, solver_tried, settings, solver_sent_cookies)
     )
@@ -398,6 +408,19 @@ def _log_fallback_short(label: str, alt_chars: int, floor: int) -> None:
     )
 
 
+# A gated page must clear more than the plain floor: the few paragraphs a publisher
+# shows above the wall routinely pass 500 chars while being useless to narrate.
+_GATED_FLOOR_MULTIPLIER = 2
+
+
+def _accept_floor(gated: bool, floor: int, settings: Settings) -> int:
+    """Length a candidate must reach to be accepted."""
+
+    if not gated:
+        return floor
+    return max(floor, settings.MIN_EXTRACTION_CHARS * _GATED_FLOOR_MULTIPLIER)
+
+
 def _effective_chars(result: ExtractionResult, rule: SourceFallback | None, floor: int) -> int:
     """Body length for the floor decision. For an operator-flagged host (a matched
     rule), when the page's own JSON-LD says the article body is below the floor but the
@@ -428,6 +451,50 @@ def looks_truncated(result: ExtractionResult) -> bool:
     """True when a solved result still reads like a click-gated teaser."""
 
     return scan_markers(result, _TRUNCATION_MARKERS)
+
+
+# Wording that only appears where a registration/paywall gate replaces the rest of the
+# article. Deliberately narrower than _TRUNCATION_MARKERS: those merely trigger a free
+# render retry, while these truncate the body and can fail a job, so a bare "read more"
+# in a related-links block must not match.
+_GATE_MARKERS = (
+    "continue reading this story",
+    "sign me up for the newsletter",
+    "create your free account",
+    "subscribe to continue",
+    "to continue reading",
+    "this post is for paid subscribers",
+    "become a member to read",
+    "already have an account",
+)
+
+
+def gate_offset(markdown: str) -> int | None:
+    """Index of the earliest registration-gate marker, or None when ungated."""
+
+    lowered = markdown.lower()
+    hits = [lowered.find(marker) for marker in _GATE_MARKERS]
+    found = [i for i in hits if i >= 0]
+    return min(found) if found else None
+
+
+def trim_at_gate(result: ExtractionResult) -> ExtractionResult:
+    """Drop everything from a registration gate onward.
+
+    What follows a gate is the signup form, tag list, and author bio, never article
+    text -- confirmed against w42st.com, where 713 of 1202 scraped chars were
+    furniture. Cutting here both stops that being narrated and lets the ordinary
+    length floor judge what was actually recovered."""
+
+    offset = gate_offset(result.markdown)
+    if offset is None:
+        return result
+    return ExtractionResult(
+        markdown=result.markdown[:offset].strip(),
+        metadata=result.metadata,
+        article_chars=result.article_chars,
+        raw_html=result.raw_html,
+    )
 
 
 def _is_render_rule(rule: SourceFallback | None) -> bool:
