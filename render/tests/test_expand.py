@@ -5,6 +5,8 @@ from renderer import (
     expandable_targets,
     is_captcha_wall,
     is_public_url,
+    looks_registration_gated,
+    registration_form_index,
     word_estimate,
 )
 
@@ -87,8 +89,6 @@ def test_is_public_url_allows_public_literal() -> None:
 
 
 # --- registration gates (0.53.0) -------------------------------------------
-
-from renderer import looks_registration_gated, registration_form_index  # noqa: E402
 
 
 def test_registration_gate_detected_from_visible_copy() -> None:

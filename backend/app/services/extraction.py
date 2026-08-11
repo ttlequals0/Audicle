@@ -335,15 +335,15 @@ async def extract(
     if rescued is not None:
         return rescued
 
-    # Only claim "your cookies look expired" when a solver attempt actually carried
-    # cookies -- an auto-escalation solver runs without them, so the rule merely having
-    # cookies isn't enough.
     # Last resort on a wall that only wants an email: let the sidecar answer it.
     if gated and settings.REGISTRATION_EMAIL.strip():
         unlocked = await _try_registration(url, settings)
         if unlocked is not None:
             return unlocked
 
+    # Only claim "your cookies look expired" when a solver attempt actually carried
+    # cookies -- an auto-escalation solver runs without them, so the rule merely having
+    # cookies isn't enough.
     if gated:
         raise ExtractionTooShortError(
             "This article sits behind a sign-up wall: only "
@@ -375,10 +375,8 @@ async def _render_above_floor(
 async def _try_registration(url: str, settings: Settings) -> ExtractionResult | None:
     """Have the render sidecar complete a free registration wall, or None.
 
-    Only reached when the page is gated, the cascade already failed, and the
-    operator configured an address -- so the address is offered to a publisher
-    exactly when the alternative is losing the article. The unlocked body still has
-    to clear the floor to be used."""
+    Reached only when the page is gated, the cascade already failed, and an address
+    is configured. The unlocked body still has to clear the floor to be used."""
 
     if not settings.RENDER_URL.strip():
         return None

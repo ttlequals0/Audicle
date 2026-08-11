@@ -128,10 +128,8 @@ class Settings(BaseSettings):
     FIRECRAWL_BACKOFF_BASE_SECONDS: int = 1
     FIRECRAWL_TIMEOUT_SECONDS: int = 30
     MIN_EXTRACTION_CHARS: int = 500
-    # Address the render sidecar types into free registration walls ("give us an
-    # email to keep reading"). Empty disables it and those articles simply fail.
-    # Best effort: it only fires on a detected gate, and only after the normal
-    # cascade came up short. Your address does go to the publisher.
+    # Address the render sidecar types into free registration walls, after the
+    # cascade came up short. Needs RENDER_URL; empty means nothing is submitted.
     REGISTRATION_EMAIL: str = ""
 
     # OCR fallback for scanned/image uploads (0.51.0). Engages only when a PDF's

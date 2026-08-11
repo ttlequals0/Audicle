@@ -15,10 +15,12 @@ work lives under `[Unreleased]`.
   fills the publisher's signup form with the configured address in its own
   browser and re-reads the unlocked page. It runs only on a detected wall and
   only after the ordinary bypasses came up short; blank means nothing is ever
-  submitted. The sidecar picks the form by shape, requiring an email field and
-  registration wording, so a search box or comment form can never receive the
-  address. Settable in Settings under Extraction or by env, validated for
-  shape, and logged per host when it fires.
+  submitted. The sidecar picks the form by shape, requiring an email field, no
+  password field, and registration wording, so a login, a comment box, or a
+  footer newsletter signup can never receive the address, and it submits once
+  per article however many times the render retries. Needs `RENDER_URL`.
+  Settable in Settings under Extraction or by env, validated for shape, and
+  logged per host when it fires.
 
 ### Changed
 

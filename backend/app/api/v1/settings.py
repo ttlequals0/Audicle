@@ -192,10 +192,10 @@ def _defaults_map(settings: Settings) -> dict[str, Any]:
     return defaults
 
 
-# Shape checks for the two wrapper-facing strings, so a hand-crafted PUT
-# cannot store a value that fails later on every TTS call. The wrapper stays
-# the authority on which names exist.
-_TTS_STRING_SHAPES: dict[str, re.Pattern[str]] = {
+# Shape checks for free-text keys whose value is handed to something else later
+# (the TTS wrapper, a publisher's signup form), so a hand-crafted PUT cannot store
+# one that only fails far from here. The wrapper stays the authority on model names.
+_STRING_SHAPES: dict[str, re.Pattern[str]] = {
     "TTS_MODEL": re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$"),
     "TTS_LANGUAGE": re.compile(r"^[a-z]{2,3}$"),
     # A typo here would be typed into publishers' signup forms, so check the shape.
@@ -214,9 +214,10 @@ def _validate_value(key: str, value: Any, settings: Settings) -> None:
     CHATTERBOX_TEMPERATURE, to fail far away on every TTS call.
     """
 
-    shape = _TTS_STRING_SHAPES.get(key)
+    shape = _STRING_SHAPES.get(key)
     if shape is not None:
-        if value != "" and not shape.fullmatch(str(value)):
+        # "" never reaches here: the caller treats it as a clear.
+        if not shape.fullmatch(str(value)):
             raise HTTPException(
                 status_code=400,
                 detail=f"{key} must match {shape.pattern} (or be empty), got {value!r}",

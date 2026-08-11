@@ -407,5 +407,5 @@ def test_put_rejects_a_malformed_registration_email(env: Path) -> None:
         ok = client.put("/api/v1/settings", json={"REGISTRATION_EMAIL": "reader@example.test"})
         cleared = client.put("/api/v1/settings", json={"REGISTRATION_EMAIL": ""})
     assert bad.status_code == 400
-    assert ok.status_code == 200
-    assert cleared.status_code == 200
+    assert ok.json()["values"]["REGISTRATION_EMAIL"] == "reader@example.test"
+    assert "REGISTRATION_EMAIL" not in cleared.json()["values"]

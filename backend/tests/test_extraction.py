@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 from app.config import get_settings
-from app.services import extraction, flaresolverr
+from app.services import extraction, flaresolverr, render
 
 
 @pytest.fixture(autouse=True)
@@ -1371,8 +1371,6 @@ async def test_registration_email_unlocks_a_gated_article(
     """With an address configured, the sidecar is asked to complete the signup and
     the unlocked body is used."""
 
-    from app.services import render
-
     monkeypatch.setenv("ARCHIVE_FALLBACK_ENABLED", "false")
     monkeypatch.setenv("RENDER_URL", "http://render.test:8000")
     monkeypatch.setenv("REGISTRATION_EMAIL", "reader@example.test")
@@ -1381,10 +1379,8 @@ async def test_registration_email_unlocks_a_gated_article(
     seen: dict = {}
 
     async def _fake_render(url, settings, email=None):
-        from app.services.extraction_types import ExtractionResult
-
         seen["email"] = email
-        return ExtractionResult(
+        return extraction.ExtractionResult(
             markdown="The full article continues at length. " * 80, metadata={"title": "ok"}
         )
 
@@ -1396,22 +1392,66 @@ async def test_registration_email_unlocks_a_gated_article(
     assert "The full article continues" in result.markdown
 
 
+async def test_registration_needs_a_render_sidecar(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr: None
+) -> None:
+    """An address with no sidecar configured is a no-op, not a crash."""
+
+    monkeypatch.setenv("ARCHIVE_FALLBACK_ENABLED", "false")
+    monkeypatch.setenv("RENDER_URL", "")
+    monkeypatch.setenv("REGISTRATION_EMAIL", "reader@example.test")
+    get_settings.cache_clear()
+
+    async def _boom(url, settings, email=None):
+        raise AssertionError("render.fetch must not run without RENDER_URL")
+
+    monkeypatch.setattr(render, "fetch", _boom)
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response(_GATED_BODY)))
+
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://w42st.com/post/amazon", get_settings())
+
+
+async def test_registration_that_does_not_open_still_fails_the_job(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr: None, caplog
+) -> None:
+    """A wall that takes the address and stays shut must not publish the teaser."""
+
+    monkeypatch.setenv("ARCHIVE_FALLBACK_ENABLED", "false")
+    monkeypatch.setenv("RENDER_URL", "http://render.test:8000")
+    monkeypatch.setenv("REGISTRATION_EMAIL", "reader@example.test")
+    get_settings.cache_clear()
+
+    async def _still_gated(url, settings, email=None):
+        return extraction.ExtractionResult(
+            markdown="Two paragraphs only. " * 10 + "Continue reading this story for FREE!",
+            metadata={"title": "ok"},
+        )
+
+    monkeypatch.setattr(render, "fetch", _still_gated)
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response(_GATED_BODY)))
+
+    with caplog.at_level(logging.INFO), pytest.raises(
+        extraction.ExtractionTooShortError, match="sign-up wall"
+    ):
+        await extraction.extract("https://w42st.com/post/amazon", get_settings())
+    assert any(r.__dict__.get("event") == "registration_failed" for r in caplog.records)
+
+
 async def test_no_registration_email_never_sends_one(
     env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr: None
 ) -> None:
     """Unset means the address is never typed into anyone's form."""
-
-    from app.services import render
 
     monkeypatch.setenv("ARCHIVE_FALLBACK_ENABLED", "false")
     monkeypatch.setenv("RENDER_URL", "http://render.test:8000")
     monkeypatch.setenv("REGISTRATION_EMAIL", "")
     get_settings.cache_clear()
 
-    seen: dict = {"email": "sentinel"}
+    calls: list[str | None] = []
 
     async def _fake_render(url, settings, email=None):
-        seen["email"] = email
+        calls.append(email)
         return None
 
     monkeypatch.setattr(render, "fetch", _fake_render)
@@ -1419,4 +1459,4 @@ async def test_no_registration_email_never_sends_one(
 
     with pytest.raises(extraction.ExtractionTooShortError):
         await extraction.extract("https://w42st.com/post/amazon", get_settings())
-    assert seen["email"] in (None, "sentinel")
+    assert calls == []  # no render rule and no address: the sidecar is never called

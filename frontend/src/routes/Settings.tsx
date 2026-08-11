@@ -133,8 +133,8 @@ const GROUP_NOTES: Record<string, string> = {
     "free at jina.ai/reader; the keyless endpoint is rate limited",
   Extraction:
     "registration_email answers free \"email to keep reading\" walls: the sidecar " +
-    "types it into the signup form rather than lose the article. blank disables " +
-    "it; the address does reach the publisher",
+    "types it into the signup form rather than lose the article. needs render_url. " +
+    "clearing it here falls back to the env value; the address does reach the publisher",
   Webhooks:
     "posts episode.processed and episode.failed to this url. blank disables. " +
     "test sends to the saved url, so save first",
