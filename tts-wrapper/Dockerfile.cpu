@@ -35,7 +35,8 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY pyproject.toml ./
-COPY config.py engine.py log_setup.py main.py chatterbox_engine.py whisper_verify.py install_engine.sh ./
+# Every module main.py imports must be listed here (see Dockerfile).
+COPY config.py engine.py log_setup.py main.py memory.py chatterbox_engine.py whisper_verify.py install_engine.sh ./
 # torch AND torchaudio are installed first from the CPU index with matching
 # versions: chatterbox imports torchaudio, and if it comes from PyPI while torch
 # is the CPU-index build the native extension fails to load (ABI mismatch).

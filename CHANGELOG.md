@@ -6,6 +6,20 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.55.1] - 2026-08-12
+
+### Fixed
+
+- The wrapper image now contains `memory.py`. Its Dockerfile copies modules by
+  name and the new one was never added, so 0.55.0's wrapper crash-looped on
+  `ModuleNotFoundError` the moment it was deployed. The tests import from the
+  source tree, where the file exists, so nothing caught it before the image was
+  running. A test now parses `main.py`'s imports and asserts every Dockerfile
+  copies each local module it needs. `Dockerfile.cpu` had the same omission.
+
+0.55.0 was withdrawn: its app and render images were sound, but the wrapper
+image could not start.
+
 ## [0.55.0] - 2026-08-12
 
 ### Fixed

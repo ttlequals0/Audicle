@@ -76,7 +76,10 @@ WORKDIR /app
 # pins to vulnerable versions (urllib3, cryptography, pillow, Brotli,
 # setuptools, wheel). torch 2.6.0 is preinstalled above; chatterbox reuses it.
 COPY pyproject.toml ./
-COPY config.py engine.py log_setup.py main.py chatterbox_engine.py whisper_verify.py install_engine.sh ./
+# Every module main.py imports must be listed here. A missing one is not caught
+# by tests (they import from the source tree) and only surfaces as an
+# ImportError crash-loop after deploy.
+COPY config.py engine.py log_setup.py main.py memory.py chatterbox_engine.py whisper_verify.py install_engine.sh ./
 # install_engine.sh (shared with Dockerfile.cpu) installs the Chatterbox engine
 # plus the optional faster-whisper backend and security patches.
 RUN sh install_engine.sh

@@ -789,3 +789,37 @@ def test_uvicorn_error_logger_is_reported_as_uvicorn() -> None:
     assert payload["level"] == "INFO"
     assert payload["logger"] == "uvicorn"
     assert "error" not in json.dumps(payload).lower()
+
+
+def test_dockerfiles_copy_every_local_module_main_imports() -> None:
+    """0.55.0 shipped a wrapper that crash-looped on ModuleNotFoundError because
+    memory.py was added to the source tree but not to the Dockerfile's COPY line.
+    Tests import from the source tree, so nothing caught it until deploy.
+
+    Parse main.py's imports, keep the ones that resolve to a local module, and
+    require each Dockerfile to copy it."""
+
+    import ast
+
+    root = Path(__file__).resolve().parent.parent
+    local_modules = {p.stem for p in root.glob("*.py")}
+    tree = ast.parse((root / "main.py").read_text())
+
+    needed = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            top = node.module.split(".")[0]
+            if top in local_modules:
+                needed.add(top)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                top = alias.name.split(".")[0]
+                if top in local_modules:
+                    needed.add(top)
+
+    assert needed, "parsed no local imports from main.py; the check would be vacuous"
+    for dockerfile in ("Dockerfile", "Dockerfile.cpu"):
+        text = (root / dockerfile).read_text()
+        copied = " ".join(line for line in text.splitlines() if line.startswith("COPY"))
+        missing = sorted(f"{m}.py" for m in needed if f"{m}.py" not in copied)
+        assert not missing, f"{dockerfile} does not COPY: {missing}"
