@@ -20,7 +20,7 @@ const DEFAULT_MAX_UPLOAD_MB = 50;
 // An accidental folder drop should not spawn hundreds of jobs.
 const MAX_BATCH = 20;
 
-type UploadState = "waiting" | "uploading" | "queued" | "failed";
+type UploadState = "uploading" | "queued" | "failed";
 interface UploadStatus {
   state: UploadState;
   message?: string;
@@ -123,9 +123,9 @@ export default function Home() {
   // One request per file also means a 409 or a 400 names exactly one file.
   const uploadM = useMutation({
     mutationFn: async (batch: File[]) => {
-      setStatuses(
-        Object.fromEntries(batch.map((f) => [fileKey(f), { state: "waiting" as const }]))
-      );
+      // Clear last run's results so a retried file does not show its old
+      // failure. A file with no status yet renders its size, as before.
+      setStatuses({});
       const failed: File[] = [];
       for (const f of batch) {
         const key = fileKey(f);
@@ -239,11 +239,12 @@ export default function Home() {
     const next = [...files];
     for (const f of incoming) {
       const ext = fileExt(f.name);
+      const key = fileKey(f);
       if (!ALLOWED_EXTS.includes(ext)) {
         reasons.push(`${f.name}: unsupported type .${ext || "(none)"}`);
       } else if (f.size > maxUploadBytes) {
         reasons.push(`${f.name}: too large (max ${maxUploadMb} MB)`);
-      } else if (next.some((existing) => fileKey(existing) === fileKey(f))) {
+      } else if (next.some((existing) => fileKey(existing) === key)) {
         reasons.push(`${f.name}: already selected`);
       } else if (next.length >= MAX_BATCH) {
         reasons.push(`${f.name}: batch is limited to ${MAX_BATCH} files`);
@@ -384,7 +385,7 @@ export default function Home() {
                             <div className="mono-xs text-danger break-words">{status.message}</div>
                           ) : null}
                         </div>
-                        {status && status.state !== "waiting" ? (
+                        {status ? (
                           <span className={`tag ${uploadTag(status.state)}`}>{status.state}</span>
                         ) : (
                           <span className="mono-xs text-mute shrink-0">{formatBytes(f.size)}</span>
@@ -656,12 +657,10 @@ function uploadTag(state: UploadState): string {
   switch (state) {
     case "uploading":
       return "tag-processing";
-    case "queued":
-      return "tag-done";
     case "failed":
       return "tag-failed";
     default:
-      return "tag-queued";
+      return "tag-done"; // queued
   }
 }
 
