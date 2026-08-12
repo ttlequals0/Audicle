@@ -762,8 +762,17 @@ paths:
           type: integer
           maximum: 500
           minimum: 1
-          default: 50
+          default: 25
           title: Per Page
+      - name: q
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            maxLength: 200
+          - type: 'null'
+          title: Q
       responses:
         '200':
           description: Successful Response
