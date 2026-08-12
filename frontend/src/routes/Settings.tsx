@@ -13,6 +13,7 @@ import {
 import { useAuth } from "../lib/auth";
 import { useHealthLive } from "../lib/useHealthLive";
 import CollapsibleSection from "../components/CollapsibleSection";
+import { SettingsSearchContext } from "../components/SettingsSearchContext";
 
 /**
  * Operator-facing setting groups, plus the prompt
@@ -60,12 +61,29 @@ const GROUPS: Record<string, string[]> = {
     "READER_PROXY_TEMPLATE",
     "READER_API_KEY",
   ],
+  // Per-request budgets for the extraction cascade and the webhook. Opened to
+  // runtime in 0.55.0: a slow upstream is exactly when these need changing.
+  Timeouts: [
+    "FIRECRAWL_TIMEOUT_SECONDS",
+    "FIRECRAWL_RETRY_COUNT",
+    "FIRECRAWL_BACKOFF_BASE_SECONDS",
+    "RENDER_TIMEOUT_SECONDS",
+    "FLARESOLVERR_MAX_TIMEOUT_MS",
+    "WAYBACK_TIMEOUT_SECONDS",
+    "WEBHOOK_TIMEOUT_SECONDS",
+  ],
   Extraction: [
     "EXTRACTION_ENGINE",
     "EXTRACTION_DIRECT_TIMEOUT_SECONDS",
+    "EXTRACTION_DIRECT_USER_AGENT",
     "EXTRACTION_ARC_ENABLED",
+    "EXTRACTION_FALLBACKS_ENABLED",
     "ARCHIVE_FALLBACK_ENABLED",
+    "MIN_EXTRACTION_CHARS",
     "REGISTRATION_EMAIL",
+    "FIRECRAWL_ONLY_MAIN_CONTENT",
+    "FIRECRAWL_REMOVE_BASE64_IMAGES",
+    "FIRECRAWL_EXCLUDE_TAGS",
   ],
   Webhooks: ["WEBHOOK_URL"],
   TTS: [
@@ -83,6 +101,15 @@ const GROUPS: Record<string, string[]> = {
     "CHATTERBOX_TOP_K",
     "CHATTERBOX_SEED",
     "CHATTERBOX_MAX_CHARS",
+  ],
+  // Wrapper resilience: reachable at runtime since 0.55.0 so an operator can
+  // widen the budget during an incident instead of redeploying.
+  "TTS delivery": [
+    "TTS_RETRY_COUNT",
+    "TTS_CONNECT_RETRY_MAX_SECONDS",
+    "TTS_HTTP_TIMEOUT_SECONDS",
+    "TTS_REACHABILITY_GRACE_SECONDS",
+    "TTS_REACHABILITY_PROBE_TIMEOUT",
   ],
   Verification: [
     "WHISPER_VERIFY_ENABLED",
@@ -106,8 +133,40 @@ const GROUPS: Record<string, string[]> = {
     "AUDIO_ANALYSIS_REGEN_CHARS_FACTOR",
     "AUDIO_ANALYSIS_REGEN_MIN_CHARS",
     "AUDIO_ANALYSIS_REGEN_PENALTY_STEP",
+    "AUDIO_ANALYSIS_FRAME_MS",
+    "AUDIO_ANALYSIS_HOP_MS",
+    "AUDIO_ANALYSIS_WINDOW_SECS",
+    "AUDIO_ANALYSIS_F0_WARMUP_CHUNKS",
   ],
-  Cleanup: ["MIN_CLEANUP_CHARS", "MAX_PROMPT_LENGTH_BYTES"],
+  // Output encode + silence handling, opened to runtime in 0.55.0.
+  "Audio output": [
+    "MP3_BITRATE",
+    "MP3_SAMPLE_RATE",
+    "MP3_CHANNELS",
+    "LOUDNORM_TARGET_LUFS",
+    "LOUDNORM_TRUE_PEAK_DB",
+    "LOUDNORM_LRA",
+    "AUDIO_SILENCE_THRESHOLD",
+    "AUDIO_SILENCE_BUFFER_MS",
+    "AUDIO_MAX_INTERNAL_SILENCE_MS",
+    "AUDIO_INTERNAL_SILENCE_KEEP_MS",
+    "INTRO_READ_ENABLED",
+  ],
+  Chapters: ["CHAPTERS_ENABLED", "CHAPTERS_MIN_DURATION_SECS"],
+  Artwork: [
+    "ARTWORK_SIZE_PX",
+    "EMBED_ARTWORK_SIZE_PX",
+    "ARTWORK_JPG_QUALITY",
+    "ARTWORK_FETCH_TIMEOUT_SECONDS",
+    "ARTWORK_MIN_SOURCE_PX",
+    "ARTWORK_MAX_DOWNLOAD_BYTES",
+  ],
+  Cleanup: [
+    "MIN_CLEANUP_CHARS",
+    "MAX_PROMPT_LENGTH_BYTES",
+    "MAX_CORRECTIONS_ENTRIES",
+    "LEXICON_AGGRESSIVE",
+  ],
   Uploads: [
     "UPLOAD_MAX_MB",
     "OCR_ENABLED",
@@ -123,8 +182,59 @@ const GROUPS: Record<string, string[]> = {
     "JOB_TIMEOUT_CEILING_MULTIPLIER",
   ],
   Retention: ["RETENTION_DAYS"],
+  Diagnostics: ["LOG_LEVEL"],
   RSS: ["RSS_CACHE_MAX_AGE_SECONDS"],
 };
+
+// Groups arranged into categories, ordered by how often an operator touches
+// them. Presentation only: no key changes group, so nothing about how a setting
+// is stored or read is affected. Every GROUPS entry must appear exactly once
+// here (asserted below) so a new group can't be added and silently not render.
+const CATEGORIES: { name: string; groups: string[] }[] = [
+  { name: "Content", groups: ["Feed", "Extraction", "Cleanup", "Uploads"] },
+  {
+    name: "Voice",
+    groups: [
+      "TTS",
+      "TTS generation",
+      "TTS delivery",
+      "Verification",
+      "Audio analysis",
+      "Audio output",
+      "Chapters",
+    ],
+  },
+  { name: "Integrations", groups: ["LLM", "Connections", "Timeouts", "Webhooks"] },
+  {
+    name: "Operations",
+    groups: ["Pipeline", "Artwork", "Retention", "RSS", "Diagnostics"],
+  },
+];
+
+// Runs once at import. A group missing from CATEGORIES would never render and a
+// duplicated one would render twice; both are easy to miss by eye.
+{
+  const placed = CATEGORIES.flatMap((c) => c.groups);
+  const missing = Object.keys(GROUPS).filter((g) => !placed.includes(g));
+  const duplicated = placed.filter((g, i) => placed.indexOf(g) !== i);
+  const unknown = placed.filter((g) => !(g in GROUPS));
+  if (missing.length || duplicated.length || unknown.length) {
+    console.error("CATEGORIES/GROUPS mismatch", { missing, duplicated, unknown });
+  }
+}
+
+// The hand-written sections below the generic form. Listed so the search can
+// match them by title; their bodies are widgets, not settings keys.
+const STANDALONE_SECTIONS = [
+  "cleanup prompt",
+  "pronunciation corrections",
+  "site overrides",
+  "voices",
+  "end chime",
+  "authenticated feeds",
+  "security",
+  "system info",
+];
 
 // One terse help line per group, rendered above the group's fields.
 const GROUP_NOTES: Record<string, string> = {
@@ -308,6 +418,46 @@ export default function SettingsRoute() {
   const healthQ = useHealthLive();
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  // Settings search. qInput is what the box shows; q is the trimmed value the
+  // matcher uses. Matching runs over the group titles and their setting keys,
+  // which the page already holds, rather than over rendered text.
+  const [qInput, setQInput] = useState("");
+  const q = qInput.trim().toLowerCase();
+  const searchRegionRef = useRef<HTMLDivElement>(null);
+
+  // Paint the matched text using the CSS Custom Highlight API: ranges are
+  // registered with the browser, so nothing in the DOM is mutated and React
+  // keeps sole ownership of the tree. Runs after the filter commits, so the
+  // ranges point at sections the search has already expanded. Where the API is
+  // missing (older Safari) filtering still works and only the paint is lost.
+  useEffect(() => {
+    if (typeof CSS === "undefined" || !("highlights" in CSS)) return;
+    const region = searchRegionRef.current;
+    if (!q || !region) {
+      CSS.highlights.delete("settings-search");
+      return;
+    }
+    const ranges: Range[] = [];
+    const walker = document.createTreeWalker(region, NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) =>
+        node.nodeValue && node.parentElement?.offsetParent
+          ? NodeFilter.FILTER_ACCEPT
+          : NodeFilter.FILTER_REJECT,
+    });
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const hay = node.nodeValue!.toLowerCase();
+      for (let i = hay.indexOf(q); i !== -1; i = hay.indexOf(q, i + q.length)) {
+        const range = document.createRange();
+        range.setStart(node, i);
+        range.setEnd(node, i + q.length);
+        ranges.push(range);
+      }
+    }
+    CSS.highlights.set("settings-search", new Highlight(...ranges));
+    return () => {
+      CSS.highlights.delete("settings-search");
+    };
+  });
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const seeded = useRef(false);
   // The seeded values (override-or-default) so save() can send only the keys
@@ -397,22 +547,89 @@ export default function SettingsRoute() {
       .map(([k]) => k)
   );
 
+  // Which keys each group actually shows: allowlisted by the backend, and for a
+  // provider-specific key, only under its selected provider.
+  const provider = draft["LLM_PROVIDER"] ?? "";
+  const visibleKeysByGroup: Record<string, string[]> = {};
+  for (const [group, keys] of Object.entries(GROUPS)) {
+    visibleKeysByGroup[group] = keys.filter((k) => {
+      if (!settingsQ.data?.allowlist.includes(k)) return false;
+      return !PROVIDER_SPECIFIC_KEYS.has(k) || (PROVIDER_FIELDS[provider]?.has(k) ?? false);
+    });
+  }
+
+  // A group matches when its own name matches, or any key it displays does.
+  // Keys are matched with underscores treated as spaces too, so "max f0" finds
+  // AUDIO_ANALYSIS_MAX_F0_SEMITONES.
+  const matchedGroups = new Set<string>();
+  if (q) {
+    for (const [group, keys] of Object.entries(visibleKeysByGroup)) {
+      const hay = [group, GROUP_NOTES[group] ?? "", ...keys]
+        .join(" ")
+        .toLowerCase()
+        .replace(/_/g, " ");
+      if (hay.includes(q.replace(/_/g, " "))) matchedGroups.add(group);
+    }
+    for (const title of STANDALONE_SECTIONS) {
+      if (title.toLowerCase().includes(q)) matchedGroups.add(title);
+    }
+  }
+
   return (
+    <SettingsSearchContext.Provider value={q ? matchedGroups : null}>
     <div className="space-y-4">
       <h1 className="text-2xl font-black tracking-tight mb-1">Settings</h1>
-      {Object.entries(GROUPS).map(([group, keys]) => {
-        const provider = draft["LLM_PROVIDER"] ?? "";
-        const visible = keys.filter((k) => {
-          if (!settingsQ.data?.allowlist.includes(k)) return false;
-          // A provider-specific key shows only for its provider; others always show.
-          return !PROVIDER_SPECIFIC_KEYS.has(k) || (PROVIDER_FIELDS[provider]?.has(k) ?? false);
-        });
-        if (visible.length === 0) return null;
+      <div className="search-wrap mb-4">
+        <span className="search-slash" aria-hidden="true">
+          /
+        </span>
+        <input
+          type="search"
+          className="field"
+          placeholder="Search settings"
+          autoComplete="off"
+          value={qInput}
+          onChange={(e) => setQInput(e.target.value)}
+          aria-label="Search settings"
+        />
+        {qInput && (
+          <button
+            type="button"
+            className="search-clear"
+            onClick={() => setQInput("")}
+            aria-label="Clear search"
+          >
+            &times;
+          </button>
+        )}
+      </div>
+
+      {q && matchedGroups.size === 0 && (
+        <p className="text-mute text-sm">nothing matches "{qInput.trim()}".</p>
+      )}
+
+      <div ref={searchRegionRef} className="space-y-4">
+      {CATEGORIES.map((category) => {
+        const groupsHere = category.groups.filter(
+          (g) => visibleKeysByGroup[g] && visibleKeysByGroup[g].length > 0
+        );
+        const shown = q ? groupsHere.filter((g) => matchedGroups.has(g)) : groupsHere;
+        if (shown.length === 0) return null;
         return (
-          <CollapsibleSection key={group} title={group} defaultOpen={group === "LLM"}>
-            {GROUP_NOTES[group] && (
-              <p className="mono-xs text-mute mb-3">// {GROUP_NOTES[group]}</p>
-            )}
+          <section key={category.name} className="space-y-3">
+            <h2 className="category-heading">{category.name}</h2>
+            {shown.map((group) => {
+              const visible = visibleKeysByGroup[group];
+              return (
+                <CollapsibleSection
+                  key={group}
+                  title={group}
+                  searchKey={group}
+                  defaultOpen={group === "LLM"}
+                >
+                  {GROUP_NOTES[group] && (
+                    <p className="mono-xs text-mute mb-3">// {GROUP_NOTES[group]}</p>
+                  )}
             {visible.map((key) => {
               const isBool = boolKeys.has(key);
               // Fixed-choice settings render as a dropdown; keys with dynamic
@@ -518,54 +735,48 @@ export default function SettingsRoute() {
               );
             })}
             {group === "Webhooks" && <WebhookTest />}
-          </CollapsibleSection>
+                </CollapsibleSection>
+              );
+            })}
+          </section>
         );
       })}
-
-      <div className="flex items-center gap-3 sticky bottom-2 z-10">
-        <button className="btn-primary" disabled={putM.isPending} onClick={save}>
-          {putM.isPending ? "saving..." : "save all"}
-        </button>
-        {savedMsg && (
-          <span className="font-mono text-xs text-accent">{savedMsg}</span>
-        )}
-        {saveErr && <span className="font-mono text-xs text-danger">{saveErr}</span>}
       </div>
 
       {promptQ.data !== undefined && (
-        <CollapsibleSection title="cleanup prompt">
+        <CollapsibleSection title="cleanup prompt" searchKey="cleanup prompt">
           <PromptEditor initial={promptQ.data.prompt} />
         </CollapsibleSection>
       )}
       {correctionsQ.data !== undefined && (
-        <CollapsibleSection title="pronunciation corrections">
+        <CollapsibleSection title="pronunciation corrections" searchKey="pronunciation corrections">
           <CorrectionsTable initial={correctionsQ.data} />
         </CollapsibleSection>
       )}
       {fallbacksQ.data !== undefined && (
-        <CollapsibleSection title="site overrides">
+        <CollapsibleSection title="site overrides" searchKey="site overrides">
           <SourceFallbacksTable initial={fallbacksQ.data} />
         </CollapsibleSection>
       )}
-      <CollapsibleSection title="voices">
+      <CollapsibleSection title="voices" searchKey="voices">
         <VoicesWidget />
       </CollapsibleSection>
 
-      <CollapsibleSection title="end chime">
+      <CollapsibleSection title="end chime" searchKey="end chime">
         <ChimeWidget />
       </CollapsibleSection>
 
-      <CollapsibleSection title="authenticated feeds">
+      <CollapsibleSection title="authenticated feeds" searchKey="authenticated feeds">
         <AuthenticatedFeedsWidget />
       </CollapsibleSection>
 
       {authStatus && (
-        <CollapsibleSection title="security">
+        <CollapsibleSection title="security" searchKey="security">
           <SecuritySection passwordSet={authStatus.password_set} onChanged={refreshAuth} />
         </CollapsibleSection>
       )}
 
-      <CollapsibleSection title="system info" defaultOpen>
+      <CollapsibleSection title="system info" searchKey="system info" defaultOpen>
         <ReadOnlyRow label="version" value={healthQ.data?.version ?? "loading"} />
         <ReadOnlyRow label="uptime" value={formatUptime(healthQ.data?.uptime_seconds)} />
         <ReadOnlyRow label="password_set" value={String(authStatus?.password_set ?? "loading")} />
@@ -582,7 +793,19 @@ export default function SettingsRoute() {
           </a>
         </div>
       </CollapsibleSection>
+
+      {/* Saves the grouped fields above. Each section in between saves itself,
+          which is exactly why this belongs at the end of the page rather than
+          in the middle of them. Sticky so it stays reachable while scrolling. */}
+      <div className="save-bar">
+        <button className="btn-primary" disabled={putM.isPending} onClick={save}>
+          {putM.isPending ? "Saving..." : "Save settings"}
+        </button>
+        {savedMsg && <span className="font-mono text-xs text-accent">{savedMsg}</span>}
+        {saveErr && <span className="font-mono text-xs text-danger">{saveErr}</span>}
+      </div>
     </div>
+    </SettingsSearchContext.Provider>
   );
 }
 

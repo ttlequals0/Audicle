@@ -119,6 +119,47 @@
     outline: none;
   }
 
+  /* Settings category heading. Sits above a run of sections, so it reads as a
+     tier above .section-title rather than competing with it: same mono
+     vocabulary, wider tracking, muted instead of accent. */
+  .category-heading {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.625rem;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: #6b6b78;
+    padding: 0.75rem 0 0.125rem;
+    border-bottom: 1px solid #1a1a20;
+  }
+
+  /* Save bar. Sticks to the bottom of the viewport so it stays reachable while
+     scrolling a long settings page, and clears the mobile tab bar. */
+  .save-bar {
+    position: sticky;
+    bottom: 0.5rem;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+    padding: 0.75rem;
+    background: #0a0a0cf2;
+    border: 1px solid #26262e;
+    border-radius: 10px;
+    backdrop-filter: blur(6px);
+  }
+  .save-bar > .btn-primary {
+    width: auto;
+    flex: 1;
+  }
+
+  /* Highlight painted over settings-search matches via the CSS Custom Highlight
+     API. Accent-tinted rather than the usual yellow so it belongs to this UI. */
+  ::highlight(settings-search) {
+    background-color: #1ce78338;
+    color: #eafff4;
+  }
+
   /* Page footer. Numbers are zero-padded like .queue-index: both are positions
      in a real sequence, not decoration. */
   .pager {
