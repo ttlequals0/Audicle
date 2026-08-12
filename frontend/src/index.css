@@ -186,16 +186,22 @@
     cursor: pointer;
     font-family: "JetBrains Mono", monospace;
     font-size: 0.6875rem;
-    color: #6b6b78;
+    /* Red at rest, not on hover alone: this is the one control on the page that
+       discards values, so it should read that way before you touch it. The
+       muted grey it used to sit at was too close to the card background to
+       find. Matches the Delete button's #ff5252. */
+    color: #ff5252;
     transition: color 0.15s;
   }
   .reset-btn:hover:not(:disabled),
   .reset-btn:focus-visible:not(:disabled) {
-    color: #ff5252;
+    color: #ff7b7b;
     outline: none;
   }
+  /* Dimmed with an explicit colour rather than opacity, so "nothing to reset"
+     stays legible instead of fading into the card. */
   .reset-btn:disabled {
-    opacity: 0.4;
+    color: #7a5a5e;
     cursor: default;
   }
 
