@@ -6,6 +6,30 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.54.0] - 2026-08-11
+
+### Added
+
+- The feed shows 25 episodes at a time. Past 50 the rest were unreachable from
+  the UI: it asked the API for the first 50 and rendered whatever came back.
+  Prev and next appear only when there is more than one page, and deleting the
+  last episode on the last page drops you back a page instead of showing an
+  empty list.
+- A search box on the feed page matches episode titles, source URLs, and
+  uploaded filenames. It runs on the server, so it searches the whole feed
+  rather than the page on screen. A typed `%` or `_` is literal text, not a
+  wildcard.
+- The upload form takes several files at once, up to 20, and each becomes its
+  own queued job. Files upload one at a time because the server holds each one
+  in memory while it reads it. One bad file no longer sinks the batch: a
+  duplicate or an oversized document is reported against its own filename and
+  stays in the picker for a retry while the rest go through.
+
+### Changed
+
+- `GET /api/v1/episodes` returns 25 per page by default instead of 50 and
+  accepts `q`. `X-Total-Count` reports the filtered total.
+
 ## [0.53.1] - 2026-08-11
 
 ### Changed
