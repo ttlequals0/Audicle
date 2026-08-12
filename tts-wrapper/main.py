@@ -16,6 +16,7 @@ import importlib.metadata as _metadata
 import io
 import logging
 import os
+import signal
 import tempfile
 import time
 import wave
@@ -23,7 +24,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -36,6 +37,7 @@ from engine import (
     InferenceBusyError,
 )
 from log_setup import setup_logging
+from memory import maybe_cleanup, over_hard_limit, rss_mb
 from whisper_verify import WhisperVerifier
 
 setup_logging()
@@ -81,6 +83,17 @@ _TORCH_VERSION = _pkg_version("torch")
 # Per-request inference budget. Without this a wedged
 # torch call holds the lock forever and the wrapper stops serving anything.
 _REQUEST_INFERENCE_TIMEOUT_SECONDS = float(os.environ.get("TTS_REQUEST_TIMEOUT_SECONDS", "120"))
+
+
+def _request_restart() -> None:
+    """Ask uvicorn to shut down so the container restarts us.
+
+    Sent as SIGTERM rather than os._exit so uvicorn drains in-flight work and
+    the lifespan shutdown runs. Called from a background task, i.e. after the
+    response has been delivered, so the chunk that tripped the ceiling is not
+    lost. Requires a restart policy on the container, which the stack sets."""
+
+    os.kill(os.getpid(), signal.SIGTERM)
 
 
 class GenerateRequest(BaseModel):
@@ -308,6 +321,7 @@ def create_app(
     async def generate(
         body: GenerateRequest,
         request: Request,
+        background_tasks: BackgroundTasks,
         engine: Engine = Depends(get_engine),
         lock: asyncio.Lock = Depends(get_lock),
     ) -> GenerateResponse:
@@ -473,8 +487,39 @@ def create_app(
                 "inference_ms": inference_ms,
                 "duration_secs": duration,
                 "wav_path": str(wav_path),
+                # Per-chunk RSS, so the growth curve over a long job is visible
+                # in the log rather than inferred after an OOM kill.
+                "rss_mb": rss_mb(),
             },
         )
+
+        # Drop the synthesized audio before cleaning up: it is the largest object
+        # in this scope and holding it would blunt the trim.
+        del wav_bytes
+
+        # Cleanup runs after the response is built but before it is returned, so
+        # it never overlaps another chunk's inference.
+        maybe_cleanup(cfg.memory_soft_limit_mb, getattr(engine, "torch_module", None))
+        if over_hard_limit(cfg.memory_hard_limit_mb):
+            # Still too large after cleaning. Restart at this chunk boundary
+            # rather than wait for the kernel to do it mid-inference: the client
+            # gets this chunk's result, and only its next request meets a
+            # reloading wrapper, which the backend's connect budget absorbs.
+            logger.warning(
+                "Resident memory above the hard limit after cleanup; restarting",
+                extra={
+                    "event": "tts_memory_restart",
+                    "rss_mb": rss_mb(),
+                    "hard_limit_mb": cfg.memory_hard_limit_mb,
+                    "episode_id": body.episode_id,
+                    "chunk_index": body.chunk_index,
+                },
+            )
+            # Queued as a background task so it runs after this response is
+            # delivered. SIGTERM gives uvicorn a graceful shutdown; the
+            # container's restart policy brings the process back.
+            background_tasks.add_task(_request_restart)
+
         return GenerateResponse(
             wav_path=str(wav_path),
             duration_secs=duration,

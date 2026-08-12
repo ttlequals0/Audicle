@@ -1,13 +1,33 @@
-import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, Episode, SettingsPayload } from "../lib/api";
+import { useEffect, useState } from "react";
+import { keepPreviousData, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { api, apiList, Episode, SettingsPayload } from "../lib/api";
 import { fileExt, formatBytes } from "../lib/format";
 import ActionMenu from "../components/ActionMenu";
 import AudioPlayer from "../components/AudioPlayer";
 
+// Cards are tall (artwork, player, action row), so a page is about a screen of
+// scrolling. The endpoint caps per_page at 500.
+const PER_PAGE = 25;
+
 export default function Feed() {
   const [copied, setCopied] = useState(false);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  // qInput is what the box shows; q is the debounced value the server sees.
+  const [qInput, setQInput] = useState("");
+  const [q, setQ] = useState("");
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      // Both in one callback so they land in a single render. A new search
+      // restarts at page 1, because page 4 of the old list is almost never
+      // page 4 of the new one. Setting the page in its own effect would fetch
+      // the old page number against the new term first.
+      setQ(qInput.trim());
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [qInput]);
   const qc = useQueryClient();
   // The subscribe URL is slug-derived from FEED_TITLE and built server-side
   // (against the configured BASE_URL, the public feed host), so the client
@@ -29,8 +49,15 @@ export default function Feed() {
   };
 
   const episodesQ = useQuery({
-    queryKey: ["episodes"],
-    queryFn: () => api<Episode[]>("/api/v1/episodes?per_page=50"),
+    queryKey: ["episodes", page, q],
+    queryFn: () =>
+      apiList<Episode>(
+        `/api/v1/episodes?page=${page}&per_page=${PER_PAGE}` +
+          (q ? `&q=${encodeURIComponent(q)}` : "")
+      ),
+    // Keep the current page on screen while the next one loads instead of
+    // blanking the list on every click.
+    placeholderData: keepPreviousData,
   });
 
   const deleteM = useMutation({
@@ -77,14 +104,27 @@ export default function Feed() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const episodes = episodesQ.data ?? [];
+  const episodes = episodesQ.data?.items ?? [];
+  const total = episodesQ.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
+
+  // Deleting the last episode on the last page leaves `page` past the end;
+  // land on the new last page rather than an empty list.
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  const goToPage = (next: number) => {
+    setPage(next);
+    window.scrollTo({ top: 0 });
+  };
 
   return (
     <div>
       <div className="flex items-baseline justify-between mb-3">
         <h1 className="text-2xl font-black tracking-tight">Feed</h1>
         <div className="mono-xs text-mute">
-          {episodes.length} episode{episodes.length === 1 ? "" : "s"}
+          {q ? `${total} matching` : `${total} episode${total === 1 ? "" : "s"}`}
         </div>
       </div>
 
@@ -101,10 +141,37 @@ export default function Feed() {
         {feedUrl || (settingsQ.isError ? "feed URL unavailable" : "loading...")}
       </p>
 
+      <div className="search-wrap mb-4">
+        <span className="search-slash" aria-hidden="true">
+          /
+        </span>
+        <input
+          type="search"
+          className="field"
+          placeholder="Search title or URL"
+          autoComplete="off"
+          value={qInput}
+          onChange={(e) => setQInput(e.target.value)}
+          aria-label="Search episodes"
+        />
+        {qInput && (
+          <button
+            type="button"
+            className="search-clear"
+            onClick={() => setQInput("")}
+            aria-label="Clear search"
+          >
+            &times;
+          </button>
+        )}
+      </div>
+
       {actionMsg && <p className="mono-xs text-accent mb-3">{actionMsg}</p>}
       {episodesQ.isLoading && <p className="text-mute text-sm">loading...</p>}
       {episodes.length === 0 && !episodesQ.isLoading && (
-        <p className="text-mute text-sm">no episodes yet.</p>
+        <p className="text-mute text-sm">
+          {q ? `nothing matches "${q}".` : "no episodes yet."}
+        </p>
       )}
 
       <div className="space-y-3">
@@ -221,6 +288,24 @@ export default function Feed() {
           </article>
         ))}
       </div>
+
+      {totalPages > 1 && (
+        <nav className="pager" aria-label="Episode pages">
+          <button className="btn-ghost" disabled={page <= 1} onClick={() => goToPage(page - 1)}>
+            &lsaquo; Prev
+          </button>
+          <span className="mono-xs text-mute" aria-live="polite">
+            PAGE {String(page).padStart(2, "0")} / {String(totalPages).padStart(2, "0")}
+          </span>
+          <button
+            className="btn-ghost"
+            disabled={page >= totalPages}
+            onClick={() => goToPage(page + 1)}
+          >
+            Next &rsaquo;
+          </button>
+        </nav>
+      )}
     </div>
   );
 }

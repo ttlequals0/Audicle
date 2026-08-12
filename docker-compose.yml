@@ -104,6 +104,19 @@ services:
       # cpu -> int8); add them here only to override.
       - WHISPER_ENABLED=${WHISPER_ENABLED:-false}
       - WHISPER_MODEL=${WHISPER_MODEL:-base}
+      # Memory ladder (0.55.0). This process serves hundreds of chunks from one
+      # interpreter; before these limits its RSS climbed to ~20 GB on long jobs
+      # and the host OOM killer took it out mid-inference, losing episodes that
+      # had already run over an hour. Above the soft limit it runs
+      # gc + empty_cache + malloc_trim after a chunk; still above the hard limit
+      # it restarts itself at the chunk boundary, which is far cheaper than
+      # being SIGKILLed mid-request. Set either to 0 to disable that stage.
+      - TTS_MEMORY_SOFT_LIMIT_MB=${TTS_MEMORY_SOFT_LIMIT_MB:-8000}
+      - TTS_MEMORY_HARD_LIMIT_MB=${TTS_MEMORY_HARD_LIMIT_MB:-14000}
+      # glibc allocates up to 8 arenas per core for threaded processes and never
+      # returns them to the kernel, which is the suspected bulk of that growth.
+      # Capping arenas bounds the fragmentation before malloc_trim has to.
+      - MALLOC_ARENA_MAX=${MALLOC_ARENA_MAX:-2}
     volumes:
       - ./data:/data
       # Reference voices: read-only here; the app writes voices/slot{n}.wav (host

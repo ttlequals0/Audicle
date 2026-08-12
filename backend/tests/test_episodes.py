@@ -148,3 +148,118 @@ def test_latest_updated_at_tracks_most_recent_published(env: Path) -> None:
         assert episodes.latest_updated_at(conn) == "2026-06-01T00:00:00Z"
     finally:
         conn.close()
+
+
+def _seed_searchable(
+    conn,
+    *,
+    id_: str,
+    title: str,
+    url: str,
+    filename: str | None = None,
+) -> None:
+    episodes.upsert(
+        conn,
+        id=id_,
+        job_id=None,
+        original_url=url,
+        title=title,
+        author="A",
+        audio_path=f"/data/media/{id_}.mp3",
+        artwork_path=None,
+        transcript_vtt=None,
+        duration_secs=10,
+        source_type="upload" if filename else "url",
+        source_filename=filename,
+    )
+
+
+def test_search_matches_title(env: Path) -> None:
+    conn = _open(env)
+    try:
+        _seed_searchable(conn, id_="a", title="Rust memory model", url="https://x.test/a")
+        _seed_searchable(conn, id_="b", title="Python packaging", url="https://x.test/b")
+        found = episodes.list_published_page(conn, limit=50, offset=0, q="memory")
+        assert [ep.id for ep in found] == ["a"]
+    finally:
+        conn.close()
+
+
+def test_search_matches_original_url(env: Path) -> None:
+    conn = _open(env)
+    try:
+        _seed_searchable(conn, id_="a", title="One", url="https://wired.test/story")
+        _seed_searchable(conn, id_="b", title="Two", url="https://other.test/story")
+        found = episodes.list_published_page(conn, limit=50, offset=0, q="wired")
+        assert [ep.id for ep in found] == ["a"]
+    finally:
+        conn.close()
+
+
+def test_search_matches_source_filename(env: Path) -> None:
+    conn = _open(env)
+    try:
+        _seed_searchable(
+            conn,
+            id_="a",
+            title="Untitled",
+            url="upload://abc",
+            filename="quarterly-report.pdf",
+        )
+        _seed_searchable(conn, id_="b", title="Untitled", url="upload://def", filename="notes.md")
+        found = episodes.list_published_page(conn, limit=50, offset=0, q="quarterly")
+        assert [ep.id for ep in found] == ["a"]
+    finally:
+        conn.close()
+
+
+def test_search_is_case_insensitive(env: Path) -> None:
+    conn = _open(env)
+    try:
+        _seed_searchable(conn, id_="a", title="Rust Memory Model", url="https://x.test/a")
+        found = episodes.list_published_page(conn, limit=50, offset=0, q="MEMORY")
+        assert [ep.id for ep in found] == ["a"]
+    finally:
+        conn.close()
+
+
+def test_search_treats_wildcards_as_literal_text(env: Path) -> None:
+    conn = _open(env)
+    try:
+        _seed_searchable(conn, id_="a", title="Up 50% year on year", url="https://x.test/a")
+        _seed_searchable(conn, id_="b", title="No percentage here", url="https://x.test/b")
+        hits = episodes.list_published_page(conn, limit=50, offset=0, q="50%")
+        assert [ep.id for ep in hits] == ["a"]
+        # A bare wildcard matches only the row that literally contains it,
+        # rather than matching everything the way an unescaped % would.
+        bare = episodes.list_published_page(conn, limit=50, offset=0, q="%")
+        assert [ep.id for ep in bare] == ["a"]
+        assert episodes.list_published_page(conn, limit=50, offset=0, q="_") == []
+    finally:
+        conn.close()
+
+
+def test_blank_search_is_no_filter(env: Path) -> None:
+    conn = _open(env)
+    try:
+        _seed_searchable(conn, id_="a", title="One", url="https://x.test/a")
+        _seed_searchable(conn, id_="b", title="Two", url="https://x.test/b")
+        for blank in (None, "", "   "):
+            assert episodes.count_published(conn, q=blank) == 2
+            assert len(episodes.list_published_page(conn, limit=50, offset=0, q=blank)) == 2
+    finally:
+        conn.close()
+
+
+def test_count_and_page_agree_on_the_same_term(env: Path) -> None:
+    conn = _open(env)
+    try:
+        for n in range(5):
+            _seed_searchable(
+                conn, id_=f"hit{n}", title=f"Rust part {n}", url=f"https://x.test/{n}"
+            )
+        _seed_searchable(conn, id_="miss", title="Python", url="https://x.test/p")
+        assert episodes.count_published(conn, q="rust") == 5
+        assert len(episodes.list_published_page(conn, limit=50, offset=0, q="rust")) == 5
+    finally:
+        conn.close()

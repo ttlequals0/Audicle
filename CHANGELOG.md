@@ -6,6 +6,145 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.55.4] - 2026-08-12
+
+### Changed
+
+- The reset-to-defaults control is red instead of grey. It is the one control on
+  the page that discards values, and the grey was hard to find against the card.
+- The README is a short front page again. The details moved to a docs tree with
+  a per-page split, a glossary that links every term to the page covering it, a
+  release flow, a deployment runbook, and fresh screenshots of the current UI.
+- The app image builds with uv 0.12.3 (#119).
+
+## [0.55.3] - 2026-08-12
+
+### Changed
+
+- The settings save bar appears only when there are unsaved edits, and shows how
+  many. It sits bottom right at its own size rather than spanning the page: it is
+  one action among the per-section saves, not the page's headline.
+
+### Added
+
+- Each settings card can put its fields back to the values the app ships with.
+  The control is clickable only where something actually differs, and it edits
+  the form rather than saving, so a reset is undoable until you press save.
+
+### Fixed
+
+- Saving now re-baselines the form. It never did, so every page counted as
+  edited from the first save onward. Nothing showed it while the save bar was
+  always on screen; making the bar conditional is what surfaced it.
+
+## [0.55.2] - 2026-08-12
+
+### Changed
+
+- Settings are grouped by subject: Content, Voice, Publishing, Services, System.
+  The hand-written sections now sit in those categories rather than trailing the
+  page, which is what had stranded voices away from the voice settings and left
+  the last category holding whatever was unclaimed, artwork included.
+- Three groups renamed for what an operator would look for: the category holding
+  Connections is Services rather than Integrations, since two near-synonyms at
+  adjacent levels of one hierarchy only invite the question of whether they mean
+  different things; Diagnostics is Logging, which is the one setting it holds;
+  and Pipeline is Job timeouts, which is what its four settings actually decide.
+- The TTS delivery, Job timeouts, and Timeouts groups have help text. Those are
+  the groups you reach for while something is failing.
+
+## [0.55.1] - 2026-08-12
+
+### Fixed
+
+- The wrapper image now contains `memory.py`. Its Dockerfile copies modules by
+  name and the new one was never added, so 0.55.0's wrapper crash-looped on
+  `ModuleNotFoundError` the moment it was deployed. The tests import from the
+  source tree, where the file exists, so nothing caught it before the image was
+  running. A test now parses `main.py`'s imports and asserts every Dockerfile
+  copies each local module it needs. `Dockerfile.cpu` had the same omission.
+
+0.55.0 was withdrawn: its app and render images were sound, but the wrapper
+image could not start.
+
+## [0.55.0] - 2026-08-12
+
+### Fixed
+
+- The TTS wrapper no longer grows until the kernel kills it. It served every
+  chunk from one process with no cleanup between them, and on long jobs its
+  resident memory climbed to about 20 GB until the host OOM killer took it out
+  mid-chunk. That happened three times in one day, each time destroying a job
+  that had already run 84 to 91 minutes. Above a soft limit it now collects
+  garbage, empties the CUDA cache, and returns freed allocator arenas to the
+  kernel; still above a hard limit it restarts itself between chunks, which
+  costs a pause instead of an episode. Per-chunk resident size is logged, so the
+  curve is visible rather than something you reconstruct from a kernel log.
+- A wrapper that is not listening gets its own retry budget. Restarting it takes
+  60 to 99 seconds while the models reload, and the old budget of seven attempts
+  covered 61 seconds of backoff, so jobs died a few seconds before the wrapper
+  could have answered. Connection failures are now bounded by elapsed time
+  instead of attempts. A comment claiming that budget was 90 seconds was wrong;
+  the arithmetic gives 61.
+- Wrapper logs are no longer all errors. uvicorn's lifecycle logger is named
+  `uvicorn.error` and carries ordinary INFO lines like "Application startup
+  complete", and a shipper that reads a level by scanning the text matched the
+  word "error" in that name. The whole stream arrived in Loki as errors, which
+  made an error-rate panel useless.
+
+### Added
+
+- A search box at the top of Settings filters as you type and paints the matching
+  words. Matches open themselves, so nothing is buried behind a collapsed header,
+  and clearing the box restores whatever was open before.
+- Settings are grouped into Content, Voice, Integrations, and Operations. TTS
+  settings had been split across three groups with Webhooks in between, and the
+  sections below the save button belonged to no group at all.
+- Chatterbox can run on another host (#117). `TTS_BACKEND=openai-api` points at
+  any OpenAI-compatible speech endpoint; because a remote host shares no volume
+  with this app, the client writes the audio it returns to the path the pipeline
+  expects, and the rest of the pipeline neither knows nor cares which backend
+  ran. A remote server returns no transcript, so `WHISPER_BACKEND` selects where
+  verification happens: the bundled wrapper, a remote OpenAI-compatible
+  transcriber, or nowhere. The two switches are independent, so local synthesis
+  with remote transcription works. Asking the local wrapper to verify audio made
+  elsewhere is refused at startup rather than silently returning no transcripts.
+- 42 settings that previously needed a redeploy are now editable in the UI and
+  the API, including the TTS retry and timeout knobs that were unreachable
+  during the incident above. Settings that guard the login path stay env-only on
+  purpose: reaching the Settings UI must not confer the ability to switch off the
+  defences protecting it.
+
+### Changed
+
+- The Settings save button sits at the end of the page. It saves the grouped
+  fields, and the eight sections that used to sit below it each save themselves,
+  which is exactly why its old position read as the middle of the page.
+
+## [0.54.0] - 2026-08-11
+
+### Added
+
+- The feed shows 25 episodes at a time. Past 50 the rest were unreachable from
+  the UI: it asked the API for the first 50 and rendered whatever came back.
+  Prev and next appear only when there is more than one page, and deleting the
+  last episode on the last page drops you back a page instead of showing an
+  empty list.
+- A search box on the feed page matches episode titles, source URLs, and
+  uploaded filenames. It runs on the server, so it searches the whole feed
+  rather than the page on screen. A typed `%` or `_` is literal text, not a
+  wildcard.
+- The upload form takes several files at once, up to 20, and each becomes its
+  own queued job. Files upload one at a time because the server holds each one
+  in memory while it reads it. One bad file no longer sinks the batch: a
+  duplicate or an oversized document is reported against its own filename and
+  stays in the picker for a retry while the rest go through.
+
+### Changed
+
+- `GET /api/v1/episodes` returns 25 per page by default instead of 50 and
+  accepts `q`. `X-Total-Count` reports the filtered total.
+
 ## [0.53.1] - 2026-08-11
 
 ### Changed

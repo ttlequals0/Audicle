@@ -145,10 +145,25 @@ def require_feed_key(
         raise HTTPException(status_code=401, detail="feed key required")
 
 
-def require_voice_loaded() -> None:
+def require_voice_loaded(
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> None:
     """Reject a new job when no reference voice is loaded. Slots-only model: a job
     has nothing to narrate with until at least one slot is filled, so submit/upload
-    fail fast with 400 instead of queuing a job that can only die at the TTS stage."""
+    fail fast with 400 instead of queuing a job that can only die at the TTS stage.
+
+    Reference-voice slots are a bundled-wrapper concept. A remote
+    OpenAI-compatible server manages its own voices and is told which to use by
+    name (``TTS_API_VOICE``), so this gate would block every submission on a
+    deployment that has no local slots and does not need any."""
+
+    # Read the single key off the request's existing connection rather than
+    # building a whole overlay: get_effective_settings opens its own connection,
+    # and submit is asserted to open exactly one per request.
+    backend = runtime_settings.get_all(conn).get("TTS_BACKEND", settings.TTS_BACKEND)
+    if backend == "openai-api":
+        return
 
     if not voices.filled_slots():
         raise HTTPException(

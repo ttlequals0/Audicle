@@ -259,23 +259,55 @@ def list_published(conn: sqlite3.Connection) -> list[Episode]:
     return [_row_to_episode(row) for row in rows]
 
 
-def count_published(conn: sqlite3.Connection) -> int:
-    row = conn.execute("SELECT COUNT(*) AS n FROM episodes WHERE audio_path IS NOT NULL").fetchone()
+def _search_clause(q: str | None) -> tuple[str, list[str]]:
+    """SQL fragment and params restricting a listing to rows matching ``q``.
+
+    Empty or whitespace-only input means no filter, so the count and the page
+    can never disagree about what they are counting. The term is matched as
+    literal text: ``%`` and ``_`` typed into the search box are escaped so they
+    do not act as wildcards. Backslash is escaped first, otherwise the escapes
+    added for ``%`` and ``_`` would themselves get escaped.
+    """
+
+    term = (q or "").strip()
+    if not term:
+        return "", []
+    escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    like = f"%{escaped}%"
+    clause = (
+        " AND (title LIKE ? ESCAPE '\\'"
+        " OR original_url LIKE ? ESCAPE '\\'"
+        " OR source_filename LIKE ? ESCAPE '\\')"
+    )
+    return clause, [like, like, like]
+
+
+def count_published(conn: sqlite3.Connection, *, q: str | None = None) -> int:
+    clause, params = _search_clause(q)
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM episodes WHERE audio_path IS NOT NULL" + clause,
+        params,
+    ).fetchone()
     return int(row["n"] if row else 0)
 
 
-def list_published_page(conn: sqlite3.Connection, *, limit: int, offset: int) -> list[Episode]:
-    """SQL-paginated counterpart to ``list_published`` -- avoids reading
-    every row when the admin UI only wants 50."""
+def list_published_page(
+    conn: sqlite3.Connection, *, limit: int, offset: int, q: str | None = None
+) -> list[Episode]:
+    """SQL-paginated counterpart to ``list_published`` -- avoids reading every
+    row when the admin UI only wants one page. ``q`` optionally filters on
+    title, source URL, or uploaded filename."""
 
+    clause, params = _search_clause(q)
     rows = conn.execute(
-        # _SELECT_COLUMNS is a fixed module constant -- no user input.
+        # _SELECT_COLUMNS and the search clause are fixed module text; the
+        # search term itself is bound, never interpolated.
         "SELECT " + _SELECT_COLUMNS + " "
         "FROM episodes "
-        "WHERE audio_path IS NOT NULL "
+        "WHERE audio_path IS NOT NULL" + clause + " "
         "ORDER BY pub_date DESC, created_at DESC "
         "LIMIT ? OFFSET ?",
-        (limit, offset),
+        [*params, limit, offset],
     ).fetchall()
     return [_row_to_episode(row) for row in rows]
 

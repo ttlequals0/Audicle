@@ -85,8 +85,8 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "READER_API_KEY",
         # Render sidecar endpoint (empty disables); tunable live so an operator can point
         # at their own sidecar without an env edit. Which hosts use render is a per-host
-        # Site-override rule now, not a setting. RENDER_TIMEOUT_SECONDS stays env-only
-        # (a structural per-request budget, like FLARESOLVERR_MAX_TIMEOUT_MS).
+        # Site-override rule now, not a setting. (RENDER_TIMEOUT_SECONDS was env-only
+        # until 0.55.0; it now sits with the other per-request budgets below.)
         "RENDER_URL",
         # Try a Wayback capture as a last resort on a hard block; tunable live.
         "ARCHIVE_FALLBACK_ENABLED",
@@ -106,7 +106,9 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "CHATTERBOX_MAX_CHARS",
         "CHIME_ENABLED",
         # Audio-QA thresholds: tunable live since they need empirical tuning
-        # against real failures. The frame/hop sizes stay env-only (structural).
+        # against real failures. (The frame/hop/window sizes joined them in
+        # 0.55.0; they are read per job like the rest, so the old split did not
+        # hold up.)
         "AUDIO_ANALYSIS_ENABLED",
         "AUDIO_ANALYSIS_MAX_REGEN",
         "AUDIO_ANALYSIS_MIN_RMS_CV",
@@ -150,8 +152,109 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "LLM_TIMEOUT_SECONDS",
         "LLM_RETRY_COUNT",
         "LLM_PRONUNCIATION_CONCURRENCY",
+        # Wrapper resilience (0.55.0). These are the knobs an operator reaches for
+        # during an incident, so they must not need a redeploy: when the wrapper
+        # is OOM-killed mid-job its cold start runs 60-99 s, and the retry budget
+        # has to outlast that or the job dies having burned an hour of GPU.
+        "TTS_RETRY_COUNT",
+        "TTS_HTTP_TIMEOUT_SECONDS",
+        "TTS_CONNECT_RETRY_MAX_SECONDS",
+        "TTS_REACHABILITY_GRACE_SECONDS",
+        "TTS_REACHABILITY_PROBE_TIMEOUT",
+        # Extraction and delivery budgets (0.55.0). Same reasoning as the TTS
+        # group: every one is read per request, and a slow upstream is exactly
+        # when an operator needs to widen a timeout without a restart. This
+        # reverses an earlier call that kept RENDER_TIMEOUT_SECONDS and
+        # FLARESOLVERR_MAX_TIMEOUT_MS env-only as "structural" -- they are read
+        # per request like the rest, so the distinction did not hold.
+        "FIRECRAWL_RETRY_COUNT",
+        "FIRECRAWL_BACKOFF_BASE_SECONDS",
+        "FIRECRAWL_TIMEOUT_SECONDS",
+        "RENDER_TIMEOUT_SECONDS",
+        "WAYBACK_TIMEOUT_SECONDS",
+        "FLARESOLVERR_MAX_TIMEOUT_MS",
+        "WEBHOOK_TIMEOUT_SECONDS",
+        "MIN_EXTRACTION_CHARS",
+        "EXTRACTION_FALLBACKS_ENABLED",
+        "EXTRACTION_DIRECT_USER_AGENT",
+        "FIRECRAWL_ONLY_MAIN_CONTENT",
+        "FIRECRAWL_REMOVE_BASE64_IMAGES",
+        "FIRECRAWL_EXCLUDE_TAGS",
+        # Audio output tuning (0.55.0), read per job in the audio stage.
+        "AUDIO_SILENCE_THRESHOLD",
+        "AUDIO_SILENCE_BUFFER_MS",
+        "AUDIO_MAX_INTERNAL_SILENCE_MS",
+        "AUDIO_INTERNAL_SILENCE_KEEP_MS",
+        "LOUDNORM_TARGET_LUFS",
+        "LOUDNORM_TRUE_PEAK_DB",
+        "LOUDNORM_LRA",
+        "MP3_BITRATE",
+        "MP3_SAMPLE_RATE",
+        "MP3_CHANNELS",
+        "CHAPTERS_ENABLED",
+        "CHAPTERS_MIN_DURATION_SECS",
+        "INTRO_READ_ENABLED",
+        # The remaining four AUDIO_ANALYSIS_* keys. The group was split with 14
+        # tunable and these 4 env-only as "structural"; they are read per job
+        # alongside the others, so the split was arbitrary and is now closed.
+        "AUDIO_ANALYSIS_FRAME_MS",
+        "AUDIO_ANALYSIS_HOP_MS",
+        "AUDIO_ANALYSIS_WINDOW_SECS",
+        "AUDIO_ANALYSIS_F0_WARMUP_CHUNKS",
+        # Artwork pipeline (0.55.0), read per job in the artwork stage.
+        "ARTWORK_SIZE_PX",
+        "EMBED_ARTWORK_SIZE_PX",
+        "ARTWORK_JPG_QUALITY",
+        "ARTWORK_FETCH_TIMEOUT_SECONDS",
+        "ARTWORK_MIN_SOURCE_PX",
+        "ARTWORK_MAX_DOWNLOAD_BYTES",
+        "MAX_CORRECTIONS_ENTRIES",
+        "LEXICON_AGGRESSIVE",
+        # Remote TTS / ASR backends (issue #117). Live-tunable so an operator can
+        # point at another host without an env edit; the API keys are masked on
+        # read like every other credential.
+        "TTS_BACKEND",
+        "TTS_API_BASE_URL",
+        "TTS_API_KEY",
+        "TTS_API_MODEL",
+        "TTS_API_VOICE",
+        "WHISPER_BACKEND",
+        "WHISPER_API_BASE_URL",
+        "WHISPER_API_KEY",
+        "WHISPER_API_MODEL",
+        "WHISPER_API_TIMEOUT_SECONDS",
+        # Log verbosity is mutable at runtime in Python, so raising a live
+        # deployment to DEBUG to watch one job should not need a redeploy.
+        # LOG_FORMAT stays env-only: the formatter is wired once at startup.
+        "LOG_LEVEL",
     }
 )
+
+# Settings deliberately excluded from ALLOWED_KEYS, with the reason, so a future
+# audit does not have to re-derive it. Anything guarding the login path stays out
+# on purpose: reaching the Settings UI must not confer the ability to switch off
+# the defences protecting it. TRUST_PROXY_HEADERS is the sharpest case, since
+# enabling header trust lets a client spoof its IP past the lockout.
+#
+#   SESSION_SECRET_KEY            signing key; never readable or writable via API
+#   TRUST_PROXY_HEADERS           IP spoofing past the lockout
+#   TRUSTED_PROXY_HOPS            same
+#   LOCKOUT_MAX_FAILED_ATTEMPTS   brute-force protection
+#   LOCKOUT_WINDOW_SECONDS        same
+#   LOGIN_RATE_LIMIT              same (already live via an env-resolving callable)
+#   SESSION_COOKIE_SECURE         middleware built once at startup
+#   SESSION_COOKIE_MAX_AGE_SECONDS same
+#   CORS_ORIGINS                  same
+#   BASE_URL / UI_BASE_URL        deployment identity; BASE_URL is baked into
+#                                 published enclosure URLs
+#   DEFAULT_ARTWORK_URL           branding constant
+#   DATA_DIR                      filesystem path resolved at boot
+#   WEB_WORKERS                   process shape
+#   QUEUE_POLL_INTERVAL_SECONDS   worker loop, read once at worker start
+#   RETENTION_SWEEP_HOUR_UTC      scheduler, read once at startup
+#   MIGRATION_BACKUP_RETENTION_DAYS  migration-time only
+#   LOG_FORMAT                    formatter wired at startup
+#   TTS_DEVICE                    describes the wrapper's hardware, not app policy
 
 # Secret-bearing keys: their stored value is never returned by GET (masked to a
 # sentinel) so the Settings UI can show "set" without leaking the credential.
@@ -162,6 +265,8 @@ MASKED_KEYS: frozenset[str] = frozenset(
         "OPENROUTER_API_KEY",
         "FIRECRAWL_API_KEY",
         "READER_API_KEY",
+        "TTS_API_KEY",
+        "WHISPER_API_KEY",
     }
 )
 

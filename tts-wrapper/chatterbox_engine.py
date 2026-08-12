@@ -62,7 +62,7 @@ class ChatterboxEngine:
         self.sample_rate = config.sample_rate
         self.device = config.device
         self._model = None
-        self._torch = None  # cached torch module reference
+        self._torch = None  # cached torch module reference; see torch_module
         # The reference clip whose conditionals are currently encoded. Lets
         # ``select_voice`` skip a redundant re-encode when the requested voice is
         # already active -- every /generate carries the job's slot so the switch and
@@ -76,6 +76,16 @@ class ChatterboxEngine:
         # and read by the inference_turbo shim (_install_generation_cap). Written
         # only under _gpu_lock, so no race.
         self._piece_max_gen_len = _MAX_GEN_TOKENS
+
+    @property
+    def torch_module(self):
+        """The cached torch module, or None before the model has loaded.
+
+        Exposed so the per-chunk memory cleanup can call ``empty_cache`` without
+        importing torch itself (the import is deliberately lazy so the wrapper's
+        tests run without it)."""
+
+        return self._torch
 
     def _load_model(self, device: str):
         from chatterbox.tts_turbo import ChatterboxTurboTTS  # noqa: PLC0415

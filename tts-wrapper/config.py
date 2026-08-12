@@ -55,6 +55,24 @@ class Config:
     whisper_device: str
     whisper_compute_type: str
 
+    # Memory hygiene (0.55.0). The wrapper had none: torch.cuda.empty_cache()
+    # ran only on model reset and reference change, and gc.collect() nowhere. On
+    # long jobs resident memory climbed to ~20 GB and the host OOM killer took
+    # the process out mid-chunk, three times in one day, each costing a job that
+    # had already run 84-91 minutes. Growth is host RSS, not VRAM, so
+    # empty_cache() alone would not have stopped any of them.
+    #
+    # soft_limit: RSS above this triggers gc + empty_cache + malloc_trim after a
+    #   chunk. malloc_trim is the one that returns glibc arenas to the kernel,
+    #   which is the suspected bulk of the growth.
+    # hard_limit: still above this after a clean means the process restarts at
+    #   the next chunk boundary. A restart we choose beats a SIGKILL mid-
+    #   inference: the in-flight chunk completes and only the next request meets
+    #   a reloading wrapper, which the backend's connect budget rides out.
+    # Zero disables either stage.
+    memory_soft_limit_mb: int
+    memory_hard_limit_mb: int
+
     @classmethod
     def from_env(cls) -> "Config":
         # ASR device defaults to the TTS device; compute_type then follows it
@@ -72,6 +90,8 @@ class Config:
             whisper_compute_type=_str_env(
                 "WHISPER_COMPUTE_TYPE", "float16" if whisper_device == "cuda" else "int8"
             ),
+            memory_soft_limit_mb=_int_env("TTS_MEMORY_SOFT_LIMIT_MB", 8000),
+            memory_hard_limit_mb=_int_env("TTS_MEMORY_HARD_LIMIT_MB", 14000),
         )
 
     def slot_path(self, slot: int) -> Path:

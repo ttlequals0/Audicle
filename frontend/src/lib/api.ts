@@ -52,6 +52,28 @@ export async function api<T = unknown>(
   return parseResponse<T>(response);
 }
 
+/**
+ * GET a list endpoint that reports its unpaged size in `X-Total-Count`.
+ * Returns the page plus that total so a caller can compute page numbers.
+ * The UI is served same-origin by the app container and the backend installs
+ * no CORS middleware, so the header is readable without `expose_headers`.
+ */
+export async function apiList<T = unknown>(
+  path: string
+): Promise<{ items: T[]; total: number }> {
+  const response = await fetch(path, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    credentials: "include",
+  });
+  const items = await parseResponse<T[]>(response);
+  // Checked against null before Number(): Number(null) is 0, which would report
+  // a full feed as empty whenever the header is missing.
+  const raw = response.headers.get("X-Total-Count");
+  const parsed = raw === null ? NaN : Number(raw);
+  return { items, total: Number.isFinite(parsed) ? parsed : items.length };
+}
+
 /** Shared response handling: throw ApiError on non-2xx, else parse JSON/text. */
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {

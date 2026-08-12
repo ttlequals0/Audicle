@@ -1,7 +1,8 @@
 """``/api/v1/episodes`` -- admin UI list, delete, and chapter regeneration.
 
-The list endpoint paginates via ``page`` + ``per_page`` query params and
-returns ``X-Total-Count`` so the UI can render a footer. Delete removes
+The list endpoint paginates via ``page`` + ``per_page`` query params, filters on
+``q`` (title, source URL, or uploaded filename), and returns ``X-Total-Count``
+for the filtered set so the UI can render a pager. Delete removes
 the DB row + on-disk media via the existing retention helpers.
 ``POST /episodes/{id}/chapters`` rebuilds chapters from the stored transcript.
 """
@@ -69,11 +70,12 @@ async def list_episodes(
     response: Response,
     conn: Annotated[sqlite3.Connection, Depends(get_conn)],
     page: Annotated[int, Query(ge=1)] = 1,
-    per_page: Annotated[int, Query(ge=1, le=500)] = 50,
+    per_page: Annotated[int, Query(ge=1, le=500)] = 25,
+    q: Annotated[str | None, Query(max_length=200)] = None,
 ) -> list[EpisodeListItem]:
-    total = episodes_service.count_published(conn)
+    total = episodes_service.count_published(conn, q=q)
     page_rows = episodes_service.list_published_page(
-        conn, limit=per_page, offset=(page - 1) * per_page
+        conn, limit=per_page, offset=(page - 1) * per_page, q=q
     )
     with_text = episodes_service.ids_with_cleaned_text(
         conn, [ep.id for ep in page_rows]
