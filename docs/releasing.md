@@ -2,6 +2,8 @@
 
 Audicle ships one channel. Every release publishes three images under its version tag, and `latest` follows the newest release that has merged to main.
 
+Historically this was not done consistently: the changelog has far more versions than the repo has tags, and no version was ever published as a GitHub release. `scripts/publish_release.sh` exists so the tag and the release page come from one command instead of memory.
+
 | Docker tags | What they are |
 |---|---|
 | `<version>` | An immutable release: `ttlequals0/audicle`, `ttlequals0/audicle-tts`, `ttlequals0/audicle-render` all carry it |
@@ -39,7 +41,20 @@ Every release gets a CHANGELOG.md section. If a branch bumps the version more th
 5. Smoke the images as containers, not just the code. Run the app image and hit `/health/live`; confirm `import main` works inside the wrapper image. Tests import from the source tree, so a file missing from a Dockerfile COPY line only surfaces here (0.55.0 shipped that way and could not start; a wrapper test now guards the COPY list, but the principle stands for every image).
 6. Push the version tags for all three images. Verify the manifests exist on Docker Hub before deploying, since the stack pins `BUILD_VERSION` for all of them.
 7. Deploy by updating the stack's `BUILD_VERSION` to X.Y.Z, then verify `GET /health/live` reports the new version and `GET /health/ready` shows every component healthy.
-8. Merge the release PR to main, create the annotated `vX.Y.Z` tag on the merge commit, and push it.
+8. Merge the release PR to main, then publish from up-to-date main:
+
+   ```bash
+   git checkout main && git pull --ff-only
+   scripts/publish_release.sh X.Y.Z --dry-run   # preview the notes
+   scripts/publish_release.sh X.Y.Z
+   ```
+
+   The script refuses to run off main, on a dirty tree, behind origin, when
+   `VERSION` disagrees with the argument, when the tag already exists, or when
+   the three images are not yet on Docker Hub. It creates the annotated tag and
+   a GitHub release whose notes come from CHANGELOG.md, rolling up every section
+   since the previous tag so a branch that bumped the version more than once
+   publishes all of them.
 9. Repoint `latest` for all three images to the just-merged version and push. This is deliberately the last step: `latest` represents main, so it never moves from an unmerged branch.
 
 ## Rolling back
