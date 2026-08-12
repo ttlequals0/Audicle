@@ -204,40 +204,6 @@ const GROUPS: Record<string, string[]> = {
 // them. Presentation only: no key changes group, so nothing about how a setting
 // is stored or read is affected. Every GROUPS entry must appear exactly once
 // here (asserted below) so a new group can't be added and silently not render.
-const CATEGORIES: { name: string; groups: string[] }[] = [
-  { name: "Content", groups: ["Feed", "Extraction", "Cleanup", "Uploads"] },
-  {
-    name: "Voice",
-    groups: [
-      "TTS",
-      "TTS generation",
-      "TTS backend",
-      "TTS delivery",
-      "Verification",
-      "Audio analysis",
-      "Audio output",
-      "Chapters",
-    ],
-  },
-  { name: "Integrations", groups: ["LLM", "Connections", "Timeouts", "Webhooks"] },
-  {
-    name: "Operations",
-    groups: ["Pipeline", "Artwork", "Retention", "RSS", "Diagnostics"],
-  },
-];
-
-// Runs once at import. A group missing from CATEGORIES would never render and a
-// duplicated one would render twice; both are easy to miss by eye.
-{
-  const placed = CATEGORIES.flatMap((c) => c.groups);
-  const missing = Object.keys(GROUPS).filter((g) => !placed.includes(g));
-  const duplicated = placed.filter((g, i) => placed.indexOf(g) !== i);
-  const unknown = placed.filter((g) => !(g in GROUPS));
-  if (missing.length || duplicated.length || unknown.length) {
-    console.error("CATEGORIES/GROUPS mismatch", { missing, duplicated, unknown });
-  }
-}
-
 // The hand-written sections below the generic form. Listed so the search can
 // match them by title; their bodies are widgets, not settings keys.
 const STANDALONE_SECTIONS = [
@@ -250,6 +216,67 @@ const STANDALONE_SECTIONS = [
   "security",
   "system info",
 ];
+
+// Settings arranged by the question an operator is answering, not by which
+// mechanism happens to store them. Entries name either a GROUPS key or one of
+// the hand-written widget sections, and both render inline here: leaving the
+// widgets to trail the page was what made "voices" impossible to find under
+// Voice and turned the last category into a junk drawer.
+const CATEGORIES: { name: string; entries: string[] }[] = [
+  {
+    // Getting the article and preparing its text.
+    name: "Content",
+    entries: ["Extraction", "site overrides", "Cleanup", "cleanup prompt", "Uploads"],
+  },
+  {
+    // Everything that shapes how it sounds, in the order you set it up:
+    // pick a voice, choose the engine, tune it, check the result, shape output.
+    name: "Voice",
+    entries: [
+      "voices",
+      "TTS",
+      "TTS backend",
+      "TTS generation",
+      "pronunciation corrections",
+      "Verification",
+      "Audio analysis",
+      "Audio output",
+      "end chime",
+      "TTS delivery",
+    ],
+  },
+  {
+    // The podcast as subscribers receive it.
+    name: "Publishing",
+    entries: ["Feed", "Artwork", "Chapters", "RSS", "authenticated feeds", "Retention"],
+  },
+  {
+    // Services this app talks to.
+    name: "Integrations",
+    entries: ["LLM", "Connections", "Timeouts", "Webhooks"],
+  },
+  {
+    // Running the app itself. Small on purpose: anything that belongs to a
+    // subject above lives there instead.
+    name: "System",
+    entries: ["Pipeline", "Diagnostics", "security", "system info"],
+  },
+];
+
+// Runs once at import. An entry that matches neither a GROUPS key nor a widget
+// section would never render, and a duplicate would render twice. Both are easy
+// to miss by eye and this is the only thing that keeps the two lists in step.
+{
+  const placed = CATEGORIES.flatMap((c) => c.entries);
+  const known = [...Object.keys(GROUPS), ...STANDALONE_SECTIONS];
+  const missing = known.filter((g) => !placed.includes(g));
+  const duplicated = placed.filter((g, i) => placed.indexOf(g) !== i);
+  const unknown = placed.filter((g) => !known.includes(g));
+  if (missing.length || duplicated.length || unknown.length) {
+    console.error("CATEGORIES mismatch", { missing, duplicated, unknown });
+  }
+}
+
 
 // One terse help line per group, rendered above the group's fields.
 const GROUP_NOTES: Record<string, string> = {
@@ -601,6 +628,43 @@ export default function SettingsRoute() {
     });
   }
 
+  // The hand-written sections, keyed by title so CATEGORIES can place them
+  // alongside the generic groups. null means "nothing to show yet", which keeps
+  // an empty shell out of the page while its query is still loading.
+  const widgets: Record<string, ReactNode | null> = {
+    "cleanup prompt":
+      promptQ.data !== undefined ? <PromptEditor initial={promptQ.data.prompt} /> : null,
+    "pronunciation corrections":
+      correctionsQ.data !== undefined ? <CorrectionsTable initial={correctionsQ.data} /> : null,
+    "site overrides":
+      fallbacksQ.data !== undefined ? <SourceFallbacksTable initial={fallbacksQ.data} /> : null,
+    voices: <VoicesWidget />,
+    "end chime": <ChimeWidget />,
+    "authenticated feeds": <AuthenticatedFeedsWidget />,
+    security: authStatus ? (
+      <SecuritySection passwordSet={authStatus.password_set} onChanged={refreshAuth} />
+    ) : null,
+    "system info": (
+      <>
+        <ReadOnlyRow label="version" value={healthQ.data?.version ?? "loading"} />
+        <ReadOnlyRow label="uptime" value={formatUptime(healthQ.data?.uptime_seconds)} />
+        <ReadOnlyRow label="password_set" value={String(authStatus?.password_set ?? "loading")} />
+        <ReadOnlyRow label="authenticated" value={String(authStatus?.authenticated ?? "loading")} />
+        <div className="flex justify-between font-mono text-[11px] pt-1">
+          <span className="text-dim uppercase">api docs</span>
+          <a
+            href="/api/v1/docs"
+            target="_blank"
+            rel="noreferrer"
+            className="text-accent hover:underline"
+          >
+            /api/v1/docs
+          </a>
+        </div>
+      </>
+    ),
+  };
+
   // A group matches when its own name matches, or any key it displays does.
   // Keys are matched with underscores treated as spaces too, so "max f0" finds
   // AUDIO_ANALYSIS_MAX_F0_SEMITONES.
@@ -653,15 +717,30 @@ export default function SettingsRoute() {
 
       <div ref={searchRegionRef} className="space-y-4">
       {CATEGORIES.map((category) => {
-        const groupsHere = category.groups.filter(
-          (g) => visibleKeysByGroup[g] && visibleKeysByGroup[g].length > 0
+        // An entry appears only if it has something to show: a group with at
+        // least one visible key, or a widget whose data has loaded.
+        const present = category.entries.filter((name) =>
+          name in GROUPS ? (visibleKeysByGroup[name]?.length ?? 0) > 0 : widgets[name] != null
         );
-        const shown = q ? groupsHere.filter((g) => matchedGroups.has(g)) : groupsHere;
+        const shown = q ? present.filter((name) => matchedGroups.has(name)) : present;
         if (shown.length === 0) return null;
         return (
           <section key={category.name} className="space-y-3">
             <h2 className="category-heading">{category.name}</h2>
-            {shown.map((group) => {
+            {shown.map((name) => {
+              if (!(name in GROUPS)) {
+                return (
+                  <CollapsibleSection
+                    key={name}
+                    title={name}
+                    searchKey={name}
+                    defaultOpen={name === "system info"}
+                  >
+                    {widgets[name]}
+                  </CollapsibleSection>
+                );
+              }
+              const group = name;
               const visible = visibleKeysByGroup[group];
               return (
                 <CollapsibleSection
@@ -780,8 +859,7 @@ export default function SettingsRoute() {
                   )}
                 </div>
               );
-            })}
-            {group === "Webhooks" && <WebhookTest />}
+            })}            {group === "Webhooks" && <WebhookTest />}
                 </CollapsibleSection>
               );
             })}
@@ -789,57 +867,6 @@ export default function SettingsRoute() {
         );
       })}
       </div>
-
-      {promptQ.data !== undefined && (
-        <CollapsibleSection title="cleanup prompt" searchKey="cleanup prompt">
-          <PromptEditor initial={promptQ.data.prompt} />
-        </CollapsibleSection>
-      )}
-      {correctionsQ.data !== undefined && (
-        <CollapsibleSection title="pronunciation corrections" searchKey="pronunciation corrections">
-          <CorrectionsTable initial={correctionsQ.data} />
-        </CollapsibleSection>
-      )}
-      {fallbacksQ.data !== undefined && (
-        <CollapsibleSection title="site overrides" searchKey="site overrides">
-          <SourceFallbacksTable initial={fallbacksQ.data} />
-        </CollapsibleSection>
-      )}
-      <CollapsibleSection title="voices" searchKey="voices">
-        <VoicesWidget />
-      </CollapsibleSection>
-
-      <CollapsibleSection title="end chime" searchKey="end chime">
-        <ChimeWidget />
-      </CollapsibleSection>
-
-      <CollapsibleSection title="authenticated feeds" searchKey="authenticated feeds">
-        <AuthenticatedFeedsWidget />
-      </CollapsibleSection>
-
-      {authStatus && (
-        <CollapsibleSection title="security" searchKey="security">
-          <SecuritySection passwordSet={authStatus.password_set} onChanged={refreshAuth} />
-        </CollapsibleSection>
-      )}
-
-      <CollapsibleSection title="system info" searchKey="system info" defaultOpen>
-        <ReadOnlyRow label="version" value={healthQ.data?.version ?? "loading"} />
-        <ReadOnlyRow label="uptime" value={formatUptime(healthQ.data?.uptime_seconds)} />
-        <ReadOnlyRow label="password_set" value={String(authStatus?.password_set ?? "loading")} />
-        <ReadOnlyRow label="authenticated" value={String(authStatus?.authenticated ?? "loading")} />
-        <div className="flex justify-between font-mono text-[11px] pt-1">
-          <span className="text-dim uppercase">api docs</span>
-          <a
-            href="/api/v1/docs"
-            target="_blank"
-            rel="noreferrer"
-            className="text-accent hover:underline"
-          >
-            /api/v1/docs
-          </a>
-        </div>
-      </CollapsibleSection>
 
       {/* Saves the grouped fields above. Each section in between saves itself,
           which is exactly why this belongs at the end of the page rather than
