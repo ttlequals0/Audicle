@@ -20,6 +20,15 @@ from typing import Any
 
 _SERVICE = "tts-wrapper"
 
+# ``uvicorn.error`` is uvicorn's general lifecycle logger, not an error channel:
+# "Application startup complete" and "Uvicorn running on ..." arrive on it at
+# INFO. The name leaks into the log line, and a shipper that derives a level by
+# scanning the raw text (Grafana Alloy does) matches the word "error" and labels
+# every one of those records as an error. The whole wrapper stream was
+# level=error in Loki as a result, which makes an error-rate panel useless.
+# Reporting the honest name fixes the label without touching the shipper.
+_LOGGER_ALIASES = {"uvicorn.error": "uvicorn"}
+
 
 @cache
 def _hostname() -> str:
@@ -49,7 +58,7 @@ class JSONFormatter(logging.Formatter):
         payload: dict[str, Any] = {
             "timestamp": self.formatTime(record),
             "level": record.levelname,
-            "logger": record.name,
+            "logger": _LOGGER_ALIASES.get(record.name, record.name),
             "message": record.getMessage(),
             "service": _SERVICE,
             "hostname": _hostname(),

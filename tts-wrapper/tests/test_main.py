@@ -764,3 +764,28 @@ def test_generate_does_not_restart_under_the_hard_limit(
         )
     assert response.status_code == 200
     assert restarts == []
+
+
+def test_uvicorn_error_logger_is_reported_as_uvicorn() -> None:
+    """Loki labelled the entire wrapper stream level=error because Grafana Alloy
+    scans the raw line for a level and matched the word "error" in the logger
+    name uvicorn.error, which is actually uvicorn's INFO lifecycle channel."""
+
+    import json
+    import logging as _logging
+
+    from log_setup import JSONFormatter
+
+    record = _logging.LogRecord(
+        name="uvicorn.error",
+        level=_logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="Application startup complete.",
+        args=(),
+        exc_info=None,
+    )
+    payload = json.loads(JSONFormatter().format(record))
+    assert payload["level"] == "INFO"
+    assert payload["logger"] == "uvicorn"
+    assert "error" not in json.dumps(payload).lower()
