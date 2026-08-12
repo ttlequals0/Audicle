@@ -6,10 +6,16 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.55.4] - 2026-08-12
+
 ### Changed
 
 - The reset-to-defaults control is red instead of grey. It is the one control on
   the page that discards values, and the grey was hard to find against the card.
+- The README is a short front page again. The details moved to a docs tree with
+  a per-page split, a glossary that links every term to the page covering it, a
+  release flow, a deployment runbook, and fresh screenshots of the current UI.
+- The app image builds with uv 0.12.3 (#119).
 
 ## [0.55.3] - 2026-08-12
 
