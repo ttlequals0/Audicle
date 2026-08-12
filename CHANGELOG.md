@@ -6,6 +6,11 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Changed
+
+- The reset-to-defaults control is red instead of grey. It is the one control on
+  the page that discards values, and the grey was hard to find against the card.
+
 ## [0.55.3] - 2026-08-12
 
 ### Changed
