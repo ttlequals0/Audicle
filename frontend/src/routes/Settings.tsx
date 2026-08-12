@@ -571,7 +571,10 @@ export default function SettingsRoute() {
         body: JSON.stringify(payload),
       }),
     onSuccess: () => {
-      setSavedMsg("saved");
+      // The saved values are the new baseline; without this the form stays
+      // "dirty" forever and the save bar never goes away.
+      baseline.current = { ...draft };
+      setSavedMsg("Saved");
       setTimeout(() => setSavedMsg(null), 2000);
       qc.invalidateQueries({ queryKey: ["settings"] });
       // A saved provider/base-URL change means the model list may differ.
@@ -678,6 +681,30 @@ export default function SettingsRoute() {
       </>
     ),
   };
+
+  // The app default for a key, as the string the form holds. Used both to
+  // decide whether a card is still at its defaults and to put it back.
+  const defaultString = (key: string): string => {
+    const d = settingsQ.data?.defaults[key];
+    return d === undefined || d === null ? "" : String(d);
+  };
+
+  // Keys edited since the page was seeded (or since the last save). Drives the
+  // save bar's existence: with nothing pending there is nothing to save, so the
+  // control has no reason to occupy the screen.
+  const dirtyKeys = Object.keys(draft).filter(
+    (key) => draft[key] !== (baseline.current[key] ?? "")
+  );
+
+  const groupDiffersFromDefaults = (keys: string[]) =>
+    keys.some((key) => (draft[key] ?? "") !== defaultString(key));
+
+  const resetGroupToDefaults = (keys: string[]) =>
+    setDraft((prev) => {
+      const next = { ...prev };
+      for (const key of keys) next[key] = defaultString(key);
+      return next;
+    });
 
   // A group matches when its own name matches, or any key it displays does.
   // Keys are matched with underscores treated as spaces too, so "max f0" finds
@@ -874,6 +901,26 @@ export default function SettingsRoute() {
                 </div>
               );
             })}            {group === "Webhooks" && <WebhookTest />}
+            {/* Puts this card's fields back to the values the app ships with.
+                Edits the form rather than saving, so it is undoable until you
+                press save, like every other change on the page. Disabled when
+                the card already matches, with the reason on hover: a control
+                that does nothing and does not say why is a dead end. */}
+            <div className="card-reset">
+              <button
+                type="button"
+                className="reset-btn"
+                disabled={!groupDiffersFromDefaults(visible)}
+                title={
+                  groupDiffersFromDefaults(visible)
+                    ? "Put these fields back to the app defaults"
+                    : "Already at the app defaults"
+                }
+                onClick={() => resetGroupToDefaults(visible)}
+              >
+                // reset to defaults
+              </button>
+            </div>
                 </CollapsibleSection>
               );
             })}
@@ -882,16 +929,27 @@ export default function SettingsRoute() {
       })}
       </div>
 
-      {/* Saves the grouped fields above. Each section in between saves itself,
-          which is exactly why this belongs at the end of the page rather than
-          in the middle of them. Sticky so it stays reachable while scrolling. */}
-      <div className="save-bar">
-        <button className="btn-primary" disabled={putM.isPending} onClick={save}>
-          {putM.isPending ? "Saving..." : "Save settings"}
-        </button>
-        {savedMsg && <span className="font-mono text-xs text-accent">{savedMsg}</span>}
-        {saveErr && <span className="font-mono text-xs text-danger">{saveErr}</span>}
-      </div>
+      {/* Appears only when there is something to save, or something to report
+          about the last attempt. Saving clears the dirty set, so the bar has to
+          outlive that for its own confirmation to be readable. */}
+      {(dirtyKeys.length > 0 || putM.isPending || savedMsg || saveErr) && (
+        <div className="save-bar">
+          {saveErr ? (
+            <span className="mono-xs text-danger mr-auto">{saveErr}</span>
+          ) : savedMsg && dirtyKeys.length === 0 ? (
+            <span className="mono-xs text-accent mr-auto">{savedMsg}</span>
+          ) : (
+            <span className="mono-xs text-mute mr-auto">
+              // {dirtyKeys.length} changed
+            </span>
+          )}
+          {dirtyKeys.length > 0 && (
+            <button className="btn-primary save-btn" disabled={putM.isPending} onClick={save}>
+              {putM.isPending ? "Saving..." : "Save settings"}
+            </button>
+          )}
+        </div>
+      )}
     </div>
     </SettingsSearchContext.Provider>
   );

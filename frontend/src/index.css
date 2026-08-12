@@ -132,25 +132,77 @@
     border-bottom: 1px solid #1a1a20;
   }
 
-  /* Save bar. Sticks to the bottom of the viewport so it stays reachable while
-     scrolling a long settings page, and clears the mobile tab bar. */
+  /* Save bar. Present only while there are unsaved edits, so it earns the space
+     it takes. Sticks to the bottom of the viewport and sits right, where the
+     commit action belongs; the pending count sits left. */
   .save-bar {
     position: sticky;
     bottom: 0.5rem;
     z-index: 10;
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     gap: 0.75rem;
     margin-top: 1.5rem;
-    padding: 0.75rem;
+    padding: 0.625rem 0.75rem;
     background: #0a0a0cf2;
     border: 1px solid #26262e;
     border-radius: 10px;
     backdrop-filter: blur(6px);
+    animation: save-bar-in 0.16s ease-out;
   }
-  .save-bar > .btn-primary {
+  /* Sized to its label rather than the container: this is one action among the
+     page's own per-section saves, not the page's headline. */
+  .save-bar > .save-btn {
     width: auto;
-    flex: 1;
+    flex: 0 0 auto;
+    padding: 0.5rem 1.125rem;
+    font-size: 0.8125rem;
+  }
+  @keyframes save-bar-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* Per-card reset. Sits at the foot of the card body, not in the header: the
+     header is itself the collapse button and a button cannot nest inside one. */
+  .card-reset {
+    display: flex;
+    justify-content: flex-end;
+    padding-top: 0.5rem;
+    margin-top: 0.25rem;
+    border-top: 1px solid #1a1a20;
+  }
+  .reset-btn {
+    background: transparent;
+    border: none;
+    padding: 0.125rem 0;
+    cursor: pointer;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.6875rem;
+    color: #6b6b78;
+    transition: color 0.15s;
+  }
+  .reset-btn:hover:not(:disabled),
+  .reset-btn:focus-visible:not(:disabled) {
+    color: #ff5252;
+    outline: none;
+  }
+  .reset-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .save-bar {
+      animation: none;
+    }
   }
 
   /* Highlight painted over settings-search matches via the CSS Custom Highlight
