@@ -12,8 +12,10 @@ import io
 import wave
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
+import main
 from engine import Engine, GenerationParams, GPUOutOfMemoryError, InferenceBusyError
 from main import create_app
 
@@ -695,3 +697,70 @@ def test_select_model_load_failure_rolls_back(tmp_path: Path) -> None:
         health = client.get("/health")
     assert health.json()["engine"] == "fake"
     assert engine.model_loaded
+
+
+# --- memory ladder (0.55.0) ------------------------------------------------
+
+
+def test_generate_logs_rss_per_chunk(tmp_path: Path, caplog) -> None:
+    """The per-chunk RSS series is what makes the growth curve visible instead
+    of only being discoverable from a kernel OOM report after the fact."""
+
+    engine = FakeEngine(synthesize_returns=_silent_wav(duration_secs=0.5))
+    with caplog.at_level("INFO"):
+        with _client(engine, tmp_path) as client:
+            response = client.post(
+                "/generate",
+                json={"text": "hi", "episode_id": "ep-1", "chunk_index": 0},
+            )
+    assert response.status_code == 200
+    done = [r for r in caplog.records if getattr(r, "event", None) == "tts_chunk_done"]
+    assert done, "no tts_chunk_done record"
+    assert getattr(done[0], "rss_mb") > 0
+
+
+def test_generate_restarts_when_over_the_hard_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
+    """The regression that cost three jobs: the kernel used to SIGKILL the
+    wrapper mid-inference. With a hard limit of 1 MB the ceiling is always
+    exceeded, so the chunk must still succeed and the restart must be requested
+    only after the response is built."""
+
+    restarts: list[str] = []
+    monkeypatch.setattr(main, "_request_restart", lambda: restarts.append("restart"))
+    monkeypatch.setenv("TTS_MEMORY_HARD_LIMIT_MB", "1")
+    monkeypatch.setenv("TTS_MEMORY_SOFT_LIMIT_MB", "1")
+
+    engine = FakeEngine(synthesize_returns=_silent_wav(duration_secs=0.5))
+    with caplog.at_level("WARNING"):
+        with _client(engine, tmp_path) as client:
+            response = client.post(
+                "/generate",
+                json={"text": "hi", "episode_id": "ep-1", "chunk_index": 0},
+            )
+
+    # The chunk the client asked for is delivered; that is the whole point of
+    # restarting on our own terms rather than being killed mid-request.
+    assert response.status_code == 200, response.text
+    assert response.json()["wav_path"].endswith("ep-1_chunk_0.wav")
+    assert restarts == ["restart"]
+    assert any(getattr(r, "event", None) == "tts_memory_restart" for r in caplog.records)
+
+
+def test_generate_does_not_restart_under_the_hard_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    restarts: list[str] = []
+    monkeypatch.setattr(main, "_request_restart", lambda: restarts.append("restart"))
+    monkeypatch.setenv("TTS_MEMORY_HARD_LIMIT_MB", "10000000")
+    monkeypatch.setenv("TTS_MEMORY_SOFT_LIMIT_MB", "10000000")
+
+    engine = FakeEngine(synthesize_returns=_silent_wav(duration_secs=0.5))
+    with _client(engine, tmp_path) as client:
+        response = client.post(
+            "/generate",
+            json={"text": "hi", "episode_id": "ep-1", "chunk_index": 0},
+        )
+    assert response.status_code == 200
+    assert restarts == []
