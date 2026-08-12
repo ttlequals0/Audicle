@@ -30,7 +30,6 @@ from tenacity import (
     AsyncRetrying,
     RetryError,
     retry_if_exception_type,
-    stop_after_attempt,
     wait_exponential,
 )
 
@@ -50,6 +49,16 @@ class TTSTimeoutError(TTSError):
 class TTSProviderError(TTSError):
     """5xx response or transport failure (unreachable, connection dropped
     mid-request by an OOM-killed wrapper). Retryable."""
+
+
+class TTSUnreachableError(TTSProviderError):
+    """Nothing is listening at ``TTS_URL``: the wrapper is down or restarting.
+
+    A subclass of :class:`TTSProviderError` so existing handlers keep working,
+    but distinguished because it justifies a longer retry budget than a 5xx.
+    The wrapper's cold start after an OOM kill runs 60-99 s, so this is retried
+    against an elapsed-time budget (``TTS_CONNECT_RETRY_MAX_SECONDS``) rather
+    than the attempt count that governs other provider errors."""
 
 
 class TTSRequestError(TTSError):
@@ -114,6 +123,10 @@ async def _post(
             return await client.post(endpoint, json=payload)
         except httpx.TimeoutException as exc:
             raise TTSTimeoutError(f"{what} timed out: {exc}") from exc
+        except httpx.ConnectError as exc:
+            # Nothing is listening: the wrapper is down or reloading its models.
+            # Gets the elapsed-time budget, not the attempt budget.
+            raise TTSUnreachableError(f"TTS unreachable: {exc}") from exc
         except (httpx.NetworkError, httpx.RemoteProtocolError) as exc:
             raise TTSProviderError(f"TTS unreachable: {exc}") from exc
 
@@ -225,12 +238,33 @@ async def generate_chunk_with_retry(
     )
 
 
+def _stop_policy(settings: Settings) -> Callable[[Any], bool]:
+    """Stop condition that gives an unreachable wrapper a longer leash.
+
+    A 5xx or a timeout means the wrapper answered badly, so the attempt count
+    (``TTS_RETRY_COUNT``) bounds it. A ``ConnectError`` means nothing is
+    listening, which after an OOM kill lasts 60-99 s while the models reload --
+    longer than the attempt budget's 61 s of backoff. Those get an elapsed-time
+    budget instead (``TTS_CONNECT_RETRY_MAX_SECONDS``), so a wrapper restart
+    costs a job a pause rather than an hour of discarded synthesis.
+    """
+
+    def stop(state: Any) -> bool:
+        exc = state.outcome.exception() if state.outcome else None
+        if isinstance(exc, TTSUnreachableError):
+            return state.seconds_since_start >= settings.TTS_CONNECT_RETRY_MAX_SECONDS
+        return state.attempt_number >= settings.TTS_RETRY_COUNT
+
+    return stop
+
+
 async def _retry_transients(op: Callable[[], Awaitable[Any]], settings: Settings) -> Any:
-    """Run ``op`` under the shared wrapper retry policy: ``TTS_RETRY_COUNT``
-    attempts, exponential backoff, retry only provider/timeout errors."""
+    """Run ``op`` under the shared wrapper retry policy: exponential backoff,
+    retrying only provider/timeout errors. Attempt-bounded for provider errors,
+    elapsed-time-bounded when the wrapper is unreachable (see ``_stop_policy``)."""
 
     retrying = AsyncRetrying(
-        stop=stop_after_attempt(settings.TTS_RETRY_COUNT),
+        stop=_stop_policy(settings),
         wait=wait_exponential(multiplier=1, min=1, max=30),
         retry=retry_if_exception_type((TTSProviderError, TTSTimeoutError)),
         reraise=False,
@@ -268,6 +302,10 @@ async def _get(path: str, settings: Settings, what: str) -> httpx.Response:
             return await client.get(endpoint)
         except httpx.TimeoutException as exc:
             raise TTSTimeoutError(f"{what} timed out: {exc}") from exc
+        except httpx.ConnectError as exc:
+            # Nothing is listening: the wrapper is down or reloading its models.
+            # Gets the elapsed-time budget, not the attempt budget.
+            raise TTSUnreachableError(f"TTS unreachable: {exc}") from exc
         except (httpx.NetworkError, httpx.RemoteProtocolError) as exc:
             raise TTSProviderError(f"TTS unreachable: {exc}") from exc
 

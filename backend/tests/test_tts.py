@@ -470,3 +470,94 @@ async def test_list_models_gets_wrapper_models(
     body = await tts.list_models(get_settings())
     assert captured["request"].url.path == "/models"
     assert body["active"] == "chatterbox"
+
+
+# --- connect-failure retry budget (0.55.0) ---------------------------------
+
+
+async def test_connect_error_classifies_as_unreachable(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ConnectError is TTSUnreachableError, the subclass that earns the long
+    elapsed-time budget, rather than a plain provider error."""
+
+    get_settings.cache_clear()
+
+    def handler(request):
+        raise httpx.ConnectError("All connection attempts failed", request=request)
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    with pytest.raises(tts.TTSUnreachableError):
+        await tts.generate_chunk("hi", "ep", 0, get_settings())
+
+
+async def test_connect_retry_outlasts_a_wrapper_cold_start(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The regression this fixes: an OOM-killed wrapper takes 60-99 s to reload,
+    while the 7-attempt budget only covered 61 s of backoff, so the job died.
+    More attempts than TTS_RETRY_COUNT must be allowed while the elapsed-time
+    budget lasts."""
+
+    monkeypatch.setenv("TTS_RETRY_COUNT", "7")
+    monkeypatch.setenv("TTS_CONNECT_RETRY_MAX_SECONDS", "180")
+    get_settings.cache_clear()
+
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        # Refuse for more attempts than the attempt budget would ever allow.
+        if calls["n"] <= 9:
+            raise httpx.ConnectError("All connection attempts failed", request=request)
+        return _ok_generate()
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    monkeypatch.setattr(tenacity.wait_exponential, "__call__", lambda self, rs: 0)
+
+    result = await tts.generate_chunk_with_retry("hi", "ep", 0, get_settings())
+    assert result.wav_path == "/data/media/abc_chunk_0.wav"
+    assert calls["n"] == 10, "connect failures must not stop at TTS_RETRY_COUNT"
+
+
+async def test_connect_retry_gives_up_once_the_time_budget_expires(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The long budget is a budget, not an infinite loop: a wrapper that never
+    returns still surfaces a failure."""
+
+    monkeypatch.setenv("TTS_CONNECT_RETRY_MAX_SECONDS", "0")
+    get_settings.cache_clear()
+
+    def handler(request):
+        raise httpx.ConnectError("All connection attempts failed", request=request)
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    monkeypatch.setattr(tenacity.wait_exponential, "__call__", lambda self, rs: 0)
+
+    with pytest.raises(tts.TTSUnreachableError):
+        await tts.generate_chunk_with_retry("hi", "ep", 0, get_settings())
+
+
+async def test_provider_error_still_bounded_by_attempt_count(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 5xx means the wrapper answered, so it keeps the attempt budget and must
+    not inherit the connect-failure leash."""
+
+    monkeypatch.setenv("TTS_RETRY_COUNT", "3")
+    monkeypatch.setenv("TTS_CONNECT_RETRY_MAX_SECONDS", "180")
+    get_settings.cache_clear()
+
+    calls = {"n": 0}
+
+    def handler(_request):
+        calls["n"] += 1
+        return httpx.Response(500, text="boom")
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    monkeypatch.setattr(tenacity.wait_exponential, "__call__", lambda self, rs: 0)
+
+    with pytest.raises(tts.TTSProviderError):
+        await tts.generate_chunk_with_retry("hi", "ep", 0, get_settings())
+    assert calls["n"] == 3

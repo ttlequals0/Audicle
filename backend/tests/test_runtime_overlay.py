@@ -179,3 +179,24 @@ def test_parse_iso_helper_round_trips() -> None:
     naive = parse_iso("2026-05-28T18:00:00")
     assert naive is not None
     assert naive.tzinfo is UTC
+
+
+def test_every_allowed_key_is_a_real_settings_field() -> None:
+    """A key in ALLOWED_KEYS that is not a Settings field is silently dead: the
+    overlay stores it, the UI shows it, and nothing ever reads it. This is the
+    invariant that keeps the allowlist honest as settings are added."""
+
+    from app.config import Settings
+
+    fields = set(Settings.model_fields)
+    orphans = sorted(k for k in runtime_settings.ALLOWED_KEYS if k not in fields)
+    assert orphans == [], f"ALLOWED_KEYS entries with no Settings field: {orphans}"
+
+
+def test_masked_keys_are_all_allowed() -> None:
+    """Masking only takes effect for keys the overlay actually serves, so a
+    MASKED_KEYS entry outside ALLOWED_KEYS would be a credential the UI thinks
+    is protected and isn't."""
+
+    stray = sorted(runtime_settings.MASKED_KEYS - runtime_settings.ALLOWED_KEYS)
+    assert stray == [], f"MASKED_KEYS entries missing from ALLOWED_KEYS: {stray}"

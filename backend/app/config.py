@@ -257,15 +257,20 @@ class Settings(BaseSettings):
     TTS_MODEL: str = ""
     TTS_DEVICE: Literal["cuda", "cpu"] = "cuda"
     TTS_HTTP_TIMEOUT_SECONDS: float = 120
-    # Used by the per-chunk pipeline call site; defined here so
-    # operators can tune .env now without a follow-up rebuild.
-    # 7 attempts = ~90s cumulative backoff, enough to ride out the wrapper's
-    # ~40s restart + model reload after an OOM kill (3 attempts was ~6s, so
-    # any wrapper restart failed the whole episode). Trade-off: a wrapper that
-    # HANGS instead of dying now takes up to 7 x TTS_HTTP_TIMEOUT_SECONDS
-    # (~15 min) to surface a chunk failure; lower this if hang-mode failures
-    # matter more than restart-riding.
+    # Attempt budget for provider errors (5xx) and timeouts. With the
+    # exponential backoff in services/tts.py (1, 2, 4, 8, 16, 30) seven attempts
+    # is 61 s of cumulative wait, not the ~90 s an earlier comment here claimed.
+    # Trade-off: a wrapper that HANGS rather than dying takes up to
+    # TTS_RETRY_COUNT x TTS_HTTP_TIMEOUT_SECONDS to surface a chunk failure.
     TTS_RETRY_COUNT: int = 7
+    # Connection failures get their own budget, measured in elapsed seconds
+    # rather than attempts, because they mean one specific thing: the wrapper is
+    # not listening. Observed cold starts after an OOM kill run 60-99 s (reload
+    # Chatterbox, re-encode reference conditionals, reload faster-whisper), and
+    # the 61 s attempt budget above expired before the wrapper could answer,
+    # failing jobs that had already burned 84-91 minutes of GPU. 180 s covers the
+    # worst measured restart with room to spare.
+    TTS_CONNECT_RETRY_MAX_SECONDS: float = 180
     TTS_REACHABILITY_GRACE_SECONDS: float = 60
     TTS_REACHABILITY_PROBE_TIMEOUT: float = 10
 
