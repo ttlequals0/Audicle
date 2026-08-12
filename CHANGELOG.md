@@ -6,6 +6,26 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.55.3] - 2026-08-12
+
+### Changed
+
+- The settings save bar appears only when there are unsaved edits, and shows how
+  many. It sits bottom right at its own size rather than spanning the page: it is
+  one action among the per-section saves, not the page's headline.
+
+### Added
+
+- Each settings card can put its fields back to the values the app ships with.
+  The control is clickable only where something actually differs, and it edits
+  the form rather than saving, so a reset is undoable until you press save.
+
+### Fixed
+
+- Saving now re-baselines the form. It never did, so every page counted as
+  edited from the first save onward. Nothing showed it while the save bar was
+  always on screen; making the bar conditional is what surfaced it.
+
 ## [0.55.2] - 2026-08-12
 
 ### Changed
