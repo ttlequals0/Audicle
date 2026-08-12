@@ -18,15 +18,16 @@ export default function Feed() {
   const [q, setQ] = useState("");
 
   useEffect(() => {
-    const timer = setTimeout(() => setQ(qInput.trim()), 300);
+    const timer = setTimeout(() => {
+      // Both in one callback so they land in a single render. A new search
+      // restarts at page 1, because page 4 of the old list is almost never
+      // page 4 of the new one. Setting the page in its own effect would fetch
+      // the old page number against the new term first.
+      setQ(qInput.trim());
+      setPage(1);
+    }, 300);
     return () => clearTimeout(timer);
   }, [qInput]);
-
-  // A new search restarts at page 1: page 4 of the old list is almost never
-  // page 4 of the new one, and is usually past the end.
-  useEffect(() => {
-    setPage(1);
-  }, [q]);
   const qc = useQueryClient();
   // The subscribe URL is slug-derived from FEED_TITLE and built server-side
   // (against the configured BASE_URL, the public feed host), so the client
