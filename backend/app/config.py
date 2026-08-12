@@ -250,6 +250,39 @@ class Settings(BaseSettings):
     # auto-derived entries can't regress words the engine already says correctly.
     LEXICON_AGGRESSIVE: bool = True
 
+    # Which TTS implementation the pipeline talks to (issue #117).
+    #
+    # "wrapper" is the bundled tts-wrapper container. It returns ``wav_path``
+    # into the /data volume it SHARES with this app, plus a faster-whisper
+    # transcript when verification is on.
+    #
+    # "openai-api" is any OpenAI-compatible speech endpoint, so Chatterbox can
+    # run on another host. It shares no volume, so it returns audio bytes that
+    # the client writes to the same path the pipeline expects, and it returns no
+    # transcript -- which is why WHISPER_BACKEND exists separately below.
+    TTS_BACKEND: Literal["wrapper", "openai-api"] = "wrapper"
+    TTS_API_BASE_URL: str = ""
+    TTS_API_KEY: str = ""
+    TTS_API_MODEL: str = "tts-1"
+    # Voice name on the remote server. Reference-voice slots are a wrapper
+    # concept: a remote server manages its own voices, so this names one.
+    TTS_API_VOICE: str = "alloy"
+
+    # Where post-TTS ASR verification runs. Independent of TTS_BACKEND on
+    # purpose: local synthesis with remote ASR is a legitimate pairing.
+    #
+    # "wrapper" takes the transcript the bundled wrapper returns alongside the
+    # audio. "openai-api" POSTs the produced WAV to an OpenAI-compatible
+    # /v1/audio/transcriptions. "off" skips verification entirely.
+    #
+    # "wrapper" combined with TTS_BACKEND="openai-api" is rejected at startup:
+    # the local wrapper never saw that audio, so it has nothing to transcribe.
+    WHISPER_BACKEND: Literal["wrapper", "openai-api", "off"] = "wrapper"
+    WHISPER_API_BASE_URL: str = ""
+    WHISPER_API_KEY: str = ""
+    WHISPER_API_MODEL: str = "whisper-1"
+    WHISPER_API_TIMEOUT_SECONDS: float = 120
+
     # TTS wrapper.
     TTS_LANGUAGE: str = "en"
     # Wrapper TTS model, applied at the start of each job's TTS stage via
@@ -433,6 +466,43 @@ class Settings(BaseSettings):
                 with contextlib.suppress(ValueError):
                     self.UPLOAD_MAX_MB = max(1, int(legacy) // (1024 * 1024))
         return self
+
+    @model_validator(mode="after")
+    def _validate_backends(self) -> Settings:
+        """Reject backend combinations that cannot work, at startup rather than
+        at the TTS stage of someone's first job."""
+
+        if self.TTS_BACKEND == "openai-api":
+            if not self.TTS_API_BASE_URL.strip():
+                raise ValueError(
+                    "TTS_BACKEND=openai-api requires TTS_API_BASE_URL "
+                    "(the remote server's /v1 endpoint)"
+                )
+            if self.WHISPER_BACKEND == "wrapper" and self.WHISPER_VERIFY_ENABLED:
+                # The bundled wrapper never saw audio synthesized elsewhere, so
+                # it has nothing to transcribe and every chunk would come back
+                # unverified without saying why.
+                raise ValueError(
+                    "WHISPER_BACKEND=wrapper cannot verify audio produced by "
+                    "TTS_BACKEND=openai-api: the local wrapper never receives it. "
+                    "Set WHISPER_BACKEND=openai-api (with WHISPER_API_BASE_URL) "
+                    "to verify remotely, or WHISPER_BACKEND=off to skip verification."
+                )
+        if self.WHISPER_BACKEND == "openai-api" and not self.WHISPER_API_BASE_URL.strip():
+            raise ValueError(
+                "WHISPER_BACKEND=openai-api requires WHISPER_API_BASE_URL "
+                "(the remote transcription server's /v1 endpoint)"
+            )
+        return self
+
+    @property
+    def verification_enabled(self) -> bool:
+        """Whether a transcript is expected for a chunk.
+
+        Folds the WHISPER_BACKEND=off switch into the existing
+        WHISPER_VERIFY_ENABLED toggle so callers ask one question."""
+
+        return self.WHISPER_VERIFY_ENABLED and self.WHISPER_BACKEND != "off"
 
     @property
     def cors_origin_list(self) -> list[str]:

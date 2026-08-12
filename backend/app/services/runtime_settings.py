@@ -85,8 +85,8 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "READER_API_KEY",
         # Render sidecar endpoint (empty disables); tunable live so an operator can point
         # at their own sidecar without an env edit. Which hosts use render is a per-host
-        # Site-override rule now, not a setting. RENDER_TIMEOUT_SECONDS stays env-only
-        # (a structural per-request budget, like FLARESOLVERR_MAX_TIMEOUT_MS).
+        # Site-override rule now, not a setting. (RENDER_TIMEOUT_SECONDS was env-only
+        # until 0.55.0; it now sits with the other per-request budgets below.)
         "RENDER_URL",
         # Try a Wayback capture as a last resort on a hard block; tunable live.
         "ARCHIVE_FALLBACK_ENABLED",
@@ -106,7 +106,9 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "CHATTERBOX_MAX_CHARS",
         "CHIME_ENABLED",
         # Audio-QA thresholds: tunable live since they need empirical tuning
-        # against real failures. The frame/hop sizes stay env-only (structural).
+        # against real failures. (The frame/hop/window sizes joined them in
+        # 0.55.0; they are read per job like the rest, so the old split did not
+        # hold up.)
         "AUDIO_ANALYSIS_ENABLED",
         "AUDIO_ANALYSIS_MAX_REGEN",
         "AUDIO_ANALYSIS_MIN_RMS_CV",
@@ -208,6 +210,19 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "ARTWORK_MAX_DOWNLOAD_BYTES",
         "MAX_CORRECTIONS_ENTRIES",
         "LEXICON_AGGRESSIVE",
+        # Remote TTS / ASR backends (issue #117). Live-tunable so an operator can
+        # point at another host without an env edit; the API keys are masked on
+        # read like every other credential.
+        "TTS_BACKEND",
+        "TTS_API_BASE_URL",
+        "TTS_API_KEY",
+        "TTS_API_MODEL",
+        "TTS_API_VOICE",
+        "WHISPER_BACKEND",
+        "WHISPER_API_BASE_URL",
+        "WHISPER_API_KEY",
+        "WHISPER_API_MODEL",
+        "WHISPER_API_TIMEOUT_SECONDS",
         # Log verbosity is mutable at runtime in Python, so raising a live
         # deployment to DEBUG to watch one job should not need a redeploy.
         # LOG_FORMAT stays env-only: the formatter is wired once at startup.
@@ -250,6 +265,8 @@ MASKED_KEYS: frozenset[str] = frozenset(
         "OPENROUTER_API_KEY",
         "FIRECRAWL_API_KEY",
         "READER_API_KEY",
+        "TTS_API_KEY",
+        "WHISPER_API_KEY",
     }
 )
 

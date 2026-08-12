@@ -104,6 +104,20 @@ const GROUPS: Record<string, string[]> = {
   ],
   // Wrapper resilience: reachable at runtime since 0.55.0 so an operator can
   // widen the budget during an incident instead of redeploying.
+  // Which TTS implementation runs, and where ASR verification happens. The two
+  // are independent: local synthesis with remote ASR is a valid pairing.
+  "TTS backend": [
+    "TTS_BACKEND",
+    "TTS_API_BASE_URL",
+    "TTS_API_MODEL",
+    "TTS_API_VOICE",
+    "TTS_API_KEY",
+    "WHISPER_BACKEND",
+    "WHISPER_API_BASE_URL",
+    "WHISPER_API_MODEL",
+    "WHISPER_API_KEY",
+    "WHISPER_API_TIMEOUT_SECONDS",
+  ],
   "TTS delivery": [
     "TTS_RETRY_COUNT",
     "TTS_CONNECT_RETRY_MAX_SECONDS",
@@ -197,6 +211,7 @@ const CATEGORIES: { name: string; groups: string[] }[] = [
     groups: [
       "TTS",
       "TTS generation",
+      "TTS backend",
       "TTS delivery",
       "Verification",
       "Audio analysis",
@@ -239,6 +254,12 @@ const STANDALONE_SECTIONS = [
 // One terse help line per group, rendered above the group's fields.
 const GROUP_NOTES: Record<string, string> = {
   Feed: "applies on the next podcast-app refresh",
+  "TTS backend":
+    "wrapper is the bundled container. openai-api points at chatterbox on " +
+    "another host, which manages its own voices, so voice slots do not apply " +
+    "and tts_api_voice names the remote one. a remote server returns no " +
+    "transcript, so verification needs whisper_backend set to openai-api too, " +
+    "or off",
   Connections:
     "firecrawl key optional when self-hosting. reader key is a jina key, " +
     "free at jina.ai/reader; the keyless endpoint is rate limited",
@@ -291,6 +312,25 @@ const PROVIDER_OPTIONS = ["openai-compatible", "anthropic", "openrouter", "ollam
 // Keep in sync with the EXTRACTION_ENGINE Literal in backend/app/config.py. The
 // backend rejects any other value on PUT, so this list only drives the dropdown.
 const EXTRACTION_ENGINE_OPTIONS = ["direct", "firecrawl"];
+// Keep in sync with the TTS_BACKEND / WHISPER_BACKEND Literals in
+// backend/app/config.py (issue #117).
+const TTS_BACKEND_OPTIONS = ["wrapper", "openai-api"];
+const WHISPER_BACKEND_OPTIONS = ["wrapper", "openai-api", "off"];
+
+// Remote-backend keys only mean anything under their own backend, so they are
+// hidden otherwise -- the same treatment LLM provider keys already get.
+const TTS_REMOTE_KEYS = new Set([
+  "TTS_API_BASE_URL",
+  "TTS_API_KEY",
+  "TTS_API_MODEL",
+  "TTS_API_VOICE",
+]);
+const WHISPER_REMOTE_KEYS = new Set([
+  "WHISPER_API_BASE_URL",
+  "WHISPER_API_KEY",
+  "WHISPER_API_MODEL",
+  "WHISPER_API_TIMEOUT_SECONDS",
+]);
 
 // Which provider-specific keys are relevant per provider. Keys not listed for
 // the selected provider are hidden (openrouter's base URL is fixed server-side;
@@ -554,6 +594,9 @@ export default function SettingsRoute() {
   for (const [group, keys] of Object.entries(GROUPS)) {
     visibleKeysByGroup[group] = keys.filter((k) => {
       if (!settingsQ.data?.allowlist.includes(k)) return false;
+      // Remote endpoint/credential fields are noise unless that backend is on.
+      if (TTS_REMOTE_KEYS.has(k) && draft["TTS_BACKEND"] !== "openai-api") return false;
+      if (WHISPER_REMOTE_KEYS.has(k) && draft["WHISPER_BACKEND"] !== "openai-api") return false;
       return !PROVIDER_SPECIFIC_KEYS.has(k) || (PROVIDER_FIELDS[provider]?.has(k) ?? false);
     });
   }
@@ -640,9 +683,13 @@ export default function SettingsRoute() {
                   ? PROVIDER_OPTIONS
                   : key === "EXTRACTION_ENGINE"
                     ? EXTRACTION_ENGINE_OPTIONS
-                    : key === "OCR_LANGUAGE"
-                      ? (ocrLangsQ.data?.languages ?? ["en"])
-                      : null;
+                    : key === "TTS_BACKEND"
+                      ? TTS_BACKEND_OPTIONS
+                      : key === "WHISPER_BACKEND"
+                        ? WHISPER_BACKEND_OPTIONS
+                        : key === "OCR_LANGUAGE"
+                          ? (ocrLangsQ.data?.languages ?? ["en"])
+                          : null;
               // Languages follow the model picked in the form, not just the
               // loaded one.
               const ttsLanguages =

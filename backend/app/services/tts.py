@@ -20,7 +20,10 @@ through.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import logging
+import wave
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -160,6 +163,9 @@ async def generate_chunk(
     inside the same GPU lock that guards inference, so a concurrent audition
     cannot land between selecting the voice and using it."""
 
+    if settings.TTS_BACKEND == "openai-api":
+        return await _generate_chunk_remote(text, episode_id, chunk_index, settings, verify)
+
     payload: dict[str, Any] = {
         "text": text,
         "episode_id": episode_id,
@@ -200,6 +206,51 @@ async def generate_chunk(
     except (KeyError, TypeError, ValueError) as exc:
         raise TTSRequestError(f"Unexpected TTS response shape: {exc}") from exc
     return result
+
+
+def _wav_duration_seconds(audio: bytes) -> tuple[float, int]:
+    """Duration and sample rate from WAV headers.
+
+    The wrapper reports these itself; a remote speech endpoint returns only
+    bytes, so they are derived here to produce the same GenerateResult."""
+
+    with contextlib.closing(wave.open(io.BytesIO(audio), "rb")) as handle:
+        frames = handle.getnframes()
+        rate = handle.getframerate() or 1
+    return frames / rate, rate
+
+
+async def _generate_chunk_remote(
+    text: str,
+    episode_id: str,
+    chunk_index: int,
+    settings: Settings,
+    verify: bool,
+) -> GenerateResult:
+    """Synthesize via an OpenAI-compatible endpoint, then verify separately.
+
+    A remote server returns audio and nothing else, so the transcript the
+    wrapper would have supplied is fetched with its own ASR call when
+    verification is on and pointed at a remote transcriber."""
+
+    from app.services import tts_remote
+
+    wav_path, audio = await tts_remote.synthesize(text, episode_id, chunk_index, settings)
+    try:
+        duration, sample_rate = _wav_duration_seconds(audio)
+    except (wave.Error, EOFError) as exc:
+        raise TTSRequestError(f"remote TTS returned audio that is not WAV: {exc}") from exc
+
+    transcript: str | None = None
+    if verify and settings.WHISPER_BACKEND == "openai-api":
+        transcript = await tts_remote.transcribe(audio, settings)
+
+    return GenerateResult(
+        wav_path=str(wav_path),
+        duration_secs=duration,
+        sample_rate=sample_rate,
+        transcript=transcript,
+    )
 
 
 async def generate_chunk_with_retry(

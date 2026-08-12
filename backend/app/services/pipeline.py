@@ -1185,7 +1185,10 @@ async def _generate_chunk_quality_checked(
 
     word_count = len(text.split())
     audio_enabled = settings.AUDIO_ANALYSIS_ENABLED
-    verify_enabled = settings.WHISPER_VERIFY_ENABLED
+    # verification_enabled also honours WHISPER_BACKEND=off, so a deployment
+    # with no transcriber configured does not wait on transcripts that will
+    # never arrive.
+    verify_enabled = settings.verification_enabled
     # Tiny chunks skip the tuned thresholds (transcription noise dominates) but
     # still get a gross-mismatch check -- a fully wrong 3-word chunk is audible.
     # Gate on the comparison word list, not the raw split: spaced acronyms

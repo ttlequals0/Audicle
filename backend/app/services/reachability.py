@@ -124,6 +124,17 @@ async def check_tts(settings: Settings) -> CheckResult:
     ``model_loaded: true`` response.
     """
 
+    if settings.TTS_BACKEND == "openai-api":
+        # A remote OpenAI-compatible server exposes no /health contract we can
+        # rely on, and it is not ours to wait for. Report it as configured and
+        # let the first real call surface a problem, which the connect-retry
+        # budget already handles.
+        return CheckResult(
+            name="tts",
+            ok=True,
+            detail=f"remote backend ({settings.TTS_API_BASE_URL or 'unset'}); not probed",
+        )
+
     endpoint = f"{settings.TTS_URL.rstrip('/')}/health"
     deadline = time.monotonic() + settings.TTS_REACHABILITY_GRACE_SECONDS
     per_probe = httpx.Timeout(settings.TTS_REACHABILITY_PROBE_TIMEOUT)
