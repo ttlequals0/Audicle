@@ -6,6 +6,22 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.55.2] - 2026-08-12
+
+### Changed
+
+- Settings are grouped by subject: Content, Voice, Publishing, Services, System.
+  The hand-written sections now sit in those categories rather than trailing the
+  page, which is what had stranded voices away from the voice settings and left
+  the last category holding whatever was unclaimed, artwork included.
+- Three groups renamed for what an operator would look for: the category holding
+  Connections is Services rather than Integrations, since two near-synonyms at
+  adjacent levels of one hierarchy only invite the question of whether they mean
+  different things; Diagnostics is Logging, which is the one setting it holds;
+  and Pipeline is Job timeouts, which is what its four settings actually decide.
+- The TTS delivery, Job timeouts, and Timeouts groups have help text. Those are
+  the groups you reach for while something is failing.
+
 ## [0.55.1] - 2026-08-12
 
 ### Fixed

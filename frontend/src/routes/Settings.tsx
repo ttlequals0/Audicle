@@ -189,14 +189,14 @@ const GROUPS: Record<string, string[]> = {
     "OCR_MIN_CONFIDENCE",
     "OCR_LANGUAGE",
   ],
-  Pipeline: [
+  "Job timeouts": [
     "JOB_STALL_SECONDS",
     "JOB_TIMEOUT_SECONDS",
     "JOB_TIMEOUT_PER_CHUNK_SECONDS",
     "JOB_TIMEOUT_CEILING_MULTIPLIER",
   ],
   Retention: ["RETENTION_DAYS"],
-  Diagnostics: ["LOG_LEVEL"],
+  Logging: ["LOG_LEVEL"],
   RSS: ["RSS_CACHE_MAX_AGE_SECONDS"],
 };
 
@@ -251,15 +251,19 @@ const CATEGORIES: { name: string; entries: string[] }[] = [
     entries: ["Feed", "Artwork", "Chapters", "RSS", "authenticated feeds", "Retention"],
   },
   {
-    // Services this app talks to.
-    name: "Integrations",
+    // The services this app talks to. Named "Services" rather than
+    // "Integrations" because one of its own groups is called Connections, and
+    // two near-synonyms at adjacent levels of the same hierarchy just make the
+    // reader work out whether they mean different things. "Services" is also
+    // what a self-hoster already calls these.
+    name: "Services",
     entries: ["LLM", "Connections", "Timeouts", "Webhooks"],
   },
   {
     // Running the app itself. Small on purpose: anything that belongs to a
     // subject above lives there instead.
     name: "System",
-    entries: ["Pipeline", "Diagnostics", "security", "system info"],
+    entries: ["Job timeouts", "Logging", "security", "system info"],
   },
 ];
 
@@ -283,10 +287,20 @@ const GROUP_NOTES: Record<string, string> = {
   Feed: "applies on the next podcast-app refresh",
   "TTS backend":
     "wrapper is the bundled container. openai-api points at chatterbox on " +
-    "another host, which manages its own voices, so voice slots do not apply " +
-    "and tts_api_voice names the remote one. a remote server returns no " +
-    "transcript, so verification needs whisper_backend set to openai-api too, " +
-    "or off",
+    "another host. that host manages its own voices, so voice slots do not " +
+    "apply and tts_api_voice names the one to use. it also returns no " +
+    "transcript, so verification needs whisper_backend on openai-api too, or off",
+  "TTS delivery":
+    "how long to keep trying when the wrapper is slow or restarting. a restart " +
+    "takes about 90 seconds while the models reload, so connect_retry_max_seconds " +
+    "has to outlast that or a long job dies a few seconds short",
+  "Job timeouts":
+    "when to give up on a job. the budget is the base plus per-chunk time, so " +
+    "long documents get proportionally longer, and stall_seconds kills one that " +
+    "has stopped making progress",
+  Timeouts:
+    "per-request budgets for the extraction cascade. raise one when an upstream " +
+    "is slow rather than losing the article",
   Connections:
     "firecrawl key optional when self-hosting. reader key is a jina key, " +
     "free at jina.ai/reader; the keyless endpoint is rate limited",
