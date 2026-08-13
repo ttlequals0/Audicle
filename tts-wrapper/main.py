@@ -144,6 +144,12 @@ class GenerateResponse(BaseModel):
     sample_rate: int
     # faster-whisper transcript when verification ran; None otherwise.
     transcript: str | None = None
+    # Pure synth time, matching tts_chunk_done.inference_ms.
+    inference_ms: int | None = None
+    # ASR verification time; None when verify was off (not just 0).
+    verify_ms: int | None = None
+    # Resident set size right after this chunk, for the caller's memory series.
+    rss_mb: int | None = None
 
 
 class HealthResponse(BaseModel):
@@ -440,7 +446,9 @@ def create_app(
             # here must never fail the chunk -- the backend just gets no
             # transcript and skips its divergence check for this chunk.
             transcript: str | None = None
+            verify_ms: int | None = None
             if body.verify and chosen_verifier is not None:
+                verify_started = time.perf_counter()
                 try:
                     transcript = await asyncio.wait_for(
                         asyncio.to_thread(chosen_verifier.transcribe, wav_bytes, cfg.language),
@@ -457,6 +465,10 @@ def create_app(
                         },
                     )
                     transcript = None
+                finally:
+                    # Measured even on failure: the ASR call still spent this
+                    # time before raising.
+                    verify_ms = int((time.perf_counter() - verify_started) * 1000)
 
         out_dir = chosen_data_dir / "media"
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -485,6 +497,7 @@ def create_app(
                 "episode_id": body.episode_id,
                 "chunk_index": body.chunk_index,
                 "inference_ms": inference_ms,
+                "verify_ms": verify_ms,
                 "duration_secs": duration,
                 "wav_path": str(wav_path),
                 # Per-chunk RSS, so the growth curve over a long job is visible
@@ -525,6 +538,9 @@ def create_app(
             duration_secs=duration,
             sample_rate=engine.sample_rate,
             transcript=transcript,
+            inference_ms=inference_ms,
+            verify_ms=verify_ms,
+            rss_mb=rss_mb(),
         )
 
     @app.post("/reload")

@@ -224,6 +224,11 @@ def test_generate_writes_wav_and_returns_path_duration_rate(tmp_path: Path) -> N
     assert engine.synthesize_calls == ["hello there"]
     # With no verifier wired and verify not requested, transcript is null.
     assert body["transcript"] is None
+    assert isinstance(body["inference_ms"], int)
+    assert body["inference_ms"] >= 0
+    assert body["rss_mb"] > 0
+    # Verify never ran, so verify_ms stays null rather than a stale 0.
+    assert body["verify_ms"] is None
 
 
 def test_verifier_warmed_at_startup(tmp_path: Path) -> None:
@@ -247,8 +252,11 @@ def test_generate_verify_returns_transcript(tmp_path: Path) -> None:
             json={"text": "hello there", "episode_id": "ep-1", "chunk_index": 0, "verify": True},
         )
     assert response.status_code == 200, response.text
-    assert response.json()["transcript"] == "hello there"
+    body = response.json()
+    assert body["transcript"] == "hello there"
     assert len(verifier.calls) == 1  # transcribed the produced audio once
+    assert isinstance(body["verify_ms"], int)
+    assert body["verify_ms"] >= 0
 
 
 def test_generate_without_verify_skips_transcription(tmp_path: Path) -> None:
