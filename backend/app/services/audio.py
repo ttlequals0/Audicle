@@ -305,6 +305,11 @@ def concat_with_padding(
     """Load each chunk WAV, trim edge silence, compress internal silence,
     append silence padding between chunks, write the concatenated WAV.
 
+    Streams each processed chunk straight to disk via a ``soundfile.SoundFile``
+    instead of building one full-episode tensor in memory -- a multi-hour
+    episode's chunks would otherwise all be resident at once just to be
+    written out.
+
     Returns ``(output_path, sample_rate, chunk_durations)``: the sample rate so
     subsequent ffmpeg invocations can pin it explicitly, and each chunk's final
     post-trim duration in seconds so the transcript stage can build VTT cues
@@ -318,40 +323,53 @@ def concat_with_padding(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    pieces: list[torch.Tensor] = []
     durations: list[float] = []
     sample_rate: int | None = None
     channels: int | None = None
-    pad_tensor: torch.Tensor | None = None
+    pad_frames: np.ndarray | None = None
+    sf_out: sf.SoundFile | None = None
 
-    for index, path in enumerate(chunk_paths):
-        wave, rate = _load_wav(path)
-        if sample_rate is None:
-            sample_rate = rate
-            channels = wave.size(0)
-        elif rate != sample_rate:
-            raise AudioError(
-                f"chunk {index} has sample rate {rate} but earlier chunk had {sample_rate}"
-            )
-        elif wave.size(0) != channels:
-            raise AudioError(
-                f"chunk {index} has {wave.size(0)} channels but earlier chunk had {channels}"
-            )
-        wave = trim_silence(wave, rate, settings)
-        wave = compress_internal_silence(wave, rate, settings)
-        durations.append(wave.size(1) / rate)
-        if index > 0:
-            if pad_tensor is None:
-                pad_n = round(settings.TTS_CHUNK_SILENCE_MS * sample_rate / 1000)
-                # Match the channel count of the input WAVs so torch.cat doesn't
-                # crash opaquely on stereo (or future multi-channel) chunks.
-                pad_tensor = torch.zeros((channels, pad_n), dtype=wave.dtype)
-            pieces.append(pad_tensor)
-        pieces.append(wave)
+    try:
+        for index, path in enumerate(chunk_paths):
+            wave, rate = _load_wav(path)
+            if sample_rate is None:
+                sample_rate = rate
+                channels = wave.size(0)
+                # Mirrors _save_wav's subtype so the WAV on disk stays
+                # byte-compatible for the ffmpeg stage downstream.
+                sf_out = sf.SoundFile(
+                    str(output_path),
+                    mode="w",
+                    samplerate=sample_rate,
+                    channels=channels,
+                    subtype="PCM_16",
+                )
+            elif rate != sample_rate:
+                raise AudioError(
+                    f"chunk {index} has sample rate {rate} but earlier chunk had {sample_rate}"
+                )
+            elif wave.size(0) != channels:
+                raise AudioError(
+                    f"chunk {index} has {wave.size(0)} channels but earlier chunk had {channels}"
+                )
+            wave = trim_silence(wave, rate, settings)
+            wave = compress_internal_silence(wave, rate, settings)
+            durations.append(wave.size(1) / rate)
+
+            # soundfile wants (frames, channels); torch's convention here is
+            # (channels, frames).
+            frames = wave.numpy().T
+            if index > 0:
+                if pad_frames is None:
+                    pad_n = round(settings.TTS_CHUNK_SILENCE_MS * sample_rate / 1000)
+                    pad_frames = np.zeros((pad_n, channels), dtype=frames.dtype)
+                sf_out.write(pad_frames)
+            sf_out.write(frames)
+    finally:
+        if sf_out is not None:
+            sf_out.close()
 
     assert sample_rate is not None
-    combined = torch.cat(pieces, dim=1)
-    _save_wav(output_path, combined, sample_rate)
     return output_path, sample_rate, durations
 
 
