@@ -21,6 +21,7 @@ shared SSRF guard rather than trusting the configured host.
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 import httpx
@@ -32,6 +33,9 @@ from app.services.atomic_write import write_bytes_atomic
 
 logger = logging.getLogger("app.services.tts_remote")
 
+_GUARD_TTL_SECONDS = 300.0
+_guard_cache: dict[str, float] = {}
+
 
 def _auth_headers(api_key: str) -> dict[str, str]:
     key = api_key.strip()
@@ -42,11 +46,22 @@ async def _guard(url: str) -> None:
     """Run the SSRF guard over an operator-supplied endpoint.
 
     Both endpoints are configured through the Settings UI, so a hostile or
-    mistaken value could otherwise point the app at an internal address."""
+    mistaken value could otherwise point the app at an internal address.
+
+    Verdicts are cached per host for a short TTL: the guard re-resolves DNS on
+    every chunk otherwise. A changed endpoint host misses the cache by key, so
+    Settings edits take effect immediately; the TTL only bounds how long a
+    previously approved host is trusted."""
 
     host = httpx.URL(url).host
-    if host:
-        await ssrf.resolve_public_host(host)
+    if not host:
+        return
+    now = time.monotonic()
+    expiry = _guard_cache.get(host)
+    if expiry is not None and now < expiry:
+        return
+    await ssrf.resolve_public_host(host)
+    _guard_cache[host] = now + _GUARD_TTL_SECONDS
 
 
 async def synthesize(
@@ -70,6 +85,7 @@ async def synthesize(
         TTSRequestError,
         TTSTimeoutError,
         TTSUnreachableError,
+        shared_client,
     )
 
     base = settings.TTS_API_BASE_URL.rstrip("/")
@@ -84,17 +100,20 @@ async def synthesize(
         "response_format": "wav",
     }
     timeout = httpx.Timeout(settings.TTS_HTTP_TIMEOUT_SECONDS)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            response = await client.post(
-                endpoint, json=payload, headers=_auth_headers(settings.TTS_API_KEY)
-            )
-        except httpx.TimeoutException as exc:
-            raise TTSTimeoutError(f"remote TTS timed out: {exc}") from exc
-        except httpx.ConnectError as exc:
-            raise TTSUnreachableError(f"TTS unreachable: {exc}") from exc
-        except (httpx.NetworkError, httpx.RemoteProtocolError) as exc:
-            raise TTSProviderError(f"TTS unreachable: {exc}") from exc
+    client = shared_client()
+    try:
+        response = await client.post(
+            endpoint,
+            json=payload,
+            headers=_auth_headers(settings.TTS_API_KEY),
+            timeout=timeout,
+        )
+    except httpx.TimeoutException as exc:
+        raise TTSTimeoutError(f"remote TTS timed out: {exc}") from exc
+    except httpx.ConnectError as exc:
+        raise TTSUnreachableError(f"TTS unreachable: {exc}") from exc
+    except (httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+        raise TTSProviderError(f"TTS unreachable: {exc}") from exc
 
     if response.is_server_error:
         raise TTSProviderError(f"remote TTS returned {response.status_code}")
@@ -125,6 +144,8 @@ async def transcribe(audio: bytes, settings: Settings) -> str | None:
     chunk that synthesized fine.
     """
 
+    from app.services.tts import shared_client
+
     base = settings.WHISPER_API_BASE_URL.rstrip("/")
     endpoint = f"{base}/audio/transcriptions"
     try:
@@ -138,13 +159,14 @@ async def transcribe(audio: bytes, settings: Settings) -> str | None:
 
     timeout = httpx.Timeout(settings.WHISPER_API_TIMEOUT_SECONDS)
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(
-                endpoint,
-                headers=_auth_headers(settings.WHISPER_API_KEY),
-                files={"file": ("chunk.wav", audio, "audio/wav")},
-                data={"model": settings.WHISPER_API_MODEL, "response_format": "json"},
-            )
+        client = shared_client()
+        response = await client.post(
+            endpoint,
+            headers=_auth_headers(settings.WHISPER_API_KEY),
+            files={"file": ("chunk.wav", audio, "audio/wav")},
+            data={"model": settings.WHISPER_API_MODEL, "response_format": "json"},
+            timeout=timeout,
+        )
         if response.status_code >= 400:
             logger.warning(
                 "Remote ASR verification failed; continuing without a transcript",

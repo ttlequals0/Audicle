@@ -40,6 +40,19 @@ from app.config import Settings
 
 logger = logging.getLogger("app.services.tts")
 
+_client: httpx.AsyncClient | None = None
+
+
+def shared_client() -> httpx.AsyncClient:
+    """Process-wide client so wrapper/remote calls reuse connections instead of
+    paying TCP+TLS setup per chunk. No default timeout: each call passes its
+    own, so a Settings change applies on the next request without a rebuild."""
+
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient()
+    return _client
+
 
 class TTSError(Exception):
     """Base class so callers can do a single except for any TTS failure."""
@@ -121,17 +134,17 @@ async def _post(
 
     endpoint = f"{settings.TTS_URL.rstrip('/')}{path}"
     timeout = httpx.Timeout(settings.TTS_HTTP_TIMEOUT_SECONDS)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            return await client.post(endpoint, json=payload)
-        except httpx.TimeoutException as exc:
-            raise TTSTimeoutError(f"{what} timed out: {exc}") from exc
-        except httpx.ConnectError as exc:
-            # Nothing is listening: the wrapper is down or reloading its models.
-            # Gets the elapsed-time budget, not the attempt budget.
-            raise TTSUnreachableError(f"TTS unreachable: {exc}") from exc
-        except (httpx.NetworkError, httpx.RemoteProtocolError) as exc:
-            raise TTSProviderError(f"TTS unreachable: {exc}") from exc
+    client = shared_client()
+    try:
+        return await client.post(endpoint, json=payload, timeout=timeout)
+    except httpx.TimeoutException as exc:
+        raise TTSTimeoutError(f"{what} timed out: {exc}") from exc
+    except httpx.ConnectError as exc:
+        # Nothing is listening: the wrapper is down or reloading its models.
+        # Gets the elapsed-time budget, not the attempt budget.
+        raise TTSUnreachableError(f"TTS unreachable: {exc}") from exc
+    except (httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+        raise TTSProviderError(f"TTS unreachable: {exc}") from exc
 
 
 @dataclass(frozen=True)
@@ -348,17 +361,17 @@ async def _get(path: str, settings: Settings, what: str) -> httpx.Response:
 
     endpoint = f"{settings.TTS_URL.rstrip('/')}{path}"
     timeout = httpx.Timeout(settings.TTS_HTTP_TIMEOUT_SECONDS)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            return await client.get(endpoint)
-        except httpx.TimeoutException as exc:
-            raise TTSTimeoutError(f"{what} timed out: {exc}") from exc
-        except httpx.ConnectError as exc:
-            # Nothing is listening: the wrapper is down or reloading its models.
-            # Gets the elapsed-time budget, not the attempt budget.
-            raise TTSUnreachableError(f"TTS unreachable: {exc}") from exc
-        except (httpx.NetworkError, httpx.RemoteProtocolError) as exc:
-            raise TTSProviderError(f"TTS unreachable: {exc}") from exc
+    client = shared_client()
+    try:
+        return await client.get(endpoint, timeout=timeout)
+    except httpx.TimeoutException as exc:
+        raise TTSTimeoutError(f"{what} timed out: {exc}") from exc
+    except httpx.ConnectError as exc:
+        # Nothing is listening: the wrapper is down or reloading its models.
+        # Gets the elapsed-time budget, not the attempt budget.
+        raise TTSUnreachableError(f"TTS unreachable: {exc}") from exc
+    except (httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+        raise TTSProviderError(f"TTS unreachable: {exc}") from exc
 
 
 async def select_model(settings: Settings, model: str) -> None:

@@ -13,13 +13,11 @@ from app.services import tts
 
 
 def _patch_async_client(monkeypatch: pytest.MonkeyPatch, transport: httpx.MockTransport) -> None:
-    original = httpx.AsyncClient
-
-    def factory(*args, **kwargs):
-        kwargs.setdefault("transport", transport)
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    # _post/_get pull the shared client (module-level singleton), so patching
+    # httpx.AsyncClient itself no longer reaches them once it's constructed.
+    # Hand back a dedicated client wired to this test's transport instead.
+    client = httpx.AsyncClient(transport=transport)
+    monkeypatch.setattr(tts, "shared_client", lambda: client)
 
 
 def _capture_transport(*, response: httpx.Response):

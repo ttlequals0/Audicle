@@ -10,6 +10,10 @@ work lives under `[Unreleased]`.
 
 - The README sample is a newer narration clip (#122). The download is
   `docs/sample.mp4`, the same file the player uses; `docs/sample.mp3` is gone.
+- TTS and remote-ASR calls now share one process-wide `httpx.AsyncClient`
+  instead of opening a fresh one per chunk, and the remote SSRF guard caches a
+  resolved host's verdict for 5 minutes instead of re-resolving DNS on every
+  chunk.
 
 ## [0.55.4] - 2026-08-12
 

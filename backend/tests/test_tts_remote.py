@@ -29,13 +29,12 @@ def _wav_bytes(duration_secs: float = 1.0, rate: int = 24000) -> bytes:
 
 
 def _patch_client(monkeypatch: pytest.MonkeyPatch, transport: httpx.MockTransport) -> None:
-    original = httpx.AsyncClient
-
-    def factory(*args, **kwargs):
-        kwargs["transport"] = transport
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    # synthesize/transcribe pull the shared client (module-level singleton in
+    # tts.py), so patching httpx.AsyncClient itself no longer reaches them
+    # once it's constructed. Hand back a dedicated client wired to this
+    # test's transport instead.
+    client = httpx.AsyncClient(transport=transport)
+    monkeypatch.setattr(tts, "shared_client", lambda: client)
 
 
 def _remote_env(monkeypatch: pytest.MonkeyPatch, **extra: str) -> Settings:
