@@ -156,6 +156,14 @@ class GenerateResult:
     transcript: str | None = None
     """faster-whisper transcript of the produced audio, when ``verify`` was
     requested and the wrapper has Whisper enabled; otherwise ``None``."""
+    inference_ms: int | None = None
+    """Wrapper-reported synthesis time. ``None`` on an older wrapper (field
+    absent) or the remote backend, which reports neither."""
+    verify_ms: int | None = None
+    """Wrapper-reported ASR verify time, when ``verify`` was requested."""
+    rss_mb: int | None = None
+    """Wrapper process RSS at generation time, for tracking GPU-host memory
+    pressure from the pipeline's own logs."""
 
 
 async def generate_chunk(
@@ -209,12 +217,18 @@ async def generate_chunk(
         raise TTSRequestError(f"TTS returned non-object JSON: {type(body).__name__}")
 
     raw_transcript = body.get("transcript")
+    raw_inference_ms = body.get("inference_ms")
+    raw_verify_ms = body.get("verify_ms")
+    raw_rss_mb = body.get("rss_mb")
     try:
         result = GenerateResult(
             wav_path=str(body["wav_path"]),
             duration_secs=float(body["duration_secs"]),
             sample_rate=int(body["sample_rate"]),
             transcript=str(raw_transcript) if raw_transcript is not None else None,
+            inference_ms=int(raw_inference_ms) if raw_inference_ms is not None else None,
+            verify_ms=int(raw_verify_ms) if raw_verify_ms is not None else None,
+            rss_mb=int(raw_rss_mb) if raw_rss_mb is not None else None,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise TTSRequestError(f"Unexpected TTS response shape: {exc}") from exc

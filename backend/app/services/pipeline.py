@@ -30,6 +30,7 @@ import time
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
+from datetime import UTC, datetime
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
@@ -231,7 +232,19 @@ async def process_job(job: jobs.Job, settings: Settings) -> None:
     watchdog: _Watchdog | None = None
 
     with _job_context(job):
-        logger.info("Pipeline starting", extra={"event": "pipeline_start"})
+        start_log_extra: dict[str, Any] = {"event": "pipeline_start"}
+        try:
+            # jobs.created_at is a 'Z'-suffixed UTC string (database.py's
+            # ``strftime`` default); fromisoformat parses that suffix as a UTC
+            # offset since Python 3.11, so both sides here are tz-aware.
+            queue_wait_seconds = (
+                datetime.now(UTC) - datetime.fromisoformat(job.created_at)
+            ).total_seconds()
+            start_log_extra["queue_wait_seconds"] = queue_wait_seconds
+        except (ValueError, TypeError):
+            # Never let a log field break the pipeline over a malformed timestamp.
+            pass
+        logger.info("Pipeline starting", extra=start_log_extra)
         terminal_event = "episode.processed"
         try:
             loop = asyncio.get_running_loop()
@@ -1160,9 +1173,10 @@ async def _generate_chunk_quality_checked(
     settings: Settings,
     slot: int | None = None,
     pitch_tracker: audio_analysis.PitchTracker | None = None,
-) -> tts.GenerateResult:
+) -> tuple[tts.GenerateResult, int]:
     """Synthesize one chunk, then (if enabled) check the audio and regenerate it
-    when it came back degraded.
+    when it came back degraded. Returns ``(result, attempts_used)`` so the
+    caller can log how many tries a chunk cost.
 
     Two independent checks gate a chunk, either of which can trigger a regen:
     the signal-level audio analysis (drone / noise / repetition) and, when
@@ -1225,7 +1239,7 @@ async def _generate_chunk_quality_checked(
         # against a whole regen loop's worth of them.
         _beat()
         if not (audio_enabled or verify_enabled):
-            return result
+            return result, attempt + 1
 
         reasons: list[str] = []
         verdict = None
@@ -1237,7 +1251,7 @@ async def _generate_chunk_quality_checked(
                     "Chunk audio analysis failed; passing chunk through",
                     extra={"event": "chunk_analysis_error", "chunk_index": index, "error": str(exc)},
                 )
-                return result
+                return result, attempt + 1
             if not verdict.ok:
                 reasons.extend(verdict.reasons)
 
@@ -1300,7 +1314,7 @@ async def _generate_chunk_quality_checked(
                         "repetition_penalty": penalty,
                     },
                 )
-            return result
+            return result, attempt + 1
         log_extra: dict[str, Any] = {
             "event": "chunk_quality_bad",
             "chunk_index": index,
@@ -1359,7 +1373,7 @@ async def _generate_chunk_quality_checked(
             "kept": kept,
         },
     )
-    return result
+    return result, attempt + 1
 
 
 async def _stage_tts(
@@ -1418,11 +1432,18 @@ async def _stage_tts(
     )
     for index, text in enumerate(chunks):
         _raise_if_cancelled(job.id, settings)
-        result = await _generate_chunk_quality_checked(
+        chunk_started = time.monotonic()
+        result, attempts = await _generate_chunk_quality_checked(
             job, text, index, settings, target_slot, pitch_tracker
         )
+        synth_ms = int((time.monotonic() - chunk_started) * 1000)
         results.append(result)
         _set_progress(job.id, index + 1, total, settings)
+        # Wall time including any regens, against the produced audio's own
+        # duration -- how many seconds of synthesis each second of audio cost.
+        rtf = (
+            synth_ms / 1000 / result.duration_secs if result.duration_secs > 0 else None
+        )
         logger.info(
             "Chunk synthesized",
             extra={
@@ -1430,6 +1451,12 @@ async def _stage_tts(
                 "chunk_index": index,
                 "duration_secs": result.duration_secs,
                 "wav_path": result.wav_path,
+                "synth_ms": synth_ms,
+                "attempts": attempts,
+                "rtf": rtf,
+                "inference_ms": result.inference_ms,
+                "verify_ms": result.verify_ms,
+                "rss_mb": result.rss_mb,
             },
         )
     logger.info(
@@ -1924,6 +1951,7 @@ async def _pronounce_window(
         f"and a line {cleanup_output.END_MARKER} -- no commentary outside the markers."
         f"\n\n<text>\n{window}\n</text>"
     )
+    llm_started = time.monotonic()
     try:
         raw = await _llm_with_retry(system_prompt, user_message, settings)
         if cleanup_output.BEGIN_MARKER not in raw:
@@ -1952,6 +1980,16 @@ async def _pronounce_window(
             exc_info=True,
         )
         return window
+    llm_ms = int((time.monotonic() - llm_started) * 1000)
+    logger.info(
+        "Pronunciation window done",
+        extra={
+            "event": "pronunciation_window_done",
+            "window_index": index,
+            "llm_ms": llm_ms,
+            "input_chars": len(window),
+        },
+    )
     if len(part) < len(window) * _PRONUNCIATION_MIN_RATIO:
         logger.warning(
             "Pronunciation window output too short; keeping original",

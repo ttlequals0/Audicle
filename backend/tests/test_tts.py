@@ -171,6 +171,45 @@ async def test_generate_chunk_parses_transcript(
     assert result.transcript == "the spoken words"
 
 
+async def test_generate_chunk_parses_instrumentation_fields(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    response = httpx.Response(
+        200,
+        content=json.dumps(
+            {
+                "wav_path": "/data/media/abc_chunk_0.wav",
+                "duration_secs": 12.3,
+                "sample_rate": 24000,
+                "inference_ms": 450,
+                "verify_ms": 80,
+                "rss_mb": 2048,
+            }
+        ).encode(),
+        headers={"content-type": "application/json"},
+    )
+    transport, _captured = _capture_transport(response=response)
+    _patch_async_client(monkeypatch, transport)
+
+    result = await tts.generate_chunk("hello", "ep-1", 3, get_settings())
+    assert result.inference_ms == 450
+    assert result.verify_ms == 80
+    assert result.rss_mb == 2048
+
+
+async def test_generate_chunk_instrumentation_fields_absent_default_none(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An older wrapper (or the remote backend) omits these fields entirely.
+    transport, _captured = _capture_transport(response=_ok_generate())
+    _patch_async_client(monkeypatch, transport)
+
+    result = await tts.generate_chunk("hello", "ep-1", 3, get_settings())
+    assert result.inference_ms is None
+    assert result.verify_ms is None
+    assert result.rss_mb is None
+
+
 async def test_generate_chunk_5xx_raises_provider_error(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

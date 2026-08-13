@@ -1526,7 +1526,7 @@ async def test_chunk_quality_check_regenerates_bad_chunk(
 
     monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
     job = _seed_job(env)
-    result = await pipeline._generate_chunk_quality_checked(
+    result, _attempts = await pipeline._generate_chunk_quality_checked(
         job, "two words here now", 0, get_settings()
     )
     assert calls["n"] == 2  # one bad read, one regeneration that recovered
@@ -1536,6 +1536,27 @@ async def test_chunk_quality_check_regenerates_bad_chunk(
     # produces different audio.
     assert seeds[0] is None
     assert isinstance(seeds[1], int) and seeds[1] != 0
+
+
+async def test_chunk_quality_check_passes_first_try_returns_one_attempt(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    database.run_migrations(env)
+    from app.services import tts
+
+    wav = tmp_path / "ep_chunk_0.wav"
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        _write_speechlike_wav(wav)  # good on the first take, no regen needed
+        return tts.GenerateResult(wav_path=str(wav), duration_secs=2.0, sample_rate=24000)
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    job = _seed_job(env)
+    result, attempts = await pipeline._generate_chunk_quality_checked(
+        job, "two words here now", 0, get_settings()
+    )
+    assert attempts == 1
+    assert result.wav_path == str(wav)
 
 
 async def test_chunk_quality_check_keeps_last_after_max_regen(
@@ -1554,7 +1575,7 @@ async def test_chunk_quality_check_keeps_last_after_max_regen(
 
     monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
     job = _seed_job(env)
-    result = await pipeline._generate_chunk_quality_checked(
+    result, _attempts = await pipeline._generate_chunk_quality_checked(
         job, "two words here now", 0, get_settings()
     )
     # 1 baseline + MAX_REGEN extra attempts; job is not failed (a result returns).
@@ -1583,7 +1604,7 @@ async def test_chunk_pitch_drift_regenerates(
     for _ in range(settings.AUDIO_ANALYSIS_F0_WARMUP_CHUNKS):
         tracker.accept(180.0)
     job = _seed_job(env)
-    result = await pipeline._generate_chunk_quality_checked(
+    result, _attempts = await pipeline._generate_chunk_quality_checked(
         job, "two words here now", 0, settings, pitch_tracker=tracker
     )
     assert calls["n"] == 2
@@ -1614,7 +1635,7 @@ async def test_chunk_pitch_drift_keeps_closest_attempt(
     for _ in range(settings.AUDIO_ANALYSIS_F0_WARMUP_CHUNKS):
         tracker.accept(180.0)
     job = _seed_job(env)
-    result = await pipeline._generate_chunk_quality_checked(
+    result, _attempts = await pipeline._generate_chunk_quality_checked(
         job, "two words here now", 0, settings, pitch_tracker=tracker
     )
     assert calls["n"] == settings.AUDIO_ANALYSIS_MAX_REGEN + 1
@@ -1704,7 +1725,7 @@ async def test_chunk_asr_verify_regenerates_on_divergence(
 
     monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
     job = _seed_job(env)
-    result = await pipeline._generate_chunk_quality_checked(job, text, 0, get_settings())
+    result, _attempts = await pipeline._generate_chunk_quality_checked(job, text, 0, get_settings())
     assert calls["n"] == 2  # diverged once, matched on regen
     assert all(verifies)  # verify flag sent on every attempt
     assert result.transcript == text
@@ -1742,7 +1763,7 @@ async def test_chunk_asr_divergent_run_regenerates_despite_low_global(
 
     monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
     job = _seed_job(env)
-    result = await pipeline._generate_chunk_quality_checked(job, text, 0, settings)
+    result, _attempts = await pipeline._generate_chunk_quality_checked(job, text, 0, settings)
     assert calls["n"] == 2  # run check flagged attempt 1, regen matched
     assert result.transcript == text
 
@@ -1776,7 +1797,7 @@ async def test_chunk_asr_short_chunk_regenerates_on_gross_mismatch(
     job = _seed_job(env)
     # Short chunks (< WHISPER_VERIFY_MIN_WORDS) are still transcribed and fail
     # on gross mismatch -- a fully wrong 3-word chunk must not slip through.
-    result = await pipeline._generate_chunk_quality_checked(
+    result, _attempts = await pipeline._generate_chunk_quality_checked(
         job, text, 0, get_settings()
     )
     assert calls["n"] == 2
@@ -1920,8 +1941,11 @@ async def test_stage_tts_carries_the_job_voice_on_every_chunk(
 
     async def _fake_gen(_job, _text, index, _settings, slot=None, pitch_tracker=None):
         per_chunk_slots.append(slot)
-        return tts_mod.GenerateResult(
-            wav_path=f"/tmp/c{index}.wav", duration_secs=1.0, sample_rate=24000
+        return (
+            tts_mod.GenerateResult(
+                wav_path=f"/tmp/c{index}.wav", duration_secs=1.0, sample_rate=24000
+            ),
+            1,
         )
 
     monkeypatch.setattr(tts_mod, "select_voice", _fake_select)
@@ -2302,8 +2326,11 @@ async def test_stage_tts_applies_configured_model(
         selected_models.append(model)
 
     async def _fake_gen(_job, _text, index, _settings, slot=None, pitch_tracker=None):
-        return tts_mod.GenerateResult(
-            wav_path=f"/tmp/c{index}.wav", duration_secs=1.0, sample_rate=24000
+        return (
+            tts_mod.GenerateResult(
+                wav_path=f"/tmp/c{index}.wav", duration_secs=1.0, sample_rate=24000
+            ),
+            1,
         )
 
     async def _fake_select_voice(_settings, _slot):
