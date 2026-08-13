@@ -152,6 +152,9 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "LLM_TIMEOUT_SECONDS",
         "LLM_RETRY_COUNT",
         "LLM_PRONUNCIATION_CONCURRENCY",
+        # Pronunciation pass scope (chunk | sentence); Literal choice, so
+        # api/v1/settings.py's generic Literal-field check enforces the members.
+        "PRONUNCIATION_SCOPE",
         # Wrapper resilience (0.55.0). These are the knobs an operator reaches for
         # during an incident, so they must not need a redeploy: when the wrapper
         # is OOM-killed mid-job its cold start runs 60-99 s, and the retry budget

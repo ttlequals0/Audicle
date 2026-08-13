@@ -1912,16 +1912,21 @@ async def _pronounce_chunks_with_llm(
 
     async def _pronounce_one(index: int, window: str) -> str:
         nonlocal done_count
-        lines = [line for pattern, line in matchers if pattern.search(window)]
+        window_matchers = [(pattern, line) for pattern, line in matchers if pattern.search(window)]
         try:
-            if not lines:
+            if not window_matchers:
                 return window
             system_prompt = (
                 f"{base_prompt}\n\nPRONUNCIATION REFERENCE (term -> respelling):\n"
-                + "\n".join(lines)
+                + "\n".join(line for _, line in window_matchers)
             )
             async with semaphore:
-                part = await _pronounce_window(system_prompt, window, index, settings)
+                if settings.PRONUNCIATION_SCOPE == "sentence":
+                    part = await _pronounce_window_sentence_scope(
+                        system_prompt, window, index, settings, window_matchers
+                    )
+                else:
+                    part = await _pronounce_window(system_prompt, window, index, settings)
             return part
         finally:
             done_count += 1
@@ -2005,6 +2010,108 @@ async def _pronounce_window(
         )
         return window
     return part
+
+
+_PRONUNCIATION_SENTENCE_INSTRUCTION = (
+    "Respell the numbered sentences below per the pronunciation reference, changing "
+    "only matching terms. Return the same numbered lines, one per line, between a "
+    f"line {cleanup_output.BEGIN_MARKER} and a line {cleanup_output.END_MARKER}. Keep "
+    "every number. No other text."
+)
+
+_NUMBERED_LINE_RE = re.compile(r"^\s*(\d+)\.\s*(.*)$")
+
+
+def _splice_sentences(window: str, originals: list[str], replacements: list[str]) -> str:
+    """Replace each of ``originals`` with its ``replacements`` counterpart, in
+    the order the sentences appear in ``window``.
+
+    Walks the window with ``str.find`` per sentence, advancing the search
+    offset past each replacement so a repeated sentence splices into its own
+    occurrence rather than the first one. Raises ValueError if a sentence
+    can't be located -- the caller treats that as a splice failure and falls
+    back to the full-window call.
+    """
+
+    result = window
+    offset = 0
+    for original, respelled in zip(originals, replacements, strict=True):
+        idx = result.find(original, offset)
+        if idx == -1:
+            raise ValueError(f"sentence not found while splicing: {original!r}")
+        # Per-sentence short-output guard, same ratio as the full-window check.
+        if len(respelled) < len(original) * _PRONUNCIATION_MIN_RATIO:
+            respelled = original
+        result = result[:idx] + respelled + result[idx + len(original) :]
+        offset = idx + len(respelled)
+    return result
+
+
+async def _pronounce_window_sentence_scope(
+    system_prompt: str,
+    window: str,
+    index: int,
+    settings: Settings,
+    window_matchers: list[tuple[re.Pattern[str], str]],
+) -> str:
+    """Sentence-scoped pronunciation call: only reference-matched sentences are
+    sent to the LLM as numbered lines, cutting tokens on chunks where most
+    sentences carry no reference term. Any protocol failure (missing markers,
+    unparseable or mismatched numbering) or splice failure (a respelled
+    sentence not locatable in the window) falls back to the existing
+    full-window call, which has its own marker retry and verbatim fallback.
+    """
+
+    sentences = chunker.split_sentences(window)
+    selected = [s for s in sentences if any(pattern.search(s) for pattern, _ in window_matchers)]
+    if not selected:
+        return window
+    numbered = "\n".join(f"{i}. {sentence}" for i, sentence in enumerate(selected, start=1))
+    user_message = f"{_PRONUNCIATION_SENTENCE_INSTRUCTION}\n\n{numbered}"
+    llm_started = time.monotonic()
+    try:
+        raw = await _llm_with_retry(system_prompt, user_message, settings)
+        if cleanup_output.BEGIN_MARKER not in raw:
+            raise ValueError("sentence-scope reply missing markers")
+        body = cleanup_output.extract_clean_output(raw)
+        parsed: dict[int, str] = {}
+        for line in body.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            match = _NUMBERED_LINE_RE.match(stripped)
+            if not match:
+                raise ValueError(f"unparseable numbered line: {stripped!r}")
+            parsed[int(match.group(1))] = match.group(2).strip()
+        expected_numbers = set(range(1, len(selected) + 1))
+        if set(parsed.keys()) != expected_numbers:
+            raise ValueError("sentence-scope reply numbering mismatch")
+        replacements = [parsed[i] for i in range(1, len(selected) + 1)]
+        spliced = _splice_sentences(window, selected, replacements)
+    except Exception:
+        logger.info(
+            "Pronunciation sentence-scope pass failed; falling back to full window",
+            extra={
+                "event": "pronunciation_sentence_scope_fallback",
+                "window_index": index,
+                "sentence_count": len(selected),
+            },
+            exc_info=True,
+        )
+        return await _pronounce_window(system_prompt, window, index, settings)
+    llm_ms = int((time.monotonic() - llm_started) * 1000)
+    logger.info(
+        "Pronunciation window done",
+        extra={
+            "event": "pronunciation_window_done",
+            "window_index": index,
+            "llm_ms": llm_ms,
+            "input_chars": len(window),
+            "scope": "sentence",
+            "sentence_count": len(selected),
+        },
+    )
+    return spliced
 
 
 async def _stage_normalize(job: jobs.Job, chunks: list[str], settings: Settings) -> list[str]:

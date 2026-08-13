@@ -156,10 +156,18 @@ def _insert_runon_boundaries(text: str) -> str:
 
 
 def _split_sentences(paragraph: str) -> list[str]:
-    # Run-on boundaries are already healed by _chunk_paragraph (the only caller)
-    # before the text reaches here.
+    # _chunk_paragraph heals run-on boundaries before its internal call; other
+    # callers reach this only via the public split_sentences() wrapper below,
+    # on text that may not have gone through that healing step.
     sentences = _SENTENCE_BOUNDARY.split(paragraph)
     return [s.strip() for s in sentences if s.strip()]
+
+
+def split_sentences(paragraph: str) -> list[str]:
+    """Public wrapper over ``_split_sentences`` for callers outside chunking
+    (e.g. the sentence-scoped pronunciation pass)."""
+
+    return _split_sentences(paragraph)
 
 
 def _pack(sentences: list[str], limits: ChunkerLimits, *, base_chunk_index: int) -> list[str]:

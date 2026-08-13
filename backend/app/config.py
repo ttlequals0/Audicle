@@ -103,6 +103,11 @@ class Settings(BaseSettings):
     # Concurrent per-chunk pronunciation calls. Lower it if the provider rate
     # limits a long article (each chunk with reference terms is one call).
     LLM_PRONUNCIATION_CONCURRENCY: int = Field(default=4, ge=1, le=16)
+    # Pronunciation pass scope. "chunk" sends the whole window (default,
+    # existing behavior). "sentence" sends only reference-matched sentences as
+    # numbered lines, cutting tokens on chunks where most sentences carry no
+    # reference term; any protocol or splice failure falls back to "chunk".
+    PRONUNCIATION_SCOPE: Literal["chunk", "sentence"] = "chunk"
 
     # Episode webhooks (0.31.0). Fire-and-forget POST to this URL on every terminal
     # job transition (episode.processed / episode.failed). Empty disables. A dead or
