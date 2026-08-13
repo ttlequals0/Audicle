@@ -46,11 +46,11 @@ Settings: everything grouped by subject, searchable as you type.
 
 ## Sample
 
-A 30-second clip of cloned-voice narration (a news article).
+A short clip of cloned-voice narration.
 
-https://github.com/user-attachments/assets/4e4e9f05-9da7-4f27-b7e8-41b9dfe1bee3
+https://github.com/user-attachments/assets/b7dbbcd5-902d-4fed-a2df-32c972f4589f
 
-[Download the MP3](docs/sample.mp3)
+[Download the MP4](docs/sample.mp4)
 
 ## Quickstart
 

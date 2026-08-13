@@ -6,6 +6,11 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Changed
+
+- The README sample is a newer narration clip (#122). The download is
+  `docs/sample.mp4`, the same file the player uses; `docs/sample.mp3` is gone.
+
 ## [0.55.4] - 2026-08-12
 
 ### Changed
