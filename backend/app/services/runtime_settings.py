@@ -226,6 +226,7 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "WHISPER_API_KEY",
         "WHISPER_API_MODEL",
         "WHISPER_API_TIMEOUT_SECONDS",
+        "WHISPER_API_STRICT",
         # Log verbosity is mutable at runtime in Python, so raising a live
         # deployment to DEBUG to watch one job should not need a redeploy.
         # LOG_FORMAT stays env-only: the formatter is wired once at startup.

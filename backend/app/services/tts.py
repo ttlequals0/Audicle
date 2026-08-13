@@ -271,6 +271,10 @@ async def _generate_chunk_remote(
     transcript: str | None = None
     if verify and settings.WHISPER_BACKEND == "openai-api":
         transcript = await tts_remote.transcribe(audio, settings)
+        if transcript is None and settings.WHISPER_API_STRICT:
+            # Retryable: strict mode means "verified or not shipped", and the
+            # outage may be transient. The normal path degrades to unverified.
+            raise TTSProviderError("remote ASR unavailable and WHISPER_API_STRICT is on")
 
     return GenerateResult(
         wav_path=str(wav_path),

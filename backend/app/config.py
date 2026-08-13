@@ -287,6 +287,10 @@ class Settings(BaseSettings):
     WHISPER_API_KEY: str = ""
     WHISPER_API_MODEL: str = "whisper-1"
     WHISPER_API_TIMEOUT_SECONDS: float = 120
+    # False keeps the existing degrade-to-unverified behavior when the remote
+    # ASR call fails; True raises TTSProviderError instead, so a chunk never
+    # ships without verification (at the cost of retrying/failing the job).
+    WHISPER_API_STRICT: bool = False
 
     # TTS wrapper.
     TTS_LANGUAGE: str = "en"
