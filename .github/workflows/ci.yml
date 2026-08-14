@@ -22,6 +22,9 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.12.3"
+      # The audio/chapters/chime tests shell out to ffmpeg; without it 4 tests
+      # fail outright and 28 more skip.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - run: uv run pytest
 
   test-render:
