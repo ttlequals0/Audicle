@@ -7,6 +7,7 @@ Historically this was not done consistently: the changelog has far more versions
 | Docker tags | What they are |
 |---|---|
 | `<version>` | An immutable release: `ttlequals0/audicle`, `ttlequals0/audicle-tts`, `ttlequals0/audicle-render` all carry it |
+| `<version>-cpu` | The CPU-only wrapper build (`ttlequals0/audicle-tts` only), for deployments without a CUDA GPU |
 | `latest` | The newest released version on main; repointed after merge, never from an unmerged branch |
 
 Deployments should pin `<version>` (the stack passes it as `BUILD_VERSION`), so repointing `latest` never changes a running deployment.
@@ -33,13 +34,14 @@ Every release gets a CHANGELOG.md section. If a branch bumps the version more th
    ```bash
    docker build --pull --platform linux/amd64 -t ttlequals0/audicle:X.Y.Z .
    docker build --pull --platform linux/amd64 -t ttlequals0/audicle-tts:X.Y.Z tts-wrapper/
+   docker build --pull --platform linux/amd64 -t ttlequals0/audicle-tts:X.Y.Z-cpu -f tts-wrapper/Dockerfile.cpu tts-wrapper/
    docker build --pull --platform linux/amd64 -t ttlequals0/audicle-render:X.Y.Z render/
    ```
 
    Never retag an old build as a new version: retagging freezes the apt-upgrade security layer.
-4. Run the CVE gate. `scripts/trivy_gate.sh X.Y.Z` scans all three with the correct per-image ignorefile. A FAILED that is really a trivy cache-lock or layer-analysis timeout looks identical to a finding at a glance; read the output before treating it as a CVE. Nothing in CI enforces this, which is exactly why it must run.
+4. Run the CVE gate. `scripts/trivy_gate.sh X.Y.Z` scans all four tags (the three release images plus the `-cpu` wrapper) with the correct per-image ignorefile. A FAILED that is really a trivy cache-lock or layer-analysis timeout looks identical to a finding at a glance; read the output before treating it as a CVE. Nothing in CI enforces this, which is exactly why it must run.
 5. Smoke the images as containers, not just the code. Run the app image and hit `/health/live`; confirm `import main` works inside the wrapper image. Tests import from the source tree, so a file missing from a Dockerfile COPY line only surfaces here (0.55.0 shipped that way and could not start; a wrapper test now guards the COPY list, but the principle stands for every image).
-6. Push the version tags for all three images. Verify the manifests exist on Docker Hub before deploying, since the stack pins `BUILD_VERSION` for all of them.
+6. Push the version tags for all three images, plus `ttlequals0/audicle-tts:X.Y.Z-cpu`. Verify the manifests exist on Docker Hub before deploying, since the stack pins `BUILD_VERSION` for all of them. (`publish_release.sh` checks only the three GPU-stack images; the `-cpu` tag is not a deploy dependency, so forgetting it breaks CPU users, not the release.)
 7. Deploy by updating the stack's `BUILD_VERSION` to X.Y.Z, then verify `GET /health/live` reports the new version and `GET /health/ready` shows every component healthy.
 8. Merge the release PR to main, then publish from up-to-date main:
 

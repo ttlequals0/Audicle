@@ -35,6 +35,10 @@ work lives under `[Unreleased]`.
   pytest suites (backend, render, tts-wrapper on CPU torch wheels) and build
   the app image. Until now the full test and build gate was local-only; CI
   ran just CodeQL and dependency review.
+- Each release now also publishes a CPU-only wrapper image,
+  `ttlequals0/audicle-tts:<version>-cpu`, so a GPU-less deployment no longer
+  has to build it locally. The trivy release gate scans the new tag with the
+  tts ignorefile.
 
 ### Changed
 
