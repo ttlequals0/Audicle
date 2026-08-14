@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.3"
+      - run: uv run ruff check
+
+  test-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.3"
+      - run: uv run pytest
+
+  test-render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.3"
+      - run: uv run pytest
+        working-directory: render
+
+  test-tts-wrapper:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.3"
+      # The wrapper pins torch 2.6.0; CPU wheels keep the runner off the
+      # multi-GB CUDA downloads.
+      - run: uv run pytest
+        working-directory: tts-wrapper
+        env:
+          UV_TORCH_BACKEND: cpu
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t audicle-ci .

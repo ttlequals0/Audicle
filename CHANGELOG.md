@@ -31,6 +31,10 @@ work lives under `[Unreleased]`.
   limit. The wrapper rejects with 503 while inference is still running. New
   setting `TTS_IDLE_RESTART_ENABLED` (default on); a no-op for the
   `openai-api` TTS backend.
+- A CI workflow. Pull requests and pushes to main now run ruff plus all three
+  pytest suites (backend, render, tts-wrapper on CPU torch wheels) and build
+  the app image. Until now the full test and build gate was local-only; CI
+  ran just CodeQL and dependency review.
 
 ### Changed
 
