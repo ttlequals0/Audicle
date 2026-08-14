@@ -49,7 +49,10 @@ scan() {
     out="$(mktemp)"
     echo "Scanning $tag ..."
     # --timeout 30m: the default 5m dies mid-analysis inside the 10 GB tts
-    # image ("semaphore acquire: context deadline exceeded").
+    # image ("semaphore acquire: context deadline exceeded"). Deliberately NOT
+    # passing --scanners vuln to speed this up: that would skip the image-layer
+    # secret scan, which also covers secrets arriving via build args or base
+    # images that the pre-build repo scan never sees.
     if trivy image --timeout 30m --severity HIGH,CRITICAL --exit-code 1 --quiet \
             --ignorefile "$ignorefile" "$tag" >"$out" 2>&1; then
         cat "$out"
