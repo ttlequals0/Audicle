@@ -4,6 +4,19 @@ All notable changes to Audicle are recorded here. Format follows Keep a Changelo
 (https://keepachangelog.com). Versioning is semver once a release ships; pre-release
 work lives under `[Unreleased]`.
 
+## [0.56.1] - 2026-08-14
+
+### Changed
+
+- The default summary and chapter prompts now carry an anti-slop style
+  section distilled from the humanizer rules: banned AI vocabulary and
+  constructions (em dashes, colon reveals, forced triads, significance
+  inflation, vague attribution, hedging stacks), a concrete-over-thematic
+  rule, and an end-on-the-last-point rule; chapter titles additionally get
+  sentence case and a name-the-topic rule. Deployments that edited either
+  prompt in Settings keep their override; reset to defaults to pick up the
+  new text.
+
 ## [0.56.0] - 2026-08-13
 
 ### Added
