@@ -1131,26 +1131,43 @@ _MAX_CHARS_BOUNDS = RUNTIME_SETTING_BOUNDS["CHATTERBOX_MAX_CHARS"]
 _WRAPPER_TEXT_CAP = 4000
 _PENALTY_BOUNDS = RUNTIME_SETTING_BOUNDS["CHATTERBOX_REPETITION_PENALTY"]
 
+# Adaptive max_chars (_stage_tts): if _ADAPTIVE_TRIGGER or more of the first
+# _ADAPTIVE_WINDOW chunks needed a regen (attempts > 1), the configured
+# CHATTERBOX_MAX_CHARS is probably oversized for this job's text/voice, so the
+# rest of the job synthesizes at CHATTERBOX_MAX_CHARS * _ADAPTIVE_FACTOR
+# instead of paying for a regen on most chunks. Lowering only -- once set it
+# is never raised back up mid-job.
+_ADAPTIVE_WINDOW = 20
+_ADAPTIVE_TRIGGER = 2
+_ADAPTIVE_FACTOR = 0.75
+
 
 def _regen_seed(chunk_index: int, attempt: int) -> int:
     return (_REGEN_SEED_BASE + chunk_index * 131 + attempt) & 0xFFFFFFFF
 
 
-def _regen_params(settings: Settings, attempt: int) -> tuple[int | None, float | None]:
+def _regen_params(
+    settings: Settings, attempt: int, base_max_chars: int | None = None
+) -> tuple[int | None, float | None]:
     """``(max_chars, repetition_penalty)`` overrides for a regeneration attempt.
 
     A re-gen that only re-rolls the seed leaves the model in the same failure
     basin: on the episode that prompted this, three identical-parameter attempts
     took 43 bad chunks down to only 24. Each retry instead shortens the text fed
     to one inference call (the repetition-loop trigger) and stiffens the
-    repetition penalty. Attempt 0 returns ``(None, None)`` so the baseline take
-    is exactly what the operator configured.
+    repetition penalty. Attempt 0 returns ``(base_max_chars, None)`` -- normally
+    ``(None, None)``, so the baseline take is exactly what the operator
+    configured, unless the adaptive max_chars gate (_stage_tts) has already
+    lowered this job's baseline. Regen attempts scale from that same lowered
+    baseline (``base_max_chars or settings.CHATTERBOX_MAX_CHARS``) rather than
+    the operator's unmodified value, so escalation stays proportionate.
     """
 
     if attempt <= 0:
-        return None, None
+        return base_max_chars, None
+    base = base_max_chars or settings.CHATTERBOX_MAX_CHARS
     factor = settings.AUDIO_ANALYSIS_REGEN_CHARS_FACTOR
-    scaled = int(settings.CHATTERBOX_MAX_CHARS * factor**attempt)
+    scaled = int(base * factor**attempt)
     # Operator floor first, then the wrapper's hard bounds.
     max_chars = max(settings.AUDIO_ANALYSIS_REGEN_MIN_CHARS, scaled)
     step = settings.AUDIO_ANALYSIS_REGEN_PENALTY_STEP
@@ -1175,6 +1192,7 @@ async def _generate_chunk_quality_checked(
     slot: int | None = None,
     pitch_tracker: audio_analysis.PitchTracker | None = None,
     model_confirmed: bool = True,
+    base_max_chars: int | None = None,
 ) -> tuple[tts.GenerateResult, int]:
     """Synthesize one chunk, then (if enabled) check the audio and regenerate it
     when it came back degraded. Returns ``(result, attempts_used)`` so the
@@ -1203,7 +1221,16 @@ async def _generate_chunk_quality_checked(
     call failed (``_stage_tts``): the wrapper may then be running whatever
     model it had loaded before, not ``settings.TTS_MODEL``, so the chunk
     cache is skipped entirely rather than keying this job's audio under a
-    model it was never confirmed to have used."""
+    model it was never confirmed to have used.
+
+    ``base_max_chars`` is the adaptive-max_chars override (_stage_tts): once a
+    job has tripped the early-failure gate, every later chunk's baseline take
+    (attempt 0) synthesizes at this lowered value instead of the operator's
+    ``CHATTERBOX_MAX_CHARS``. The chunk cache key is computed from the
+    *unmodified* baseline params (``tts.generation_params(settings)`` with no
+    override), so a chunk synthesized under a lowered base_max_chars would
+    differ from what that key promises; the cache is skipped -- both lookup
+    and store -- whenever ``base_max_chars`` is not None."""
 
     word_count = len(text.split())
     audio_enabled = settings.AUDIO_ANALYSIS_ENABLED
@@ -1229,7 +1256,7 @@ async def _generate_chunk_quality_checked(
     # escalated regen attempt) because the key identifies "what the baseline
     # settings would synthesize", not which attempt produced the stored take.
     cache_key_value: str | None = None
-    if settings.TTS_CHUNK_CACHE_ENABLED and model_confirmed:
+    if settings.TTS_CHUNK_CACHE_ENABLED and model_confirmed and base_max_chars is None:
         identity = tts.cache_identity(settings, slot)
         if identity is not None:
             backend, model, fingerprint = identity
@@ -1274,7 +1301,7 @@ async def _generate_chunk_quality_checked(
     # regen overwrites the canonical WAV. Restored on exhaustion.
     best_pitch: tuple[float, tts.GenerateResult] | None = None
     for attempt in range(max_extra + 1):  # 1 baseline + up to max_extra regenerations
-        max_chars, penalty = _regen_params(settings, attempt)
+        max_chars, penalty = _regen_params(settings, attempt, base_max_chars)
         result = await tts.generate_chunk_with_retry(
             text=text,
             episode_id=job.episode_id,
@@ -1506,15 +1533,40 @@ async def _stage_tts(
     pitch_tracker = (
         audio_analysis.PitchTracker(settings) if settings.AUDIO_ANALYSIS_ENABLED else None
     )
+    # Adaptive max_chars: count early chunks that needed a regen; once the
+    # trigger is reached, base_max_chars is set for the rest of the job and
+    # never reset (lowering only -- see _ADAPTIVE_* constants above).
+    adaptive_enabled = settings.TTS_ADAPTIVE_MAX_CHARS_ENABLED
+    base_max_chars: int | None = None
+    early_regen_count = 0
     for index, text in enumerate(chunks):
         _raise_if_cancelled(job.id, settings)
         chunk_started = time.monotonic()
         result, attempts = await _generate_chunk_quality_checked(
-            job, text, index, settings, target_slot, pitch_tracker, model_confirmed
+            job, text, index, settings, target_slot, pitch_tracker, model_confirmed, base_max_chars
         )
         synth_ms = int((time.monotonic() - chunk_started) * 1000)
         results.append(result)
         _set_progress(job.id, index + 1, total, settings)
+        if (
+            adaptive_enabled
+            and base_max_chars is None
+            and index < _ADAPTIVE_WINDOW
+            and attempts > 1
+        ):
+            early_regen_count += 1
+            if early_regen_count >= _ADAPTIVE_TRIGGER:
+                base_max_chars = int(
+                    _clamp(settings.CHATTERBOX_MAX_CHARS * _ADAPTIVE_FACTOR, _MAX_CHARS_BOUNDS)
+                )
+                logger.info(
+                    "Early QA failures triggered a lowered max_chars for the rest of the job",
+                    extra={
+                        "event": "tts_adaptive_max_chars",
+                        "max_chars": base_max_chars,
+                        "trigger_chunks": early_regen_count,
+                    },
+                )
         # Wall time including any regens, against the produced audio's own
         # duration -- how many seconds of synthesis each second of audio cost.
         rtf = (

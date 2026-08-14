@@ -129,6 +129,9 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "AUDIO_ANALYSIS_REGEN_CHARS_FACTOR",
         "AUDIO_ANALYSIS_REGEN_MIN_CHARS",
         "AUDIO_ANALYSIS_REGEN_PENALTY_STEP",
+        # Adaptive max_chars: same reasoning, tunable live so an operator can
+        # disable it mid-incident without a restart.
+        "TTS_ADAPTIVE_MAX_CHARS_ENABLED",
         # Post-TTS ASR verification policy. Tunable live so an operator can turn
         # the gate on/off and adjust strictness without a restart. The wrapper's
         # WHISPER_ENABLED (which loads the model) stays env-only -- it is a

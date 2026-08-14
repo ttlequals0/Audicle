@@ -2016,6 +2016,42 @@ async def test_tts_cache_skipped_when_model_select_unconfirmed(
     assert calls["n"] == 2  # unconfirmed model: never stored, never hit
 
 
+async def test_tts_cache_skipped_when_adaptive_max_chars_active(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An active adaptive max_chars override (_stage_tts) changes what actually
+    gets synthesized, but the cache key is still derived from the unmodified
+    baseline params -- so a non-None base_max_chars must disable the cache for
+    both read and write, the same way an unconfirmed model does."""
+    monkeypatch.setenv("TTS_MODEL", "chatterbox-turbo")
+    get_settings.cache_clear()
+    database.run_migrations(env)
+    from app.services import tts
+
+    calls = {"n": 0}
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        calls["n"] += 1
+        wav = tmp_path / f"synth_{calls['n']}.wav"
+        _write_speechlike_wav(wav)
+        return tts.GenerateResult(wav_path=str(wav), duration_secs=2.0, sample_rate=24000)
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+
+    settings = get_settings()
+    job1 = _seed_job(env, url="https://example.test/article-adaptive-one")
+    job2 = _seed_job(env, url="https://example.test/article-adaptive-two")
+    with caplog.at_level(logging.INFO, logger="app.services.pipeline"):
+        await pipeline._generate_chunk_quality_checked(
+            job1, "two words here now", 0, settings, slot=1, base_max_chars=200
+        )
+        await pipeline._generate_chunk_quality_checked(
+            job2, "two words here now", 0, settings, slot=1, base_max_chars=200
+        )
+    assert calls["n"] == 2  # active override: never stored, never hit
+    assert not any(getattr(r, "event", "") == "tts_cache_hit" for r in caplog.records)
+
+
 async def test_tts_cache_store_failure_does_not_fail_chunk(
     env: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2126,7 +2162,14 @@ async def test_stage_tts_carries_the_job_voice_on_every_chunk(
         selected.append(slot)
 
     async def _fake_gen(
-        _job, _text, index, _settings, slot=None, pitch_tracker=None, model_confirmed=True
+        _job,
+        _text,
+        index,
+        _settings,
+        slot=None,
+        pitch_tracker=None,
+        model_confirmed=True,
+        base_max_chars=None,
     ):
         per_chunk_slots.append(slot)
         return (
@@ -2514,7 +2557,14 @@ async def test_stage_tts_applies_configured_model(
         selected_models.append(model)
 
     async def _fake_gen(
-        _job, _text, index, _settings, slot=None, pitch_tracker=None, model_confirmed=True
+        _job,
+        _text,
+        index,
+        _settings,
+        slot=None,
+        pitch_tracker=None,
+        model_confirmed=True,
+        base_max_chars=None,
     ):
         return (
             tts_mod.GenerateResult(

@@ -16,6 +16,13 @@ work lives under `[Unreleased]`.
   `TTS_CACHE_RETENTION_DAYS` (default 7). Caching is skipped whenever the
   active voice/model cannot be identified with confidence (no resolved
   voice slot, no configured model, or a failed model select).
+- Adaptive `max_chars`: if 2 or more of a job's first 20 chunks needed a
+  regeneration, the rest of the job synthesizes at a lowered
+  `CHATTERBOX_MAX_CHARS` (75% of the configured value) instead of paying for
+  a regen on most chunks. Lowering only -- never raised back up mid-job. New
+  setting `TTS_ADAPTIVE_MAX_CHARS_ENABLED` (default on). A chunk synthesized
+  under the lowered value skips the TTS chunk cache (lookup and store),
+  since the cache key is derived from the unmodified baseline params.
 
 ### Changed
 

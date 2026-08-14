@@ -421,6 +421,14 @@ class Settings(BaseSettings):
     AUDIO_ANALYSIS_REGEN_MIN_CHARS: int = Field(default=150, ge=100, le=2000)
     AUDIO_ANALYSIS_REGEN_PENALTY_STEP: float = Field(default=0.15, ge=0, le=1.0)
 
+    # Adaptive max_chars (pipeline._stage_tts): when enough of the early chunks
+    # in a job need a regen, the wrapper's baseline text window is probably too
+    # large for this article/voice, so the rest of the job synthesizes with a
+    # lowered CHATTERBOX_MAX_CHARS instead of paying for a regen on most chunks.
+    # Lowering only, never raised back up mid-job -- see pipeline.py for the
+    # trigger constants (_ADAPTIVE_WINDOW/_ADAPTIVE_TRIGGER/_ADAPTIVE_FACTOR).
+    TTS_ADAPTIVE_MAX_CHARS_ENABLED: bool = True
+
     # Post-TTS ASR verification (defense-in-depth, off by default). When enabled,
     # the wrapper transcribes each produced chunk with faster-whisper and the
     # backend diffs that transcript against the expected narration text; a high
