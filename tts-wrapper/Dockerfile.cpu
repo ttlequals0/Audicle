@@ -45,7 +45,14 @@ COPY config.py engine.py log_setup.py main.py memory.py chatterbox_engine.py whi
 # engine plus the optional faster-whisper backend and security patches.
 RUN pip install --no-cache-dir torch==2.6.0 torchaudio==2.6.0 \
         --index-url https://download.pytorch.org/whl/cpu \
-    && sh install_engine.sh
+    && sh install_engine.sh \
+    # The build toolchain (and with it linux-libc-dev, a magnet for unfixable
+    # kernel-header CVEs) is only needed to compile native extensions above.
+    # Purge it from the shipped image; the compiled wheels need only the
+    # runtime shared libs, which are pinned manual so autoremove keeps them.
+    && apt-mark manual libstdc++6 libgomp1 libgcc-s1 curl ca-certificates libsndfile1 \
+    && apt-get purge -y build-essential git \
+    && apt-get autoremove -y --purge
 
 EXPOSE 8000
 

@@ -80,6 +80,12 @@ work lives under `[Unreleased]`.
   index, dropping the nvidia-*-cu12 wheel set (~7 GB) from any dev or CI sync
   of the chatterbox extra. The shipped images are unaffected: both wrapper
   Dockerfiles install torch with pip on their own.
+- The CPU wrapper image no longer ships the build toolchain: build-essential
+  and git are purged after the native extensions compile, which removes
+  linux-libc-dev and with it 50 unfixable HIGH/CRITICAL kernel-header CVE
+  findings from the trivy gate. The gate script itself now uses a 30 minute
+  trivy timeout and reports a fatal scan error (cache lock, analysis timeout)
+  as SCAN ERROR instead of conflating it with a CVE FAILED verdict.
 
 ## [0.55.4] - 2026-08-12
 

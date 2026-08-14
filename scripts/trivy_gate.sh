@@ -46,14 +46,27 @@ scan() {
     ref="$1"
     ignorefile="$2"
     tag="ttlequals0/${ref}"
+    out="$(mktemp)"
     echo "Scanning $tag ..."
-    if trivy image --severity HIGH,CRITICAL --exit-code 1 --quiet \
-            --ignorefile "$ignorefile" "$tag"; then
+    # --timeout 30m: the default 5m dies mid-analysis inside the 10 GB tts
+    # image ("semaphore acquire: context deadline exceeded").
+    if trivy image --timeout 30m --severity HIGH,CRITICAL --exit-code 1 --quiet \
+            --ignorefile "$ignorefile" "$tag" >"$out" 2>&1; then
+        cat "$out"
         echo "$tag CLEAN"
+    # trivy exits 1 for findings AND for fatal errors (cache lock held by a
+    # concurrent scan, layer-analysis timeout). Distinguish them so an infra
+    # hiccup is not read as a CVE failure -- and is still a gate failure.
+    elif grep -q "FATAL" "$out"; then
+        cat "$out" >&2
+        echo "$tag SCAN ERROR (not a CVE verdict; re-run)" >&2
+        FAILED=1
     else
+        cat "$out" >&2
         echo "$tag FAILED" >&2
         FAILED=1
     fi
+    rm -f "$out"
 }
 
 # The -cpu wrapper shares the tts ignorefile: same codebase, only the torch
