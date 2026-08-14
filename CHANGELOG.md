@@ -76,6 +76,10 @@ work lives under `[Unreleased]`.
   soundfile instead of building the whole episode as one in-memory tensor,
   removing the end-of-job memory spike on long episodes. Output is
   byte-identical to the old path.
+- `tts-wrapper/uv.lock` now sources torch and torchaudio from the PyTorch CPU
+  index, dropping the nvidia-*-cu12 wheel set (~7 GB) from any dev or CI sync
+  of the chatterbox extra. The shipped images are unaffected: both wrapper
+  Dockerfiles install torch with pip on their own.
 
 ## [0.55.4] - 2026-08-12
 
