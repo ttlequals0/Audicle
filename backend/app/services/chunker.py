@@ -141,7 +141,7 @@ def _chunk_paragraph(paragraph: str, limits: ChunkerLimits, *, base_chunk_index:
     if word_count <= limits.target_words and char_count <= limits.max_chars:
         return [paragraph]
     # Paragraph too big; switch to sentence-level packing.
-    sentences = _split_sentences(paragraph)
+    sentences = split_sentences(paragraph)
     return _pack(sentences, limits, base_chunk_index=base_chunk_index)
 
 
@@ -155,19 +155,12 @@ def _insert_runon_boundaries(text: str) -> str:
     return _RUNON_BOUNDARY.sub(r"\1\2\3 \4", text)
 
 
-def _split_sentences(paragraph: str) -> list[str]:
-    # _chunk_paragraph heals run-on boundaries before its internal call; other
-    # callers reach this only via the public split_sentences() wrapper below,
-    # on text that may not have gone through that healing step.
+def split_sentences(paragraph: str) -> list[str]:
+    # _chunk_paragraph heals run-on boundaries before calling this; outside
+    # callers (e.g. the sentence-scoped pronunciation pass) may pass text that
+    # has not gone through that healing step.
     sentences = _SENTENCE_BOUNDARY.split(paragraph)
     return [s.strip() for s in sentences if s.strip()]
-
-
-def split_sentences(paragraph: str) -> list[str]:
-    """Public wrapper over ``_split_sentences`` for callers outside chunking
-    (e.g. the sentence-scoped pronunciation pass)."""
-
-    return _split_sentences(paragraph)
 
 
 def _pack(sentences: list[str], limits: ChunkerLimits, *, base_chunk_index: int) -> list[str]:

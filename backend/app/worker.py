@@ -14,7 +14,7 @@ import logging
 import signal
 from datetime import UTC, datetime
 
-from app.config import RUNTIME_SETTING_BOUNDS, Settings, get_settings
+from app.config import RUNTIME_SETTING_BOUNDS, Settings, clamp_to_bounds, get_settings
 from app.core import database
 from app.services import (
     jobs,
@@ -88,9 +88,9 @@ def _maybe_run_retention_sweep(settings: Settings, last_sweep_day: str | None) -
         # RUNTIME_SETTING_BOUNDS (no Field constraint, so a stale env value
         # can't fail startup); clamp here so a misconfigured <=0 value can't
         # turn every sweep into "purge the whole tts_cache".
-        cache_bounds = RUNTIME_SETTING_BOUNDS["TTS_CACHE_RETENTION_DAYS"]
-        retention_days = min(
-            cache_bounds["le"], max(cache_bounds["ge"], overlaid.TTS_CACHE_RETENTION_DAYS)
+        retention_days = clamp_to_bounds(
+            overlaid.TTS_CACHE_RETENTION_DAYS,
+            RUNTIME_SETTING_BOUNDS["TTS_CACHE_RETENTION_DAYS"],
         )
         tts_cache.purge_older_than(overlaid.DATA_DIR, int(retention_days))
     except Exception:

@@ -52,4 +52,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: docker build -t audicle-ci .
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          tags: audicle-ci
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

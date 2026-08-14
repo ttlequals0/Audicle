@@ -69,7 +69,7 @@ async def test_adaptive_max_chars_lowers_after_early_qa_failures(
     await pipeline._stage_tts(_job("ajob", "e1"), chunks, settings)
 
     expected = int(
-        pipeline._clamp(
+        pipeline.clamp_to_bounds(
             settings.CHATTERBOX_MAX_CHARS * pipeline._ADAPTIVE_FACTOR,
             pipeline._MAX_CHARS_BOUNDS,
         )

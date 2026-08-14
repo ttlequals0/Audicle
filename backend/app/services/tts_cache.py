@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import time
 from dataclasses import dataclass
@@ -96,6 +97,22 @@ def lookup(data_dir: Path, key: str) -> CachedChunk | None:
     )
 
 
+def link_or_copy(src: str | Path, dst: str | Path) -> None:
+    """Hard-link ``dst`` to ``src``, falling back to a full copy when the two
+    sit on different filesystems. Both cache and media dirs normally live
+    under DATA_DIR, so the link (metadata-only, no byte copy) is the common
+    case; chunk WAVs are never modified in place, so sharing the inode is
+    safe. An existing ``dst`` is replaced either way.
+    """
+
+    dst = Path(dst)
+    dst.unlink(missing_ok=True)
+    try:
+        os.link(str(src), str(dst))
+    except OSError:
+        shutil.copyfile(str(src), str(dst))
+
+
 def store(
     data_dir: Path,
     key: str,
@@ -106,7 +123,7 @@ def store(
 ) -> None:
     d = cache_dir(data_dir)
     d.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(str(wav_path), str(d / f"{key}.wav"))
+    link_or_copy(wav_path, d / f"{key}.wav")
     payload = {
         "duration_secs": duration_secs,
         "sample_rate": sample_rate,

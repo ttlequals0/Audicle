@@ -35,9 +35,10 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
-from app.config import RUNTIME_SETTING_BOUNDS, Settings
+from app.config import RUNTIME_SETTING_BOUNDS, Settings, clamp_to_bounds
 from app.core import database
 from app.core.paths import file_size_or_zero, media_dir
+from app.core.timestamps import parse_iso
 from app.services import (
     article_prep,
     artwork,
@@ -234,17 +235,12 @@ async def process_job(job: jobs.Job, settings: Settings) -> None:
 
     with _job_context(job):
         start_log_extra: dict[str, Any] = {"event": "pipeline_start"}
-        try:
-            # jobs.created_at is a 'Z'-suffixed UTC string (database.py's
-            # ``strftime`` default); fromisoformat parses that suffix as a UTC
-            # offset since Python 3.11, so both sides here are tz-aware.
-            queue_wait_seconds = (
-                datetime.now(UTC) - datetime.fromisoformat(job.created_at)
+        # A malformed created_at drops the field rather than break the pipeline.
+        queued_at = parse_iso(job.created_at)
+        if queued_at is not None:
+            start_log_extra["queue_wait_seconds"] = (
+                datetime.now(UTC) - queued_at
             ).total_seconds()
-            start_log_extra["queue_wait_seconds"] = queue_wait_seconds
-        except (ValueError, TypeError):
-            # Never let a log field break the pipeline over a malformed timestamp.
-            pass
         logger.info("Pipeline starting", extra=start_log_extra)
         terminal_event = "episode.processed"
         try:
@@ -1173,15 +1169,9 @@ def _regen_params(
     step = settings.AUDIO_ANALYSIS_REGEN_PENALTY_STEP
     penalty = settings.CHATTERBOX_REPETITION_PENALTY + step * attempt
     return (
-        int(_clamp(max_chars, _MAX_CHARS_BOUNDS)),
-        _clamp(penalty, _PENALTY_BOUNDS),
+        int(clamp_to_bounds(max_chars, _MAX_CHARS_BOUNDS)),
+        clamp_to_bounds(penalty, _PENALTY_BOUNDS),
     )
-
-
-def _clamp(value: float, bounds: dict[str, float]) -> float:
-    """Hold ``value`` inside a RUNTIME_SETTING_BOUNDS entry's ge/le range."""
-
-    return min(bounds["le"], max(bounds["ge"], value))
 
 
 async def _generate_chunk_quality_checked(
@@ -1273,15 +1263,7 @@ async def _generate_chunk_quality_checked(
                 if cached is not None:
                     dest = media_dir(settings) / f"{job.episode_id}_chunk_{index}.wav"
                     dest.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copyfile(cached.wav_path, dest)
-            except Exception as exc:
-                cached = None
-                logger.warning(
-                    "TTS cache lookup failed; falling through to synthesis",
-                    extra={"event": "tts_cache_error", "chunk_index": index, "error": str(exc)},
-                )
-            else:
-                if cached is not None:
+                    tts_cache.link_or_copy(cached.wav_path, dest)
                     logger.info(
                         "TTS cache hit", extra={"event": "tts_cache_hit", "chunk_index": index}
                     )
@@ -1294,6 +1276,11 @@ async def _generate_chunk_quality_checked(
                         ),
                         1,
                     )
+            except Exception as exc:
+                logger.warning(
+                    "TTS cache lookup failed; falling through to synthesis",
+                    extra={"event": "tts_cache_error", "chunk_index": index, "error": str(exc)},
+                )
 
     result = None
     last_reasons: list[str] = []
@@ -1557,7 +1544,9 @@ async def _stage_tts(
             early_regen_count += 1
             if early_regen_count >= _ADAPTIVE_TRIGGER:
                 base_max_chars = int(
-                    _clamp(settings.CHATTERBOX_MAX_CHARS * _ADAPTIVE_FACTOR, _MAX_CHARS_BOUNDS)
+                    clamp_to_bounds(
+                        settings.CHATTERBOX_MAX_CHARS * _ADAPTIVE_FACTOR, _MAX_CHARS_BOUNDS
+                    )
                 )
                 logger.info(
                     "Early QA failures triggered a lowered max_chars for the rest of the job",

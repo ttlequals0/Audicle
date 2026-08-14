@@ -593,6 +593,16 @@ RUNTIME_SETTING_BOUNDS: dict[str, dict[str, float]] = {
 }
 
 
+def clamp_to_bounds(value: float, bounds: dict[str, float]) -> float:
+    """Hold ``value`` inside a RUNTIME_SETTING_BOUNDS entry's ge/le range.
+
+    Only for entries with both ``ge`` and ``le`` keys; ``gt``-style entries
+    have no meaningful clamp target.
+    """
+
+    return min(bounds["le"], max(bounds["ge"], value))
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Cached singleton. Reset via get_settings.cache_clear() in tests."""

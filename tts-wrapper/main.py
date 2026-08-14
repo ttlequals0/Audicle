@@ -37,7 +37,7 @@ from engine import (
     InferenceBusyError,
 )
 from log_setup import setup_logging
-from memory import maybe_cleanup, over_hard_limit, rss_mb
+from memory import maybe_cleanup, over_hard_limit, over_soft_limit, rss_mb
 from whisper_verify import WhisperVerifier
 
 setup_logging()
@@ -321,7 +321,7 @@ def create_app(
             # a memory-heavy wrapper to restart itself via /maintenance/restart
             # rather than waiting for the mid-job hard-limit restart.
             "rss_mb": current_rss,
-            "restart_recommended": current_rss > cfg.memory_soft_limit_mb,
+            "restart_recommended": over_soft_limit(cfg.memory_soft_limit_mb, current_rss),
         }
         if not ok:
             # 503 body includes a diagnostic "error".
