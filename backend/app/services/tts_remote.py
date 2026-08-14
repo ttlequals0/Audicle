@@ -33,7 +33,7 @@ from app.services.atomic_write import write_bytes_atomic
 
 logger = logging.getLogger("app.services.tts_remote")
 
-_GUARD_TTL_SECONDS = 300.0
+_GUARD_TTL_SECONDS = 60.0
 _guard_cache: dict[str, float] = {}
 
 
@@ -51,7 +51,15 @@ async def _guard(url: str) -> None:
     Verdicts are cached per host for a short TTL: the guard re-resolves DNS on
     every chunk otherwise. A changed endpoint host misses the cache by key, so
     Settings edits take effect immediately; the TTL only bounds how long a
-    previously approved host is trusted."""
+    previously approved host is trusted.
+
+    The TTL trades per-chunk DNS re-validation for a bounded DNS-rebinding
+    window: a host that resolved public can be re-pointed at an internal
+    address and stay trusted until the entry expires. 60 s keeps nearly all of
+    the win (one resolve per minute instead of one per chunk) while shrinking
+    that exposure. Full mitigation would need IP pinning at the transport
+    layer, so the request connects to the address the guard actually
+    approved."""
 
     host = httpx.URL(url).host
     if not host:

@@ -127,16 +127,23 @@ def cache_identity(settings: Settings, slot: int | None) -> tuple[str, str, str]
 
     Wrapper backend needs a resolved slot with a readable reference file and
     a configured ``TTS_MODEL`` (an empty model means the wrapper's active
-    model was never explicitly selected, so it is unknown). Remote backend
-    names its own model/voice directly, and is likewise skipped if either is
-    blanked out -- an empty name is not an identity."""
+    model was never explicitly selected, so it is unknown). It also needs a
+    non-zero ``CHATTERBOX_SEED``: seed 0 means the wrapper rolls a fresh
+    random seed per call, so the audio is deliberately not reproducible and
+    caching it would freeze one re-roll for the whole retention window.
+    Remote backend names its own model/voice directly, and is likewise skipped
+    if either is blanked out -- an empty name is not an identity. Its
+    fingerprint carries the base URL because two providers can advertise the
+    same model and voice names without producing the same voice."""
 
     if settings.TTS_BACKEND == "openai-api":
         if not settings.TTS_API_MODEL or not settings.TTS_API_VOICE:
             return None
-        fingerprint = f"{settings.TTS_API_MODEL}:{settings.TTS_API_VOICE}"
+        fingerprint = (
+            f"{settings.TTS_API_BASE_URL}:{settings.TTS_API_MODEL}:{settings.TTS_API_VOICE}"
+        )
         return settings.TTS_BACKEND, settings.TTS_API_MODEL, fingerprint
-    if not settings.TTS_MODEL or slot is None:
+    if not settings.TTS_MODEL or slot is None or settings.CHATTERBOX_SEED == 0:
         return None
     fingerprint = tts_cache.voice_fingerprint_for_slot(slot)
     if fingerprint is None:
@@ -149,6 +156,7 @@ async def _post(
     settings: Settings,
     payload: dict[str, Any] | None,
     what: str,
+    timeout_seconds: float | None = None,
 ) -> httpx.Response:
     """POST to the wrapper, mapping connection-level failures to typed errors.
 
@@ -158,10 +166,15 @@ async def _post(
     from a bad TTS_URL, ``LocalProtocolError``) stay unclassified so permanent
     misconfiguration fails fast instead of burning the retry budget. Status
     handling stays with each caller because it differs per endpoint.
+
+    ``timeout_seconds`` overrides ``TTS_HTTP_TIMEOUT_SECONDS`` for calls that
+    are not chunk synthesis and must not inherit its inference-sized budget.
     """
 
     endpoint = f"{settings.TTS_URL.rstrip('/')}{path}"
-    timeout = httpx.Timeout(settings.TTS_HTTP_TIMEOUT_SECONDS)
+    timeout = httpx.Timeout(
+        settings.TTS_HTTP_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+    )
     client = shared_client()
     try:
         return await client.post(endpoint, json=payload, timeout=timeout)
@@ -245,22 +258,29 @@ async def generate_chunk(
         raise TTSRequestError(f"TTS returned non-object JSON: {type(body).__name__}")
 
     raw_transcript = body.get("transcript")
-    raw_inference_ms = body.get("inference_ms")
-    raw_verify_ms = body.get("verify_ms")
-    raw_rss_mb = body.get("rss_mb")
     try:
         result = GenerateResult(
             wav_path=str(body["wav_path"]),
             duration_secs=float(body["duration_secs"]),
             sample_rate=int(body["sample_rate"]),
             transcript=str(raw_transcript) if raw_transcript is not None else None,
-            inference_ms=int(raw_inference_ms) if raw_inference_ms is not None else None,
-            verify_ms=int(raw_verify_ms) if raw_verify_ms is not None else None,
-            rss_mb=int(raw_rss_mb) if raw_rss_mb is not None else None,
+            # Diagnostics are parsed best-effort below: they are logging fodder,
+            # so a wrapper reporting one of them oddly must not fail the chunk
+            # with a non-retryable error.
+            inference_ms=_optional_int(body.get("inference_ms")),
+            verify_ms=_optional_int(body.get("verify_ms")),
+            rss_mb=_optional_int(body.get("rss_mb")),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise TTSRequestError(f"Unexpected TTS response shape: {exc}") from exc
     return result
+
+
+def _optional_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _wav_duration_seconds(audio: bytes) -> tuple[float, int]:
@@ -402,11 +422,15 @@ async def select_voice_with_retry(settings: Settings, slot: int) -> None:
     await _retry_transients(lambda: select_voice(settings, slot), settings)
 
 
-async def _get(path: str, settings: Settings, what: str) -> httpx.Response:
+async def _get(
+    path: str, settings: Settings, what: str, timeout_seconds: float | None = None
+) -> httpx.Response:
     """GET from the wrapper with the same transport-error mapping as ``_post``."""
 
     endpoint = f"{settings.TTS_URL.rstrip('/')}{path}"
-    timeout = httpx.Timeout(settings.TTS_HTTP_TIMEOUT_SECONDS)
+    timeout = httpx.Timeout(
+        settings.TTS_HTTP_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+    )
     client = shared_client()
     try:
         return await client.get(endpoint, timeout=timeout)
@@ -425,9 +449,16 @@ async def wrapper_health(settings: Settings) -> dict[str, Any]:
     fields (``rss_mb``, ``restart_recommended``) the worker's opportunistic
     between-jobs restart reads. Returns the body regardless of status code --
     a 503 (not ready) still carries valid rss_mb/restart_recommended -- and
-    lets transport-level failures propagate as the usual TTSError family."""
+    lets transport-level failures propagate as the usual TTSError family.
 
-    response = await _get("/health", settings, "TTS health")
+    Bounded by ``TTS_REACHABILITY_PROBE_TIMEOUT``, not the inference-sized
+    ``TTS_HTTP_TIMEOUT_SECONDS``: this runs on the worker's job-pickup path,
+    where a wrapper that accepts the connection and never answers would
+    otherwise stall the next job for minutes."""
+
+    response = await _get(
+        "/health", settings, "TTS health", settings.TTS_REACHABILITY_PROBE_TIMEOUT
+    )
     try:
         body = response.json()
     except ValueError as exc:
@@ -440,9 +471,16 @@ async def wrapper_health(settings: Settings) -> dict[str, Any]:
 async def request_wrapper_restart(settings: Settings) -> None:
     """POST /maintenance/restart: ask an idle-between-jobs wrapper to restart
     itself. 503 means the GPU inference lock is still held; the worker treats
-    that as "try again next idle window", not a hard failure."""
+    that as "try again next idle window", not a hard failure. Same
+    probe-sized timeout as ``wrapper_health`` and for the same reason."""
 
-    response = await _post("/maintenance/restart", settings, None, "TTS idle restart")
+    response = await _post(
+        "/maintenance/restart",
+        settings,
+        None,
+        "TTS idle restart",
+        settings.TTS_REACHABILITY_PROBE_TIMEOUT,
+    )
     if response.is_error:
         raise TTSProviderError(
             f"TTS restart returned {response.status_code}: {response.text[:200]}"

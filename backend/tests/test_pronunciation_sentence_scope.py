@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from app.config import get_settings
 from app.core import database
-from app.services import cleanup_output, pipeline
+from app.services import cleanup_output, lexicon, pipeline
 
 BEGIN = cleanup_output.BEGIN_MARKER
 END = cleanup_output.END_MARKER
@@ -172,3 +172,87 @@ async def test_chunk_scope_behavior_unchanged_by_default(
     assert len(captured) == 1
     assert "<text>\n" in captured[0]
     assert out == [_WINDOW]
+
+
+async def test_sentence_scope_uses_its_own_system_prompt_with_the_reference(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The full-window system prompt orders the model to output the ENTIRE
+    text, which contradicts returning a subset as numbered lines. The
+    sentence-scope call gets its own prompt, still carrying the filtered
+    reference lines."""
+
+    database.run_migrations(env)
+    systems: list[str] = []
+
+    async def _fake(system, _user, _settings, **_kwargs):
+        systems.append(system)
+        return f"{BEGIN}\n1. I ran a sequel query today.\n{END}"
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _fake)
+    await pipeline._pronounce_chunks_with_llm("job", [_WINDOW], _sentence_scope_settings())
+
+    assert len(systems) == 1
+    assert "ENTIRE text" not in systems[0]
+    assert "numbered lines" in systems[0]
+    assert "PRONUNCIATION REFERENCE (term -> respelling):" in systems[0]
+    assert "SQL" in systems[0]
+
+
+async def test_sentence_scope_falls_back_when_a_term_spans_a_sentence_split(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A term with an internal abbreviation period ("St. John") is split across
+    two sentences, so no single sentence matches it. The window still contains
+    the term, so it goes to the chunk-scoped call instead of being returned
+    unrespelled."""
+
+    database.run_migrations(env)
+    with database.connection(get_settings().DATA_DIR) as conn:
+        lexicon.replace_user_entries(conn, {"St. John": {"spoken": "Saint John"}})
+
+    window = "We met at St. John Street today. A plain sentence follows here."
+    captured: list[str] = []
+
+    async def _fake(_system, user, _settings, **_kwargs):
+        captured.append(user)
+        body = user.split("<text>\n", 1)[1].rsplit("\n</text>", 1)[0]
+        return f"{BEGIN}\n{body.replace('St. John', 'Saint John')}\n{END}"
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _fake)
+    out = await pipeline._pronounce_chunks_with_llm("job", [window], _sentence_scope_settings())
+
+    assert len(captured) == 1
+    assert "<text>\n" in captured[0]  # the chunk-scoped protocol
+    assert out == ["We met at Saint John Street today. A plain sentence follows here."]
+
+
+async def test_sentence_scope_protocol_failure_latches_off_for_the_job(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A model that ignores the numbered-line contract will ignore it again,
+    so after the first protocol failure the job stops paying for a doomed
+    sentence call plus a full-window retry on every remaining chunk."""
+
+    database.run_migrations(env)
+    settings = get_settings().model_copy(
+        update={"PRONUNCIATION_SCOPE": "sentence", "LLM_PRONUNCIATION_CONCURRENCY": 1}
+    )
+    captured: list[str] = []
+
+    async def _fake(_system, user, _settings, **_kwargs):
+        captured.append(user)
+        if "<text>\n" in user:
+            body = user.split("<text>\n", 1)[1].rsplit("\n</text>", 1)[0]
+            return f"{BEGIN}\n{body}\n{END}"
+        return "1. I ran a sequel query today."  # markers ignored: protocol failure
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _fake)
+    second = "The SQL migration finished last night. Another plain sentence."
+    out = await pipeline._pronounce_chunks_with_llm("job", [_WINDOW, second], settings)
+
+    kinds = ["chunk" if "<text>\n" in user else "sentence" for user in captured]
+    # Window 1: sentence attempt, then its full-window fallback. Window 2:
+    # straight to chunk scope, no second sentence attempt.
+    assert kinds == ["sentence", "chunk", "chunk"]
+    assert out == [_WINDOW, second]

@@ -162,11 +162,11 @@ async def _maybe_restart_idle_wrapper(settings: Settings) -> None:
             conn.close()
         if queued > 0:
             return
-        # Uses TTS_HTTP_TIMEOUT_SECONDS with no retry (unlike the per-chunk
-        # calls), so a wrapper that accepts the connection but never answers
-        # can delay the next job's pickup by up to ~2x that timeout (health
-        # GET + restart POST). Accepted as bounded rather than adding a retry
-        # budget to an opportunistic, best-effort check.
+        # Uses TTS_REACHABILITY_PROBE_TIMEOUT with no retry (unlike the
+        # per-chunk calls), so a wrapper that accepts the connection but never
+        # answers can delay the next job's pickup by up to ~2x that probe
+        # timeout (health GET + restart POST). Accepted as bounded rather than
+        # adding a retry budget to an opportunistic, best-effort check.
         health = await tts.wrapper_health(effective)
         if not health.get("restart_recommended"):
             return

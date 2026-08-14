@@ -41,12 +41,13 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.12.3"
-      # The wrapper pins torch 2.6.0; CPU wheels keep the runner off the
-      # multi-GB CUDA downloads.
+      # tts-wrapper/uv.lock pins torch 2.6.0 from the CUDA index, so this job
+      # downloads the multi-GB CUDA wheels onto a CPU runner. They import and
+      # the tests pass; it is just heavy. UV_TORCH_BACKEND only affects
+      # resolution, not an existing lockfile, so switching the lock to the cpu
+      # index is the actual fix and is a follow-up.
       - run: uv run pytest
         working-directory: tts-wrapper
-        env:
-          UV_TORCH_BACKEND: cpu
 
   docker-build:
     runs-on: ubuntu-latest

@@ -1,4 +1,4 @@
-"""Content-addressed cache of QA-passing TTS chunks.
+"""Content-addressed cache of synthesized TTS chunks.
 
 A chunk's synthesized audio is deterministic-enough-to-reuse once it has
 already cleared the quality-check loop in ``pipeline._generate_chunk_quality_checked``:
@@ -9,8 +9,9 @@ of them -- including an operator editing a Chatterbox knob -- misses the
 cache rather than serving stale audio.
 
 Storage: ``<data_dir>/tts_cache/<key>.wav`` + ``<key>.json`` (duration_secs,
-sample_rate, transcript). The cache is best-effort: every failure here must
-be swallowed by the caller and treated as a miss, never as a chunk failure.
+sample_rate, transcript, qa_passed, median_f0_hz). The cache is best-effort:
+every failure here must be swallowed by the caller and treated as a miss,
+never as a chunk failure.
 """
 
 from __future__ import annotations
@@ -37,6 +38,14 @@ class CachedChunk:
     duration_secs: float
     sample_rate: int
     transcript: str | None
+    qa_passed: bool = False
+    """True when the stored take cleared the quality-check loop. A take stored
+    by a QA-off deployment is False, so a later QA-on run treats it as a miss
+    instead of inheriting audio nothing ever checked."""
+    median_f0_hz: float | None = None
+    """Median F0 of the stored take, so a cache hit can keep feeding the
+    pipeline's pitch tracker instead of re-warming it from zero at the resume
+    point. None when no audio analysis measured it."""
 
 
 def cache_dir(data_dir: Path) -> Path:
@@ -85,6 +94,9 @@ def lookup(data_dir: Path, key: str) -> CachedChunk | None:
         sample_rate = int(payload["sample_rate"])
         raw_transcript = payload.get("transcript")
         transcript = str(raw_transcript) if raw_transcript is not None else None
+        qa_passed = bool(payload.get("qa_passed", False))
+        raw_f0 = payload.get("median_f0_hz")
+        median_f0_hz = float(raw_f0) if raw_f0 is not None else None
     except (OSError, ValueError, TypeError, KeyError):
         wav_path.unlink(missing_ok=True)
         json_path.unlink(missing_ok=True)
@@ -94,6 +106,8 @@ def lookup(data_dir: Path, key: str) -> CachedChunk | None:
         duration_secs=duration_secs,
         sample_rate=sample_rate,
         transcript=transcript,
+        qa_passed=qa_passed,
+        median_f0_hz=median_f0_hz,
     )
 
 
@@ -120,6 +134,9 @@ def store(
     duration_secs: float,
     sample_rate: int,
     transcript: str | None,
+    *,
+    qa_passed: bool,
+    median_f0_hz: float | None = None,
 ) -> None:
     d = cache_dir(data_dir)
     d.mkdir(parents=True, exist_ok=True)
@@ -128,6 +145,8 @@ def store(
         "duration_secs": duration_secs,
         "sample_rate": sample_rate,
         "transcript": transcript,
+        "qa_passed": qa_passed,
+        "median_f0_hz": median_f0_hz,
     }
     write_bytes_atomic(d / f"{key}.json", json.dumps(payload).encode("utf-8"))
 

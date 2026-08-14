@@ -41,6 +41,7 @@ const GROUPS: Record<string, string[]> = {
     "LLM_TIMEOUT_SECONDS",
     "LLM_RETRY_COUNT",
     "LLM_PRONUNCIATION_CONCURRENCY",
+    "PRONUNCIATION_SCOPE",
   ],
   Feed: [
     "FEED_TITLE",
@@ -101,6 +102,9 @@ const GROUPS: Record<string, string[]> = {
     "CHATTERBOX_TOP_K",
     "CHATTERBOX_SEED",
     "CHATTERBOX_MAX_CHARS",
+    "TTS_CHUNK_CACHE_ENABLED",
+    "TTS_CACHE_RETENTION_DAYS",
+    "TTS_ADAPTIVE_MAX_CHARS_ENABLED",
   ],
   // Wrapper resilience: reachable at runtime since 0.55.0 so an operator can
   // widen the budget during an incident instead of redeploying.
@@ -124,6 +128,7 @@ const GROUPS: Record<string, string[]> = {
     "TTS_HTTP_TIMEOUT_SECONDS",
     "TTS_REACHABILITY_GRACE_SECONDS",
     "TTS_REACHABILITY_PROBE_TIMEOUT",
+    "TTS_IDLE_RESTART_ENABLED",
   ],
   Verification: [
     "WHISPER_VERIFY_ENABLED",
@@ -131,6 +136,7 @@ const GROUPS: Record<string, string[]> = {
     "WHISPER_MAX_DIVERGENT_RUN",
     "WHISPER_VERIFY_MIN_WORDS",
     "WHISPER_SHORT_CHUNK_DIVERGENCE",
+    "WHISPER_API_STRICT",
   ],
   "Audio analysis": [
     "AUDIO_ANALYSIS_ENABLED",
@@ -357,6 +363,7 @@ const EXTRACTION_ENGINE_OPTIONS = ["direct", "firecrawl"];
 // backend/app/config.py (issue #117).
 const TTS_BACKEND_OPTIONS = ["wrapper", "openai-api"];
 const WHISPER_BACKEND_OPTIONS = ["wrapper", "openai-api", "off"];
+const PRONUNCIATION_SCOPE_OPTIONS = ["chunk", "sentence"];
 
 // Remote-backend keys only mean anything under their own backend, so they are
 // hidden otherwise -- the same treatment LLM provider keys already get.
@@ -371,6 +378,9 @@ const WHISPER_REMOTE_KEYS = new Set([
   "WHISPER_API_KEY",
   "WHISPER_API_MODEL",
   "WHISPER_API_TIMEOUT_SECONDS",
+  // Strict verification only exists for the remote ASR path: the wrapper
+  // backend has no separate ASR call to fail.
+  "WHISPER_API_STRICT",
 ]);
 
 // Which provider-specific keys are relevant per provider. Keys not listed for
@@ -807,9 +817,11 @@ export default function SettingsRoute() {
                       ? TTS_BACKEND_OPTIONS
                       : key === "WHISPER_BACKEND"
                         ? WHISPER_BACKEND_OPTIONS
-                        : key === "OCR_LANGUAGE"
-                          ? (ocrLangsQ.data?.languages ?? ["en"])
-                          : null;
+                        : key === "PRONUNCIATION_SCOPE"
+                          ? PRONUNCIATION_SCOPE_OPTIONS
+                          : key === "OCR_LANGUAGE"
+                            ? (ocrLangsQ.data?.languages ?? ["en"])
+                            : null;
               // Languages follow the model picked in the form, not just the
               // loaded one.
               const ttsLanguages =

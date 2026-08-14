@@ -43,7 +43,16 @@ def test_store_and_lookup_round_trip(tmp_path: Path) -> None:
     src_wav.write_bytes(b"RIFF-fake-wav-bytes")
     key = _base_key()
 
-    tts_cache.store(data_dir, key, src_wav, duration_secs=1.5, sample_rate=24000, transcript="hi")
+    tts_cache.store(
+        data_dir,
+        key,
+        src_wav,
+        duration_secs=1.5,
+        sample_rate=24000,
+        transcript="hi",
+        qa_passed=True,
+        median_f0_hz=118.5,
+    )
 
     cached = tts_cache.lookup(data_dir, key)
     assert cached is not None
@@ -51,6 +60,8 @@ def test_store_and_lookup_round_trip(tmp_path: Path) -> None:
     assert cached.duration_secs == 1.5
     assert cached.sample_rate == 24000
     assert cached.transcript == "hi"
+    assert cached.qa_passed is True
+    assert cached.median_f0_hz == 118.5
 
 
 def test_store_and_lookup_round_trip_no_transcript(tmp_path: Path) -> None:
@@ -59,11 +70,21 @@ def test_store_and_lookup_round_trip_no_transcript(tmp_path: Path) -> None:
     src_wav.write_bytes(b"bytes")
     key = _base_key()
 
-    tts_cache.store(data_dir, key, src_wav, duration_secs=2.0, sample_rate=22050, transcript=None)
+    tts_cache.store(
+        data_dir,
+        key,
+        src_wav,
+        duration_secs=2.0,
+        sample_rate=22050,
+        transcript=None,
+        qa_passed=False,
+    )
 
     cached = tts_cache.lookup(data_dir, key)
     assert cached is not None
     assert cached.transcript is None
+    assert cached.qa_passed is False
+    assert cached.median_f0_hz is None
 
 
 def test_lookup_missing_json_returns_none(tmp_path: Path) -> None:
@@ -74,6 +95,24 @@ def test_lookup_missing_json_returns_none(tmp_path: Path) -> None:
     (cache_dir / f"{key}.wav").write_bytes(b"wav-only")
 
     assert tts_cache.lookup(data_dir, key) is None
+
+
+def test_lookup_payload_without_qa_passed_defaults_to_false(tmp_path: Path) -> None:
+    # The cache is new on this branch, so there are no legacy entries to
+    # migrate; a payload missing the field is still read as unverified.
+    data_dir = tmp_path / "data"
+    key = "somekey"
+    cache_dir = tts_cache.cache_dir(data_dir)
+    cache_dir.mkdir(parents=True)
+    (cache_dir / f"{key}.wav").write_bytes(b"wav")
+    (cache_dir / f"{key}.json").write_text(
+        json.dumps({"duration_secs": 1.0, "sample_rate": 24000, "transcript": None})
+    )
+
+    cached = tts_cache.lookup(data_dir, key)
+    assert cached is not None
+    assert cached.qa_passed is False
+    assert cached.median_f0_hz is None
 
 
 def test_lookup_missing_wav_returns_none(tmp_path: Path) -> None:
@@ -110,8 +149,12 @@ def test_purge_older_than_removes_only_old_entries(tmp_path: Path) -> None:
     old_wav.write_bytes(b"old")
     new_wav.write_bytes(b"new")
 
-    tts_cache.store(data_dir, "old_key", old_wav, duration_secs=1.0, sample_rate=24000, transcript=None)
-    tts_cache.store(data_dir, "new_key", new_wav, duration_secs=1.0, sample_rate=24000, transcript=None)
+    tts_cache.store(
+        data_dir, "old_key", old_wav, 1.0, 24000, None, qa_passed=True, median_f0_hz=None
+    )
+    tts_cache.store(
+        data_dir, "new_key", new_wav, 1.0, 24000, None, qa_passed=True, median_f0_hz=None
+    )
 
     cache_dir = tts_cache.cache_dir(data_dir)
     old_time = time.time() - (10 * 86400)

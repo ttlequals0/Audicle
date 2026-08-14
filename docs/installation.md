@@ -22,6 +22,8 @@ The RSS feed is served at a slug derived from the feed name, so `FEED_TITLE="Art
 
 The backend and wrapper share a `/data` volume so the backend can read the audio the wrapper produces. The wrapper is a separate container so GPU memory stays isolated and the model reloads only when the voice changes.
 
+Size the `./data` volume for the TTS chunk cache too: it keeps roughly 170 MB per hour of narrated audio under `data/tts_cache`, for `TTS_CACHE_RETENTION_DAYS` (default 7) days.
+
 ## File permissions
 
 The containers run as a non-root user (uid 1000). If you bind-mount host directories (or set `user:` in compose), make them writable by uid 1000 so the app can write the database and media and seed the default prompt and corrections:

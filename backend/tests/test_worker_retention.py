@@ -190,6 +190,7 @@ def test_maybe_run_retention_sweep_purges_old_tts_cache_entries(
         duration_secs=1.0,
         sample_rate=24000,
         transcript=None,
+        qa_passed=True,
     )
     cache_dir = tts_cache.cache_dir(settings.DATA_DIR)
     old_time = time_mod.time() - (settings.TTS_CACHE_RETENTION_DAYS + 1) * 86400

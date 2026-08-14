@@ -15,14 +15,19 @@ work lives under `[Unreleased]`.
   produced. New settings `TTS_CHUNK_CACHE_ENABLED` (default on) and
   `TTS_CACHE_RETENTION_DAYS` (default 7). Caching is skipped whenever the
   active voice/model cannot be identified with confidence (no resolved
-  voice slot, no configured model, or a failed model select).
+  voice slot, no configured model, an unseeded `CHATTERBOX_SEED=0`, or a
+  failed model select). Each entry records whether it cleared the quality
+  checks, so a run with audio analysis or ASR verification on ignores an
+  entry stored by a run that had them off, and never inherits audio it
+  would have checked.
 - Adaptive `max_chars`: if 2 or more of a job's first 20 chunks needed a
   regeneration, the rest of the job synthesizes at a lowered
   `CHATTERBOX_MAX_CHARS` (75% of the configured value) instead of paying for
   a regen on most chunks. Lowering only; it is never raised back up mid-job. New
-  setting `TTS_ADAPTIVE_MAX_CHARS_ENABLED` (default on). A chunk synthesized
-  under the lowered value skips the TTS chunk cache (lookup and store),
-  since the cache key is derived from the unmodified baseline params.
+  setting `TTS_ADAPTIVE_MAX_CHARS_ENABLED` (default on). The lowered value is
+  part of the TTS chunk cache key, so those chunks are still cached, under a
+  key that describes what was actually synthesized rather than colliding with
+  the unmodified-baseline entry for the same text.
 - Idle wrapper restart: between jobs, when the queue is empty, the worker
   checks the tts-wrapper's `/health` (now reporting `rss_mb` and
   `restart_recommended`) and asks it to restart itself via the new
@@ -32,7 +37,7 @@ work lives under `[Unreleased]`.
   running. New setting `TTS_IDLE_RESTART_ENABLED` (default on); a no-op for the
   `openai-api` TTS backend.
 - A CI workflow. Pull requests and pushes to main now run ruff plus all three
-  pytest suites (backend, render, tts-wrapper on CPU torch wheels) and build
+  pytest suites (backend, render, tts-wrapper) and build
   the app image. Until now the full test and build gate was local-only; CI
   ran just CodeQL and dependency review.
 - Each release now also publishes a CPU-only wrapper image,
@@ -44,7 +49,9 @@ work lives under `[Unreleased]`.
   only the sentences that matched a reference term, as numbered lines, and
   splices the respelled sentences back in place. Any protocol or splice
   failure falls back to the existing full-chunk call, so the worst case is
-  what happens today.
+  what happens today; a protocol failure also turns sentence scope off for the
+  rest of that job, since a model that ignores the numbered-line contract once
+  keeps ignoring it.
 - A strict mode for remote ASR verification: `WHISPER_API_STRICT` (default
   off) fails a chunk instead of shipping it unverified when the `openai-api`
   ASR backend is configured but unreachable. The default keeps the existing

@@ -1174,6 +1174,50 @@ def _regen_params(
     )
 
 
+def _cache_entry_usable(
+    cached: tts_cache.CachedChunk, *, audio_enabled: bool, verify_enabled: bool
+) -> bool:
+    """Whether a cache entry may stand in for a fresh synthesis under the
+    checks this run has enabled. A hit bypasses the QA loop entirely, so an
+    entry that was never QA'd (stored by a QA-off run) or that carries no
+    transcript while ASR verification is on would silently ship audio this
+    run's settings say must be checked."""
+
+    if (audio_enabled or verify_enabled) and not cached.qa_passed:
+        return False
+    return not (verify_enabled and cached.transcript is None)
+
+
+def _cache_store_best_effort(
+    settings: Settings,
+    key: str,
+    index: int,
+    result: tts.GenerateResult,
+    *,
+    qa_passed: bool,
+    median_f0_hz: float | None,
+) -> None:
+    """Store a produced chunk, swallowing every failure: the cache is an
+    optimization and must never turn a synthesized chunk into a failed one."""
+
+    try:
+        tts_cache.store(
+            settings.DATA_DIR,
+            key,
+            result.wav_path,
+            result.duration_secs,
+            result.sample_rate,
+            result.transcript,
+            qa_passed=qa_passed,
+            median_f0_hz=median_f0_hz,
+        )
+    except Exception as exc:
+        logger.warning(
+            "TTS cache store failed",
+            extra={"event": "tts_cache_error", "chunk_index": index, "error": str(exc)},
+        )
+
+
 async def _generate_chunk_quality_checked(
     job: jobs.Job,
     text: str,
@@ -1216,11 +1260,10 @@ async def _generate_chunk_quality_checked(
     ``base_max_chars`` is the adaptive-max_chars override (_stage_tts): once a
     job has tripped the early-failure gate, every later chunk's baseline take
     (attempt 0) synthesizes at this lowered value instead of the operator's
-    ``CHATTERBOX_MAX_CHARS``. The chunk cache key is computed from the
-    *unmodified* baseline params (``tts.generation_params(settings)`` with no
-    override), so a chunk synthesized under a lowered base_max_chars would
-    differ from what that key promises; the cache is skipped -- both lookup
-    and store -- whenever ``base_max_chars`` is not None."""
+    ``CHATTERBOX_MAX_CHARS``. It rides into the cache key as the effective
+    ``max_chars``, so a chunk synthesized under a lowered baseline is cached
+    under a key that honestly describes it and never collides with the
+    unmodified-baseline entry for the same text."""
 
     word_count = len(text.split())
     audio_enabled = settings.AUDIO_ANALYSIS_ENABLED
@@ -1241,12 +1284,15 @@ async def _generate_chunk_quality_checked(
     )
 
     # Resumable chunk cache: a hit skips synthesis AND the QA loop entirely,
-    # since only QA-clean takes are ever stored. The key is computed once
-    # up front (even though the take that eventually passes may come from an
-    # escalated regen attempt) because the key identifies "what the baseline
-    # settings would synthesize", not which attempt produced the stored take.
+    # so an entry is only reusable when it was checked at least as strictly as
+    # this run checks. An entry stored by a QA-off run (qa_passed False), or
+    # one with no transcript when ASR verification is now on, is treated as a
+    # miss. The key is computed once up front (even though the take that
+    # eventually passes may come from an escalated regen attempt) because the
+    # key identifies "what these settings would synthesize", not which attempt
+    # produced the stored take.
     cache_key_value: str | None = None
-    if settings.TTS_CHUNK_CACHE_ENABLED and model_confirmed and base_max_chars is None:
+    if settings.TTS_CHUNK_CACHE_ENABLED and model_confirmed:
         identity = tts.cache_identity(settings, slot)
         if identity is not None:
             backend, model, fingerprint = identity
@@ -1256,14 +1302,21 @@ async def _generate_chunk_quality_checked(
                 voice_fingerprint=fingerprint,
                 language=settings.TTS_LANGUAGE,
                 text=text,
-                params=tts.generation_params(settings),
+                params=tts.generation_params(settings, max_chars=base_max_chars),
             )
             try:
                 cached = tts_cache.lookup(settings.DATA_DIR, cache_key_value)
-                if cached is not None:
+                if cached is not None and _cache_entry_usable(
+                    cached, audio_enabled=audio_enabled, verify_enabled=verify_enabled
+                ):
                     dest = media_dir(settings) / f"{job.episode_id}_chunk_{index}.wav"
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     tts_cache.link_or_copy(cached.wav_path, dest)
+                    # Keep the pitch gate warm across hits: a resumed job whose
+                    # chunks all come from the cache would otherwise re-warm the
+                    # tracker from zero exactly at the resume point.
+                    if pitch_tracker is not None and cached.median_f0_hz is not None:
+                        pitch_tracker.accept(cached.median_f0_hz)
                     logger.info(
                         "TTS cache hit", extra={"event": "tts_cache_hit", "chunk_index": index}
                     )
@@ -1306,6 +1359,13 @@ async def _generate_chunk_quality_checked(
         # against a whole regen loop's worth of them.
         _beat()
         if not (audio_enabled or verify_enabled):
+            # No checks configured, so this take is the only take: cache it as
+            # unverified. A later run with QA on treats qa_passed False as a
+            # miss (_cache_entry_usable) rather than trusting it.
+            if cache_key_value is not None:
+                _cache_store_best_effort(
+                    settings, cache_key_value, index, result, qa_passed=False, median_f0_hz=None
+                )
             return result, attempt + 1
 
         reasons: list[str] = []
@@ -1382,20 +1442,14 @@ async def _generate_chunk_quality_checked(
                     },
                 )
             if cache_key_value is not None:
-                try:
-                    tts_cache.store(
-                        settings.DATA_DIR,
-                        cache_key_value,
-                        result.wav_path,
-                        result.duration_secs,
-                        result.sample_rate,
-                        result.transcript,
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "TTS cache store failed",
-                        extra={"event": "tts_cache_error", "chunk_index": index, "error": str(exc)},
-                    )
+                _cache_store_best_effort(
+                    settings,
+                    cache_key_value,
+                    index,
+                    result,
+                    qa_passed=True,
+                    median_f0_hz=verdict.metrics.median_f0_hz if verdict is not None else None,
+                )
             return result, attempt + 1
         log_extra: dict[str, Any] = {
             "event": "chunk_quality_bad",
@@ -1523,6 +1577,9 @@ async def _stage_tts(
     # Adaptive max_chars: count early chunks that needed a regen; once the
     # trigger is reached, base_max_chars is set for the rest of the job and
     # never reset (lowering only -- see _ADAPTIVE_* constants above).
+    # A cache hit reports attempts=1, so a mostly-cached resumed job may never
+    # arm this gate inside the first-20 window; accepted, since those chunks
+    # cost no synthesis anyway.
     adaptive_enabled = settings.TTS_ADAPTIVE_MAX_CHARS_ENABLED
     base_max_chars: int | None = None
     early_regen_count = 0
@@ -2026,6 +2083,11 @@ async def _pronounce_chunks_with_llm(
     # Chunks are independent, so run the calls concurrently under a small cap.
     semaphore = asyncio.Semaphore(max(1, settings.LLM_PRONUNCIATION_CONCURRENCY))
     done_count = 0
+    # Per-job latch: once a model has shown it will not follow the numbered-line
+    # protocol, every further sentence-scope call costs a wasted call plus the
+    # full-window retry. Mutated from concurrent tasks without a lock -- a race
+    # only means one extra attempt.
+    sentence_scope_broken = {"failed": False}
 
     async def _pronounce_one(index: int, window: str) -> str:
         nonlocal done_count
@@ -2033,14 +2095,23 @@ async def _pronounce_chunks_with_llm(
         try:
             if not window_matchers:
                 return window
-            system_prompt = (
-                f"{base_prompt}\n\nPRONUNCIATION REFERENCE (term -> respelling):\n"
-                + "\n".join(line for _, line in window_matchers)
+            reference_block = "PRONUNCIATION REFERENCE (term -> respelling):\n" + "\n".join(
+                line for _, line in window_matchers
+            )
+            system_prompt = f"{base_prompt}\n\n{reference_block}"
+            use_sentence_scope = (
+                settings.PRONUNCIATION_SCOPE == "sentence" and not sentence_scope_broken["failed"]
             )
             async with semaphore:
-                if settings.PRONUNCIATION_SCOPE == "sentence":
+                if use_sentence_scope:
                     part = await _pronounce_window_sentence_scope(
-                        system_prompt, window, index, settings, window_matchers
+                        system_prompt,
+                        f"{_PRONUNCIATION_SENTENCE_SYSTEM}\n\n{reference_block}",
+                        window,
+                        index,
+                        settings,
+                        window_matchers,
+                        sentence_scope_broken,
                     )
                 else:
                     part = await _pronounce_window(system_prompt, window, index, settings)
@@ -2103,15 +2174,6 @@ async def _pronounce_window(
         )
         return window
     llm_ms = int((time.monotonic() - llm_started) * 1000)
-    logger.info(
-        "Pronunciation window done",
-        extra={
-            "event": "pronunciation_window_done",
-            "window_index": index,
-            "llm_ms": llm_ms,
-            "input_chars": len(window),
-        },
-    )
     if len(part) < len(window) * _PRONUNCIATION_MIN_RATIO:
         logger.warning(
             "Pronunciation window output too short; keeping original",
@@ -2126,8 +2188,33 @@ async def _pronounce_window(
             },
         )
         return window
+    # Logged only for a window whose output is actually applied, so the event
+    # count matches the windows the pass changed.
+    logger.info(
+        "Pronunciation window done",
+        extra={
+            "event": "pronunciation_window_done",
+            "window_index": index,
+            "llm_ms": llm_ms,
+            "input_chars": len(window),
+        },
+    )
     return part
 
+
+# The sentence-scope call gets its own system prompt: the full-window one opens
+# with an "output the ENTIRE text" contract that directly contradicts returning
+# a subset of the chunk as numbered lines. The reference block is appended by
+# the caller in the same shape both prompts use.
+_PRONUNCIATION_SENTENCE_SYSTEM = (
+    "You are a text-processing engine, not a chat assistant. You receive numbered "
+    "sentences taken from narration text. Change ONLY the spelled form of terms that "
+    "match the pronunciation reference below; leave every other word exactly as "
+    "written, character for character. Never letter-space an acronym that has no "
+    "reference entry. Do not summarize, reorder, merge, split, drop, or renumber the "
+    "lines, and never comment on them. Return exactly the numbered lines you were "
+    "given, one per line, in the same order, keeping every number."
+)
 
 _PRONUNCIATION_SENTENCE_INSTRUCTION = (
     "Respell the numbered sentences below per the pronunciation reference, changing "
@@ -2164,12 +2251,36 @@ def _splice_sentences(window: str, originals: list[str], replacements: list[str]
     return result
 
 
+def _parse_numbered_reply(raw: str, expected: int) -> list[str]:
+    """The respelled sentences from a marker-delimited numbered-line reply, in
+    order. Raises ValueError on any protocol violation (missing markers, a
+    line that is not numbered, numbering that does not cover exactly
+    1..expected)."""
+
+    if cleanup_output.BEGIN_MARKER not in raw:
+        raise ValueError("sentence-scope reply missing markers")
+    parsed: dict[int, str] = {}
+    for line in cleanup_output.extract_clean_output(raw).splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        match = _NUMBERED_LINE_RE.match(stripped)
+        if not match:
+            raise ValueError(f"unparseable numbered line: {stripped!r}")
+        parsed[int(match.group(1))] = match.group(2).strip()
+    if set(parsed.keys()) != set(range(1, expected + 1)):
+        raise ValueError("sentence-scope reply numbering mismatch")
+    return [parsed[i] for i in range(1, expected + 1)]
+
+
 async def _pronounce_window_sentence_scope(
     system_prompt: str,
+    sentence_prompt: str,
     window: str,
     index: int,
     settings: Settings,
     window_matchers: list[tuple[re.Pattern[str], str]],
+    sentence_scope_broken: dict[str, bool],
 ) -> str:
     """Sentence-scoped pronunciation call: only reference-matched sentences are
     sent to the LLM as numbered lines, cutting tokens on chunks where most
@@ -2177,45 +2288,50 @@ async def _pronounce_window_sentence_scope(
     unparseable or mismatched numbering) or splice failure (a respelled
     sentence not locatable in the window) falls back to the existing
     full-window call, which has its own marker retry and verbatim fallback.
+
+    A protocol failure also latches ``sentence_scope_broken``: a model that
+    ignores the numbered-line contract once will ignore it again, so the rest
+    of the job goes straight to chunk scope. Splice failures and windows with
+    no selectable sentence are content-specific and do not latch.
     """
 
     sentences = chunker.split_sentences(window)
     selected = [s for s in sentences if any(pattern.search(s) for pattern, _ in window_matchers)]
-    if not selected:
-        return window
-    numbered = "\n".join(f"{i}. {sentence}" for i, sentence in enumerate(selected, start=1))
-    user_message = f"{_PRONUNCIATION_SENTENCE_INSTRUCTION}\n\n{numbered}"
-    llm_started = time.monotonic()
-    try:
-        raw = await _llm_with_retry(system_prompt, user_message, settings)
-        if cleanup_output.BEGIN_MARKER not in raw:
-            raise ValueError("sentence-scope reply missing markers")
-        body = cleanup_output.extract_clean_output(raw)
-        parsed: dict[int, str] = {}
-        for line in body.splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
-            match = _NUMBERED_LINE_RE.match(stripped)
-            if not match:
-                raise ValueError(f"unparseable numbered line: {stripped!r}")
-            parsed[int(match.group(1))] = match.group(2).strip()
-        expected_numbers = set(range(1, len(selected) + 1))
-        if set(parsed.keys()) != expected_numbers:
-            raise ValueError("sentence-scope reply numbering mismatch")
-        replacements = [parsed[i] for i in range(1, len(selected) + 1)]
-        spliced = _splice_sentences(window, selected, replacements)
-    except Exception:
+
+    async def _fallback(reason: str) -> str:
         logger.info(
-            "Pronunciation sentence-scope pass failed; falling back to full window",
+            "Pronunciation sentence-scope pass skipped; falling back to full window",
             extra={
                 "event": "pronunciation_sentence_scope_fallback",
                 "window_index": index,
                 "sentence_count": len(selected),
+                "reason": reason,
             },
-            exc_info=True,
+            exc_info=reason != "no_matching_sentence",
         )
         return await _pronounce_window(system_prompt, window, index, settings)
+
+    if not selected:
+        # The chunk matched a term the sentence split broke apart ("St. John"
+        # splits after "St."), so no single sentence carries it. The chunk-scope
+        # call still sees the whole term.
+        return await _fallback("no_matching_sentence")
+    numbered = "\n".join(f"{i}. {sentence}" for i, sentence in enumerate(selected, start=1))
+    user_message = f"{_PRONUNCIATION_SENTENCE_INSTRUCTION}\n\n{numbered}"
+    llm_started = time.monotonic()
+    try:
+        raw = await _llm_with_retry(sentence_prompt, user_message, settings)
+    except Exception:
+        return await _fallback("llm_error")
+    try:
+        replacements = _parse_numbered_reply(raw, len(selected))
+    except ValueError:
+        sentence_scope_broken["failed"] = True
+        return await _fallback("protocol")
+    try:
+        spliced = _splice_sentences(window, selected, replacements)
+    except ValueError:
+        return await _fallback("splice")
     llm_ms = int((time.monotonic() - llm_started) * 1000)
     logger.info(
         "Pronunciation window done",
