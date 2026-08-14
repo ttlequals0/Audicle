@@ -6,6 +6,17 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Added
+
+- A resumable TTS chunk cache: a synthesized chunk that clears the quality
+  checks is stored under `<data_dir>/tts_cache`, keyed on backend, model,
+  voice, language, text, and the baseline generation params, so a re-run of
+  a job that failed partway through does not re-synthesize chunks it already
+  produced. New settings `TTS_CHUNK_CACHE_ENABLED` (default on) and
+  `TTS_CACHE_RETENTION_DAYS` (default 7). Caching is skipped whenever the
+  active voice/model cannot be identified with confidence (no resolved
+  voice slot, no configured model, or a failed model select).
+
 ### Changed
 
 - The README sample is a newer narration clip (#122). The download is

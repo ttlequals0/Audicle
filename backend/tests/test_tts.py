@@ -137,6 +137,42 @@ def test_generation_param_defaults_and_bounds_match_wrapper() -> None:
         ), backend_key
 
 
+def test_cache_identity_wrapper_needs_model_and_slot(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TTS_MODEL", "chatterbox-turbo")
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    identity = tts.cache_identity(settings, 1)
+    assert identity is not None
+    assert identity[:2] == ("wrapper", "chatterbox-turbo")
+
+    assert tts.cache_identity(settings, None) is None  # no resolved slot
+    monkeypatch.setenv("TTS_MODEL", "")
+    get_settings.cache_clear()
+    assert tts.cache_identity(get_settings(), 1) is None  # model never selected
+    get_settings.cache_clear()
+
+
+def test_cache_identity_remote_backend_needs_model_and_voice(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TTS_BACKEND", "openai-api")
+    monkeypatch.setenv("TTS_API_BASE_URL", "http://remote.test")
+    monkeypatch.setenv("TTS_API_MODEL", "tts-1")
+    monkeypatch.setenv("TTS_API_VOICE", "alloy")
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    assert tts.cache_identity(settings, None) == ("openai-api", "tts-1", "tts-1:alloy")
+
+    monkeypatch.setenv("TTS_API_MODEL", "")
+    get_settings.cache_clear()
+    assert tts.cache_identity(get_settings(), None) is None  # blank model, not an identity
+    get_settings.cache_clear()
+
+
 async def test_generate_chunk_verify_flag_sets_payload_field(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

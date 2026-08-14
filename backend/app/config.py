@@ -335,6 +335,15 @@ class Settings(BaseSettings):
     CHATTERBOX_SEED: int = 1234
     CHATTERBOX_MAX_CHARS: int = 300
 
+    # Content-addressed cache of QA-passing TTS chunks (resumable synthesis):
+    # a chunk keyed on backend/model/voice/language/text/baseline-params is
+    # reused instead of re-synthesized, e.g. on a re-run after a job failed
+    # partway through. Off switches back to always-synthesize.
+    TTS_CHUNK_CACHE_ENABLED: bool = True
+    # Bounds in RUNTIME_SETTING_BOUNDS, not a Field constraint here, so a stale
+    # out-of-range env value can't fail backend startup.
+    TTS_CACHE_RETENTION_DAYS: int = 7
+
     # Chunking.
     # Chunk size = transcript-cue granularity + per-chunk TTS round-trips. The
     # tts-wrapper splits each chunk into engine-safe sentence pieces internally, so
@@ -565,6 +574,7 @@ RUNTIME_SETTING_BOUNDS: dict[str, dict[str, float]] = {
     "AUDIO_ANALYSIS_REGEN_PENALTY_STEP": {"ge": 0, "le": 1.0},
     # An octave of drift is not drift, it is a different voice.
     "AUDIO_ANALYSIS_MAX_F0_SEMITONES": {"gt": 0, "le": 12.0},
+    "TTS_CACHE_RETENTION_DAYS": {"ge": 1, "le": 90},
 }
 
 

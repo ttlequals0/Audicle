@@ -37,6 +37,7 @@ from tenacity import (
 )
 
 from app.config import Settings
+from app.services import tts_cache
 
 logger = logging.getLogger("app.services.tts")
 
@@ -114,6 +115,33 @@ def generation_params(
         # value it can't speak rather than ignoring it.
         "language": settings.TTS_LANGUAGE,
     }
+
+
+def cache_identity(settings: Settings, slot: int | None) -> tuple[str, str, str] | None:
+    """``(backend, model, voice_fingerprint)`` for the TTS chunk cache key, or
+    ``None`` when it is not safe to identify the voice/model this job will
+    speak with. This module already owns the ``TTS_BACKEND`` dispatch
+    (``generate_chunk`` above) and the settings that determine what gets
+    synthesized (``generation_params``), so the cache's identity component
+    lives here rather than being re-derived by the pipeline.
+
+    Wrapper backend needs a resolved slot with a readable reference file and
+    a configured ``TTS_MODEL`` (an empty model means the wrapper's active
+    model was never explicitly selected, so it is unknown). Remote backend
+    names its own model/voice directly, and is likewise skipped if either is
+    blanked out -- an empty name is not an identity."""
+
+    if settings.TTS_BACKEND == "openai-api":
+        if not settings.TTS_API_MODEL or not settings.TTS_API_VOICE:
+            return None
+        fingerprint = f"{settings.TTS_API_MODEL}:{settings.TTS_API_VOICE}"
+        return settings.TTS_BACKEND, settings.TTS_API_MODEL, fingerprint
+    if not settings.TTS_MODEL or slot is None:
+        return None
+    fingerprint = tts_cache.voice_fingerprint_for_slot(slot)
+    if fingerprint is None:
+        return None
+    return settings.TTS_BACKEND, settings.TTS_MODEL, fingerprint
 
 
 async def _post(

@@ -57,6 +57,7 @@ from app.services import (
     source_fallbacks_store,
     transcript,
     tts,
+    tts_cache,
     voices,
     webhooks,
 )
@@ -1173,6 +1174,7 @@ async def _generate_chunk_quality_checked(
     settings: Settings,
     slot: int | None = None,
     pitch_tracker: audio_analysis.PitchTracker | None = None,
+    model_confirmed: bool = True,
 ) -> tuple[tts.GenerateResult, int]:
     """Synthesize one chunk, then (if enabled) check the audio and regenerate it
     when it came back degraded. Returns ``(result, attempts_used)`` so the
@@ -1195,7 +1197,13 @@ async def _generate_chunk_quality_checked(
     except when the only defect was pitch, where the attempt closest to the
     reference pitch is preserved in a sidecar and restored. A degraded chunk
     never fails the whole episode. Analysis errors are swallowed: they must
-    never become a new failure mode."""
+    never become a new failure mode.
+
+    ``model_confirmed`` is False when this job's ``select_model_with_retry``
+    call failed (``_stage_tts``): the wrapper may then be running whatever
+    model it had loaded before, not ``settings.TTS_MODEL``, so the chunk
+    cache is skipped entirely rather than keying this job's audio under a
+    model it was never confirmed to have used."""
 
     word_count = len(text.split())
     audio_enabled = settings.AUDIO_ANALYSIS_ENABLED
@@ -1214,6 +1222,51 @@ async def _generate_chunk_quality_checked(
     max_extra = (
         max(0, settings.AUDIO_ANALYSIS_MAX_REGEN) if (audio_enabled or verify_enabled) else 0
     )
+
+    # Resumable chunk cache: a hit skips synthesis AND the QA loop entirely,
+    # since only QA-clean takes are ever stored. The key is computed once
+    # up front (even though the take that eventually passes may come from an
+    # escalated regen attempt) because the key identifies "what the baseline
+    # settings would synthesize", not which attempt produced the stored take.
+    cache_key_value: str | None = None
+    if settings.TTS_CHUNK_CACHE_ENABLED and model_confirmed:
+        identity = tts.cache_identity(settings, slot)
+        if identity is not None:
+            backend, model, fingerprint = identity
+            cache_key_value = tts_cache.cache_key(
+                backend=backend,
+                model=model,
+                voice_fingerprint=fingerprint,
+                language=settings.TTS_LANGUAGE,
+                text=text,
+                params=tts.generation_params(settings),
+            )
+            try:
+                cached = tts_cache.lookup(settings.DATA_DIR, cache_key_value)
+                if cached is not None:
+                    dest = media_dir(settings) / f"{job.episode_id}_chunk_{index}.wav"
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(cached.wav_path, dest)
+            except Exception as exc:
+                cached = None
+                logger.warning(
+                    "TTS cache lookup failed; falling through to synthesis",
+                    extra={"event": "tts_cache_error", "chunk_index": index, "error": str(exc)},
+                )
+            else:
+                if cached is not None:
+                    logger.info(
+                        "TTS cache hit", extra={"event": "tts_cache_hit", "chunk_index": index}
+                    )
+                    return (
+                        tts.GenerateResult(
+                            wav_path=str(dest),
+                            duration_secs=cached.duration_secs,
+                            sample_rate=cached.sample_rate,
+                            transcript=cached.transcript,
+                        ),
+                        1,
+                    )
 
     result = None
     last_reasons: list[str] = []
@@ -1314,6 +1367,21 @@ async def _generate_chunk_quality_checked(
                         "repetition_penalty": penalty,
                     },
                 )
+            if cache_key_value is not None:
+                try:
+                    tts_cache.store(
+                        settings.DATA_DIR,
+                        cache_key_value,
+                        result.wav_path,
+                        result.duration_secs,
+                        result.sample_rate,
+                        result.transcript,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "TTS cache store failed",
+                        extra={"event": "tts_cache_error", "chunk_index": index, "error": str(exc)},
+                    )
             return result, attempt + 1
         log_extra: dict[str, Any] = {
             "event": "chunk_quality_bad",
@@ -1393,10 +1461,18 @@ async def _stage_tts(
     # so the wrapper re-selects inside the same GPU lock that guards inference and a
     # concurrent audition cannot slip between choosing the voice and using it.
     # A failed model select keeps the wrapper's current model, not a dead job.
+    # ``model_confirmed`` tracks whether that succeeded: on failure the wrapper
+    # may still be running whatever model it had loaded before, so the chunk
+    # cache (keyed on settings.TTS_MODEL) must not trust that as the model
+    # that actually produced this job's audio -- caching this job's chunks
+    # under the intended-but-unconfirmed model would let a later job with a
+    # working select serve audio synthesized by a different model.
+    model_confirmed = True
     if settings.TTS_MODEL:
         try:
             await tts.select_model_with_retry(settings, settings.TTS_MODEL)
         except tts.TTSError:
+            model_confirmed = False
             logger.warning(
                 "Model select failed; using the wrapper's current model",
                 extra={"event": "tts_select_model_failed", "model": settings.TTS_MODEL},
@@ -1434,7 +1510,7 @@ async def _stage_tts(
         _raise_if_cancelled(job.id, settings)
         chunk_started = time.monotonic()
         result, attempts = await _generate_chunk_quality_checked(
-            job, text, index, settings, target_slot, pitch_tracker
+            job, text, index, settings, target_slot, pitch_tracker, model_confirmed
         )
         synth_ms = int((time.monotonic() - chunk_started) * 1000)
         results.append(result)

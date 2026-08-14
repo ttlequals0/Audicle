@@ -104,6 +104,10 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "CHATTERBOX_TOP_K",
         "CHATTERBOX_SEED",
         "CHATTERBOX_MAX_CHARS",
+        # Resumable TTS chunk cache: tunable live so an operator can disable it
+        # mid-incident or adjust how long entries survive without a restart.
+        "TTS_CHUNK_CACHE_ENABLED",
+        "TTS_CACHE_RETENTION_DAYS",
         "CHIME_ENABLED",
         # Audio-QA thresholds: tunable live since they need empirical tuning
         # against real failures. (The frame/hop/window sizes joined them in
