@@ -29,10 +29,10 @@ Search at the top filters the page as you type. The save bar appears only when t
 
 Everything that shapes how an episode sounds, in setup order: pick a [voice](voices-and-tts.md), choose the model, tune generation, check the result, shape the output.
 
-- **TTS generation** is the Chatterbox sampling group: lower temperature reads steadier, raise the repetition penalty if words loop, seed 0 is random.
+- **TTS generation** is the Chatterbox sampling group: lower temperature reads steadier, raise the repetition penalty if words loop, seed 0 is random. It also holds the [chunk cache](how-it-works.md#the-chunk-cache) toggles (`TTS_CHUNK_CACHE_ENABLED`, `TTS_CACHE_RETENTION_DAYS`; note that seed 0 disables caching) and [adaptive chunk sizing](how-it-works.md#adaptive-chunk-sizing) (`TTS_ADAPTIVE_MAX_CHARS_ENABLED`).
 - **Verification** and **Audio analysis** are the [quality gates](how-it-works.md#the-quality-gates).
 - **Audio output** covers silence handling, loudness normalization, and the MP3 encode.
-- **TTS delivery** is how long to keep trying when the wrapper is slow or restarting; see [the memory ladder](how-it-works.md#the-wrappers-memory-ladder) for why the connect budget must outlast a 90-second restart.
+- **TTS delivery** is how long to keep trying when the wrapper is slow or restarting; see [the memory ladder](how-it-works.md#the-wrappers-memory-ladder) for why the connect budget must outlast a 90-second restart. The idle restart toggle (`TTS_IDLE_RESTART_ENABLED`) lives here too.
 
 ### Pronunciation corrections
 
