@@ -33,10 +33,12 @@ Every release gets a CHANGELOG.md section. If a branch bumps the version more th
 
    ```bash
    docker build --pull --platform linux/amd64 -t ttlequals0/audicle:X.Y.Z .
-   docker build --pull --platform linux/amd64 -t ttlequals0/audicle-tts:X.Y.Z tts-wrapper/
-   docker build --pull --platform linux/amd64 -t ttlequals0/audicle-tts:X.Y.Z-cpu -f tts-wrapper/Dockerfile.cpu tts-wrapper/
+   docker build --pull --platform linux/amd64 --build-arg WRAPPER_VERSION=$(cat VERSION) -t ttlequals0/audicle-tts:X.Y.Z tts-wrapper/
+   docker build --pull --platform linux/amd64 --build-arg WRAPPER_VERSION=$(cat VERSION) -t ttlequals0/audicle-tts:X.Y.Z-cpu -f tts-wrapper/Dockerfile.cpu tts-wrapper/
    docker build --pull --platform linux/amd64 -t ttlequals0/audicle-render:X.Y.Z render/
    ```
+
+   The wrapper builds need the version passed in: their build context is `tts-wrapper/`, which cannot read the repo-root `VERSION`, and without the arg the wrapper reports 0.0.0 in `/health/ready` (the 0.56.0 release shipped that way for about half an hour before being rebuilt).
 
    Never retag an old build as a new version: retagging freezes the apt-upgrade security layer.
 4. Run the CVE gate. `scripts/trivy_gate.sh X.Y.Z` scans all four tags (the three release images plus the `-cpu` wrapper) with the correct per-image ignorefile. A FAILED that is really a trivy cache-lock or layer-analysis timeout looks identical to a finding at a glance; read the output before treating it as a CVE. Nothing in CI enforces this, which is exactly why it must run.
