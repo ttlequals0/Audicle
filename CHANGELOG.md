@@ -4,7 +4,7 @@ All notable changes to Audicle are recorded here. Format follows Keep a Changelo
 (https://keepachangelog.com). Versioning is semver once a release ships; pre-release
 work lives under `[Unreleased]`.
 
-## [Unreleased]
+## [0.56.0] - 2026-08-13
 
 ### Added
 
@@ -19,17 +19,17 @@ work lives under `[Unreleased]`.
 - Adaptive `max_chars`: if 2 or more of a job's first 20 chunks needed a
   regeneration, the rest of the job synthesizes at a lowered
   `CHATTERBOX_MAX_CHARS` (75% of the configured value) instead of paying for
-  a regen on most chunks. Lowering only -- never raised back up mid-job. New
+  a regen on most chunks. Lowering only; it is never raised back up mid-job. New
   setting `TTS_ADAPTIVE_MAX_CHARS_ENABLED` (default on). A chunk synthesized
   under the lowered value skips the TTS chunk cache (lookup and store),
   since the cache key is derived from the unmodified baseline params.
 - Idle wrapper restart: between jobs, when the queue is empty, the worker
   checks the tts-wrapper's `/health` (now reporting `rss_mb` and
   `restart_recommended`) and asks it to restart itself via the new
-  `POST /maintenance/restart` if it's over its memory soft limit -- on our
-  own schedule, instead of only ever restarting mid-job at the wrapper's hard
-  limit. The wrapper rejects with 503 while inference is still running. New
-  setting `TTS_IDLE_RESTART_ENABLED` (default on); a no-op for the
+  `POST /maintenance/restart` if it's over its memory soft limit. That puts
+  the restart on our schedule, instead of only ever restarting mid-job at the
+  wrapper's hard limit. The wrapper rejects with 503 while inference is still
+  running. New setting `TTS_IDLE_RESTART_ENABLED` (default on); a no-op for the
   `openai-api` TTS backend.
 - A CI workflow. Pull requests and pushes to main now run ruff plus all three
   pytest suites (backend, render, tts-wrapper on CPU torch wheels) and build
@@ -39,6 +39,23 @@ work lives under `[Unreleased]`.
   `ttlequals0/audicle-tts:<version>-cpu`, so a GPU-less deployment no longer
   has to build it locally. The trivy release gate scans the new tag with the
   tts ignorefile.
+- An opt-in sentence-scoped pronunciation pass: with `PRONUNCIATION_SCOPE`
+  set to `sentence` (default stays `chunk`), the pronunciation LLM call sends
+  only the sentences that matched a reference term, as numbered lines, and
+  splices the respelled sentences back in place. Any protocol or splice
+  failure falls back to the existing full-chunk call, so the worst case is
+  what happens today.
+- A strict mode for remote ASR verification: `WHISPER_API_STRICT` (default
+  off) fails a chunk instead of shipping it unverified when the `openai-api`
+  ASR backend is configured but unreachable. The default keeps the existing
+  degrade-to-unverified behavior.
+- Per-chunk pipeline instrumentation in the logs: `tts_chunk_done` now
+  carries `synth_ms`, `attempts`, `rtf`, and the wrapper-reported
+  `inference_ms`, `verify_ms`, and `rss_mb` (also new in the wrapper's
+  `/generate` response); `pipeline_start` reports `queue_wait_seconds`; the
+  pronunciation pass logs `pronunciation_window_done` with `llm_ms` and
+  `input_chars`. Real-time factor per chunk was previously not measurable
+  from the logs at all.
 
 ### Changed
 
@@ -48,6 +65,10 @@ work lives under `[Unreleased]`.
   instead of opening a fresh one per chunk, and the remote SSRF guard caches a
   resolved host's verdict for 5 minutes instead of re-resolving DNS on every
   chunk.
+- Episode audio is concatenated by streaming each chunk to disk with
+  soundfile instead of building the whole episode as one in-memory tensor,
+  removing the end-of-job memory spike on long episodes. Output is
+  byte-identical to the old path.
 
 ## [0.55.4] - 2026-08-12
 
