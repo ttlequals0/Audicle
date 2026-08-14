@@ -164,6 +164,11 @@ class HealthResponse(BaseModel):
     whisper_enabled: bool | None = None
     whisper_model: str | None = None
     whisper_loaded: bool | None = None
+    # Idle wrapper restart (0.56.0): computed unconditionally, including in the
+    # 503 (not-ready) body, so the worker can decide to restart even a wrapper
+    # that never finished loading a reference voice.
+    rss_mb: int
+    restart_recommended: bool
 
 
 def _turbo_factory() -> Engine:
@@ -298,6 +303,7 @@ def create_app(
         model_loaded = bool(engine.model_loaded)
         reference_loaded = bool(engine.reference_loaded)
         ok = model_loaded and reference_loaded
+        current_rss = rss_mb()
         body: dict[str, Any] = {
             "ok": ok,
             "model_loaded": model_loaded,
@@ -311,6 +317,11 @@ def create_app(
             "whisper_enabled": cfg.whisper_enabled,
             "whisper_model": chosen_verifier.model_name if chosen_verifier else None,
             "whisper_loaded": bool(chosen_verifier.loaded) if chosen_verifier else False,
+            # Idle restart (0.56.0): the worker polls this between jobs and asks
+            # a memory-heavy wrapper to restart itself via /maintenance/restart
+            # rather than waiting for the mid-job hard-limit restart.
+            "rss_mb": current_rss,
+            "restart_recommended": current_rss > cfg.memory_soft_limit_mb,
         }
         if not ok:
             # 503 body includes a diagnostic "error".
@@ -322,6 +333,29 @@ def create_app(
             body["error"] = "; ".join(reasons)
             return JSONResponse(status_code=503, content=body)
         return JSONResponse(status_code=200, content=body)
+
+    @app.post("/maintenance/restart")
+    async def maintenance_restart(
+        background_tasks: BackgroundTasks,
+        lock: asyncio.Lock = Depends(get_lock),
+    ) -> dict[str, Any]:
+        """Opportunistic restart requested by the worker between jobs (queue
+        empty, /health reported restart_recommended). Rejects while inference
+        is running rather than waiting on the lock, so a between-jobs restart
+        can never delay or interrupt a chunk in flight -- the worker just
+        tries again on its next idle window."""
+
+        if lock.locked():
+            raise HTTPException(status_code=503, detail={"error": "inference busy"})
+        logger.info(
+            "Idle wrapper restart requested",
+            extra={"event": "tts_idle_restart", "rss_mb": rss_mb()},
+        )
+        # Queued as a background task so the 200 response reaches the caller
+        # before uvicorn starts draining for shutdown, same as the hard-limit
+        # restart in /generate.
+        background_tasks.add_task(_request_restart)
+        return {"restarting": True}
 
     @app.post("/generate", response_model=GenerateResponse)
     async def generate(

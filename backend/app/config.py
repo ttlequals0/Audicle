@@ -315,6 +315,13 @@ class Settings(BaseSettings):
     TTS_CONNECT_RETRY_MAX_SECONDS: float = 180
     TTS_REACHABILITY_GRACE_SECONDS: float = 60
     TTS_REACHABILITY_PROBE_TIMEOUT: float = 10
+    # Idle wrapper restart (0.56.0): between jobs, when the queue is empty, the
+    # worker checks the wrapper's /health for restart_recommended (RSS above
+    # its soft limit) and asks it to restart itself via /maintenance/restart --
+    # opportunistically, on our own schedule, instead of only ever restarting
+    # mid-job at the wrapper's hard limit. Meaningless for TTS_BACKEND=
+    # openai-api (no wrapper process to restart), which the worker also checks.
+    TTS_IDLE_RESTART_ENABLED: bool = True
 
     # Chatterbox generation knobs, sent to the wrapper on every /generate call
     # (the wrapper no longer reads them from its own env, 0.44.0). All are

@@ -23,6 +23,14 @@ work lives under `[Unreleased]`.
   setting `TTS_ADAPTIVE_MAX_CHARS_ENABLED` (default on). A chunk synthesized
   under the lowered value skips the TTS chunk cache (lookup and store),
   since the cache key is derived from the unmodified baseline params.
+- Idle wrapper restart: between jobs, when the queue is empty, the worker
+  checks the tts-wrapper's `/health` (now reporting `rss_mb` and
+  `restart_recommended`) and asks it to restart itself via the new
+  `POST /maintenance/restart` if it's over its memory soft limit -- on our
+  own schedule, instead of only ever restarting mid-job at the wrapper's hard
+  limit. The wrapper rejects with 503 while inference is still running. New
+  setting `TTS_IDLE_RESTART_ENABLED` (default on); a no-op for the
+  `openai-api` TTS backend.
 
 ### Changed
 

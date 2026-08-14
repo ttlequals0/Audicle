@@ -420,6 +420,35 @@ async def _get(path: str, settings: Settings, what: str) -> httpx.Response:
         raise TTSProviderError(f"TTS unreachable: {exc}") from exc
 
 
+async def wrapper_health(settings: Settings) -> dict[str, Any]:
+    """GET /health on the wrapper: liveness/readiness plus the idle-restart
+    fields (``rss_mb``, ``restart_recommended``) the worker's opportunistic
+    between-jobs restart reads. Returns the body regardless of status code --
+    a 503 (not ready) still carries valid rss_mb/restart_recommended -- and
+    lets transport-level failures propagate as the usual TTSError family."""
+
+    response = await _get("/health", settings, "TTS health")
+    try:
+        body = response.json()
+    except ValueError as exc:
+        raise TTSRequestError(f"TTS health returned non-JSON body: {exc}") from exc
+    if not isinstance(body, dict):
+        raise TTSRequestError(f"TTS health returned non-object JSON: {type(body).__name__}")
+    return body
+
+
+async def request_wrapper_restart(settings: Settings) -> None:
+    """POST /maintenance/restart: ask an idle-between-jobs wrapper to restart
+    itself. 503 means the GPU inference lock is still held; the worker treats
+    that as "try again next idle window", not a hard failure."""
+
+    response = await _post("/maintenance/restart", settings, None, "TTS idle restart")
+    if response.is_error:
+        raise TTSProviderError(
+            f"TTS restart returned {response.status_code}: {response.text[:200]}"
+        )
+
+
 async def select_model(settings: Settings, model: str) -> None:
     """POST /select-model: swap the wrapper's loaded TTS model."""
 

@@ -16,7 +16,15 @@ from datetime import UTC, datetime
 
 from app.config import RUNTIME_SETTING_BOUNDS, Settings, get_settings
 from app.core import database
-from app.services import jobs, pipeline, reachability, retention, runtime_settings, tts_cache
+from app.services import (
+    jobs,
+    pipeline,
+    reachability,
+    retention,
+    runtime_settings,
+    tts,
+    tts_cache,
+)
 from app.startup import bootstrap
 
 logger = logging.getLogger("app.worker")
@@ -117,6 +125,64 @@ async def _process_one(settings: Settings) -> bool:
     return True
 
 
+async def _maybe_restart_idle_wrapper(settings: Settings) -> None:
+    """Opportunistically restart a memory-heavy wrapper between jobs, instead
+    of waiting for its own mid-job hard-limit restart. Runs only when the
+    queue is empty so it can never delay a job that's waiting to run.
+
+    This is best-effort maintenance, not part of a job's success path: every
+    failure (wrapper unreachable, DB hiccup, lock still held so the wrapper
+    503s) is swallowed and logged at debug rather than raised, so it can never
+    affect the worker loop.
+    """
+
+    # Same overlay-with-fallback as _process_one: TTS_IDLE_RESTART_ENABLED,
+    # TTS_BACKEND, TTS_URL, and TTS_HTTP_TIMEOUT_SECONDS are all in ALLOWED_KEYS
+    # so an operator can flip them from the Settings UI mid-incident; reading
+    # the frozen env `settings` here would make that a dead knob until the
+    # worker restarts. A transient overlay read failure falls back to env
+    # settings rather than skipping the check entirely.
+    try:
+        effective = runtime_settings.overlay(settings)
+    except Exception:
+        logger.debug(
+            "runtime_settings overlay failed; checking idle restart on env settings",
+            extra={"event": "tts_idle_restart_overlay_failed"},
+            exc_info=True,
+        )
+        effective = settings
+
+    if not effective.TTS_IDLE_RESTART_ENABLED or effective.TTS_BACKEND == "openai-api":
+        return
+    try:
+        conn = database.connect(database.db_path(effective.DATA_DIR))
+        try:
+            queued = jobs.count_queued(conn)
+        finally:
+            conn.close()
+        if queued > 0:
+            return
+        # Uses TTS_HTTP_TIMEOUT_SECONDS with no retry (unlike the per-chunk
+        # calls), so a wrapper that accepts the connection but never answers
+        # can delay the next job's pickup by up to ~2x that timeout (health
+        # GET + restart POST). Accepted as bounded rather than adding a retry
+        # budget to an opportunistic, best-effort check.
+        health = await tts.wrapper_health(effective)
+        if not health.get("restart_recommended"):
+            return
+        await tts.request_wrapper_restart(effective)
+        logger.info(
+            "Idle wrapper restart requested",
+            extra={"event": "tts_idle_restart_requested", "rss_mb": health.get("rss_mb")},
+        )
+    except Exception:
+        logger.debug(
+            "Idle wrapper restart check failed; skipping",
+            extra={"event": "tts_idle_restart_check_failed"},
+            exc_info=True,
+        )
+
+
 async def run() -> None:
     settings = get_settings()
     bootstrap(settings, process_label="worker")
@@ -164,6 +230,7 @@ async def run() -> None:
             )
             processed = False
         if processed:
+            await _maybe_restart_idle_wrapper(settings)
             # Loop right back: a job may have arrived while we were working.
             continue
         with contextlib.suppress(asyncio.TimeoutError):

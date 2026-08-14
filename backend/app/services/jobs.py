@@ -242,6 +242,15 @@ def claim_next_queued(conn: sqlite3.Connection) -> Job | None:
     return get_job(conn, row["id"])
 
 
+def count_queued(conn: sqlite3.Connection) -> int:
+    """Number of jobs waiting to be claimed, using the same status literal
+    ``claim_next_queued`` reads. The worker's idle-restart check uses this to
+    avoid asking a wrapper to restart while a job is waiting behind it."""
+
+    row = conn.execute("SELECT COUNT(*) FROM jobs WHERE status = 'queued'").fetchone()
+    return int(row[0])
+
+
 def set_stage(conn: sqlite3.Connection, job_id: str, stage: JobStage) -> None:
     # Reset progress so a counter from the prior stage (e.g. tts) doesn't leak
     # onto the next one. The stage that has progress sets it via set_progress.

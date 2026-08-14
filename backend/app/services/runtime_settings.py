@@ -171,6 +171,7 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "TTS_CONNECT_RETRY_MAX_SECONDS",
         "TTS_REACHABILITY_GRACE_SECONDS",
         "TTS_REACHABILITY_PROBE_TIMEOUT",
+        "TTS_IDLE_RESTART_ENABLED",
         # Extraction and delivery budgets (0.55.0). Same reasoning as the TTS
         # group: every one is read per request, and a slow upstream is exactly
         # when an operator needs to widen a timeout without a restart. This
