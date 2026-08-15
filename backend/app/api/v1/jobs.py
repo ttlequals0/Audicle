@@ -174,3 +174,49 @@ async def cancel_job(
         )
     jobs_service.mark_cancelled(conn, job_id)
     return Response(status_code=204)
+
+
+class ClearJobsResponse(BaseModel):
+    removed: int
+
+
+@router.delete(
+    "/jobs/{job_id}",
+    status_code=204,
+    summary="Remove a finished run from Recents",
+)
+async def delete_job(
+    job_id: str,
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+) -> Response:
+    """Removes the job row only; the episode a done run produced stays in the
+    feed. A queued or processing job is rejected -- cancel it first."""
+
+    job = jobs_service.get_job(conn, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    if job.status in ("queued", "processing"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"job is {job.status}; cancel it before removing it",
+        )
+    jobs_service.delete_job(conn, job_id)
+    return Response(status_code=204)
+
+
+@router.delete(
+    "/jobs",
+    response_model=ClearJobsResponse,
+    summary="Clear finished runs from Recents",
+)
+async def clear_jobs(
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+    scope: Annotated[
+        Literal["all", "failed"],
+        Query(description="'failed' clears failed and cancelled runs; 'all' clears every finished run."),
+    ],
+) -> ClearJobsResponse:
+    """Bulk removal for the Recents list. Queued and processing jobs always
+    survive, and episodes are never touched."""
+
+    return ClearJobsResponse(removed=jobs_service.clear_jobs(conn, scope))

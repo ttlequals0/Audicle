@@ -4,6 +4,17 @@ All notable changes to Audicle are recorded here. Format follows Keep a Changelo
 (https://keepachangelog.com). Versioning is semver once a release ships; pre-release
 work lives under `[Unreleased]`.
 
+## [0.56.2] - 2026-08-15
+
+### Added
+
+- The Recents list can now be pruned (#125). Each finished run's action menu
+  gains "Remove from recents", and the RECENT header gains "clear failed" and
+  "clear all" controls with an inline confirm step. All of it removes job rows
+  only: queued and processing runs always survive, and episodes stay in the
+  feed. New API: `DELETE /api/v1/jobs/{id}` and
+  `DELETE /api/v1/jobs?scope=all|failed`.
+
 ## [0.56.1] - 2026-08-14
 
 ### Changed

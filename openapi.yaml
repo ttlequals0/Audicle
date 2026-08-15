@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.56.0
+  version: 0.56.2
 paths:
   /health/live:
     get:
@@ -905,6 +905,42 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - jobs
+      summary: Clear finished runs from Recents
+      description: 'Bulk removal for the Recents list. Queued and processing jobs
+        always
+
+        survive, and episodes are never touched.'
+      operationId: clear_jobs_api_v1_jobs_delete
+      parameters:
+      - name: scope
+        in: query
+        required: true
+        schema:
+          enum:
+          - all
+          - failed
+          type: string
+          description: '''failed'' clears failed and cancelled runs; ''all'' clears
+            every finished run.'
+          title: Scope
+        description: '''failed'' clears failed and cancelled runs; ''all'' clears
+          every finished run.'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClearJobsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/jobs/{job_id}/requeue:
     post:
       tags:
@@ -937,6 +973,32 @@ paths:
       - jobs
       summary: Cancel a queued or processing job
       operationId: cancel_job_api_v1_jobs__job_id__cancel_post
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/jobs/{job_id}:
+    delete:
+      tags:
+      - jobs
+      summary: Remove a finished run from Recents
+      description: 'Removes the job row only; the episode a done run produced stays
+        in the
+
+        feed. A queued or processing job is rejected -- cancel it first.'
+      operationId: delete_job_api_v1_jobs__job_id__delete
       parameters:
       - name: job_id
         in: path
@@ -1732,6 +1794,15 @@ components:
       - episode_id
       - chapter_count
       title: ChaptersRegenResponse
+    ClearJobsResponse:
+      properties:
+        removed:
+          type: integer
+          title: Removed
+      type: object
+      required:
+      - removed
+      title: ClearJobsResponse
     DeleteEpisodeResponse:
       properties:
         id:

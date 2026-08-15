@@ -307,6 +307,32 @@ def mark_cancelled(conn: sqlite3.Connection, job_id: str) -> None:
     )
 
 
+_TERMINAL_STATUSES = ("done", "failed", "cancelled")
+
+
+def delete_job(conn: sqlite3.Connection, job_id: str) -> bool:
+    """Remove one terminal job row from Recents. Returns True if a row was
+    deleted. A queued or processing job is never deleted (cancel it first);
+    the episode a done job produced is untouched."""
+
+    cur = conn.execute(
+        "DELETE FROM jobs WHERE id = ? AND status IN (?, ?, ?)",
+        (job_id, *_TERMINAL_STATUSES),
+    )
+    return cur.rowcount > 0
+
+
+def clear_jobs(conn: sqlite3.Connection, scope: str) -> int:
+    """Bulk-remove terminal job rows. ``scope='failed'`` clears failed and
+    cancelled runs; ``scope='all'`` clears every finished run. Queued and
+    processing rows always survive. Returns the number removed."""
+
+    statuses = ("failed", "cancelled") if scope == "failed" else _TERMINAL_STATUSES
+    marks = ", ".join("?" for _ in statuses)
+    cur = conn.execute(f"DELETE FROM jobs WHERE status IN ({marks})", statuses)
+    return cur.rowcount
+
+
 def job_as_dict(job: Job) -> dict[str, Any]:
     return {
         "job_id": job.id,
