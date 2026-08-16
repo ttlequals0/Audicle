@@ -4,6 +4,19 @@ All notable changes to Audicle are recorded here. Format follows Keep a Changelo
 (https://keepachangelog.com). Versioning is semver once a release ships; pre-release
 work lives under `[Unreleased]`.
 
+## [0.56.3] - 2026-08-16
+
+### Fixed
+
+- The normalize stage no longer spends minutes in the deterministic
+  corrections backstop. `lexicon.lookup()`'s OR across an unindexed column
+  full-scanned the base lexicon once per token (measured 100 to 144 ms per
+  lookup in production, about 242 s per episode); the query is now two
+  index-served probes with a new `idx_lexicon_input_text` index (migration
+  026), 160x faster per lookup in benchmarks, and the per-token cache is
+  shared across the whole episode instead of rebuilt per chunk. Instrumented
+  runs put the pass at 92% of normalize; it should now be seconds.
+
 ## [0.56.2] - 2026-08-15
 
 ### Added

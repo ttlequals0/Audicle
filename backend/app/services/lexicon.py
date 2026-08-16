@@ -100,6 +100,10 @@ CREATE TABLE IF NOT EXISTS lexicon (
 );
 """
 _CREATE_INDEX_SQL = "CREATE INDEX IF NOT EXISTS idx_lexicon_fold ON lexicon(input_fold);"
+# The PK (origin, input_text) cannot serve a bare input_text probe (origin
+# leads), so exact-case lookups need their own index; without it every
+# ``lookup`` is a full scan of the ~50k-row base lexicon.
+_CREATE_TEXT_INDEX_SQL = "CREATE INDEX IF NOT EXISTS idx_lexicon_input_text ON lexicon(input_text);"
 
 
 @dataclass(frozen=True)
@@ -118,6 +122,7 @@ class LexEntry:
 def create_schema(conn: sqlite3.Connection) -> None:
     conn.execute(CREATE_TABLE_SQL)
     conn.execute(_CREATE_INDEX_SQL)
+    conn.execute(_CREATE_TEXT_INDEX_SQL)
 
 
 def _row_to_entry(row: sqlite3.Row) -> LexEntry:
@@ -143,11 +148,16 @@ def lookup(conn: sqlite3.Connection, token: str) -> LexEntry | None:
     """
 
     fold = token.casefold()
+    # Two indexed probes instead of an OR: the OR form forced a full-table
+    # scan (input_text side had no usable index), which at one lookup per
+    # token made the corrections backstop the slowest part of normalize.
+    # The branches are disjoint (case_sensitive differs), so UNION ALL is
+    # exactly the old predicate.
     rows = conn.execute(
         """
-        SELECT * FROM lexicon
-        WHERE (case_sensitive = 1 AND input_text = ?)
-           OR (case_sensitive = 0 AND input_fold = ?)
+        SELECT * FROM lexicon WHERE case_sensitive = 1 AND input_text = ?
+        UNION ALL
+        SELECT * FROM lexicon WHERE case_sensitive = 0 AND input_fold = ?
         """,
         (token, fold),
     ).fetchall()

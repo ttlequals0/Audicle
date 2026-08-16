@@ -1947,18 +1947,23 @@ def _coerce_str(value: Any) -> str | None:
     return None
 
 
-def _apply_base_lexicon(text: str, conn, settings: Settings) -> str:
+def _apply_base_lexicon(
+    text: str, conn, settings: Settings, cache: dict[str, str] | None = None
+) -> str:
     """Aggressive per-token apply of the base lexicon.
 
     Every plain word is looked up; a ``base`` entry whose respelling differs and
     clears the confidence gate is applied. user/seed rows already ran via the
     regex pass, so only ``base`` rows are applied here. No-op when
-    ``LEXICON_AGGRESSIVE`` is off or the base layer is empty.
+    ``LEXICON_AGGRESSIVE`` is off or the base layer is empty. Callers batching
+    many texts pass one shared ``cache`` so a common word costs one DB lookup
+    per episode, not one per chunk.
     """
 
     if not settings.LEXICON_AGGRESSIVE:
         return text
-    cache: dict[str, str] = {}
+    if cache is None:
+        cache = {}
 
     def repl(match: re.Match[str]) -> str:
         token = match.group(0)
@@ -1994,6 +1999,7 @@ async def _apply_corrections_batch(texts: list[str], settings: Settings) -> list
     with database.connection(settings.DATA_DIR) as conn:
         cs_pairs, ci_pairs = lexicon.apply_pairs_by_case(conn)
         results: list[str] = []
+        token_cache: dict[str, str] = {}
         for text in texts:
             # Acronyms get no automatic letter-spelling: Chatterbox (BPE/char-based, no g2p)
             # pronounces common ones natively, and forcing "C E O" makes it choppy. A
@@ -2002,7 +2008,7 @@ async def _apply_corrections_batch(texts: list[str], settings: Settings) -> list
             # so "404 media" hits "404 Media". Then the aggressive base-lexicon pass.
             applied = corrections.apply(_normalize_for_tts(text), cs_pairs)
             applied = corrections.apply(applied, ci_pairs, case_sensitive=False)
-            applied = _apply_base_lexicon(applied, conn, settings)
+            applied = _apply_base_lexicon(applied, conn, settings, token_cache)
             # Strip periods from dotted acronyms LAST -- catches both article text ("U.S.")
             # and any dotted respelling a correction injected ("A.I.") -- so the engine
             # never pauses mid-acronym.
