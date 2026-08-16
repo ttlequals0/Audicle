@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS lexicon (
 _CREATE_INDEX_SQL = "CREATE INDEX IF NOT EXISTS idx_lexicon_fold ON lexicon(input_fold);"
 # The PK (origin, input_text) cannot serve a bare input_text probe (origin
 # leads), so exact-case lookups need their own index; without it every
-# ``lookup`` is a full scan of the ~50k-row base lexicon.
+# ``lookup`` is a full scan of the 1.3M-row base lexicon.
 _CREATE_TEXT_INDEX_SQL = "CREATE INDEX IF NOT EXISTS idx_lexicon_input_text ON lexicon(input_text);"
 
 
