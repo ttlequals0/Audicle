@@ -4,6 +4,21 @@ All notable changes to Audicle are recorded here. Format follows Keep a Changelo
 (https://keepachangelog.com). Versioning is semver once a release ships; pre-release
 work lives under `[Unreleased]`.
 
+## [0.56.4] - 2026-08-16
+
+### Fixed
+
+- The base-lexicon sync no longer holds `migration_lock` for its whole import
+  (#126). On a fresh database or a version bump the import can run for tens
+  of minutes on slow disks, and whichever process booted second sat blocked
+  in its startup migration check the entire time, so the web process never
+  bound port 8000. The sync now serializes on its own `.lexicon-sync.lock`;
+  startup never waits on it. The import itself also got faster and lighter:
+  a 64 MB page cache and no mid-transaction WAL checkpoints during the bulk
+  insert (the 2 MB default cache wrote about 14 GB for a 241 MB artifact),
+  rows inserted in key order for B-tree locality, and one deliberate
+  checkpoint afterward. Reported with a full diagnosis in #126.
+
 ## [0.56.3] - 2026-08-16
 
 ### Fixed

@@ -142,3 +142,40 @@ def test_apply_pairs_by_case_splits_on_flag(env: Path) -> None:
         assert "404 media" not in cs
         assert ci["404 media"] == "four oh four media"
         assert "US" not in ci
+
+
+def test_sync_restores_import_pragmas(env: Path, tmp_path: Path) -> None:
+    # The bulk-import pragmas (large cache, autocheckpoint off) must not leak
+    # to the caller's connection after the sync returns (#126).
+    database.run_migrations(env)
+    artifact = tmp_path / "base_lexicon.jsonl"
+    artifact.write_text(
+        '{"origin":"base","input_text":"Nguyen","spoken":"win","mode":"override"}\n',
+        encoding="utf-8",
+    )
+    with database.connection(env) as conn:
+        before_cache = conn.execute("PRAGMA cache_size").fetchone()[0]
+        before_ckpt = conn.execute("PRAGMA wal_autocheckpoint").fetchone()[0]
+        assert lexicon.sync_base_artifact(conn, artifact, "vpragma") is True
+        assert conn.execute("PRAGMA cache_size").fetchone()[0] == before_cache
+        assert conn.execute("PRAGMA wal_autocheckpoint").fetchone()[0] == before_ckpt
+
+
+def test_lexicon_sync_lock_does_not_block_migration_lock(env: Path) -> None:
+    # The #126 deadlock: the sync thread held migration_lock for a
+    # tens-of-minutes import and the other process's startup migration check
+    # never returned. The sync now uses its own lock; holding it must leave
+    # migration_lock immediately acquirable.
+    import threading
+
+    acquired = threading.Event()
+    with database.lexicon_sync_lock(env):
+
+        def _try_migration_lock() -> None:
+            with database.migration_lock(env):
+                acquired.set()
+
+        t = threading.Thread(target=_try_migration_lock)
+        t.start()
+        t.join(timeout=5)
+    assert acquired.is_set()

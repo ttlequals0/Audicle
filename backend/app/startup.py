@@ -100,14 +100,16 @@ def _sync_base_lexicon(settings: Settings, logger: logging.Logger) -> None:
     from app.services import lexicon
 
     def _run() -> None:
-        # The full artifact import takes ~tens of seconds, so it runs in a daemon
-        # thread rather than blocking app/worker startup (the app serves with the
-        # seed layer immediately and the base layer lights up when this finishes).
-        # The migration lock serializes it across the supervised processes; the
-        # version gate inside sync makes the later acquirers no-op.
+        # The import can take minutes to tens of minutes on slow disks, so it
+        # runs in a daemon thread rather than blocking app/worker startup (the
+        # app serves with the seed layer immediately and the base layer lights
+        # up when this finishes). It holds its OWN lock, never migration_lock:
+        # holding that one for the whole import blocked the other process's
+        # startup migration check, and the web process never bound :8000
+        # (#126). The version gate inside sync makes the later acquirer no-op.
         try:
             with (
-                database.migration_lock(settings.DATA_DIR),
+                database.lexicon_sync_lock(settings.DATA_DIR),
                 database.connection(settings.DATA_DIR) as conn,
             ):
                 lexicon.sync_base_artifact(conn, lexicon.default_artifact_path(), __version__)

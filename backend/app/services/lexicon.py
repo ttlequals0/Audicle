@@ -19,6 +19,7 @@ import json
 import logging
 import re
 import sqlite3
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -57,6 +58,31 @@ def sync_base_artifact(conn: sqlite3.Connection, artifact_path: Path, version: s
         return False
     if not artifact_path.exists():
         return False
+    # Import-friendly pragmas for the bulk insert (#126): the 1.3M-row base
+    # layer against SQLite's 2 MB default page cache wrote ~14 GB for a 241 MB
+    # artifact (page churn), and wal_autocheckpoint flushed dirty pages mid-
+    # transaction so they were written twice. Both are per-connection settings;
+    # restore them after so a long-lived caller keeps its defaults.
+    prev_cache = conn.execute("PRAGMA cache_size").fetchone()[0]
+    prev_ckpt = conn.execute("PRAGMA wal_autocheckpoint").fetchone()[0]
+    conn.execute("PRAGMA cache_size=-65536")
+    conn.execute("PRAGMA wal_autocheckpoint=0")
+    try:
+        return _sync_base_artifact_locked(conn, artifact_path, version)
+    finally:
+        conn.execute(f"PRAGMA cache_size={int(prev_cache)}")
+        conn.execute(f"PRAGMA wal_autocheckpoint={int(prev_ckpt)}")
+        # One deliberate checkpoint so the WAL growth from the import lands in
+        # the main file now instead of on the next unlucky writer.
+        with suppress(sqlite3.OperationalError):
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+
+def _sync_base_artifact_locked(
+    conn: sqlite3.Connection, artifact_path: Path, version: str
+) -> bool:
+    from app.services import settings_store  # local import avoids a cycle
+
     by_origin: dict[str, dict[str, dict]] = {"seed": {}, "base": {}}
     opener = gzip.open if artifact_path.suffix == ".gz" else open
     with opener(artifact_path, "rt", encoding="utf-8") as handle:
@@ -259,6 +285,9 @@ def import_readonly(conn: sqlite3.Connection, origin: str, entries: dict[str, di
 def insert_entries(
     conn: sqlite3.Connection, origin: str, entries: dict[str, dict], *, read_only: bool
 ) -> None:
+    # Sorted by key so the bulk import walks the (origin, input_text) PK and
+    # the input_text index in order instead of random-writing B-tree pages;
+    # on the 1.3M-row base layer that locality is a large I/O win (#126).
     conn.executemany(
         """
         INSERT OR REPLACE INTO lexicon
@@ -279,7 +308,7 @@ def insert_entries(
                 entry.get("notes"),
                 1 if read_only else 0,
             )
-            for key, entry in entries.items()
+            for key, entry in sorted(entries.items())
         ],
     )
 

@@ -34,6 +34,7 @@ logger = logging.getLogger("app.core.database")
 DB_FILENAME = "podcast.db"
 LOCK_FILENAME = ".migration.lock"
 REFERENCE_LOCK_FILENAME = ".reference.lock"
+LEXICON_SYNC_LOCK_FILENAME = ".lexicon-sync.lock"
 BACKUP_PREFIX = "podcast.db.backup-"
 
 
@@ -120,6 +121,20 @@ def migration_lock(data_dir: Path) -> Iterator[None]:
     """Serialize concurrent startups via fcntl.flock on .migration.lock."""
 
     with _flock_exclusive(data_dir, LOCK_FILENAME):
+        yield
+
+
+@contextmanager
+def lexicon_sync_lock(data_dir: Path) -> Iterator[None]:
+    """Serialize the base-lexicon import across the web and worker processes.
+
+    Deliberately a separate lock from ``migration_lock``: the import can take
+    tens of minutes on slow disks, and holding the migration lock for that long
+    blocked the other process's startup migration check, so the app never bound
+    its port (#126). Sync contends only with itself; startup never waits on it.
+    """
+
+    with _flock_exclusive(data_dir, LEXICON_SYNC_LOCK_FILENAME):
         yield
 
 
