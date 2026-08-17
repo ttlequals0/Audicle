@@ -2501,22 +2501,49 @@ async def _llm_with_retry(system: str, user: str, settings: Settings) -> str:
 # long-running stage doesn't hold a write lock.
 
 
-def _set_stage(job_id: str, stage: str, settings: Settings) -> None:
+# A job-row write is expected to take milliseconds; anything over this logs a
+# slow_db_write warning with the WAL size, to pinpoint the silent multi-minute
+# stalls observed between pipeline stages (suspected checkpoint-on-close work
+# against a WAL left huge by a bulk lexicon import).
+_SLOW_DB_WRITE_SECONDS = 1.0
+
+
+def _timed_job_write(op: str, settings: Settings, write) -> None:
+    started = time.monotonic()
     conn = database.connect(database.db_path(settings.DATA_DIR))
     try:
-        jobs.set_stage(conn, job_id, stage)
+        write(conn)
     finally:
         conn.close()
+    elapsed = time.monotonic() - started
+    if elapsed > _SLOW_DB_WRITE_SECONDS:
+        try:
+            wal_bytes = (
+                database.db_path(settings.DATA_DIR).with_suffix(".db-wal").stat().st_size
+            )
+        except OSError:
+            wal_bytes = None
+        logger.warning(
+            "Slow job-row write",
+            extra={
+                "event": "slow_db_write",
+                "op": op,
+                "duration_ms": int(elapsed * 1000),
+                "wal_bytes": wal_bytes,
+            },
+        )
+
+
+def _set_stage(job_id: str, stage: str, settings: Settings) -> None:
+    _timed_job_write("set_stage", settings, lambda conn: jobs.set_stage(conn, job_id, stage))
     # The DB row and the watchdog track the same signal; keep them in step.
     _beat()
 
 
 def _set_progress(job_id: str, current: int, total: int, settings: Settings) -> None:
-    conn = database.connect(database.db_path(settings.DATA_DIR))
-    try:
-        jobs.set_progress(conn, job_id, current, total)
-    finally:
-        conn.close()
+    _timed_job_write(
+        "set_progress", settings, lambda conn: jobs.set_progress(conn, job_id, current, total)
+    )
     _beat()
 
 

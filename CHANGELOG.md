@@ -18,6 +18,9 @@ work lives under `[Unreleased]`.
   insert (the 2 MB default cache wrote about 14 GB for a 241 MB artifact),
   rows inserted in key order for B-tree locality, and one deliberate
   checkpoint afterward. Reported with a full diagnosis in #126.
+- Job-row writes (stage and progress updates) log a `slow_db_write` warning
+  with the current WAL size when they exceed one second, to pinpoint the
+  silent multi-minute stalls observed between pipeline stages on 0.56.3.
 
 ## [0.56.3] - 2026-08-16
 

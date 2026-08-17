@@ -2833,3 +2833,22 @@ def test_title_echo_no_title_is_a_noop() -> None:
     body = "Some article text."
     assert pipeline._strip_title_echo(body, None) == body
     assert pipeline._strip_title_echo(body, "") == body
+
+
+def test_slow_job_write_logs_warning_with_wal_size(
+    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import time as time_mod
+
+    database.run_migrations(env)
+
+    def _slow_set_stage(conn, job_id, stage):
+        time_mod.sleep(1.1)
+
+    monkeypatch.setattr(pipeline.jobs, "set_stage", _slow_set_stage)
+    with caplog.at_level(logging.WARNING, logger="app.services.pipeline"):
+        pipeline._set_stage("j1", "extract", get_settings())
+    slow = [r for r in caplog.records if getattr(r, "event", "") == "slow_db_write"]
+    assert len(slow) == 1
+    assert slow[0].op == "set_stage"
+    assert slow[0].duration_ms >= 1100
