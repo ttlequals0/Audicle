@@ -4,6 +4,20 @@ All notable changes to Audicle are recorded here. Format follows Keep a Changelo
 (https://keepachangelog.com). Versioning is semver once a release ships; pre-release
 work lives under `[Unreleased]`.
 
+## [0.56.7] - 2026-08-17
+
+### Fixed
+
+- A release that ships an unchanged base lexicon no longer re-imports it
+  (#126 follow-up). The sync gate compared the stored value against the app
+  version, so every version bump replayed all 1,336,791 rows even though the
+  artifact was byte-identical; three releases in one day meant three full
+  imports. The gate is now a sha256 of the artifact's bytes, which costs
+  milliseconds to compute against the two minutes it saves. Upgrading
+  re-imports once more to record the digest, then stays quiet until the
+  lexicon data actually changes. The seed-resync migrations are unaffected:
+  they call the importer directly and never consulted this gate.
+
 ## [0.56.6] - 2026-08-17
 
 ### Fixed

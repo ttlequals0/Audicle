@@ -207,3 +207,46 @@ def test_bulk_import_keeps_wal_bounded(env: Path, tmp_path: Path) -> None:
         assert peak < db_size, f"peak WAL {peak} >= db size {db_size}"
     finally:
         lexicon._IMPORT_BATCH_ROWS = original
+
+
+def test_sync_gate_is_artifact_content_not_app_version(env: Path, tmp_path: Path) -> None:
+    # #126 follow-up: a release that ships a byte-identical artifact must do no
+    # work, and a changed artifact must still re-import.
+    database.run_migrations(env)
+    artifact = tmp_path / "base_lexicon.jsonl"
+    artifact.write_text(
+        '{"origin":"base","input_text":"Alpha","spoken":"AL-fuh","mode":"override"}\n',
+        encoding="utf-8",
+    )
+    with database.connection(env) as conn:
+        assert lexicon.sync_base_artifact(conn, artifact, "0.1.0") is True
+        # Same bytes, later app version: no re-import.
+        assert lexicon.sync_base_artifact(conn, artifact, "0.2.0") is False
+        assert lexicon.sync_base_artifact(conn, artifact, "0.3.0") is False
+        # Changed artifact at the same app version: re-imports.
+        artifact.write_text(
+            '{"origin":"base","input_text":"Alpha","spoken":"AL-fuh","mode":"override"}\n'
+            '{"origin":"base","input_text":"Beta","spoken":"BAY-tuh","mode":"override"}\n',
+            encoding="utf-8",
+        )
+        assert lexicon.sync_base_artifact(conn, artifact, "0.3.0") is True
+        assert lexicon.lookup(conn, "Beta").spoken == "BAY-tuh"
+
+
+def test_sync_reimports_once_when_upgrading_from_a_version_keyed_install(
+    env: Path, tmp_path: Path
+) -> None:
+    # An install from before the content gate has only the legacy version key;
+    # it re-imports once, then stores the digest and stays quiet after that.
+    from app.services import settings_store
+
+    database.run_migrations(env)
+    artifact = tmp_path / "base_lexicon.jsonl"
+    artifact.write_text(
+        '{"origin":"base","input_text":"Alpha","spoken":"AL-fuh","mode":"override"}\n',
+        encoding="utf-8",
+    )
+    with database.connection(env) as conn:
+        settings_store.set_(conn, lexicon.LEXICON_VERSION_KEY, "0.56.6")
+        assert lexicon.sync_base_artifact(conn, artifact, "0.56.7") is True
+        assert lexicon.sync_base_artifact(conn, artifact, "0.56.7") is False

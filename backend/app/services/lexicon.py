@@ -15,6 +15,7 @@ only matches the exact casing while a case-insensitive one matches any casing.
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import logging
 import re
@@ -29,9 +30,14 @@ logger = logging.getLogger("app.services.lexicon")
 ORIGINS = ("user", "seed", "base")
 _ORIGIN_RANK = {"user": 0, "seed": 1, "base": 2}
 
-# Versioned read-only import: when the bundled artifact's version differs from the
-# value stored here, the seed/base rows are refreshed (user rows untouched).
+# Versioned read-only import: the app version that last imported, kept for
+# operators reading the settings table. It is NOT the gate.
 LEXICON_VERSION_KEY = "lexicon_version"
+# The gate: a digest of the bundled artifact's bytes. Keying on the app version
+# meant every release re-imported all 1.3M rows even when the artifact was
+# byte-identical, which it usually is (#126 follow-up). Keying on content means
+# a release that does not touch the lexicon does no work at all.
+LEXICON_ARTIFACT_KEY = "lexicon_artifact_sha256"
 
 
 def default_artifact_path() -> Path:
@@ -55,9 +61,10 @@ def sync_base_artifact(conn: sqlite3.Connection, artifact_path: Path, version: s
 
     from app.services import settings_store  # local import avoids a cycle
 
-    if settings_store.get(conn, LEXICON_VERSION_KEY) == version:
-        return False
     if not artifact_path.exists():
+        return False
+    digest = artifact_digest(artifact_path)
+    if settings_store.get(conn, LEXICON_ARTIFACT_KEY) == digest:
         return False
     # Import-friendly pragmas for the bulk insert (#126): the 1.3M-row base
     # layer against SQLite's 2 MB default page cache wrote ~14 GB for a 241 MB
@@ -69,7 +76,7 @@ def sync_base_artifact(conn: sqlite3.Connection, artifact_path: Path, version: s
     conn.execute("PRAGMA cache_size=-65536")
     conn.execute("PRAGMA wal_autocheckpoint=0")
     try:
-        return _sync_base_artifact_locked(conn, artifact_path, version)
+        return _sync_base_artifact_locked(conn, artifact_path, version, digest)
     finally:
         conn.execute(f"PRAGMA cache_size={int(prev_cache)}")
         conn.execute(f"PRAGMA wal_autocheckpoint={int(prev_ckpt)}")
@@ -79,8 +86,19 @@ def sync_base_artifact(conn: sqlite3.Connection, artifact_path: Path, version: s
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
 
+def artifact_digest(path: Path) -> str:
+    """sha256 of the artifact file's bytes. Cheap next to the import it gates
+    (13.5 MB of gzip, tens of milliseconds, against a two-minute insert)."""
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def _sync_base_artifact_locked(
-    conn: sqlite3.Connection, artifact_path: Path, version: str
+    conn: sqlite3.Connection, artifact_path: Path, version: str, digest: str
 ) -> bool:
     from app.services import settings_store  # local import avoids a cycle
 
@@ -110,7 +128,8 @@ def _sync_base_artifact_locked(
     for origin, entries in by_origin.items():
         if entries:
             import_readonly(conn, origin, entries)
-    settings_store.set_(conn, LEXICON_VERSION_KEY, version)  # commits
+    settings_store.set_(conn, LEXICON_VERSION_KEY, version)
+    settings_store.set_(conn, LEXICON_ARTIFACT_KEY, digest)  # commits; the gate
     logger.info(
         "Base lexicon imported",
         extra={
