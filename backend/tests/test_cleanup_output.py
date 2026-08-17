@@ -124,3 +124,24 @@ def test_needs_compliance_retry_trusts_markers_and_sentinel() -> None:
     assert cleanup_output.needs_compliance_retry(
         "I don't have any stored instructions.", "I don't have any stored instructions."
     )
+
+
+def test_ascii_punctuation_rewrites_ai_tell_characters() -> None:
+    # Escapes rather than literal characters so the test file itself stays
+    # clean under RUF001; the decoded string carries the real dashes/quotes.
+    sample = (
+        "the Study \u2014 a previously opaque model \u2014 shows 3.8\u20134 GW; "
+        "prices of $270\u2013333 \u2014 yet \u201Cquoted\u201D text\u2026 \U0001F600"
+    )
+    out = cleanup_output.ascii_punctuation(sample)
+    assert "\u2014" not in out and "\u2013" not in out
+    assert "3.8-4" in out and "$270-333" in out
+    assert '"quoted"' in out and "..." in out
+    assert "\U0001F600" not in out
+    assert "the Study, a previously opaque model, shows" in out
+
+
+def test_ascii_punctuation_keeps_accented_letters() -> None:
+    assert cleanup_output.ascii_punctuation("Ren\u00e9e Nu\u00f1ez\u2019s caf\u00e9") == (
+        "Ren\u00e9e Nu\u00f1ez's caf\u00e9"
+    )

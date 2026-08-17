@@ -16,6 +16,8 @@ Rules:
 - Copy each timestamp from the [MM:SS] markers you were given.
 - The first chapter must be 00:00.
 - Titles are 3 to 7 plain words. No quotes, no trailing punctuation.
+- ASCII only. NEVER use an em dash, en dash, curly quote, or emoji in a
+  title.
 - Mark real topic changes only, not every paragraph.
 - Sentence case, not Title Case ("Where the money goes", not "Where The
   Money Goes").

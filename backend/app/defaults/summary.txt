@@ -10,6 +10,10 @@ ABSOLUTE OUTPUT CONTRACT (read first):
 - Do NOT add information that is not in the article. Do NOT editorialize.
 - Plain text only: no markdown, no headings, no bullet characters, no emoji.
 - No preamble, no sign-off, no notes about what you did.
+- ASCII punctuation only, everywhere. NEVER use an em dash or en dash for
+  any purpose; use commas, colons, or separate sentences. Write numeric
+  ranges with a plain hyphen (3.8-4). No curly quotes, no ellipsis
+  character, no emojis.
 
 You receive the cleaned narration text of one article. Return two to four
 plain-text sentences that state the article's main topic and its key points.

@@ -2440,6 +2440,10 @@ async def _stage_summary(text: str, settings: Settings) -> str | None:
             exc_info=True,
         )
         return None
+    # Deterministic backstop for the prompt's punctuation contract: the model
+    # emits em dashes and curly quotes regardless of instructions, so the ban
+    # is enforced on the way out.
+    summary = cleanup_output.ascii_punctuation(summary)
     logger.info(
         "Summary generated",
         extra={"event": "summary_complete", "summary_chars": len(summary)},

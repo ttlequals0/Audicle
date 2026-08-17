@@ -4,6 +4,19 @@ All notable changes to Audicle are recorded here. Format follows Keep a Changelo
 (https://keepachangelog.com). Versioning is semver once a release ships; pre-release
 work lives under `[Unreleased]`.
 
+## [0.56.5] - 2026-08-17
+
+### Fixed
+
+- Episode summaries and chapter titles can no longer ship AI-tell
+  punctuation. The summary model kept emitting em dashes, en dashes, and
+  curly quotes despite the prompt banning them, so the ban is now enforced
+  deterministically after the LLM call: dashes become comma asides, numeric
+  ranges keep a plain hyphen, quotes straighten, the ellipsis character
+  expands, and emojis are dropped. Accented letters in names are untouched.
+  The prompts also carry the ASCII rule in their top output contract now,
+  not only in the style section.
+
 ## [0.56.4] - 2026-08-16
 
 ### Fixed
