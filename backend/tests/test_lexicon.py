@@ -179,3 +179,31 @@ def test_lexicon_sync_lock_does_not_block_migration_lock(env: Path) -> None:
         t.start()
         t.join(timeout=5)
     assert acquired.is_set()
+
+
+def test_bulk_import_keeps_wal_bounded(env: Path, tmp_path: Path) -> None:
+    # #126 follow-up: with wal_autocheckpoint off for the import, an unbatched
+    # insert grew the WAL past 10 GB for a 161 MB database. Batched inserts
+    # checkpoint between batches, so peak WAL stays near one batch's pages.
+    database.run_migrations(env)
+    rows = 120_000  # spans several _IMPORT_BATCH_ROWS batches when scaled down
+    monkey_batch = 20_000
+    original = lexicon._IMPORT_BATCH_ROWS
+    lexicon._IMPORT_BATCH_ROWS = monkey_batch
+    try:
+        entries = {
+            f"term{i:06d}": {"mode": "override", "spoken": f"spoken {i}"} for i in range(rows)
+        }
+        wal = database.db_path(env).with_suffix(".db-wal")
+        peak = 0
+        with database.connection(env) as conn:
+            conn.execute("PRAGMA wal_autocheckpoint=0")
+            lexicon.import_readonly(conn, "base", entries)
+            peak = max(peak, wal.stat().st_size if wal.exists() else 0)
+            assert conn.execute("SELECT COUNT(*) FROM lexicon WHERE origin='base'").fetchone()[0] == rows
+        db_size = database.db_path(env).stat().st_size
+        # Unbatched, the WAL would hold every page written for all 120k rows.
+        # Batched, it should stay far below the finished database size.
+        assert peak < db_size, f"peak WAL {peak} >= db size {db_size}"
+    finally:
+        lexicon._IMPORT_BATCH_ROWS = original

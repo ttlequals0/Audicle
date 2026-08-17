@@ -19,6 +19,7 @@ import json
 import logging
 import re
 import sqlite3
+import time
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -95,6 +96,17 @@ def _sync_base_artifact_locked(
             if origin not in by_origin or not obj.get("input_text") or not obj.get("spoken"):
                 continue
             by_origin[origin][obj["input_text"]] = obj
+    logger.info(
+        "Base lexicon import starting",
+        extra={
+            "event": "lexicon_sync_started",
+            "version": version,
+            "seed": len(by_origin["seed"]),
+            "base": len(by_origin["base"]),
+            "batch_rows": _IMPORT_BATCH_ROWS,
+        },
+    )
+    started = time.monotonic()
     for origin, entries in by_origin.items():
         if entries:
             import_readonly(conn, origin, entries)
@@ -106,6 +118,7 @@ def _sync_base_artifact_locked(
             "version": version,
             "seed": len(by_origin["seed"]),
             "base": len(by_origin["base"]),
+            "duration_ms": int((time.monotonic() - started) * 1000),
         },
     )
     return True
@@ -269,48 +282,81 @@ def replace_user_entries(conn: sqlite3.Connection, entries: dict[str, dict]) -> 
     conn.commit()
 
 
+# Rows per insert batch during a bulk import. With wal_autocheckpoint off for
+# the import, the WAL can only shrink at an explicit checkpoint, so an
+# unbatched 1.3M-row insert grew it past 10 GB for a 161 MB database (#126
+# follow-up). Checkpointing between batches bounds peak WAL to roughly one
+# batch's pages while keeping the big page cache and key-ordered writes.
+_IMPORT_BATCH_ROWS = 50_000
+
+
 def import_readonly(conn: sqlite3.Connection, origin: str, entries: dict[str, dict]) -> None:
     """Replace all read-only rows of ``origin`` (seed/base) with ``entries``.
 
-    User rows are never touched. Caller commits (so the versioned import stays
-    inside one transaction).
+    User rows are never touched. The insert is committed and checkpointed in
+    batches rather than as one transaction: peak WAL matters more here than
+    atomicity, because the version key is only written after a full import, so
+    an interrupted import simply re-runs from the start on the next boot
+    (leaving a partial read-only layer in the meantime, which degrades
+    pronunciation slightly but corrupts nothing).
     """
 
     if origin not in ("seed", "base"):
         raise ValueError(f"import_readonly origin must be seed/base, got {origin}")
     conn.execute("DELETE FROM lexicon WHERE origin = ?", (origin,))
-    insert_entries(conn, origin, entries, read_only=True)
+    insert_entries(conn, origin, entries, read_only=True, checkpoint_between_batches=True)
 
 
 def insert_entries(
-    conn: sqlite3.Connection, origin: str, entries: dict[str, dict], *, read_only: bool
+    conn: sqlite3.Connection,
+    origin: str,
+    entries: dict[str, dict],
+    *,
+    read_only: bool,
+    checkpoint_between_batches: bool = False,
 ) -> None:
     # Sorted by key so the bulk import walks the (origin, input_text) PK and
     # the input_text index in order instead of random-writing B-tree pages;
     # on the 1.3M-row base layer that locality is a large I/O win (#126).
-    conn.executemany(
-        """
+    rows = [
+        (
+            origin,
+            key,
+            key.casefold(),
+            entry.get("mode", "override"),
+            entry["spoken"],
+            1 if entry.get("case_sensitive") else 0,
+            float(entry.get("confidence", 1.0)),
+            entry.get("source"),
+            entry.get("notes"),
+            1 if read_only else 0,
+        )
+        for key, entry in sorted(entries.items())
+    ]
+    statement = """
         INSERT OR REPLACE INTO lexicon
             (origin, input_text, input_fold, mode, spoken,
              case_sensitive, confidence, source, notes, read_only)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        [
-            (
-                origin,
-                key,
-                key.casefold(),
-                entry.get("mode", "override"),
-                entry["spoken"],
-                1 if entry.get("case_sensitive") else 0,
-                float(entry.get("confidence", 1.0)),
-                entry.get("source"),
-                entry.get("notes"),
-                1 if read_only else 0,
-            )
-            for key, entry in sorted(entries.items())
-        ],
-    )
+        """
+    for start in range(0, len(rows), _IMPORT_BATCH_ROWS):
+        batch = rows[start : start + _IMPORT_BATCH_ROWS]
+        conn.executemany(statement, batch)
+        if not checkpoint_between_batches:
+            continue
+        # TRUNCATE rather than PASSIVE: PASSIVE leaves the file at its high
+        # water mark, which is the number this is trying to bound.
+        with suppress(sqlite3.OperationalError):
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        logger.debug(
+            "Lexicon import progress",
+            extra={
+                "event": "lexicon_import_progress",
+                "origin": origin,
+                "rows_written": min(start + _IMPORT_BATCH_ROWS, len(rows)),
+                "rows_total": len(rows),
+            },
+        )
 
 
 WORD_TOKEN_RE = re.compile("[A-Za-z][A-Za-z'\u2019-]*")

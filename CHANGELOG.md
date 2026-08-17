@@ -4,6 +4,23 @@ All notable changes to Audicle are recorded here. Format follows Keep a Changelo
 (https://keepachangelog.com). Versioning is semver once a release ships; pre-release
 work lives under `[Unreleased]`.
 
+## [0.56.6] - 2026-08-17
+
+### Fixed
+
+- The base-lexicon import no longer needs tens of gigabytes of transient
+  disk (#126 follow-up). Turning off `wal_autocheckpoint` for the whole
+  1.3M-row insert meant nothing could checkpoint until it finished, so the
+  WAL grew without bound: measured here at 24 GiB peak for a 168 MB
+  database. The insert now runs in 50,000-row batches with a truncating
+  checkpoint between them, which caps peak WAL at 921 MiB with no change in
+  import time (117s versus 112s). Since 0.56.4 was the first version to run
+  this on the default startup path, a fresh install or version bump no
+  longer demands disk headroom nothing announced.
+- The import logs `lexicon_sync_started` and its completion with row counts
+  and elapsed time, so its progress is visible from the logs instead of only
+  by watching the WAL file grow.
+
 ## [0.56.5] - 2026-08-17
 
 ### Fixed
