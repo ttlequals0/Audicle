@@ -117,6 +117,16 @@ def test_whisper_verify_settings_are_runtime_tunable(env: Path) -> None:
     assert isinstance(overlaid.WHISPER_SHORT_CHUNK_DIVERGENCE, float)
 
 
+def test_pronunciation_concurrency_is_runtime_tunable(env: Path) -> None:
+    assert "LLM_PRONUNCIATION_CONCURRENCY" in runtime_settings.ALLOWED_KEYS
+    database.run_migrations(env)
+    with database.connection(env) as conn:
+        runtime_settings.set_value(conn, "LLM_PRONUNCIATION_CONCURRENCY", 8)
+    overlaid = runtime_settings.overlay(get_settings())
+    assert overlaid.LLM_PRONUNCIATION_CONCURRENCY == 8
+    assert isinstance(overlaid.LLM_PRONUNCIATION_CONCURRENCY, int)
+
+
 def test_rss_render_reflects_runtime_overrides(env: Path) -> None:
     """End-to-end: PUT a FEED_TITLE override, GET the slug feed, confirm the
     new title shows up. This is the test the deferred-fix CHANGELOG entry

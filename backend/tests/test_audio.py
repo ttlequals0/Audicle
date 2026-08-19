@@ -183,6 +183,42 @@ def test_concat_with_padding_appends_inter_chunk_silence(
     assert abs(durations[1] - 0.2) < 0.05
 
 
+def test_concat_with_padding_streams_frame_accurate_output(
+    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The streaming writer's output must be frame-accurate: total frames equal
+    the sum of each processed (trimmed) chunk's frames plus the inter-chunk
+    padding, with no leading or trailing pad."""
+
+    monkeypatch.setenv("TTS_CHUNK_SILENCE_MS", "50")
+    get_settings.cache_clear()
+    sample_rate = 24000
+
+    chunk_a = tmp_path / "a.wav"
+    chunk_b = tmp_path / "b.wav"
+    chunk_c = tmp_path / "c.wav"
+    _write_tone_wav(chunk_a, duration_secs=0.1)
+    _write_tone_wav(chunk_b, duration_secs=0.15)
+    _write_tone_wav(chunk_c, duration_secs=0.05)
+
+    out = tmp_path / "combined.wav"
+    settings = get_settings()
+    _, result_rate, durations = audio.concat_with_padding(
+        [chunk_a, chunk_b, chunk_c], out, settings
+    )
+
+    assert result_rate == sample_rate
+    assert len(durations) == 3
+
+    pad_n = round(settings.TTS_CHUNK_SILENCE_MS * sample_rate / 1000)
+    processed_frames = [round(d * sample_rate) for d in durations]
+    expected_frames = sum(processed_frames) + 2 * pad_n
+
+    with sf.SoundFile(str(out)) as f:
+        assert f.samplerate == sample_rate
+        assert f.frames == expected_frames
+
+
 def test_concat_with_padding_rejects_zero_chunks(tmp_path: Path, env: Path) -> None:
     with pytest.raises(audio.AudioError, match="zero chunks"):
         audio.concat_with_padding([], tmp_path / "out.wav", get_settings())

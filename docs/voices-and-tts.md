@@ -50,7 +50,7 @@ Verification transcribes each generated chunk and compares the transcript to the
 
 The two backends are independent: local synthesis with remote transcription is a valid pairing. The one combination that cannot work, remote synthesis with wrapper verification, is rejected at startup with a message naming the fix. The reason is plumbing, not hardware: the bundled wrapper transcribes what it just synthesized, and audio made on another host never passes through it, so it has nothing to transcribe.
 
-A transcription failure never fails a chunk that synthesized fine; the chunk just goes unverified, the same as the wrapper path behaves.
+A transcription failure normally never fails a chunk that synthesized fine; the chunk just goes unverified, the same as the wrapper path behaves. On the remote backend, `WHISPER_API_STRICT` (default off) reverses that: a chunk whose transcription cannot be obtained fails instead of shipping unverified. Turn it on when an unverified chunk is worse for you than a failed job, for example on feeds where a hallucinated run slipping through matters more than latency.
 
 The strictness knobs (divergence threshold, divergent-run length, minimum words, short-chunk bar) are live-tunable in the Verification group.
 

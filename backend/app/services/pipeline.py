@@ -30,13 +30,15 @@ import time
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
+from datetime import UTC, datetime
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
-from app.config import RUNTIME_SETTING_BOUNDS, Settings
+from app.config import RUNTIME_SETTING_BOUNDS, Settings, clamp_to_bounds
 from app.core import database
 from app.core.paths import file_size_or_zero, media_dir
+from app.core.timestamps import parse_iso
 from app.services import (
     article_prep,
     artwork,
@@ -56,6 +58,7 @@ from app.services import (
     source_fallbacks_store,
     transcript,
     tts,
+    tts_cache,
     voices,
     webhooks,
 )
@@ -231,7 +234,14 @@ async def process_job(job: jobs.Job, settings: Settings) -> None:
     watchdog: _Watchdog | None = None
 
     with _job_context(job):
-        logger.info("Pipeline starting", extra={"event": "pipeline_start"})
+        start_log_extra: dict[str, Any] = {"event": "pipeline_start"}
+        # A malformed created_at drops the field rather than break the pipeline.
+        queued_at = parse_iso(job.created_at)
+        if queued_at is not None:
+            start_log_extra["queue_wait_seconds"] = (
+                datetime.now(UTC) - queued_at
+            ).total_seconds()
+        logger.info("Pipeline starting", extra=start_log_extra)
         terminal_event = "episode.processed"
         try:
             loop = asyncio.get_running_loop()
@@ -1117,40 +1127,95 @@ _MAX_CHARS_BOUNDS = RUNTIME_SETTING_BOUNDS["CHATTERBOX_MAX_CHARS"]
 _WRAPPER_TEXT_CAP = 4000
 _PENALTY_BOUNDS = RUNTIME_SETTING_BOUNDS["CHATTERBOX_REPETITION_PENALTY"]
 
+# Adaptive max_chars (_stage_tts): if _ADAPTIVE_TRIGGER or more of the first
+# _ADAPTIVE_WINDOW chunks needed a regen (attempts > 1), the configured
+# CHATTERBOX_MAX_CHARS is probably oversized for this job's text/voice, so the
+# rest of the job synthesizes at CHATTERBOX_MAX_CHARS * _ADAPTIVE_FACTOR
+# instead of paying for a regen on most chunks. Lowering only -- once set it
+# is never raised back up mid-job.
+_ADAPTIVE_WINDOW = 20
+_ADAPTIVE_TRIGGER = 2
+_ADAPTIVE_FACTOR = 0.75
+
 
 def _regen_seed(chunk_index: int, attempt: int) -> int:
     return (_REGEN_SEED_BASE + chunk_index * 131 + attempt) & 0xFFFFFFFF
 
 
-def _regen_params(settings: Settings, attempt: int) -> tuple[int | None, float | None]:
+def _regen_params(
+    settings: Settings, attempt: int, base_max_chars: int | None = None
+) -> tuple[int | None, float | None]:
     """``(max_chars, repetition_penalty)`` overrides for a regeneration attempt.
 
     A re-gen that only re-rolls the seed leaves the model in the same failure
     basin: on the episode that prompted this, three identical-parameter attempts
     took 43 bad chunks down to only 24. Each retry instead shortens the text fed
     to one inference call (the repetition-loop trigger) and stiffens the
-    repetition penalty. Attempt 0 returns ``(None, None)`` so the baseline take
-    is exactly what the operator configured.
+    repetition penalty. Attempt 0 returns ``(base_max_chars, None)`` -- normally
+    ``(None, None)``, so the baseline take is exactly what the operator
+    configured, unless the adaptive max_chars gate (_stage_tts) has already
+    lowered this job's baseline. Regen attempts scale from that same lowered
+    baseline (``base_max_chars or settings.CHATTERBOX_MAX_CHARS``) rather than
+    the operator's unmodified value, so escalation stays proportionate.
     """
 
     if attempt <= 0:
-        return None, None
+        return base_max_chars, None
+    base = base_max_chars or settings.CHATTERBOX_MAX_CHARS
     factor = settings.AUDIO_ANALYSIS_REGEN_CHARS_FACTOR
-    scaled = int(settings.CHATTERBOX_MAX_CHARS * factor**attempt)
+    scaled = int(base * factor**attempt)
     # Operator floor first, then the wrapper's hard bounds.
     max_chars = max(settings.AUDIO_ANALYSIS_REGEN_MIN_CHARS, scaled)
     step = settings.AUDIO_ANALYSIS_REGEN_PENALTY_STEP
     penalty = settings.CHATTERBOX_REPETITION_PENALTY + step * attempt
     return (
-        int(_clamp(max_chars, _MAX_CHARS_BOUNDS)),
-        _clamp(penalty, _PENALTY_BOUNDS),
+        int(clamp_to_bounds(max_chars, _MAX_CHARS_BOUNDS)),
+        clamp_to_bounds(penalty, _PENALTY_BOUNDS),
     )
 
 
-def _clamp(value: float, bounds: dict[str, float]) -> float:
-    """Hold ``value`` inside a RUNTIME_SETTING_BOUNDS entry's ge/le range."""
+def _cache_entry_usable(
+    cached: tts_cache.CachedChunk, *, audio_enabled: bool, verify_enabled: bool
+) -> bool:
+    """Whether a cache entry may stand in for a fresh synthesis under the
+    checks this run has enabled. A hit bypasses the QA loop entirely, so an
+    entry that was never QA'd (stored by a QA-off run) or that carries no
+    transcript while ASR verification is on would silently ship audio this
+    run's settings say must be checked."""
 
-    return min(bounds["le"], max(bounds["ge"], value))
+    if (audio_enabled or verify_enabled) and not cached.qa_passed:
+        return False
+    return not (verify_enabled and cached.transcript is None)
+
+
+def _cache_store_best_effort(
+    settings: Settings,
+    key: str,
+    index: int,
+    result: tts.GenerateResult,
+    *,
+    qa_passed: bool,
+    median_f0_hz: float | None,
+) -> None:
+    """Store a produced chunk, swallowing every failure: the cache is an
+    optimization and must never turn a synthesized chunk into a failed one."""
+
+    try:
+        tts_cache.store(
+            settings.DATA_DIR,
+            key,
+            result.wav_path,
+            result.duration_secs,
+            result.sample_rate,
+            result.transcript,
+            qa_passed=qa_passed,
+            median_f0_hz=median_f0_hz,
+        )
+    except Exception as exc:
+        logger.warning(
+            "TTS cache store failed",
+            extra={"event": "tts_cache_error", "chunk_index": index, "error": str(exc)},
+        )
 
 
 async def _generate_chunk_quality_checked(
@@ -1160,9 +1225,12 @@ async def _generate_chunk_quality_checked(
     settings: Settings,
     slot: int | None = None,
     pitch_tracker: audio_analysis.PitchTracker | None = None,
-) -> tts.GenerateResult:
+    model_confirmed: bool = True,
+    base_max_chars: int | None = None,
+) -> tuple[tts.GenerateResult, int]:
     """Synthesize one chunk, then (if enabled) check the audio and regenerate it
-    when it came back degraded.
+    when it came back degraded. Returns ``(result, attempts_used)`` so the
+    caller can log how many tries a chunk cost.
 
     Two independent checks gate a chunk, either of which can trigger a regen:
     the signal-level audio analysis (drone / noise / repetition) and, when
@@ -1181,7 +1249,21 @@ async def _generate_chunk_quality_checked(
     except when the only defect was pitch, where the attempt closest to the
     reference pitch is preserved in a sidecar and restored. A degraded chunk
     never fails the whole episode. Analysis errors are swallowed: they must
-    never become a new failure mode."""
+    never become a new failure mode.
+
+    ``model_confirmed`` is False when this job's ``select_model_with_retry``
+    call failed (``_stage_tts``): the wrapper may then be running whatever
+    model it had loaded before, not ``settings.TTS_MODEL``, so the chunk
+    cache is skipped entirely rather than keying this job's audio under a
+    model it was never confirmed to have used.
+
+    ``base_max_chars`` is the adaptive-max_chars override (_stage_tts): once a
+    job has tripped the early-failure gate, every later chunk's baseline take
+    (attempt 0) synthesizes at this lowered value instead of the operator's
+    ``CHATTERBOX_MAX_CHARS``. It rides into the cache key as the effective
+    ``max_chars``, so a chunk synthesized under a lowered baseline is cached
+    under a key that honestly describes it and never collides with the
+    unmodified-baseline entry for the same text."""
 
     word_count = len(text.split())
     audio_enabled = settings.AUDIO_ANALYSIS_ENABLED
@@ -1201,13 +1283,65 @@ async def _generate_chunk_quality_checked(
         max(0, settings.AUDIO_ANALYSIS_MAX_REGEN) if (audio_enabled or verify_enabled) else 0
     )
 
+    # Resumable chunk cache: a hit skips synthesis AND the QA loop entirely,
+    # so an entry is only reusable when it was checked at least as strictly as
+    # this run checks. An entry stored by a QA-off run (qa_passed False), or
+    # one with no transcript when ASR verification is now on, is treated as a
+    # miss. The key is computed once up front (even though the take that
+    # eventually passes may come from an escalated regen attempt) because the
+    # key identifies "what these settings would synthesize", not which attempt
+    # produced the stored take.
+    cache_key_value: str | None = None
+    if settings.TTS_CHUNK_CACHE_ENABLED and model_confirmed:
+        identity = tts.cache_identity(settings, slot)
+        if identity is not None:
+            backend, model, fingerprint = identity
+            cache_key_value = tts_cache.cache_key(
+                backend=backend,
+                model=model,
+                voice_fingerprint=fingerprint,
+                language=settings.TTS_LANGUAGE,
+                text=text,
+                params=tts.generation_params(settings, max_chars=base_max_chars),
+            )
+            try:
+                cached = tts_cache.lookup(settings.DATA_DIR, cache_key_value)
+                if cached is not None and _cache_entry_usable(
+                    cached, audio_enabled=audio_enabled, verify_enabled=verify_enabled
+                ):
+                    dest = media_dir(settings) / f"{job.episode_id}_chunk_{index}.wav"
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    tts_cache.link_or_copy(cached.wav_path, dest)
+                    # Keep the pitch gate warm across hits: a resumed job whose
+                    # chunks all come from the cache would otherwise re-warm the
+                    # tracker from zero exactly at the resume point.
+                    if pitch_tracker is not None and cached.median_f0_hz is not None:
+                        pitch_tracker.accept(cached.median_f0_hz)
+                    logger.info(
+                        "TTS cache hit", extra={"event": "tts_cache_hit", "chunk_index": index}
+                    )
+                    return (
+                        tts.GenerateResult(
+                            wav_path=str(dest),
+                            duration_secs=cached.duration_secs,
+                            sample_rate=cached.sample_rate,
+                            transcript=cached.transcript,
+                        ),
+                        1,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "TTS cache lookup failed; falling through to synthesis",
+                    extra={"event": "tts_cache_error", "chunk_index": index, "error": str(exc)},
+                )
+
     result = None
     last_reasons: list[str] = []
     # Closest-to-reference pitch attempt so far, kept in a sidecar because each
     # regen overwrites the canonical WAV. Restored on exhaustion.
     best_pitch: tuple[float, tts.GenerateResult] | None = None
     for attempt in range(max_extra + 1):  # 1 baseline + up to max_extra regenerations
-        max_chars, penalty = _regen_params(settings, attempt)
+        max_chars, penalty = _regen_params(settings, attempt, base_max_chars)
         result = await tts.generate_chunk_with_retry(
             text=text,
             episode_id=job.episode_id,
@@ -1225,7 +1359,14 @@ async def _generate_chunk_quality_checked(
         # against a whole regen loop's worth of them.
         _beat()
         if not (audio_enabled or verify_enabled):
-            return result
+            # No checks configured, so this take is the only take: cache it as
+            # unverified. A later run with QA on treats qa_passed False as a
+            # miss (_cache_entry_usable) rather than trusting it.
+            if cache_key_value is not None:
+                _cache_store_best_effort(
+                    settings, cache_key_value, index, result, qa_passed=False, median_f0_hz=None
+                )
+            return result, attempt + 1
 
         reasons: list[str] = []
         verdict = None
@@ -1237,7 +1378,7 @@ async def _generate_chunk_quality_checked(
                     "Chunk audio analysis failed; passing chunk through",
                     extra={"event": "chunk_analysis_error", "chunk_index": index, "error": str(exc)},
                 )
-                return result
+                return result, attempt + 1
             if not verdict.ok:
                 reasons.extend(verdict.reasons)
 
@@ -1300,7 +1441,16 @@ async def _generate_chunk_quality_checked(
                         "repetition_penalty": penalty,
                     },
                 )
-            return result
+            if cache_key_value is not None:
+                _cache_store_best_effort(
+                    settings,
+                    cache_key_value,
+                    index,
+                    result,
+                    qa_passed=True,
+                    median_f0_hz=verdict.metrics.median_f0_hz if verdict is not None else None,
+                )
+            return result, attempt + 1
         log_extra: dict[str, Any] = {
             "event": "chunk_quality_bad",
             "chunk_index": index,
@@ -1359,7 +1509,7 @@ async def _generate_chunk_quality_checked(
             "kept": kept,
         },
     )
-    return result
+    return result, attempt + 1
 
 
 async def _stage_tts(
@@ -1379,10 +1529,18 @@ async def _stage_tts(
     # so the wrapper re-selects inside the same GPU lock that guards inference and a
     # concurrent audition cannot slip between choosing the voice and using it.
     # A failed model select keeps the wrapper's current model, not a dead job.
+    # ``model_confirmed`` tracks whether that succeeded: on failure the wrapper
+    # may still be running whatever model it had loaded before, so the chunk
+    # cache (keyed on settings.TTS_MODEL) must not trust that as the model
+    # that actually produced this job's audio -- caching this job's chunks
+    # under the intended-but-unconfirmed model would let a later job with a
+    # working select serve audio synthesized by a different model.
+    model_confirmed = True
     if settings.TTS_MODEL:
         try:
             await tts.select_model_with_retry(settings, settings.TTS_MODEL)
         except tts.TTSError:
+            model_confirmed = False
             logger.warning(
                 "Model select failed; using the wrapper's current model",
                 extra={"event": "tts_select_model_failed", "model": settings.TTS_MODEL},
@@ -1416,13 +1574,50 @@ async def _stage_tts(
     pitch_tracker = (
         audio_analysis.PitchTracker(settings) if settings.AUDIO_ANALYSIS_ENABLED else None
     )
+    # Adaptive max_chars: count early chunks that needed a regen; once the
+    # trigger is reached, base_max_chars is set for the rest of the job and
+    # never reset (lowering only -- see _ADAPTIVE_* constants above).
+    # A cache hit reports attempts=1, so a mostly-cached resumed job may never
+    # arm this gate inside the first-20 window; accepted, since those chunks
+    # cost no synthesis anyway.
+    adaptive_enabled = settings.TTS_ADAPTIVE_MAX_CHARS_ENABLED
+    base_max_chars: int | None = None
+    early_regen_count = 0
     for index, text in enumerate(chunks):
         _raise_if_cancelled(job.id, settings)
-        result = await _generate_chunk_quality_checked(
-            job, text, index, settings, target_slot, pitch_tracker
+        chunk_started = time.monotonic()
+        result, attempts = await _generate_chunk_quality_checked(
+            job, text, index, settings, target_slot, pitch_tracker, model_confirmed, base_max_chars
         )
+        synth_ms = int((time.monotonic() - chunk_started) * 1000)
         results.append(result)
         _set_progress(job.id, index + 1, total, settings)
+        if (
+            adaptive_enabled
+            and base_max_chars is None
+            and index < _ADAPTIVE_WINDOW
+            and attempts > 1
+        ):
+            early_regen_count += 1
+            if early_regen_count >= _ADAPTIVE_TRIGGER:
+                base_max_chars = int(
+                    clamp_to_bounds(
+                        settings.CHATTERBOX_MAX_CHARS * _ADAPTIVE_FACTOR, _MAX_CHARS_BOUNDS
+                    )
+                )
+                logger.info(
+                    "Early QA failures triggered a lowered max_chars for the rest of the job",
+                    extra={
+                        "event": "tts_adaptive_max_chars",
+                        "max_chars": base_max_chars,
+                        "trigger_chunks": early_regen_count,
+                    },
+                )
+        # Wall time including any regens, against the produced audio's own
+        # duration -- how many seconds of synthesis each second of audio cost.
+        rtf = (
+            synth_ms / 1000 / result.duration_secs if result.duration_secs > 0 else None
+        )
         logger.info(
             "Chunk synthesized",
             extra={
@@ -1430,6 +1625,12 @@ async def _stage_tts(
                 "chunk_index": index,
                 "duration_secs": result.duration_secs,
                 "wav_path": result.wav_path,
+                "synth_ms": synth_ms,
+                "attempts": attempts,
+                "rtf": rtf,
+                "inference_ms": result.inference_ms,
+                "verify_ms": result.verify_ms,
+                "rss_mb": result.rss_mb,
             },
         )
     logger.info(
@@ -1746,18 +1947,23 @@ def _coerce_str(value: Any) -> str | None:
     return None
 
 
-def _apply_base_lexicon(text: str, conn, settings: Settings) -> str:
+def _apply_base_lexicon(
+    text: str, conn, settings: Settings, cache: dict[str, str] | None = None
+) -> str:
     """Aggressive per-token apply of the base lexicon.
 
     Every plain word is looked up; a ``base`` entry whose respelling differs and
     clears the confidence gate is applied. user/seed rows already ran via the
     regex pass, so only ``base`` rows are applied here. No-op when
-    ``LEXICON_AGGRESSIVE`` is off or the base layer is empty.
+    ``LEXICON_AGGRESSIVE`` is off or the base layer is empty. Callers batching
+    many texts pass one shared ``cache`` so a common word costs one DB lookup
+    per episode, not one per chunk.
     """
 
     if not settings.LEXICON_AGGRESSIVE:
         return text
-    cache: dict[str, str] = {}
+    if cache is None:
+        cache = {}
 
     def repl(match: re.Match[str]) -> str:
         token = match.group(0)
@@ -1793,6 +1999,7 @@ async def _apply_corrections_batch(texts: list[str], settings: Settings) -> list
     with database.connection(settings.DATA_DIR) as conn:
         cs_pairs, ci_pairs = lexicon.apply_pairs_by_case(conn)
         results: list[str] = []
+        token_cache: dict[str, str] = {}
         for text in texts:
             # Acronyms get no automatic letter-spelling: Chatterbox (BPE/char-based, no g2p)
             # pronounces common ones natively, and forcing "C E O" makes it choppy. A
@@ -1801,7 +2008,7 @@ async def _apply_corrections_batch(texts: list[str], settings: Settings) -> list
             # so "404 media" hits "404 Media". Then the aggressive base-lexicon pass.
             applied = corrections.apply(_normalize_for_tts(text), cs_pairs)
             applied = corrections.apply(applied, ci_pairs, case_sensitive=False)
-            applied = _apply_base_lexicon(applied, conn, settings)
+            applied = _apply_base_lexicon(applied, conn, settings, token_cache)
             # Strip periods from dotted acronyms LAST -- catches both article text ("U.S.")
             # and any dotted respelling a correction injected ("A.I.") -- so the engine
             # never pauses mid-acronym.
@@ -1882,19 +2089,38 @@ async def _pronounce_chunks_with_llm(
     # Chunks are independent, so run the calls concurrently under a small cap.
     semaphore = asyncio.Semaphore(max(1, settings.LLM_PRONUNCIATION_CONCURRENCY))
     done_count = 0
+    # Per-job latch: once a model has shown it will not follow the numbered-line
+    # protocol, every further sentence-scope call costs a wasted call plus the
+    # full-window retry. Mutated from concurrent tasks without a lock -- a race
+    # only means one extra attempt.
+    sentence_scope_broken = {"failed": False}
 
     async def _pronounce_one(index: int, window: str) -> str:
         nonlocal done_count
-        lines = [line for pattern, line in matchers if pattern.search(window)]
+        window_matchers = [(pattern, line) for pattern, line in matchers if pattern.search(window)]
         try:
-            if not lines:
+            if not window_matchers:
                 return window
-            system_prompt = (
-                f"{base_prompt}\n\nPRONUNCIATION REFERENCE (term -> respelling):\n"
-                + "\n".join(lines)
+            reference_block = "PRONUNCIATION REFERENCE (term -> respelling):\n" + "\n".join(
+                line for _, line in window_matchers
+            )
+            system_prompt = f"{base_prompt}\n\n{reference_block}"
+            use_sentence_scope = (
+                settings.PRONUNCIATION_SCOPE == "sentence" and not sentence_scope_broken["failed"]
             )
             async with semaphore:
-                part = await _pronounce_window(system_prompt, window, index, settings)
+                if use_sentence_scope:
+                    part = await _pronounce_window_sentence_scope(
+                        system_prompt,
+                        f"{_PRONUNCIATION_SENTENCE_SYSTEM}\n\n{reference_block}",
+                        window,
+                        index,
+                        settings,
+                        window_matchers,
+                        sentence_scope_broken,
+                    )
+                else:
+                    part = await _pronounce_window(system_prompt, window, index, settings)
             return part
         finally:
             done_count += 1
@@ -1924,6 +2150,7 @@ async def _pronounce_window(
         f"and a line {cleanup_output.END_MARKER} -- no commentary outside the markers."
         f"\n\n<text>\n{window}\n</text>"
     )
+    llm_started = time.monotonic()
     try:
         raw = await _llm_with_retry(system_prompt, user_message, settings)
         if cleanup_output.BEGIN_MARKER not in raw:
@@ -1952,6 +2179,7 @@ async def _pronounce_window(
             exc_info=True,
         )
         return window
+    llm_ms = int((time.monotonic() - llm_started) * 1000)
     if len(part) < len(window) * _PRONUNCIATION_MIN_RATIO:
         logger.warning(
             "Pronunciation window output too short; keeping original",
@@ -1966,7 +2194,163 @@ async def _pronounce_window(
             },
         )
         return window
+    # Logged only for a window whose output is actually applied, so the event
+    # count matches the windows the pass changed.
+    logger.info(
+        "Pronunciation window done",
+        extra={
+            "event": "pronunciation_window_done",
+            "window_index": index,
+            "llm_ms": llm_ms,
+            "input_chars": len(window),
+        },
+    )
     return part
+
+
+# The sentence-scope call gets its own system prompt: the full-window one opens
+# with an "output the ENTIRE text" contract that directly contradicts returning
+# a subset of the chunk as numbered lines. The reference block is appended by
+# the caller in the same shape both prompts use.
+_PRONUNCIATION_SENTENCE_SYSTEM = (
+    "You are a text-processing engine, not a chat assistant. You receive numbered "
+    "sentences taken from narration text. Change ONLY the spelled form of terms that "
+    "match the pronunciation reference below; leave every other word exactly as "
+    "written, character for character. Never letter-space an acronym that has no "
+    "reference entry. Do not summarize, reorder, merge, split, drop, or renumber the "
+    "lines, and never comment on them. Return exactly the numbered lines you were "
+    "given, one per line, in the same order, keeping every number."
+)
+
+_PRONUNCIATION_SENTENCE_INSTRUCTION = (
+    "Respell the numbered sentences below per the pronunciation reference, changing "
+    "only matching terms. Return the same numbered lines, one per line, between a "
+    f"line {cleanup_output.BEGIN_MARKER} and a line {cleanup_output.END_MARKER}. Keep "
+    "every number. No other text."
+)
+
+_NUMBERED_LINE_RE = re.compile(r"^\s*(\d+)\.\s*(.*)$")
+
+
+def _splice_sentences(window: str, originals: list[str], replacements: list[str]) -> str:
+    """Replace each of ``originals`` with its ``replacements`` counterpart, in
+    the order the sentences appear in ``window``.
+
+    Walks the window with ``str.find`` per sentence, advancing the search
+    offset past each replacement so a repeated sentence splices into its own
+    occurrence rather than the first one. Raises ValueError if a sentence
+    can't be located -- the caller treats that as a splice failure and falls
+    back to the full-window call.
+    """
+
+    result = window
+    offset = 0
+    for original, respelled in zip(originals, replacements, strict=True):
+        idx = result.find(original, offset)
+        if idx == -1:
+            raise ValueError(f"sentence not found while splicing: {original!r}")
+        # Per-sentence short-output guard, same ratio as the full-window check.
+        if len(respelled) < len(original) * _PRONUNCIATION_MIN_RATIO:
+            respelled = original
+        result = result[:idx] + respelled + result[idx + len(original) :]
+        offset = idx + len(respelled)
+    return result
+
+
+def _parse_numbered_reply(raw: str, expected: int) -> list[str]:
+    """The respelled sentences from a marker-delimited numbered-line reply, in
+    order. Raises ValueError on any protocol violation (missing markers, a
+    line that is not numbered, numbering that does not cover exactly
+    1..expected)."""
+
+    if cleanup_output.BEGIN_MARKER not in raw:
+        raise ValueError("sentence-scope reply missing markers")
+    parsed: dict[int, str] = {}
+    for line in cleanup_output.extract_clean_output(raw).splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        match = _NUMBERED_LINE_RE.match(stripped)
+        if not match:
+            raise ValueError(f"unparseable numbered line: {stripped!r}")
+        parsed[int(match.group(1))] = match.group(2).strip()
+    if set(parsed.keys()) != set(range(1, expected + 1)):
+        raise ValueError("sentence-scope reply numbering mismatch")
+    return [parsed[i] for i in range(1, expected + 1)]
+
+
+async def _pronounce_window_sentence_scope(
+    system_prompt: str,
+    sentence_prompt: str,
+    window: str,
+    index: int,
+    settings: Settings,
+    window_matchers: list[tuple[re.Pattern[str], str]],
+    sentence_scope_broken: dict[str, bool],
+) -> str:
+    """Sentence-scoped pronunciation call: only reference-matched sentences are
+    sent to the LLM as numbered lines, cutting tokens on chunks where most
+    sentences carry no reference term. Any protocol failure (missing markers,
+    unparseable or mismatched numbering) or splice failure (a respelled
+    sentence not locatable in the window) falls back to the existing
+    full-window call, which has its own marker retry and verbatim fallback.
+
+    A protocol failure also latches ``sentence_scope_broken``: a model that
+    ignores the numbered-line contract once will ignore it again, so the rest
+    of the job goes straight to chunk scope. Splice failures and windows with
+    no selectable sentence are content-specific and do not latch.
+    """
+
+    sentences = chunker.split_sentences(window)
+    selected = [s for s in sentences if any(pattern.search(s) for pattern, _ in window_matchers)]
+
+    async def _fallback(reason: str) -> str:
+        logger.info(
+            "Pronunciation sentence-scope pass skipped; falling back to full window",
+            extra={
+                "event": "pronunciation_sentence_scope_fallback",
+                "window_index": index,
+                "sentence_count": len(selected),
+                "reason": reason,
+            },
+            exc_info=reason != "no_matching_sentence",
+        )
+        return await _pronounce_window(system_prompt, window, index, settings)
+
+    if not selected:
+        # The chunk matched a term the sentence split broke apart ("St. John"
+        # splits after "St."), so no single sentence carries it. The chunk-scope
+        # call still sees the whole term.
+        return await _fallback("no_matching_sentence")
+    numbered = "\n".join(f"{i}. {sentence}" for i, sentence in enumerate(selected, start=1))
+    user_message = f"{_PRONUNCIATION_SENTENCE_INSTRUCTION}\n\n{numbered}"
+    llm_started = time.monotonic()
+    try:
+        raw = await _llm_with_retry(sentence_prompt, user_message, settings)
+    except Exception:
+        return await _fallback("llm_error")
+    try:
+        replacements = _parse_numbered_reply(raw, len(selected))
+    except ValueError:
+        sentence_scope_broken["failed"] = True
+        return await _fallback("protocol")
+    try:
+        spliced = _splice_sentences(window, selected, replacements)
+    except ValueError:
+        return await _fallback("splice")
+    llm_ms = int((time.monotonic() - llm_started) * 1000)
+    logger.info(
+        "Pronunciation window done",
+        extra={
+            "event": "pronunciation_window_done",
+            "window_index": index,
+            "llm_ms": llm_ms,
+            "input_chars": len(window),
+            "scope": "sentence",
+            "sentence_count": len(selected),
+        },
+    )
+    return spliced
 
 
 async def _stage_normalize(job: jobs.Job, chunks: list[str], settings: Settings) -> list[str]:
@@ -2056,6 +2440,10 @@ async def _stage_summary(text: str, settings: Settings) -> str | None:
             exc_info=True,
         )
         return None
+    # Deterministic backstop for the prompt's punctuation contract: the model
+    # emits em dashes and curly quotes regardless of instructions, so the ban
+    # is enforced on the way out.
+    summary = cleanup_output.ascii_punctuation(summary)
     logger.info(
         "Summary generated",
         extra={"event": "summary_complete", "summary_chars": len(summary)},
@@ -2117,22 +2505,49 @@ async def _llm_with_retry(system: str, user: str, settings: Settings) -> str:
 # long-running stage doesn't hold a write lock.
 
 
-def _set_stage(job_id: str, stage: str, settings: Settings) -> None:
+# A job-row write is expected to take milliseconds; anything over this logs a
+# slow_db_write warning with the WAL size, to pinpoint the silent multi-minute
+# stalls observed between pipeline stages (suspected checkpoint-on-close work
+# against a WAL left huge by a bulk lexicon import).
+_SLOW_DB_WRITE_SECONDS = 1.0
+
+
+def _timed_job_write(op: str, settings: Settings, write) -> None:
+    started = time.monotonic()
     conn = database.connect(database.db_path(settings.DATA_DIR))
     try:
-        jobs.set_stage(conn, job_id, stage)
+        write(conn)
     finally:
         conn.close()
+    elapsed = time.monotonic() - started
+    if elapsed > _SLOW_DB_WRITE_SECONDS:
+        try:
+            wal_bytes = (
+                database.db_path(settings.DATA_DIR).with_suffix(".db-wal").stat().st_size
+            )
+        except OSError:
+            wal_bytes = None
+        logger.warning(
+            "Slow job-row write",
+            extra={
+                "event": "slow_db_write",
+                "op": op,
+                "duration_ms": int(elapsed * 1000),
+                "wal_bytes": wal_bytes,
+            },
+        )
+
+
+def _set_stage(job_id: str, stage: str, settings: Settings) -> None:
+    _timed_job_write("set_stage", settings, lambda conn: jobs.set_stage(conn, job_id, stage))
     # The DB row and the watchdog track the same signal; keep them in step.
     _beat()
 
 
 def _set_progress(job_id: str, current: int, total: int, settings: Settings) -> None:
-    conn = database.connect(database.db_path(settings.DATA_DIR))
-    try:
-        jobs.set_progress(conn, job_id, current, total)
-    finally:
-        conn.close()
+    _timed_job_write(
+        "set_progress", settings, lambda conn: jobs.set_progress(conn, job_id, current, total)
+    )
     _beat()
 
 

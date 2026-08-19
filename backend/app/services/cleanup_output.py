@@ -74,6 +74,47 @@ _PREAMBLE_RE = re.compile(
 )
 
 
+# Reader-facing LLM output (summary, chapter titles) must be ASCII-punctuation
+# clean: the prompts ban em dashes, curly quotes, and emojis, but Claude-family
+# models emit them anyway, so the ban is enforced here where it cannot be
+# ignored. Letters are never touched (accented names survive); only punctuation
+# is mapped and emoji ranges are dropped.
+_EN_DASH_RANGE_RE = re.compile(r"(?<=\d)\s*\u2013\s*(?=\d)")
+_DASH_ASIDE_RE = re.compile(r"\s*[\u2014\u2015\u2013]\s*")
+_EMOJI_RE = re.compile(
+    "[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200D]"
+)
+_PUNCT_MAP = str.maketrans(
+    {
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201C": '"',
+        "\u201D": '"',
+        "\u2026": "...",
+        "\u2212": "-",
+        "\u00A0": " ",
+        "\u2022": " ",
+        "\u00B7": " ",
+    }
+)
+
+
+def ascii_punctuation(text: str) -> str:
+    """Rewrite the AI-tell punctuation the prompts ban but models still emit.
+
+    A numeric range keeps a plain hyphen (3.8\u20134 -> 3.8-4); every other em
+    or en dash becomes a comma aside (word \u2014 word -> word, word); curly
+    quotes straighten, the ellipsis character expands, and emojis are removed.
+    """
+
+    text = _EN_DASH_RANGE_RE.sub("-", text)
+    text = _DASH_ASIDE_RE.sub(", ", text)
+    text = text.translate(_PUNCT_MAP)
+    text = _EMOJI_RE.sub("", text)
+    # Collapse doubled spaces the substitutions can leave behind.
+    return re.sub(r" {2,}", " ", text).strip()
+
+
 def _strip_preamble(text: str) -> str:
     """Drop leading conversational paragraphs (no-marker fallback)."""
 

@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.3"
+      - run: uv run ruff check
+
+  test-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.3"
+      # The audio/chapters/chime tests shell out to ffmpeg; without it 4 tests
+      # fail outright and 28 more skip.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: uv run pytest
+
+  test-render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.3"
+      - run: uv run pytest
+        working-directory: render
+
+  test-tts-wrapper:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.3"
+      # uv run syncs only the core + dev groups (the chatterbox extra, and with
+      # it torch, is never installed here; the tests use the fake engine). The
+      # lockfile also sources torch from the CPU index, so even a full
+      # --all-extras sync stays off the multi-GB CUDA wheels.
+      - run: uv run pytest
+        working-directory: tts-wrapper
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          tags: audicle-ci
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

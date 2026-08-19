@@ -34,6 +34,7 @@ logger = logging.getLogger("app.core.database")
 DB_FILENAME = "podcast.db"
 LOCK_FILENAME = ".migration.lock"
 REFERENCE_LOCK_FILENAME = ".reference.lock"
+LEXICON_SYNC_LOCK_FILENAME = ".lexicon-sync.lock"
 BACKUP_PREFIX = "podcast.db.backup-"
 
 
@@ -120,6 +121,20 @@ def migration_lock(data_dir: Path) -> Iterator[None]:
     """Serialize concurrent startups via fcntl.flock on .migration.lock."""
 
     with _flock_exclusive(data_dir, LOCK_FILENAME):
+        yield
+
+
+@contextmanager
+def lexicon_sync_lock(data_dir: Path) -> Iterator[None]:
+    """Serialize the base-lexicon import across the web and worker processes.
+
+    Deliberately a separate lock from ``migration_lock``: the import can take
+    tens of minutes on slow disks, and holding the migration lock for that long
+    blocked the other process's startup migration check, so the app never bound
+    its port (#126). Sync contends only with itself; startup never waits on it.
+    """
+
+    with _flock_exclusive(data_dir, LEXICON_SYNC_LOCK_FILENAME):
         yield
 
 
@@ -625,6 +640,15 @@ def _m023_reimport_seed_lexicon(conn: sqlite3.Connection) -> None:
     _reimport_seed_lexicon(conn)
 
 
+def _m026_lexicon_input_text_index(conn: sqlite3.Connection) -> None:
+    """0.56.3: index lexicon.input_text for the exact-case half of lookup().
+    The PK (origin, input_text) cannot serve a bare input_text probe, so the
+    aggressive base-lexicon pass full-scanned the table once per token,
+    costing about four minutes of normalize per episode."""
+
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_lexicon_input_text ON lexicon(input_text)")
+
+
 def _m025_episode_chapters_json(conn: sqlite3.Connection) -> None:
     """0.51.0: Podcasting 2.0 chapters document per episode, stored like
     transcript_vtt. NULL for every pre-existing row (chapters are generated
@@ -707,6 +731,7 @@ MIGRATIONS: list[tuple[str, Migration]] = [
     ("023_reimport_seed_lexicon", _m023_reimport_seed_lexicon),
     ("024_reimport_seed_lexicon", _m024_reimport_seed_lexicon),
     ("025_episode_chapters_json", _m025_episode_chapters_json),
+    ("026_lexicon_input_text_index", _m026_lexicon_input_text_index),
 ]
 
 

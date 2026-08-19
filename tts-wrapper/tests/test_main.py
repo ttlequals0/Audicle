@@ -187,6 +187,30 @@ def test_generate_503_when_reference_not_loaded(tmp_path: Path) -> None:
     assert "no reference voice" in str(response.json()["detail"])
 
 
+def test_health_reports_rss_and_restart_not_recommended_under_soft_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TTS_MEMORY_SOFT_LIMIT_MB", "8000")
+    monkeypatch.setattr(main, "rss_mb", lambda: 10)
+    engine = FakeEngine()
+    with _client(engine, tmp_path) as client:
+        body = client.get("/health").json()
+    assert body["rss_mb"] == 10
+    assert body["restart_recommended"] is False
+
+
+def test_health_reports_restart_recommended_over_soft_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TTS_MEMORY_SOFT_LIMIT_MB", "100")
+    monkeypatch.setattr(main, "rss_mb", lambda: 200)
+    engine = FakeEngine()
+    with _client(engine, tmp_path) as client:
+        body = client.get("/health").json()
+    assert body["rss_mb"] == 200
+    assert body["restart_recommended"] is True
+
+
 def test_health_live_200_without_reference(tmp_path: Path) -> None:
     """Liveness is satisfied by the model alone. A voice-less wrapper returns
     503 on /health (readiness) but must be 200 on /health/live, or the app's
@@ -224,6 +248,11 @@ def test_generate_writes_wav_and_returns_path_duration_rate(tmp_path: Path) -> N
     assert engine.synthesize_calls == ["hello there"]
     # With no verifier wired and verify not requested, transcript is null.
     assert body["transcript"] is None
+    assert isinstance(body["inference_ms"], int)
+    assert body["inference_ms"] >= 0
+    assert body["rss_mb"] > 0
+    # Verify never ran, so verify_ms stays null rather than a stale 0.
+    assert body["verify_ms"] is None
 
 
 def test_verifier_warmed_at_startup(tmp_path: Path) -> None:
@@ -247,8 +276,11 @@ def test_generate_verify_returns_transcript(tmp_path: Path) -> None:
             json={"text": "hello there", "episode_id": "ep-1", "chunk_index": 0, "verify": True},
         )
     assert response.status_code == 200, response.text
-    assert response.json()["transcript"] == "hello there"
+    body = response.json()
+    assert body["transcript"] == "hello there"
     assert len(verifier.calls) == 1  # transcribed the produced audio once
+    assert isinstance(body["verify_ms"], int)
+    assert body["verify_ms"] >= 0
 
 
 def test_generate_without_verify_skips_transcription(tmp_path: Path) -> None:
@@ -764,6 +796,50 @@ def test_generate_does_not_restart_under_the_hard_limit(
         )
     assert response.status_code == 200
     assert restarts == []
+
+
+# --- /maintenance/restart (idle wrapper restart, 0.56.0) -------------------
+
+
+def test_maintenance_restart_queues_restart_and_logs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
+    """The worker calls this between jobs when the wrapper's /health reports
+    restart_recommended; it must queue the same restart /generate's hard-limit
+    path uses, not duplicate that logic."""
+
+    restarts: list[str] = []
+    monkeypatch.setattr(main, "_request_restart", lambda: restarts.append("restart"))
+
+    engine = FakeEngine()
+    with caplog.at_level("INFO"):
+        with _client(engine, tmp_path) as client:
+            response = client.post("/maintenance/restart")
+
+    assert response.status_code == 200
+    assert response.json() == {"restarting": True}
+    assert restarts == ["restart"]
+    assert any(getattr(r, "event", None) == "tts_idle_restart" for r in caplog.records)
+
+
+def test_maintenance_restart_503_when_inference_lock_held(tmp_path: Path) -> None:
+    """A between-jobs restart must never race a chunk still on the GPU; the
+    caller (the worker) treats 503 as "try again next idle window"."""
+
+    engine = FakeEngine()
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    app = create_app(engine=engine, data_dir=data_dir)
+    # asyncio.Lock.acquire() on an uncontended lock completes synchronously
+    # (no waiter registration), so running it to completion in a throwaway
+    # event loop is enough to flip .locked() without needing real concurrency.
+    asyncio.run(app.state.lock.acquire())
+
+    with TestClient(app) as client:
+        response = client.post("/maintenance/restart")
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["error"] == "inference busy"
 
 
 def test_uvicorn_error_logger_is_reported_as_uvicorn() -> None:

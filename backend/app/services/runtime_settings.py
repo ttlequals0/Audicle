@@ -104,6 +104,10 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "CHATTERBOX_TOP_K",
         "CHATTERBOX_SEED",
         "CHATTERBOX_MAX_CHARS",
+        # Resumable TTS chunk cache: tunable live so an operator can disable it
+        # mid-incident or adjust how long entries survive without a restart.
+        "TTS_CHUNK_CACHE_ENABLED",
+        "TTS_CACHE_RETENTION_DAYS",
         "CHIME_ENABLED",
         # Audio-QA thresholds: tunable live since they need empirical tuning
         # against real failures. (The frame/hop/window sizes joined them in
@@ -125,6 +129,9 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "AUDIO_ANALYSIS_REGEN_CHARS_FACTOR",
         "AUDIO_ANALYSIS_REGEN_MIN_CHARS",
         "AUDIO_ANALYSIS_REGEN_PENALTY_STEP",
+        # Adaptive max_chars: same reasoning, tunable live so an operator can
+        # disable it mid-incident without a restart.
+        "TTS_ADAPTIVE_MAX_CHARS_ENABLED",
         # Post-TTS ASR verification policy. Tunable live so an operator can turn
         # the gate on/off and adjust strictness without a restart. The wrapper's
         # WHISPER_ENABLED (which loads the model) stays env-only -- it is a
@@ -152,6 +159,9 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "LLM_TIMEOUT_SECONDS",
         "LLM_RETRY_COUNT",
         "LLM_PRONUNCIATION_CONCURRENCY",
+        # Pronunciation pass scope (chunk | sentence); Literal choice, so
+        # api/v1/settings.py's generic Literal-field check enforces the members.
+        "PRONUNCIATION_SCOPE",
         # Wrapper resilience (0.55.0). These are the knobs an operator reaches for
         # during an incident, so they must not need a redeploy: when the wrapper
         # is OOM-killed mid-job its cold start runs 60-99 s, and the retry budget
@@ -161,6 +171,7 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "TTS_CONNECT_RETRY_MAX_SECONDS",
         "TTS_REACHABILITY_GRACE_SECONDS",
         "TTS_REACHABILITY_PROBE_TIMEOUT",
+        "TTS_IDLE_RESTART_ENABLED",
         # Extraction and delivery budgets (0.55.0). Same reasoning as the TTS
         # group: every one is read per request, and a slow upstream is exactly
         # when an operator needs to widen a timeout without a restart. This
@@ -223,6 +234,7 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "WHISPER_API_KEY",
         "WHISPER_API_MODEL",
         "WHISPER_API_TIMEOUT_SECONDS",
+        "WHISPER_API_STRICT",
         # Log verbosity is mutable at runtime in Python, so raising a live
         # deployment to DEBUG to watch one job should not need a redeploy.
         # LOG_FORMAT stays env-only: the formatter is wired once at startup.

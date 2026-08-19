@@ -162,3 +162,95 @@ def test_maybe_run_retention_sweep_logs_and_returns_unchanged_on_failure(
         result = worker._maybe_run_retention_sweep(settings, last_sweep_day=None)
     assert result is None
     assert any(getattr(rec, "event", "") == "retention_sweep_failed" for rec in caplog.records)
+
+
+def test_maybe_run_retention_sweep_purges_old_tts_cache_entries(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sweep added for the resumable TTS chunk cache purges entries
+    older than TTS_CACHE_RETENTION_DAYS, same as the other sweeps it runs
+    alongside."""
+
+    import os
+    import time as time_mod
+
+    from app.services import tts_cache
+
+    database.run_migrations(env)
+    settings = get_settings()
+    fake_now = datetime(2026, 5, 28, settings.RETENTION_SWEEP_HOUR_UTC, 30, 0, tzinfo=UTC)
+    _freeze_now(monkeypatch, fake_now)
+
+    wav_src = env / "src.wav"
+    wav_src.write_bytes(b"fake-wav-bytes")
+    tts_cache.store(
+        settings.DATA_DIR,
+        "old_key",
+        wav_src,
+        duration_secs=1.0,
+        sample_rate=24000,
+        transcript=None,
+        qa_passed=True,
+    )
+    cache_dir = tts_cache.cache_dir(settings.DATA_DIR)
+    old_time = time_mod.time() - (settings.TTS_CACHE_RETENTION_DAYS + 1) * 86400
+    for suffix in (".wav", ".json"):
+        os.utime(cache_dir / f"old_key{suffix}", (old_time, old_time))
+
+    worker._maybe_run_retention_sweep(settings, last_sweep_day=None)
+
+    assert tts_cache.lookup(settings.DATA_DIR, "old_key") is None
+
+
+def test_maybe_run_retention_sweep_logs_and_returns_unchanged_on_tts_cache_purge_failure(
+    env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A broken tts_cache.purge_older_than must be caught the same way as
+    the other sweep failures above, not just the retention.py ones."""
+
+    import logging
+
+    from app.services import tts_cache
+
+    database.run_migrations(env)
+    settings = get_settings()
+    fake_now = datetime(2026, 5, 28, settings.RETENTION_SWEEP_HOUR_UTC, 30, 0, tzinfo=UTC)
+    _freeze_now(monkeypatch, fake_now)
+
+    def _boom(_data_dir, _days):
+        raise RuntimeError("cache disk on fire")
+
+    monkeypatch.setattr(tts_cache, "purge_older_than", _boom)
+    with caplog.at_level(logging.ERROR, logger="app.worker"):
+        result = worker._maybe_run_retention_sweep(settings, last_sweep_day=None)
+    assert result is None
+    assert any(getattr(rec, "event", "") == "retention_sweep_failed" for rec in caplog.records)
+
+
+def test_maybe_run_retention_sweep_clamps_tts_cache_retention_days(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TTS_CACHE_RETENTION_DAYS has no pydantic Field constraint (bounds live
+    only in RUNTIME_SETTING_BOUNDS), so the sweep must clamp an out-of-range
+    env value itself before calling purge_older_than."""
+
+    from app.services import tts_cache
+
+    database.run_migrations(env)
+    monkeypatch.setenv("TTS_CACHE_RETENTION_DAYS", "0")
+    get_settings.cache_clear()
+    settings = get_settings()
+    fake_now = datetime(2026, 5, 28, settings.RETENTION_SWEEP_HOUR_UTC, 30, 0, tzinfo=UTC)
+    _freeze_now(monkeypatch, fake_now)
+
+    captured: dict[str, int] = {}
+
+    def _capture(_data_dir, days):
+        captured["days"] = days
+        return 0
+
+    monkeypatch.setattr(tts_cache, "purge_older_than", _capture)
+    worker._maybe_run_retention_sweep(settings, last_sweep_day=None)
+    assert captured["days"] == 1  # clamped to RUNTIME_SETTING_BOUNDS["TTS_CACHE_RETENTION_DAYS"]["ge"]

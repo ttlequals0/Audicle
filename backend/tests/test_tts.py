@@ -13,13 +13,11 @@ from app.services import tts
 
 
 def _patch_async_client(monkeypatch: pytest.MonkeyPatch, transport: httpx.MockTransport) -> None:
-    original = httpx.AsyncClient
-
-    def factory(*args, **kwargs):
-        kwargs.setdefault("transport", transport)
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    # _post/_get pull the shared client (module-level singleton), so patching
+    # httpx.AsyncClient itself no longer reaches them once it's constructed.
+    # Hand back a dedicated client wired to this test's transport instead.
+    client = httpx.AsyncClient(transport=transport)
+    monkeypatch.setattr(tts, "shared_client", lambda: client)
 
 
 def _capture_transport(*, response: httpx.Response):
@@ -139,6 +137,65 @@ def test_generation_param_defaults_and_bounds_match_wrapper() -> None:
         ), backend_key
 
 
+def test_cache_identity_wrapper_needs_model_and_slot(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TTS_MODEL", "chatterbox-turbo")
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    identity = tts.cache_identity(settings, 1)
+    assert identity is not None
+    assert identity[:2] == ("wrapper", "chatterbox-turbo")
+
+    assert tts.cache_identity(settings, None) is None  # no resolved slot
+    monkeypatch.setenv("TTS_MODEL", "")
+    get_settings.cache_clear()
+    assert tts.cache_identity(get_settings(), 1) is None  # model never selected
+    get_settings.cache_clear()
+
+
+def test_cache_identity_none_when_seed_is_unset(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Seed 0 means the wrapper rolls a random seed per call, so a stored take
+    # would freeze one re-roll for the whole retention window.
+    monkeypatch.setenv("TTS_MODEL", "chatterbox-turbo")
+    monkeypatch.setenv("CHATTERBOX_SEED", "0")
+    get_settings.cache_clear()
+
+    assert tts.cache_identity(get_settings(), 1) is None
+    get_settings.cache_clear()
+
+
+def test_cache_identity_remote_backend_needs_model_and_voice(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TTS_BACKEND", "openai-api")
+    monkeypatch.setenv("TTS_API_BASE_URL", "http://remote.test")
+    monkeypatch.setenv("TTS_API_MODEL", "tts-1")
+    monkeypatch.setenv("TTS_API_VOICE", "alloy")
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    # The base URL is part of the fingerprint: two providers can advertise the
+    # same model and voice names without producing the same voice.
+    assert tts.cache_identity(settings, None) == (
+        "openai-api",
+        "tts-1",
+        "http://remote.test:tts-1:alloy",
+    )
+    monkeypatch.setenv("TTS_API_BASE_URL", "http://other.test")
+    get_settings.cache_clear()
+    assert tts.cache_identity(get_settings(), None)[2] == "http://other.test:tts-1:alloy"
+
+    monkeypatch.setenv("TTS_API_BASE_URL", "http://remote.test")
+    monkeypatch.setenv("TTS_API_MODEL", "")
+    get_settings.cache_clear()
+    assert tts.cache_identity(get_settings(), None) is None  # blank model, not an identity
+    get_settings.cache_clear()
+
+
 async def test_generate_chunk_verify_flag_sets_payload_field(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -171,6 +228,72 @@ async def test_generate_chunk_parses_transcript(
 
     result = await tts.generate_chunk("hello", "ep-1", 3, get_settings(), verify=True)
     assert result.transcript == "the spoken words"
+
+
+async def test_generate_chunk_parses_instrumentation_fields(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    response = httpx.Response(
+        200,
+        content=json.dumps(
+            {
+                "wav_path": "/data/media/abc_chunk_0.wav",
+                "duration_secs": 12.3,
+                "sample_rate": 24000,
+                "inference_ms": 450,
+                "verify_ms": 80,
+                "rss_mb": 2048,
+            }
+        ).encode(),
+        headers={"content-type": "application/json"},
+    )
+    transport, _captured = _capture_transport(response=response)
+    _patch_async_client(monkeypatch, transport)
+
+    result = await tts.generate_chunk("hello", "ep-1", 3, get_settings())
+    assert result.inference_ms == 450
+    assert result.verify_ms == 80
+    assert result.rss_mb == 2048
+
+
+async def test_generate_chunk_instrumentation_fields_absent_default_none(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An older wrapper (or the remote backend) omits these fields entirely.
+    transport, _captured = _capture_transport(response=_ok_generate())
+    _patch_async_client(monkeypatch, transport)
+
+    result = await tts.generate_chunk("hello", "ep-1", 3, get_settings())
+    assert result.inference_ms is None
+    assert result.verify_ms is None
+    assert result.rss_mb is None
+
+
+async def test_generate_chunk_uncoercible_instrumentation_is_dropped_not_fatal(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Diagnostics are logging fodder: a wrapper reporting one oddly must not
+    # fail the chunk with a non-retryable request error.
+    response = httpx.Response(
+        200,
+        content=json.dumps(
+            {
+                "wav_path": "/data/media/abc_chunk_0.wav",
+                "duration_secs": 12.3,
+                "sample_rate": 24000,
+                "inference_ms": 450,
+                "rss_mb": "unknown",
+            }
+        ).encode(),
+        headers={"content-type": "application/json"},
+    )
+    transport, _captured = _capture_transport(response=response)
+    _patch_async_client(monkeypatch, transport)
+
+    result = await tts.generate_chunk("hello", "ep-1", 3, get_settings())
+    assert result.rss_mb is None
+    assert result.inference_ms == 450
+    assert result.wav_path == "/data/media/abc_chunk_0.wav"
 
 
 async def test_generate_chunk_5xx_raises_provider_error(

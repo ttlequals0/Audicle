@@ -242,6 +242,15 @@ def claim_next_queued(conn: sqlite3.Connection) -> Job | None:
     return get_job(conn, row["id"])
 
 
+def count_queued(conn: sqlite3.Connection) -> int:
+    """Number of jobs waiting to be claimed, using the same status literal
+    ``claim_next_queued`` reads. The worker's idle-restart check uses this to
+    avoid asking a wrapper to restart while a job is waiting behind it."""
+
+    row = conn.execute("SELECT COUNT(*) FROM jobs WHERE status = 'queued'").fetchone()
+    return int(row[0])
+
+
 def set_stage(conn: sqlite3.Connection, job_id: str, stage: JobStage) -> None:
     # Reset progress so a counter from the prior stage (e.g. tts) doesn't leak
     # onto the next one. The stage that has progress sets it via set_progress.
@@ -296,6 +305,32 @@ def mark_cancelled(conn: sqlite3.Connection, job_id: str) -> None:
         "WHERE id = ? AND status IN ('queued', 'processing')",
         (job_id,),
     )
+
+
+_TERMINAL_STATUSES = ("done", "failed", "cancelled")
+
+
+def delete_job(conn: sqlite3.Connection, job_id: str) -> bool:
+    """Remove one terminal job row from Recents. Returns True if a row was
+    deleted. A queued or processing job is never deleted (cancel it first);
+    the episode a done job produced is untouched."""
+
+    cur = conn.execute(
+        "DELETE FROM jobs WHERE id = ? AND status IN (?, ?, ?)",
+        (job_id, *_TERMINAL_STATUSES),
+    )
+    return cur.rowcount > 0
+
+
+def clear_jobs(conn: sqlite3.Connection, scope: str) -> int:
+    """Bulk-remove terminal job rows. ``scope='failed'`` clears failed and
+    cancelled runs; ``scope='all'`` clears every finished run. Queued and
+    processing rows always survive. Returns the number removed."""
+
+    statuses = ("failed", "cancelled") if scope == "failed" else _TERMINAL_STATUSES
+    marks = ", ".join("?" for _ in statuses)
+    cur = conn.execute(f"DELETE FROM jobs WHERE status IN ({marks})", statuses)
+    return cur.rowcount
 
 
 def job_as_dict(job: Job) -> dict[str, Any]:

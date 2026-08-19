@@ -205,6 +205,43 @@ export default function Home() {
     },
   });
 
+  // Remove one finished run, or clear the list in bulk. Removal only touches
+  // the job row; the episode a done run produced stays in the feed. Bulk clear
+  // is two-step: the first click arms a "confirm ..." label that reverts after
+  // a few seconds, so a stray click never wipes the list.
+  const [clearArmed, setClearArmed] = useState<"all" | "failed" | null>(null);
+  const removeJobM = useMutation({
+    mutationFn: (jobId: string) => api(`/api/v1/jobs/${jobId}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["jobs"] }),
+    onError: (e) => {
+      const status = e instanceof ApiError ? e.status : undefined;
+      setRecentMsg(`remove failed${status ? ` (HTTP ${status})` : ""}`);
+      setTimeout(() => setRecentMsg(null), 5000);
+    },
+  });
+  const clearJobsM = useMutation({
+    mutationFn: (scope: "all" | "failed") =>
+      api(`/api/v1/jobs?scope=${scope}`, { method: "DELETE" }),
+    onSuccess: () => {
+      setClearArmed(null);
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+    },
+    onError: (e) => {
+      setClearArmed(null);
+      const status = e instanceof ApiError ? e.status : undefined;
+      setRecentMsg(`clear failed${status ? ` (HTTP ${status})` : ""}`);
+      setTimeout(() => setRecentMsg(null), 5000);
+    },
+  });
+  const armClear = (scope: "all" | "failed") => {
+    if (clearArmed === scope) {
+      clearJobsM.mutate(scope);
+      return;
+    }
+    setClearArmed(scope);
+    setTimeout(() => setClearArmed((cur) => (cur === scope ? null : cur)), 4000);
+  };
+
   // Cancel a queued or processing job from the queue. A processing job stops at the
   // worker's next checkpoint; a queued job is never started.
   const [cancelMsg, setCancelMsg] = useState<string | null>(null);
@@ -292,6 +329,9 @@ export default function Home() {
     .filter((j) => j.status === "queued" || j.status === "processing")
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
   const history = jobs.filter((j) => j.status !== "queued" && j.status !== "processing");
+  const failedHistoryCount = history.filter(
+    (j) => j.status === "failed" || j.status === "cancelled"
+  ).length;
 
   return (
     <div>
@@ -541,16 +581,42 @@ export default function Home() {
 
       {history.length > 0 && (
         <section className="mt-8">
-          <button
-            className="mono-xs text-mute mb-3 flex items-center gap-1.5 hover:text-fg"
-            onClick={() => setRecentOpen(!recentOpen)}
-            aria-expanded={recentOpen}
-          >
-            <span className={`transition-transform ${recentOpen ? "rotate-90" : ""}`}>
-              &rsaquo;
-            </span>
-            // RECENT ({history.length})
-          </button>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <button
+              className="mono-xs text-mute flex items-center gap-1.5 hover:text-fg"
+              onClick={() => setRecentOpen(!recentOpen)}
+              aria-expanded={recentOpen}
+            >
+              <span className={`transition-transform ${recentOpen ? "rotate-90" : ""}`}>
+                &rsaquo;
+              </span>
+              // RECENT ({history.length})
+            </button>
+            {recentOpen && (
+              <div className="flex items-center gap-3">
+                {failedHistoryCount > 0 && (
+                  <button
+                    className={`mono-xs ${clearArmed === "failed" ? "text-danger" : "text-mute hover:text-fg"}`}
+                    onClick={() => armClear("failed")}
+                    disabled={clearJobsM.isPending}
+                    title="Removes failed and cancelled runs from this list. Episodes are not affected."
+                  >
+                    {clearArmed === "failed"
+                      ? "confirm clear failed"
+                      : `clear failed (${failedHistoryCount})`}
+                  </button>
+                )}
+                <button
+                  className={`mono-xs ${clearArmed === "all" ? "text-danger" : "text-mute hover:text-fg"}`}
+                  onClick={() => armClear("all")}
+                  disabled={clearJobsM.isPending}
+                  title="Removes every finished run from this list. Episodes are not affected."
+                >
+                  {clearArmed === "all" ? "confirm clear all" : "clear all"}
+                </button>
+              </div>
+            )}
+          </div>
           {recentMsg && <p className="mono-xs text-danger mb-2">{recentMsg}</p>}
           {recentOpen && (
             <ul className="space-y-2">
@@ -584,6 +650,11 @@ export default function Home() {
                               },
                             ]
                           : []),
+                        {
+                          label: "Remove from recents",
+                          hint: "the episode is not affected",
+                          run: () => removeJobM.mutate(j.id),
+                        },
                       ]}
                     />
                   </div>

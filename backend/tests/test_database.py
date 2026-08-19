@@ -36,6 +36,7 @@ def test_run_migrations_creates_tables(tmp_path: Path) -> None:
         "023_reimport_seed_lexicon",
         "024_reimport_seed_lexicon",
         "025_episode_chapters_json",
+        "026_lexicon_input_text_index",
     ]
 
     conn = database.connect(database.db_path(tmp_path))
@@ -77,6 +78,7 @@ def test_second_run_is_a_noop(tmp_path: Path) -> None:
         "023_reimport_seed_lexicon",
         "024_reimport_seed_lexicon",
         "025_episode_chapters_json",
+        "026_lexicon_input_text_index",
     ]
     assert second == []
 
@@ -495,5 +497,23 @@ def test_m015_converts_upload_bytes_override_to_mb(tmp_path: Path) -> None:
         rows = {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM runtime_settings")}
         assert "UPLOAD_MAX_BYTES" not in rows
         assert json.loads(rows["UPLOAD_MAX_MB"]) == 100
+    finally:
+        conn.close()
+
+
+def test_lexicon_input_text_index_exists(env: Path) -> None:
+    database.run_migrations(env)
+    conn = database.connect(database.db_path(env))
+    try:
+        names = {
+            row["name"]
+            for row in conn.execute("PRAGMA index_list('lexicon')")
+        }
+        assert "idx_lexicon_input_text" in names
+        # The exact-case probe must be index-served, not a table scan.
+        plan = conn.execute(
+            "EXPLAIN QUERY PLAN SELECT * FROM lexicon WHERE case_sensitive = 1 AND input_text = 'x'"
+        ).fetchall()
+        assert any("idx_lexicon_input_text" in row["detail"] for row in plan)
     finally:
         conn.close()

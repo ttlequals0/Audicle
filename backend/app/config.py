@@ -103,6 +103,11 @@ class Settings(BaseSettings):
     # Concurrent per-chunk pronunciation calls. Lower it if the provider rate
     # limits a long article (each chunk with reference terms is one call).
     LLM_PRONUNCIATION_CONCURRENCY: int = Field(default=4, ge=1, le=16)
+    # Pronunciation pass scope. "chunk" sends the whole window (default,
+    # existing behavior). "sentence" sends only reference-matched sentences as
+    # numbered lines, cutting tokens on chunks where most sentences carry no
+    # reference term; any protocol or splice failure falls back to "chunk".
+    PRONUNCIATION_SCOPE: Literal["chunk", "sentence"] = "chunk"
 
     # Episode webhooks (0.31.0). Fire-and-forget POST to this URL on every terminal
     # job transition (episode.processed / episode.failed). Empty disables. A dead or
@@ -282,6 +287,10 @@ class Settings(BaseSettings):
     WHISPER_API_KEY: str = ""
     WHISPER_API_MODEL: str = "whisper-1"
     WHISPER_API_TIMEOUT_SECONDS: float = 120
+    # False keeps the existing degrade-to-unverified behavior when the remote
+    # ASR call fails; True raises TTSProviderError instead, so a chunk never
+    # ships without verification (at the cost of retrying/failing the job).
+    WHISPER_API_STRICT: bool = False
 
     # TTS wrapper.
     TTS_LANGUAGE: str = "en"
@@ -306,6 +315,13 @@ class Settings(BaseSettings):
     TTS_CONNECT_RETRY_MAX_SECONDS: float = 180
     TTS_REACHABILITY_GRACE_SECONDS: float = 60
     TTS_REACHABILITY_PROBE_TIMEOUT: float = 10
+    # Idle wrapper restart (0.56.0): between jobs, when the queue is empty, the
+    # worker checks the wrapper's /health for restart_recommended (RSS above
+    # its soft limit) and asks it to restart itself via /maintenance/restart --
+    # opportunistically, on our own schedule, instead of only ever restarting
+    # mid-job at the wrapper's hard limit. Meaningless for TTS_BACKEND=
+    # openai-api (no wrapper process to restart), which the worker also checks.
+    TTS_IDLE_RESTART_ENABLED: bool = True
 
     # Chatterbox generation knobs, sent to the wrapper on every /generate call
     # (the wrapper no longer reads them from its own env, 0.44.0). All are
@@ -325,6 +341,15 @@ class Settings(BaseSettings):
     CHATTERBOX_TOP_K: int = 1000
     CHATTERBOX_SEED: int = 1234
     CHATTERBOX_MAX_CHARS: int = 300
+
+    # Content-addressed cache of QA-passing TTS chunks (resumable synthesis):
+    # a chunk keyed on backend/model/voice/language/text/baseline-params is
+    # reused instead of re-synthesized, e.g. on a re-run after a job failed
+    # partway through. Off switches back to always-synthesize.
+    TTS_CHUNK_CACHE_ENABLED: bool = True
+    # Bounds in RUNTIME_SETTING_BOUNDS, not a Field constraint here, so a stale
+    # out-of-range env value can't fail backend startup.
+    TTS_CACHE_RETENTION_DAYS: int = 7
 
     # Chunking.
     # Chunk size = transcript-cue granularity + per-chunk TTS round-trips. The
@@ -402,6 +427,14 @@ class Settings(BaseSettings):
     AUDIO_ANALYSIS_REGEN_CHARS_FACTOR: float = Field(default=0.6, gt=0, le=1.0)
     AUDIO_ANALYSIS_REGEN_MIN_CHARS: int = Field(default=150, ge=100, le=2000)
     AUDIO_ANALYSIS_REGEN_PENALTY_STEP: float = Field(default=0.15, ge=0, le=1.0)
+
+    # Adaptive max_chars (pipeline._stage_tts): when enough of the early chunks
+    # in a job need a regen, the wrapper's baseline text window is probably too
+    # large for this article/voice, so the rest of the job synthesizes with a
+    # lowered CHATTERBOX_MAX_CHARS instead of paying for a regen on most chunks.
+    # Lowering only, never raised back up mid-job -- see pipeline.py for the
+    # trigger constants (_ADAPTIVE_WINDOW/_ADAPTIVE_TRIGGER/_ADAPTIVE_FACTOR).
+    TTS_ADAPTIVE_MAX_CHARS_ENABLED: bool = True
 
     # Post-TTS ASR verification (defense-in-depth, off by default). When enabled,
     # the wrapper transcribes each produced chunk with faster-whisper and the
@@ -556,7 +589,18 @@ RUNTIME_SETTING_BOUNDS: dict[str, dict[str, float]] = {
     "AUDIO_ANALYSIS_REGEN_PENALTY_STEP": {"ge": 0, "le": 1.0},
     # An octave of drift is not drift, it is a different voice.
     "AUDIO_ANALYSIS_MAX_F0_SEMITONES": {"gt": 0, "le": 12.0},
+    "TTS_CACHE_RETENTION_DAYS": {"ge": 1, "le": 90},
 }
+
+
+def clamp_to_bounds(value: float, bounds: dict[str, float]) -> float:
+    """Hold ``value`` inside a RUNTIME_SETTING_BOUNDS entry's ge/le range.
+
+    Only for entries with both ``ge`` and ``le`` keys; ``gt``-style entries
+    have no meaningful clamp target.
+    """
+
+    return min(bounds["le"], max(bounds["ge"], value))
 
 
 @lru_cache(maxsize=1)

@@ -1,5 +1,6 @@
 #!/bin/sh
-# trivy_gate.sh -- release-time CVE gate for all three Audicle images.
+# trivy_gate.sh -- release-time CVE gate for the Audicle images: app, tts
+# (GPU and -cpu tags), render.
 #
 # Usage: scripts/trivy_gate.sh <version>   (e.g. 0.47.0)
 #
@@ -42,22 +43,41 @@ cat "$SHARED" "$IGNORE_RENDER" > "$TMP_RENDER"
 FAILED=0
 
 scan() {
-    image="$1"
+    ref="$1"
     ignorefile="$2"
-    tag="ttlequals0/${image}:${VERSION}"
+    tag="ttlequals0/${ref}"
+    out="$(mktemp)"
     echo "Scanning $tag ..."
-    if trivy image --severity HIGH,CRITICAL --exit-code 1 --quiet \
-            --ignorefile "$ignorefile" "$tag"; then
+    # --timeout 30m: the default 5m dies mid-analysis inside the 10 GB tts
+    # image ("semaphore acquire: context deadline exceeded"). Deliberately NOT
+    # passing --scanners vuln to speed this up: that would skip the image-layer
+    # secret scan, which also covers secrets arriving via build args or base
+    # images that the pre-build repo scan never sees.
+    if trivy image --timeout 30m --severity HIGH,CRITICAL --exit-code 1 --quiet \
+            --ignorefile "$ignorefile" "$tag" >"$out" 2>&1; then
+        cat "$out"
         echo "$tag CLEAN"
+    # trivy exits 1 for findings AND for fatal errors (cache lock held by a
+    # concurrent scan, layer-analysis timeout). Distinguish them so an infra
+    # hiccup is not read as a CVE failure -- and is still a gate failure.
+    elif grep -q "FATAL" "$out"; then
+        cat "$out" >&2
+        echo "$tag SCAN ERROR (not a CVE verdict; re-run)" >&2
+        FAILED=1
     else
+        cat "$out" >&2
         echo "$tag FAILED" >&2
         FAILED=1
     fi
+    rm -f "$out"
 }
 
-scan "audicle"        "$SHARED"
-scan "audicle-tts"    "$TMP_TTS"
-scan "audicle-render" "$TMP_RENDER"
+# The -cpu wrapper shares the tts ignorefile: same codebase, only the torch
+# wheels differ, and a CVE suppressed for one is a decision made for both.
+scan "audicle:${VERSION}"         "$SHARED"
+scan "audicle-tts:${VERSION}"     "$TMP_TTS"
+scan "audicle-tts:${VERSION}-cpu" "$TMP_TTS"
+scan "audicle-render:${VERSION}"  "$TMP_RENDER"
 
 if [ "$FAILED" -ne 0 ]; then
     echo "One or more images failed the CVE gate." >&2

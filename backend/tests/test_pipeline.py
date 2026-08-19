@@ -1526,7 +1526,7 @@ async def test_chunk_quality_check_regenerates_bad_chunk(
 
     monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
     job = _seed_job(env)
-    result = await pipeline._generate_chunk_quality_checked(
+    result, _attempts = await pipeline._generate_chunk_quality_checked(
         job, "two words here now", 0, get_settings()
     )
     assert calls["n"] == 2  # one bad read, one regeneration that recovered
@@ -1536,6 +1536,27 @@ async def test_chunk_quality_check_regenerates_bad_chunk(
     # produces different audio.
     assert seeds[0] is None
     assert isinstance(seeds[1], int) and seeds[1] != 0
+
+
+async def test_chunk_quality_check_passes_first_try_returns_one_attempt(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    database.run_migrations(env)
+    from app.services import tts
+
+    wav = tmp_path / "ep_chunk_0.wav"
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        _write_speechlike_wav(wav)  # good on the first take, no regen needed
+        return tts.GenerateResult(wav_path=str(wav), duration_secs=2.0, sample_rate=24000)
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    job = _seed_job(env)
+    result, attempts = await pipeline._generate_chunk_quality_checked(
+        job, "two words here now", 0, get_settings()
+    )
+    assert attempts == 1
+    assert result.wav_path == str(wav)
 
 
 async def test_chunk_quality_check_keeps_last_after_max_regen(
@@ -1554,7 +1575,7 @@ async def test_chunk_quality_check_keeps_last_after_max_regen(
 
     monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
     job = _seed_job(env)
-    result = await pipeline._generate_chunk_quality_checked(
+    result, _attempts = await pipeline._generate_chunk_quality_checked(
         job, "two words here now", 0, get_settings()
     )
     # 1 baseline + MAX_REGEN extra attempts; job is not failed (a result returns).
@@ -1583,7 +1604,7 @@ async def test_chunk_pitch_drift_regenerates(
     for _ in range(settings.AUDIO_ANALYSIS_F0_WARMUP_CHUNKS):
         tracker.accept(180.0)
     job = _seed_job(env)
-    result = await pipeline._generate_chunk_quality_checked(
+    result, _attempts = await pipeline._generate_chunk_quality_checked(
         job, "two words here now", 0, settings, pitch_tracker=tracker
     )
     assert calls["n"] == 2
@@ -1614,7 +1635,7 @@ async def test_chunk_pitch_drift_keeps_closest_attempt(
     for _ in range(settings.AUDIO_ANALYSIS_F0_WARMUP_CHUNKS):
         tracker.accept(180.0)
     job = _seed_job(env)
-    result = await pipeline._generate_chunk_quality_checked(
+    result, _attempts = await pipeline._generate_chunk_quality_checked(
         job, "two words here now", 0, settings, pitch_tracker=tracker
     )
     assert calls["n"] == settings.AUDIO_ANALYSIS_MAX_REGEN + 1
@@ -1704,7 +1725,7 @@ async def test_chunk_asr_verify_regenerates_on_divergence(
 
     monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
     job = _seed_job(env)
-    result = await pipeline._generate_chunk_quality_checked(job, text, 0, get_settings())
+    result, _attempts = await pipeline._generate_chunk_quality_checked(job, text, 0, get_settings())
     assert calls["n"] == 2  # diverged once, matched on regen
     assert all(verifies)  # verify flag sent on every attempt
     assert result.transcript == text
@@ -1742,7 +1763,7 @@ async def test_chunk_asr_divergent_run_regenerates_despite_low_global(
 
     monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
     job = _seed_job(env)
-    result = await pipeline._generate_chunk_quality_checked(job, text, 0, settings)
+    result, _attempts = await pipeline._generate_chunk_quality_checked(job, text, 0, settings)
     assert calls["n"] == 2  # run check flagged attempt 1, regen matched
     assert result.transcript == text
 
@@ -1776,7 +1797,7 @@ async def test_chunk_asr_short_chunk_regenerates_on_gross_mismatch(
     job = _seed_job(env)
     # Short chunks (< WHISPER_VERIFY_MIN_WORDS) are still transcribed and fail
     # on gross mismatch -- a fully wrong 3-word chunk must not slip through.
-    result = await pipeline._generate_chunk_quality_checked(
+    result, _attempts = await pipeline._generate_chunk_quality_checked(
         job, text, 0, get_settings()
     )
     assert calls["n"] == 2
@@ -1881,6 +1902,360 @@ async def test_chunk_asr_missing_transcript_logged_and_passes(
     )
 
 
+async def test_tts_cache_hit_skips_synthesis_on_second_call(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Wrapper-backend caching needs a resolvable model + voice fingerprint;
+    # the default TTS_MODEL="" deliberately skips caching (see
+    # tts.cache_identity), so opt in explicitly for this test.
+    monkeypatch.setenv("TTS_MODEL", "chatterbox-turbo")
+    get_settings.cache_clear()
+    database.run_migrations(env)
+    from app.services import tts
+
+    calls = {"n": 0}
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        calls["n"] += 1
+        wav = tmp_path / f"synth_{calls['n']}.wav"
+        _write_speechlike_wav(wav)  # clean take: QA passes on the first try
+        return tts.GenerateResult(wav_path=str(wav), duration_secs=2.0, sample_rate=24000)
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+
+    settings = get_settings()
+    job1 = _seed_job(env, url="https://example.test/article-one")
+    result1, attempts1 = await pipeline._generate_chunk_quality_checked(
+        job1, "two words here now", 0, settings, slot=1
+    )
+    assert calls["n"] == 1
+    assert attempts1 == 1
+
+    # A different job/episode, same text + settings: must hit the cache and
+    # never call the fake again.
+    job2 = _seed_job(env, url="https://example.test/article-two")
+    result2, attempts2 = await pipeline._generate_chunk_quality_checked(
+        job2, "two words here now", 0, settings, slot=1
+    )
+    assert calls["n"] == 1
+    assert attempts2 == 1
+    assert result2.wav_path != result1.wav_path
+    assert Path(result2.wav_path).is_file()
+    assert Path(result2.wav_path).read_bytes() == Path(result1.wav_path).read_bytes()
+    assert result2.duration_secs == 2.0
+    assert result2.sample_rate == 24000
+    # Cache-hit reconstruction leaves the wrapper-diagnostics fields unknown.
+    assert result2.inference_ms is None
+    assert result2.verify_ms is None
+    assert result2.rss_mb is None
+
+
+async def test_tts_cache_disabled_always_resynthesizes(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("TTS_MODEL", "chatterbox-turbo")
+    monkeypatch.setenv("TTS_CHUNK_CACHE_ENABLED", "false")
+    get_settings.cache_clear()
+    database.run_migrations(env)
+    from app.services import tts
+
+    calls = {"n": 0}
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        calls["n"] += 1
+        wav = tmp_path / f"synth_{calls['n']}.wav"
+        _write_speechlike_wav(wav)
+        return tts.GenerateResult(wav_path=str(wav), duration_secs=2.0, sample_rate=24000)
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+
+    settings = get_settings()
+    job1 = _seed_job(env, url="https://example.test/article-three")
+    await pipeline._generate_chunk_quality_checked(
+        job1, "two words here now", 0, settings, slot=1
+    )
+    job2 = _seed_job(env, url="https://example.test/article-four")
+    await pipeline._generate_chunk_quality_checked(
+        job2, "two words here now", 0, settings, slot=1
+    )
+    assert calls["n"] == 2  # cache disabled: no reuse
+
+
+async def test_tts_cache_skipped_when_model_select_unconfirmed(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A failed /select-model leaves the wrapper on an unknown model. Caching
+    this job's chunks under settings.TTS_MODEL anyway would let a later job
+    (with a working select) get served audio actually produced by a
+    different model -- so model_confirmed=False must disable the cache for
+    both read and write, not just skip the store."""
+    monkeypatch.setenv("TTS_MODEL", "chatterbox-turbo")
+    get_settings.cache_clear()
+    database.run_migrations(env)
+    from app.services import tts
+
+    calls = {"n": 0}
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        calls["n"] += 1
+        wav = tmp_path / f"synth_{calls['n']}.wav"
+        _write_speechlike_wav(wav)
+        return tts.GenerateResult(wav_path=str(wav), duration_secs=2.0, sample_rate=24000)
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+
+    settings = get_settings()
+    job1 = _seed_job(env, url="https://example.test/article-five")
+    await pipeline._generate_chunk_quality_checked(
+        job1, "two words here now", 0, settings, slot=1, model_confirmed=False
+    )
+    job2 = _seed_job(env, url="https://example.test/article-six")
+    await pipeline._generate_chunk_quality_checked(
+        job2, "two words here now", 0, settings, slot=1, model_confirmed=False
+    )
+    assert calls["n"] == 2  # unconfirmed model: never stored, never hit
+
+
+async def test_tts_cache_keys_on_the_effective_adaptive_max_chars(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An active adaptive max_chars override (_stage_tts) changes what actually
+    gets synthesized, so it rides into the cache key as the effective
+    max_chars: two chunks under the same override reuse each other, and an
+    override never collides with the unmodified-baseline entry."""
+    monkeypatch.setenv("TTS_MODEL", "chatterbox-turbo")
+    get_settings.cache_clear()
+    database.run_migrations(env)
+    from app.services import tts
+
+    calls = {"n": 0}
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        calls["n"] += 1
+        wav = tmp_path / f"synth_{calls['n']}.wav"
+        _write_speechlike_wav(wav)
+        return tts.GenerateResult(wav_path=str(wav), duration_secs=2.0, sample_rate=24000)
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+
+    settings = get_settings()
+    job1 = _seed_job(env, url="https://example.test/article-adaptive-one")
+    job2 = _seed_job(env, url="https://example.test/article-adaptive-two")
+    await pipeline._generate_chunk_quality_checked(
+        job1, "two words here now", 0, settings, slot=1, base_max_chars=200
+    )
+    await pipeline._generate_chunk_quality_checked(
+        job2, "two words here now", 0, settings, slot=1, base_max_chars=200
+    )
+    assert calls["n"] == 1  # same effective params: the second call hits the cache
+
+    # The unmodified baseline is a different key, so it must not serve the
+    # audio synthesized under the lowered max_chars.
+    job3 = _seed_job(env, url="https://example.test/article-adaptive-three")
+    await pipeline._generate_chunk_quality_checked(
+        job3, "two words here now", 0, settings, slot=1
+    )
+    assert calls["n"] == 2
+
+
+async def test_tts_cache_qa_off_store_is_not_reused_once_qa_is_on(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A QA-off deployment still populates the cache (its take is the only
+    take), but that entry was never checked -- so a later QA-on run must
+    re-synthesize instead of inheriting unverified audio."""
+    monkeypatch.setenv("TTS_MODEL", "chatterbox-turbo")
+    monkeypatch.setenv("AUDIO_ANALYSIS_ENABLED", "false")
+    get_settings.cache_clear()
+    database.run_migrations(env)
+    from app.services import tts, tts_cache
+
+    calls = {"n": 0}
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        calls["n"] += 1
+        wav = tmp_path / f"synth_{calls['n']}.wav"
+        _write_speechlike_wav(wav)
+        return tts.GenerateResult(wav_path=str(wav), duration_secs=2.0, sample_rate=24000)
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+
+    qa_off = get_settings()
+    job1 = _seed_job(env, url="https://example.test/article-qa-off-one")
+    await pipeline._generate_chunk_quality_checked(
+        job1, "two words here now", 0, qa_off, slot=1
+    )
+    assert calls["n"] == 1
+
+    # Stored, and stored as unverified.
+    identity = tts.cache_identity(qa_off, 1)
+    assert identity is not None
+    key = tts_cache.cache_key(
+        backend=identity[0],
+        model=identity[1],
+        voice_fingerprint=identity[2],
+        language=qa_off.TTS_LANGUAGE,
+        text="two words here now",
+        params=tts.generation_params(qa_off),
+    )
+    cached = tts_cache.lookup(qa_off.DATA_DIR, key)
+    assert cached is not None
+    assert cached.qa_passed is False
+
+    # Another QA-off run reuses it; a QA-on run does not.
+    job2 = _seed_job(env, url="https://example.test/article-qa-off-two")
+    await pipeline._generate_chunk_quality_checked(
+        job2, "two words here now", 0, qa_off, slot=1
+    )
+    assert calls["n"] == 1
+
+    monkeypatch.setenv("AUDIO_ANALYSIS_ENABLED", "true")
+    get_settings.cache_clear()
+    job3 = _seed_job(env, url="https://example.test/article-qa-on")
+    await pipeline._generate_chunk_quality_checked(
+        job3, "two words here now", 0, get_settings(), slot=1
+    )
+    assert calls["n"] == 2
+
+
+async def test_tts_cache_miss_when_verify_on_and_entry_has_no_transcript(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A hit bypasses the ASR check entirely, so an entry stored without a
+    transcript cannot stand in for a run that verifies."""
+    monkeypatch.setenv("TTS_MODEL", "chatterbox-turbo")
+    get_settings.cache_clear()
+    database.run_migrations(env)
+    from app.services import tts
+
+    calls = {"n": 0}
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        calls["n"] += 1
+        wav = tmp_path / f"synth_{calls['n']}.wav"
+        _write_speechlike_wav(wav)
+        return tts.GenerateResult(wav_path=str(wav), duration_secs=2.0, sample_rate=24000)
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+
+    text = "this chunk has clearly more than eight spoken words in it"
+    job1 = _seed_job(env, url="https://example.test/article-verify-one")
+    await pipeline._generate_chunk_quality_checked(job1, text, 0, get_settings(), slot=1)
+    assert calls["n"] == 1
+
+    monkeypatch.setenv("WHISPER_VERIFY_ENABLED", "true")
+    get_settings.cache_clear()
+    job2 = _seed_job(env, url="https://example.test/article-verify-two")
+    await pipeline._generate_chunk_quality_checked(job2, text, 0, get_settings(), slot=1)
+    assert calls["n"] == 2
+
+
+async def test_tts_cache_hit_feeds_the_pitch_tracker(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A resumed job served from the cache must keep the pitch gate warm:
+    without this the tracker restarts its warmup at the resume point."""
+    monkeypatch.setenv("TTS_MODEL", "chatterbox-turbo")
+    get_settings.cache_clear()
+    database.run_migrations(env)
+    from app.services import audio_analysis, tts
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        wav = tmp_path / "synth.wav"
+        _write_speechlike_wav(wav)
+        return tts.GenerateResult(wav_path=str(wav), duration_secs=2.0, sample_rate=24000)
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+
+    settings = get_settings()
+    store_tracker = audio_analysis.PitchTracker(settings)
+    job1 = _seed_job(env, url="https://example.test/article-pitch-one")
+    await pipeline._generate_chunk_quality_checked(
+        job1, "two words here now", 0, settings, 1, store_tracker
+    )
+    accepted = list(store_tracker._accepted)
+    assert accepted and accepted[0] > 0  # the take had a measurable pitch
+
+    hit_tracker = audio_analysis.PitchTracker(settings)
+    job2 = _seed_job(env, url="https://example.test/article-pitch-two")
+    await pipeline._generate_chunk_quality_checked(
+        job2, "two words here now", 0, settings, 1, hit_tracker
+    )
+    assert list(hit_tracker._accepted) == accepted
+
+
+async def test_tts_cache_store_failure_does_not_fail_chunk(
+    env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The cache must never fail a chunk: a broken tts_cache.store (disk
+    full, permission error, ...) after an otherwise-clean synthesis still
+    has to return the chunk that was actually produced."""
+    monkeypatch.setenv("TTS_MODEL", "chatterbox-turbo")
+    get_settings.cache_clear()
+    database.run_migrations(env)
+    from app.services import tts, tts_cache
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        wav = tmp_path / "synth.wav"
+        _write_speechlike_wav(wav)
+        return tts.GenerateResult(wav_path=str(wav), duration_secs=2.0, sample_rate=24000)
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+
+    def _boom_store(*_a, **_kw):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(tts_cache, "store", _boom_store)
+
+    settings = get_settings()
+    job = _seed_job(env, url="https://example.test/article-store-fail")
+    with caplog.at_level(logging.WARNING, logger="app.services.pipeline"):
+        result, attempts = await pipeline._generate_chunk_quality_checked(
+            job, "two words here now", 0, settings, slot=1
+        )
+    assert attempts == 1
+    assert Path(result.wav_path).is_file()
+    assert any(getattr(r, "event", "") == "tts_cache_error" for r in caplog.records)
+
+
+async def test_tts_cache_lookup_failure_falls_through_to_synthesis(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A broken tts_cache.lookup (corrupt cache dir, permission error, ...)
+    must not block the chunk -- it falls through to normal synthesis."""
+    monkeypatch.setenv("TTS_MODEL", "chatterbox-turbo")
+    get_settings.cache_clear()
+    database.run_migrations(env)
+    from app.services import tts, tts_cache
+
+    calls = {"n": 0}
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        calls["n"] += 1
+        wav = tmp_path / f"synth_{calls['n']}.wav"
+        _write_speechlike_wav(wav)
+        return tts.GenerateResult(wav_path=str(wav), duration_secs=2.0, sample_rate=24000)
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+
+    def _boom_lookup(*_a, **_kw):
+        raise OSError("cache dir unreadable")
+
+    monkeypatch.setattr(tts_cache, "lookup", _boom_lookup)
+
+    settings = get_settings()
+    job = _seed_job(env, url="https://example.test/article-lookup-fail")
+    result, attempts = await pipeline._generate_chunk_quality_checked(
+        job, "two words here now", 0, settings, slot=1
+    )
+    assert calls["n"] == 1  # fell through to synthesis despite the lookup failure
+    assert attempts == 1
+    assert Path(result.wav_path).is_file()
+
+
 async def test_pipeline_cancelled_job_ends_cancelled_not_failed(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1918,10 +2293,22 @@ async def test_stage_tts_carries_the_job_voice_on_every_chunk(
     async def _fake_select(_settings, slot):
         selected.append(slot)
 
-    async def _fake_gen(_job, _text, index, _settings, slot=None, pitch_tracker=None):
+    async def _fake_gen(
+        _job,
+        _text,
+        index,
+        _settings,
+        slot=None,
+        pitch_tracker=None,
+        model_confirmed=True,
+        base_max_chars=None,
+    ):
         per_chunk_slots.append(slot)
-        return tts_mod.GenerateResult(
-            wav_path=f"/tmp/c{index}.wav", duration_secs=1.0, sample_rate=24000
+        return (
+            tts_mod.GenerateResult(
+                wav_path=f"/tmp/c{index}.wav", duration_secs=1.0, sample_rate=24000
+            ),
+            1,
         )
 
     monkeypatch.setattr(tts_mod, "select_voice", _fake_select)
@@ -2301,9 +2688,21 @@ async def test_stage_tts_applies_configured_model(
     async def _fake_select_model(_settings, model):
         selected_models.append(model)
 
-    async def _fake_gen(_job, _text, index, _settings, slot=None, pitch_tracker=None):
-        return tts_mod.GenerateResult(
-            wav_path=f"/tmp/c{index}.wav", duration_secs=1.0, sample_rate=24000
+    async def _fake_gen(
+        _job,
+        _text,
+        index,
+        _settings,
+        slot=None,
+        pitch_tracker=None,
+        model_confirmed=True,
+        base_max_chars=None,
+    ):
+        return (
+            tts_mod.GenerateResult(
+                wav_path=f"/tmp/c{index}.wav", duration_secs=1.0, sample_rate=24000
+            ),
+            1,
         )
 
     async def _fake_select_voice(_settings, _slot):
@@ -2434,3 +2833,22 @@ def test_title_echo_no_title_is_a_noop() -> None:
     body = "Some article text."
     assert pipeline._strip_title_echo(body, None) == body
     assert pipeline._strip_title_echo(body, "") == body
+
+
+def test_slow_job_write_logs_warning_with_wal_size(
+    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import time as time_mod
+
+    database.run_migrations(env)
+
+    def _slow_set_stage(conn, job_id, stage):
+        time_mod.sleep(1.1)
+
+    monkeypatch.setattr(pipeline.jobs, "set_stage", _slow_set_stage)
+    with caplog.at_level(logging.WARNING, logger="app.services.pipeline"):
+        pipeline._set_stage("j1", "extract", get_settings())
+    slow = [r for r in caplog.records if getattr(r, "event", "") == "slow_db_write"]
+    assert len(slow) == 1
+    assert slow[0].op == "set_stage"
+    assert slow[0].duration_ms >= 1100

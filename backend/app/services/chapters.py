@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 import re
 
+from app.services import cleanup_output
+
 # ``MM:SS`` or ``H:MM:SS``, minutes allowed past 59 so a long episode's later
 # lines still parse. An optional ``-``/``:`` may separate the title.
 _LINE_RE = re.compile(r"^(\d{1,3}):(\d{2})(?::(\d{2}))?\s*[-:]?\s*(.+)$")
@@ -59,6 +61,7 @@ def parse_llm_chapters(raw: str, duration_secs: float) -> list[tuple[float, str]
             start = int(first) * 3600 + int(second) * 60 + int(third)
         else:  # MM:SS, minutes may exceed 59
             start = int(first) * 60 + int(second)
+        title = cleanup_output.ascii_punctuation(title)
         title = title.strip().strip("\"'").rstrip(".:;,-").strip()
         if title and 0 <= start < duration_secs and float(start) not in found:
             found[float(start)] = title

@@ -46,6 +46,7 @@ See the LLM providers page. Keys are stored masked.
 | `LLM_TIMEOUT_SECONDS` | `300` | yes |
 | `LLM_RETRY_COUNT` | `3` | yes |
 | `LLM_PRONUNCIATION_CONCURRENCY` | `4` | yes |
+| `PRONUNCIATION_SCOPE` | `chunk` | yes |
 
 ## Extraction and paywalls
 
@@ -122,6 +123,10 @@ The wrapper connection, model, chunking, generation, and the delivery budgets th
 | `CHATTERBOX_TOP_K` | `1000` | yes |
 | `CHATTERBOX_SEED` | `1234` | yes |
 | `CHATTERBOX_MAX_CHARS` | `300` | yes |
+| `TTS_CHUNK_CACHE_ENABLED` | `True` | yes |
+| `TTS_CACHE_RETENTION_DAYS` | `7` | yes |
+| `TTS_ADAPTIVE_MAX_CHARS_ENABLED` | `True` | yes |
+| `TTS_IDLE_RESTART_ENABLED` | `True` | yes |
 | `CHIME_ENABLED` | `False` | yes |
 | `INTRO_READ_ENABLED` | `True` | yes |
 
@@ -137,6 +142,7 @@ The quality gates. WHISPER_BACKEND selects where ASR runs.
 | `WHISPER_API_KEY` | `` | yes |
 | `WHISPER_API_MODEL` | `whisper-1` | yes |
 | `WHISPER_API_TIMEOUT_SECONDS` | `120` | yes |
+| `WHISPER_API_STRICT` | `False` | yes |
 | `WHISPER_DIVERGENCE_THRESHOLD` | `0.35` | yes |
 | `WHISPER_MAX_DIVERGENT_RUN` | `8` | yes |
 | `WHISPER_VERIFY_MIN_WORDS` | `8` | yes |

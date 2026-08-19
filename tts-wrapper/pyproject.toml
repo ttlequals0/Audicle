@@ -1,6 +1,6 @@
 [project]
 name = "audicle-tts-wrapper"
-version = "0.55.4"
+version = "0.56.7"
 description = "FastAPI TTS wrapper for Audicle (Chatterbox)."
 requires-python = ">=3.11,<3.14"
 # The wrapper's Python is set by the Dockerfiles' python:3.11-slim base. The bound
@@ -24,8 +24,11 @@ dependencies = [
 ]
 
 # chatterbox: Resemble AI's actively maintained zero-shot clone model (Turbo).
+# torch/torchaudio are declared directly (unpinned; chatterbox's == pin still
+# decides the version) ONLY so [tool.uv.sources] can point them at the CPU
+# index -- uv sources never redirect purely transitive deps.
 [project.optional-dependencies]
-chatterbox = ["chatterbox-tts>=0.1.7"]
+chatterbox = ["chatterbox-tts>=0.1.7", "torch", "torchaudio"]
 # whisper: optional faster-whisper (CTranslate2) ASR for the post-TTS verification
 # pass. CTranslate2 is independent of the engine's torch stack. Installed into
 # every image but import-gated at runtime by WHISPER_ENABLED -- the model only
@@ -76,6 +79,19 @@ dev = [
 
 [tool.uv]
 package = false
+
+# Dev/CI installs resolve torch from the CPU index: the lockfile otherwise pins
+# PyPI torch 2.6.0, whose linux wheels drag the full nvidia-*-cu12 set (~7 GB)
+# onto machines that never run GPU inference here. The shipped images are
+# unaffected -- both wrapper Dockerfiles install torch with pip on their own.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchaudio = { index = "pytorch-cpu" }
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

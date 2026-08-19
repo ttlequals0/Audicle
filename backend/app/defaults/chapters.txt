@@ -16,4 +16,14 @@ Rules:
 - Copy each timestamp from the [MM:SS] markers you were given.
 - The first chapter must be 00:00.
 - Titles are 3 to 7 plain words. No quotes, no trailing punctuation.
+- ASCII only. NEVER use an em dash, en dash, curly quote, or emoji in a
+  title.
 - Mark real topic changes only, not every paragraph.
+- Sentence case, not Title Case ("Where the money goes", not "Where The
+  Money Goes").
+- No em dashes, colons, or " -- " in titles. No emojis, no curly quotes,
+  ASCII characters only.
+- Use concrete words from the article. Banned in titles: delve, deep dive,
+  unpacking, exploring, journey, landscape, unpacked, explained.
+- Name the topic itself ("Convenience stores as AI hedges"), not the act of
+  discussing it ("Exploring the trend").

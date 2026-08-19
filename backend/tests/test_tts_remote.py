@@ -29,13 +29,12 @@ def _wav_bytes(duration_secs: float = 1.0, rate: int = 24000) -> bytes:
 
 
 def _patch_client(monkeypatch: pytest.MonkeyPatch, transport: httpx.MockTransport) -> None:
-    original = httpx.AsyncClient
-
-    def factory(*args, **kwargs):
-        kwargs["transport"] = transport
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    # synthesize/transcribe pull the shared client (module-level singleton in
+    # tts.py), so patching httpx.AsyncClient itself no longer reaches them
+    # once it's constructed. Hand back a dedicated client wired to this
+    # test's transport instead.
+    client = httpx.AsyncClient(transport=transport)
+    monkeypatch.setattr(tts, "shared_client", lambda: client)
 
 
 def _remote_env(monkeypatch: pytest.MonkeyPatch, **extra: str) -> Settings:
@@ -241,6 +240,54 @@ async def test_remote_transcription_failure_does_not_fail_the_chunk(
     result = await tts.generate_chunk("hello", "ep1", 0, settings, verify=True)
     assert result.transcript is None
     assert result.wav_path.endswith("ep1_chunk_0.wav")
+
+
+async def test_remote_transcription_failure_raises_when_strict(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WHISPER_API_STRICT flips the degrade-to-unverified default: an ASR
+    outage must fail the chunk instead of shipping it unverified."""
+
+    settings = _remote_env(
+        monkeypatch,
+        WHISPER_BACKEND="openai-api",
+        WHISPER_API_BASE_URL="https://asr.example.test/v1",
+        WHISPER_VERIFY_ENABLED="true",
+        WHISPER_API_STRICT="true",
+    )
+
+    def handler(request):
+        if request.url.path.endswith("/audio/speech"):
+            return httpx.Response(200, content=_wav_bytes())
+        return httpx.Response(500, text="asr down")
+
+    _patch_client(monkeypatch, httpx.MockTransport(handler))
+    with pytest.raises(tts.TTSProviderError):
+        await tts.generate_chunk("hello", "ep1", 0, settings, verify=True)
+
+
+async def test_remote_transcription_failure_degrades_when_not_strict(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WHISPER_API_STRICT defaults to False, so an ASR outage keeps degrading
+    to an unverified chunk rather than failing it."""
+
+    settings = _remote_env(
+        monkeypatch,
+        WHISPER_BACKEND="openai-api",
+        WHISPER_API_BASE_URL="https://asr.example.test/v1",
+        WHISPER_VERIFY_ENABLED="true",
+    )
+    assert settings.WHISPER_API_STRICT is False
+
+    def handler(request):
+        if request.url.path.endswith("/audio/speech"):
+            return httpx.Response(200, content=_wav_bytes())
+        return httpx.Response(500, text="asr down")
+
+    _patch_client(monkeypatch, httpx.MockTransport(handler))
+    result = await tts.generate_chunk("hello", "ep1", 0, settings, verify=True)
+    assert result.transcript is None
 
 
 async def test_remote_transcription_tolerates_an_unexpected_shape(

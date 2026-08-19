@@ -41,3 +41,5 @@ frontend/dist/
 .idea/
 .vscode/
 *.swp
+# Git worktrees checked out inside the repo
+.worktrees/

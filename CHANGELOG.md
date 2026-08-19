@@ -4,12 +4,187 @@ All notable changes to Audicle are recorded here. Format follows Keep a Changelo
 (https://keepachangelog.com). Versioning is semver once a release ships; pre-release
 work lives under `[Unreleased]`.
 
-## [Unreleased]
+## [0.56.7] - 2026-08-17
+
+### Fixed
+
+- A release that ships an unchanged base lexicon no longer re-imports it
+  (#126 follow-up). The sync gate compared the stored value against the app
+  version, so every version bump replayed all 1,336,791 rows even though the
+  artifact was byte-identical; three releases in one day meant three full
+  imports. The gate is now a sha256 of the artifact's bytes, which costs
+  milliseconds to compute against the two minutes it saves. Upgrading
+  re-imports once more to record the digest, then stays quiet until the
+  lexicon data actually changes. The seed-resync migrations are unaffected:
+  they call the importer directly and never consulted this gate.
+
+## [0.56.6] - 2026-08-17
+
+### Fixed
+
+- The base-lexicon import no longer needs tens of gigabytes of transient
+  disk (#126 follow-up). Turning off `wal_autocheckpoint` for the whole
+  1.3M-row insert meant nothing could checkpoint until it finished, so the
+  WAL grew without bound: measured here at 24 GiB peak for a 168 MB
+  database. The insert now runs in 50,000-row batches with a truncating
+  checkpoint between them, which caps peak WAL at 921 MiB with no change in
+  import time (117s versus 112s). Since 0.56.4 was the first version to run
+  this on the default startup path, a fresh install or version bump no
+  longer demands disk headroom nothing announced.
+- The import logs `lexicon_sync_started` and its completion with row counts
+  and elapsed time, so its progress is visible from the logs instead of only
+  by watching the WAL file grow.
+
+## [0.56.5] - 2026-08-17
+
+### Fixed
+
+- Episode summaries and chapter titles can no longer ship AI-tell
+  punctuation. The summary model kept emitting em dashes, en dashes, and
+  curly quotes despite the prompt banning them, so the ban is now enforced
+  deterministically after the LLM call: dashes become comma asides, numeric
+  ranges keep a plain hyphen, quotes straighten, the ellipsis character
+  expands, and emojis are dropped. Accented letters in names are untouched.
+  The prompts also carry the ASCII rule in their top output contract now,
+  not only in the style section.
+
+## [0.56.4] - 2026-08-16
+
+### Fixed
+
+- The base-lexicon sync no longer holds `migration_lock` for its whole import
+  (#126). On a fresh database or a version bump the import can run for tens
+  of minutes on slow disks, and whichever process booted second sat blocked
+  in its startup migration check the entire time, so the web process never
+  bound port 8000. The sync now serializes on its own `.lexicon-sync.lock`;
+  startup never waits on it. The import itself also got faster and lighter:
+  a 64 MB page cache and no mid-transaction WAL checkpoints during the bulk
+  insert (the 2 MB default cache wrote about 14 GB for a 241 MB artifact),
+  rows inserted in key order for B-tree locality, and one deliberate
+  checkpoint afterward. Reported with a full diagnosis in #126.
+- Job-row writes (stage and progress updates) log a `slow_db_write` warning
+  with the current WAL size when they exceed one second, to pinpoint the
+  silent multi-minute stalls observed between pipeline stages on 0.56.3.
+
+## [0.56.3] - 2026-08-16
+
+### Fixed
+
+- The normalize stage no longer spends minutes in the deterministic
+  corrections backstop. `lexicon.lookup()`'s OR across an unindexed column
+  full-scanned the base lexicon once per token (measured 100 to 144 ms per
+  lookup in production, about 242 s per episode); the query is now two
+  index-served probes with a new `idx_lexicon_input_text` index (migration
+  026), 160x faster per lookup in benchmarks, and the per-token cache is
+  shared across the whole episode instead of rebuilt per chunk. Instrumented
+  runs put the pass at 92% of normalize; it should now be seconds.
+
+## [0.56.2] - 2026-08-15
+
+### Added
+
+- The Recents list can now be pruned (#125). Each finished run's action menu
+  gains "Remove from recents", and the RECENT header gains "clear failed" and
+  "clear all" controls with an inline confirm step. All of it removes job rows
+  only: queued and processing runs always survive, and episodes stay in the
+  feed. New API: `DELETE /api/v1/jobs/{id}` and
+  `DELETE /api/v1/jobs?scope=all|failed`.
+
+## [0.56.1] - 2026-08-14
+
+### Changed
+
+- The default summary and chapter prompts now carry an anti-slop style
+  section distilled from the humanizer rules: banned AI vocabulary and
+  constructions (em dashes, colon reveals, forced triads, significance
+  inflation, vague attribution, hedging stacks), a concrete-over-thematic
+  rule, and an end-on-the-last-point rule; chapter titles additionally get
+  sentence case and a name-the-topic rule. Deployments that edited either
+  prompt in Settings keep their override; reset to defaults to pick up the
+  new text.
+
+## [0.56.0] - 2026-08-13
+
+### Added
+
+- A resumable TTS chunk cache: a synthesized chunk that clears the quality
+  checks is stored under `<data_dir>/tts_cache`, keyed on backend, model,
+  voice, language, text, and the baseline generation params, so a re-run of
+  a job that failed partway through does not re-synthesize chunks it already
+  produced. New settings `TTS_CHUNK_CACHE_ENABLED` (default on) and
+  `TTS_CACHE_RETENTION_DAYS` (default 7). Caching is skipped whenever the
+  active voice/model cannot be identified with confidence (no resolved
+  voice slot, no configured model, an unseeded `CHATTERBOX_SEED=0`, or a
+  failed model select). Each entry records whether it cleared the quality
+  checks, so a run with audio analysis or ASR verification on ignores an
+  entry stored by a run that had them off, and never inherits audio it
+  would have checked.
+- Adaptive `max_chars`: if 2 or more of a job's first 20 chunks needed a
+  regeneration, the rest of the job synthesizes at a lowered
+  `CHATTERBOX_MAX_CHARS` (75% of the configured value) instead of paying for
+  a regen on most chunks. Lowering only; it is never raised back up mid-job. New
+  setting `TTS_ADAPTIVE_MAX_CHARS_ENABLED` (default on). The lowered value is
+  part of the TTS chunk cache key, so those chunks are still cached, under a
+  key that describes what was actually synthesized rather than colliding with
+  the unmodified-baseline entry for the same text.
+- Idle wrapper restart: between jobs, when the queue is empty, the worker
+  checks the tts-wrapper's `/health` (now reporting `rss_mb` and
+  `restart_recommended`) and asks it to restart itself via the new
+  `POST /maintenance/restart` if it's over its memory soft limit. That puts
+  the restart on our schedule, instead of only ever restarting mid-job at the
+  wrapper's hard limit. The wrapper rejects with 503 while inference is still
+  running. New setting `TTS_IDLE_RESTART_ENABLED` (default on); a no-op for the
+  `openai-api` TTS backend.
+- A CI workflow. Pull requests and pushes to main now run ruff plus all three
+  pytest suites (backend, render, tts-wrapper) and build
+  the app image. Until now the full test and build gate was local-only; CI
+  ran just CodeQL and dependency review.
+- Each release now also publishes a CPU-only wrapper image,
+  `ttlequals0/audicle-tts:<version>-cpu`, so a GPU-less deployment no longer
+  has to build it locally. The trivy release gate scans the new tag with the
+  tts ignorefile.
+- An opt-in sentence-scoped pronunciation pass: with `PRONUNCIATION_SCOPE`
+  set to `sentence` (default stays `chunk`), the pronunciation LLM call sends
+  only the sentences that matched a reference term, as numbered lines, and
+  splices the respelled sentences back in place. Any protocol or splice
+  failure falls back to the existing full-chunk call, so the worst case is
+  what happens today; a protocol failure also turns sentence scope off for the
+  rest of that job, since a model that ignores the numbered-line contract once
+  keeps ignoring it.
+- A strict mode for remote ASR verification: `WHISPER_API_STRICT` (default
+  off) fails a chunk instead of shipping it unverified when the `openai-api`
+  ASR backend is configured but unreachable. The default keeps the existing
+  degrade-to-unverified behavior.
+- Per-chunk pipeline instrumentation in the logs: `tts_chunk_done` now
+  carries `synth_ms`, `attempts`, `rtf`, and the wrapper-reported
+  `inference_ms`, `verify_ms`, and `rss_mb` (also new in the wrapper's
+  `/generate` response); `pipeline_start` reports `queue_wait_seconds`; the
+  pronunciation pass logs `pronunciation_window_done` with `llm_ms` and
+  `input_chars`. Real-time factor per chunk was previously not measurable
+  from the logs at all.
 
 ### Changed
 
 - The README sample is a newer narration clip (#122). The download is
   `docs/sample.mp4`, the same file the player uses; `docs/sample.mp3` is gone.
+- TTS and remote-ASR calls now share one process-wide `httpx.AsyncClient`
+  instead of opening a fresh one per chunk, and the remote SSRF guard caches a
+  resolved host's verdict for 5 minutes instead of re-resolving DNS on every
+  chunk.
+- Episode audio is concatenated by streaming each chunk to disk with
+  soundfile instead of building the whole episode as one in-memory tensor,
+  removing the end-of-job memory spike on long episodes. Output is
+  byte-identical to the old path.
+- `tts-wrapper/uv.lock` now sources torch and torchaudio from the PyTorch CPU
+  index, dropping the nvidia-*-cu12 wheel set (~7 GB) from any dev or CI sync
+  of the chatterbox extra. The shipped images are unaffected: both wrapper
+  Dockerfiles install torch with pip on their own.
+- The CPU wrapper image no longer ships the build toolchain: build-essential
+  and git are purged after the native extensions compile, which removes
+  linux-libc-dev and with it 50 unfixable HIGH/CRITICAL kernel-header CVE
+  findings from the trivy gate. The gate script itself now uses a 30 minute
+  trivy timeout and reports a fatal scan error (cache lock, analysis timeout)
+  as SCAN ERROR instead of conflating it with a CVE FAILED verdict.
 
 ## [0.55.4] - 2026-08-12
 

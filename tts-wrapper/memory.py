@@ -132,6 +132,13 @@ def maybe_cleanup(
     return stats
 
 
+def over_soft_limit(soft_limit_mb: int, current_mb: int) -> bool:
+    """True when ``current_mb`` RSS is above the soft ceiling. Zero disables
+    the check, the same convention as ``maybe_cleanup``/``over_hard_limit``."""
+
+    return soft_limit_mb > 0 and current_mb > soft_limit_mb
+
+
 def over_hard_limit(hard_limit_mb: int) -> bool:
     """True when RSS is still above the hard ceiling after a cleanup, meaning a
     restart is the remaining option. Zero disables the check."""

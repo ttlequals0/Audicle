@@ -4,7 +4,9 @@ Every term the app uses, in plain words, with a link to the part of the docs tha
 
 ## A
 
-**ASR verification** - The optional quality gate that transcribes each generated chunk with Whisper and compares the transcript to the requested text; a chunk that diverges too far is regenerated. [Voices and TTS > ASR verification](voices-and-tts.md#asr-verification)
+**Adaptive chunk sizing** - After 2 of a job's first 20 chunks need a regeneration, the rest of the job synthesizes at 75% of `CHATTERBOX_MAX_CHARS`. Per job, lowering only. [How it works > Adaptive chunk sizing](how-it-works.md#adaptive-chunk-sizing)
+
+**ASR verification** - The optional quality gate that transcribes each generated chunk with Whisper and compares the transcript to the requested text; a chunk that diverges too far is regenerated. On a remote ASR backend, strict mode (`WHISPER_API_STRICT`) fails a chunk that cannot be verified instead of shipping it unverified. [Voices and TTS > ASR verification](voices-and-tts.md#asr-verification)
 
 **Audio analysis** - The signal-level quality gate over every chunk: it catches drones, noise, dead air, pacing problems, and pitch drift, and triggers a regeneration. [How it works > The quality gates](how-it-works.md#the-quality-gates)
 
@@ -19,6 +21,8 @@ Every term the app uses, in plain words, with a link to the part of the docs tha
 **Chime** - An optional short clip played at the end of every episode so back-to-back episodes are easy to tell apart. [Voices and TTS > End-of-episode chime](voices-and-tts.md#end-of-episode-chime)
 
 **Chunk** - One piece of the narration text, sized for a single TTS call. Episodes are synthesized chunk by chunk, and the quality gates judge each one. [How it works > Chunking and TTS](how-it-works.md#chunking-and-tts)
+
+**Chunk cache** - Gate-passing chunks stored on disk, keyed on everything that determines the audio, so a re-run or reprocess with unchanged settings skips synthesis it already paid for. [How it works > The chunk cache](how-it-works.md#the-chunk-cache)
 
 **Cleanup** - The LLM pass that strips an extracted page down to the article. Its prompt is editable. [How it works](how-it-works.md#cleanup-normalize-summary)
 
@@ -44,6 +48,10 @@ Every term the app uses, in plain words, with a link to the part of the docs tha
 
 **Hard block** - A site that answers a scrape with a challenge page or near-empty 403 rather than a teaser. Detected and routed through the solver automatically. [Paywalls > Hard blocks](paywalls.md#hard-blocks)
 
+## I
+
+**Idle restart** - The worker asking a memory-heavy wrapper to restart itself while the job queue is empty, so the reload cost lands between jobs instead of mid-episode. [How it works > The wrapper's memory ladder](how-it-works.md#the-wrappers-memory-ladder)
+
 ## J
 
 **Job** - One run of the pipeline for one submission. Queued, processing, done, failed, or cancelled; visible on Home. [How it works > The job queue](how-it-works.md#the-job-queue)
@@ -57,6 +65,10 @@ Every term the app uses, in plain words, with a link to the part of the docs tha
 ## N
 
 **Normalize** - The pipeline stage that rewrites cleaned text for narration: an LLM pronunciation pass plus the base lexicon and your corrections. [How it works](how-it-works.md#cleanup-normalize-summary)
+
+## P
+
+**Pronunciation scope** - What each pronunciation LLM call sends: the whole chunk (default), or only the sentences that matched a correction term, spliced back after respelling. [How it works](how-it-works.md#cleanup-normalize-summary)
 
 ## O
 
