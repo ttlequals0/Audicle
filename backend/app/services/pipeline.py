@@ -125,6 +125,9 @@ class _Watchdog:
     chunk, a finished TTS attempt -- pushes the deadline out by ``stall_seconds``,
     bounded by ``ceiling_at`` so a job that inches forward forever still cannot
     hold the single worker indefinitely.
+
+    ``beat()`` alone is callable from any thread, because the OCR fallback beats
+    per page from inside ``asyncio.to_thread``. Everything else here is loop-only.
     """
 
     def __init__(
@@ -153,6 +156,15 @@ class _Watchdog:
         a late beat from a teardown path can't ``reschedule`` an exited CM."""
 
         if not self._armed:
+            return
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is not self._loop:
+            # Re-entering on the loop re-checks _armed, which matters: a beat
+            # handed over from a worker thread lands after the CM may have exited.
+            self._loop.call_soon_threadsafe(self.beat)
             return
         self.last_beat = self._loop.time()
         self._cm.reschedule(min(self.last_beat + self.stall_seconds, self.ceiling_at))
@@ -184,7 +196,8 @@ _watchdog_ctx: ContextVar[_Watchdog | None] = ContextVar("pipeline_watchdog", de
 
 
 def _beat() -> None:
-    """Tell the running job's watchdog that progress happened."""
+    """Tell the running job's watchdog that progress happened. Safe to call from
+    a worker thread, so stages can hand it to blocking code they run off-loop."""
 
     watchdog = _watchdog_ctx.get()
     if watchdog is not None:
