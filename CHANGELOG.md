@@ -4,6 +4,34 @@ All notable changes to Audicle are recorded here. Format follows Keep a Changelo
 (https://keepachangelog.com). Versioning is semver once a release ships; pre-release
 work lives under `[Unreleased]`.
 
+## [0.56.8] - 2026-08-23
+
+### Fixed
+
+- Scanned PDFs and image uploads no longer fail extraction with
+  `RuntimeError: no running event loop`. The job watchdog's `beat()` called
+  `asyncio.Timeout.reschedule`, which resolves the event loop from whichever
+  thread calls it. Every other beat site runs on the loop, but the OCR
+  fallback beats once per page from inside the `asyncio.to_thread` parse,
+  where there is no loop to find, so the first finished page killed the job
+  seconds in. Retrying could not help, because no upload that fell through to
+  OCR had ever succeeded. An off-loop beat now re-enters on the owning loop via
+  `call_soon_threadsafe`, which also rechecks the disarm flag, because a
+  handed-over beat can land after the timeout context has exited. Text PDFs
+  stop at the pypdf parse and never reached this path.
+
+### Security
+
+- CI now declares `permissions: contents: read` at the workflow level, closing
+  five CodeQL `actions/missing-workflow-permissions` alerts. Every job only
+  checks out and runs tests or a throwaway image build, so the default token
+  scope was wider than anything the workflow does.
+- Accepted CVE-2026-14456 (openssl, HIGH) in `.trivyignore` with the reasoning
+  recorded there. Debian trixie has deferred the fix and ships no patched
+  package, 0.56.7 already carries the same 3.5.6-1~deb13u2, and the flaw is a
+  memory-growth DoS in the QUIC server path, which none of the three images
+  runs.
+
 ## [0.56.7] - 2026-08-17
 
 ### Fixed

@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import threading
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import httpx
 import pytest
@@ -155,6 +157,53 @@ async def test_pipeline_marks_failed_when_a_stage_stops_making_progress(
     assert after.stage == "extract"
     assert "made no progress" in (after.error or "")
     assert "JOB_STALL_SECONDS" in (after.error or "")
+
+
+async def test_watchdog_beat_reschedules_from_a_worker_thread() -> None:
+    """The OCR fallback beats once per page from inside ``asyncio.to_thread``.
+    ``asyncio.Timeout.reschedule`` resolves the loop from the calling thread, so
+    beating inline there raised ``RuntimeError: no running event loop`` and
+    killed every scanned PDF on its first finished page."""
+
+    loop = asyncio.get_running_loop()
+    async with asyncio.timeout(30) as cm:
+        watchdog = pipeline._Watchdog(cm, loop, 30.0, loop.time(), 300.0)
+        token = pipeline._watchdog_ctx.set(watchdog)
+        try:
+            before = cm.when()
+            await asyncio.to_thread(pipeline._beat)
+            # The off-loop beat is handed back to the loop, so it lands on a
+            # later iteration rather than inside the worker thread.
+            await asyncio.sleep(0)
+            assert cm.when() > before
+        finally:
+            watchdog.disarm()
+            pipeline._watchdog_ctx.reset(token)
+
+
+async def test_watchdog_beat_handed_over_while_armed_is_dropped_after_disarm() -> None:
+    """The hand-over lands on the loop a tick later, by which point teardown may
+    have disarmed the watchdog and exited the CM. Rescheduling then raises inside
+    a bare callback, where only the loop's exception handler would see it."""
+
+    loop = asyncio.get_running_loop()
+    errors: list[dict[str, Any]] = []
+    loop.set_exception_handler(lambda _loop, context: errors.append(context))
+    try:
+        async with asyncio.timeout(30) as cm:
+            watchdog = pipeline._Watchdog(cm, loop, 30.0, loop.time(), 300.0)
+            after_arm = cm.when()
+            # Post from a worker thread while still armed. Joining without
+            # awaiting keeps the loop from running the callback until teardown.
+            poster = threading.Thread(target=watchdog.beat)
+            poster.start()
+            poster.join()
+            watchdog.disarm()
+        await asyncio.sleep(0)  # now let the handed-over beat land
+        assert cm.when() == after_arm
+        assert errors == []
+    finally:
+        loop.set_exception_handler(None)
 
 
 def test_effective_job_timeout_scales_with_chunk_count() -> None:

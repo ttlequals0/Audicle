@@ -110,7 +110,8 @@ async def extract_file(
 
     Mirrors ``extraction.extract``'s contract. The CPU-bound parse runs in a
     worker thread so the job-timeout/cancellation can still fire during a large
-    PDF parse.
+    PDF parse. ``beat`` is therefore called from that worker thread, not the
+    loop, so whatever is passed has to tolerate it.
     """
 
     _, filename = parse_source_uri(job.url)

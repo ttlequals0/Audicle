@@ -5,6 +5,13 @@ on:
   push:
     branches: [main]
 
+# Every job only checks out and runs tests or a throwaway image build, so the
+# token needs nothing but read. Set here rather than per job: CodeQL's
+# missing-workflow-permissions rule accepts the workflow-level grant, and one
+# block cannot drift out of sync the way five copies can.
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest

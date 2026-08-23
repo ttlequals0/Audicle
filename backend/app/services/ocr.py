@@ -92,7 +92,10 @@ def _finish(
 
 
 def ocr_pdf(data: bytes, settings: Settings, beat: Callable[[], None]) -> str:
-    """Rasterize and OCR up to ``OCR_MAX_PAGES`` pages of a scanned PDF."""
+    """Rasterize and OCR up to ``OCR_MAX_PAGES`` pages of a scanned PDF.
+
+    Runs blocking, and ``beat`` fires once per page off the event loop.
+    """
 
     import numpy as np
     import pypdfium2 as pdfium

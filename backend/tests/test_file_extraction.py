@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 from pathlib import Path
 
@@ -217,6 +218,27 @@ async def test_extract_scanned_pdf_falls_back_to_ocr(env: Path, monkeypatch) -> 
     result = await _run(env, "scan.pdf", _make_pdf("tiny"))
     assert called.get("n")
     assert "Recovered by OCR" in result.markdown
+
+
+async def test_ocr_beat_is_called_off_the_event_loop(env: Path, monkeypatch) -> None:
+    """Pins the precondition behind the watchdog's thread-safety: the parse runs
+    in a worker thread, so the beat OCR fires per page has no running loop."""
+
+    from app.services import ocr
+
+    seen: dict[str, bool] = {}
+
+    def _fake_ocr_pdf(data, settings, beat):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            seen["off_loop"] = True
+        beat()
+        return "Recovered by OCR. " * 40
+
+    monkeypatch.setattr(ocr, "ocr_pdf", _fake_ocr_pdf)
+    await _run(env, "scan.pdf", _make_pdf("tiny"))
+    assert seen.get("off_loop"), "OCR ran on the loop; the per-page beat would be loop-bound"
 
 
 async def test_extract_text_pdf_does_not_invoke_ocr(env: Path, monkeypatch) -> None:
