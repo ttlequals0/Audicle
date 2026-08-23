@@ -75,6 +75,17 @@ CVE-2026-57433
 # release and drop this entry when deb13u ships a fixed curl.
 CVE-2026-8458
 
+# CVE-2026-14456 (openssl / libssl3t64 / openssl-provider-legacy, HIGH):
+# denial of service via unbounded memory growth in the QUIC SERVER path. No
+# fixed package in Debian trixie as of 2026-08-23 (trivy status: fix_deferred,
+# empty fixed-version), and 0.56.7 already ships the same 3.5.6-1~deb13u2, so
+# this is a newly published finding rather than a new exposure. Present in all
+# three images because openssl rides in the Debian base. Nothing here runs a
+# QUIC server: the app serves HTTP through uvicorn, and the wrapper and render
+# sidecars are internal HTTP too. Re-check each release and drop this entry
+# when deb13u ships a fixed openssl.
+CVE-2026-14456
+
 # CVE-2026-58050 (libssh2-1t64, HIGH): heap buffer overflow via integer
 # overflow in publickey attribute allocation. No fixed package in Debian trixie
 # as of 2026-08-11 (trivy status: affected, empty fixed-version). Present in all

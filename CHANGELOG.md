@@ -20,6 +20,18 @@ work lives under `[Unreleased]`.
   handed-over beat can land after the timeout context has exited. Text PDFs
   stop at the pypdf parse and never reached this path.
 
+### Security
+
+- CI now declares `permissions: contents: read` at the workflow level, closing
+  five CodeQL `actions/missing-workflow-permissions` alerts. Every job only
+  checks out and runs tests or a throwaway image build, so the default token
+  scope was wider than anything the workflow does.
+- Accepted CVE-2026-14456 (openssl, HIGH) in `.trivyignore` with the reasoning
+  recorded there. Debian trixie has deferred the fix and ships no patched
+  package, 0.56.7 already carries the same 3.5.6-1~deb13u2, and the flaw is a
+  memory-growth DoS in the QUIC server path, which none of the three images
+  runs.
+
 ## [0.56.7] - 2026-08-17
 
 ### Fixed
