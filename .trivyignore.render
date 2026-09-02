@@ -62,3 +62,16 @@ CVE-2026-6653
 # processes operator-supplied TIFFs. Debian marks it will_not_fix for trixie.
 # Added 0.48.3. Remove if a patch ships.
 CVE-2026-36849
+
+# libexpat1 (HIGH x1, "affected"), added 0.56.9: CVE-2026-66046, quadratic
+# blowup in storeAtts() lets a few-megabyte XML document burn CPU. No fix
+# released. Same reasoning as the libexpat block above: nothing here parses
+# untrusted XML. Duplicated in the sibling ignorefile.
+CVE-2026-66046
+
+# libtiff6 (HIGH x1, "affected"), added 0.56.9: CVE-2026-52490 is arbitrary
+# code execution in process_command_opts() in tools/tiffcrop.c. That code is
+# the tiffcrop CLI, which ships in libtiff-tools; the render image installs
+# only libtiff6, so the vulnerable function is not present in the image at all.
+# No fix released. Remove when Debian ships a patched libtiff.
+CVE-2026-52490

@@ -1,6 +1,6 @@
 [project]
 name = "audicle-tts-wrapper"
-version = "0.56.8"
+version = "0.56.9"
 description = "FastAPI TTS wrapper for Audicle (Chatterbox)."
 requires-python = ">=3.11,<3.14"
 # The wrapper's Python is set by the Dockerfiles' python:3.11-slim base. The bound
@@ -46,9 +46,13 @@ whisper = ["faster-whisper>=1.0"]
 #     DoS (fixed in starlette 1.1.0 / 1.3.1). The wrapper never starts a gradio
 #     server or imports gradio, and exposes only JSON/GET endpoints (no form parsing).
 #   * ``transformers==5.2.0`` -- GHSA-29pf-2h5f-8g72 remote code execution (fixed in
-#     5.3.0) and GHSA-fgcw-684q-jj6r LightGlue model-load code execution (fixed in
-#     5.5.0). Both are reached through loading an untrusted model/config; the wrapper
-#     only loads the fixed, trusted Chatterbox model (never ``trust_remote_code``).
+#     5.3.0), GHSA-fgcw-684q-jj6r LightGlue model-load code execution (fixed in
+#     5.5.0), and GHSA-xrqw-3rrv-vx5w ``save_pretrained`` path traversal through a
+#     chat template name (fixed in 5.10.0). The first two are reached through loading
+#     an untrusted model/config; the wrapper only loads the fixed, trusted Chatterbox
+#     model (never ``trust_remote_code``). The third needs a ``save_pretrained`` call,
+#     which the wrapper never makes, on a model carrying chat templates, which a TTS
+#     model does not.
 #   * ``torch==2.6.0`` -- GHSA-rrmf-rvhw-rf47 ``torch.jit.script`` memory corruption
 #     (LOW, fixed in 2.13.0). The wrapper never calls ``torch.jit.script``, let alone
 #     on untrusted input.

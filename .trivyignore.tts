@@ -31,3 +31,12 @@ CVE-2026-54283
 CVE-2026-4372
 # transformers 5.2.0 (fixed 5.5.0), added 0.48.2 -- same exact-pin situation:
 CVE-2026-5241
+# transformers 5.2.0 (fixed 5.10.0), added 0.56.9 -- same exact-pin situation.
+# save_pretrained path traversal, and the wrapper never calls save_pretrained:
+CVE-2026-9856
+
+# libexpat1 (HIGH x1, "affected"), added 0.56.9: CVE-2026-66046, quadratic
+# blowup in storeAtts() lets a few-megabyte XML document burn CPU. No fix
+# released. Same reasoning as the libexpat block above: nothing here parses
+# untrusted XML. Duplicated in the sibling ignorefile.
+CVE-2026-66046

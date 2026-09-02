@@ -4,6 +4,39 @@ All notable changes to Audicle are recorded here. Format follows Keep a Changelo
 (https://keepachangelog.com). Versioning is semver once a release ships; pre-release
 work lives under `[Unreleased]`.
 
+## [0.56.9] - 2026-09-02
+
+### Security
+
+- The static ffmpeg baked into the app image moves from the n8.1 series
+  (n8.1.2-22-g94138f6973, built 2026-07-10) to n9.0 (n9.0.1-11-ge47273f4d9,
+  built 2026-09-01), closing #133. ffmpeg parses untrusted audio uploads. The
+  binary carries no package-database entry, so trivy never sees it and the
+  weekly upstream monitor is the only signal that the pin has aged. The new
+  tarball is mirrored to a repo release tag and pinned by sha256 like the old
+  one.
+- Dependency updates from the merged Dependabot batch. pypdf 6.15.0 to 6.16.1
+  clears three DoS advisories, in outline retrieval, XForm extraction, and
+  `TreeObject.insert_child`. browserslist 4.28.2 to 4.28.8 and
+  postcss-selector-parser 6.1.2 to 6.1.3 cover the frontend build chain. The uv
+  builder image goes 0.12.3 to 0.12.7, and `astral-sh/setup-uv` and
+  `docker/build-push-action` move to their next major.
+- Accepted four unfixed Debian trixie base CVEs found by the release gate, each
+  with its reasoning recorded in the ignorefile it landed in. CVE-2026-11822 and
+  CVE-2026-11824 (libsqlite3-0, HIGH) are FTS5 memory corruption reachable only
+  by opening a crafted database and running a MATCH query. Audicle builds no FTS5
+  tables and opens only the database it owns. CVE-2026-66046 (libexpat1, HIGH) is
+  a quadratic blowup in `storeAtts()`, and nothing in the tts or render images
+  parses untrusted XML. CVE-2026-52490 (libtiff6, HIGH) lives in
+  `tools/tiffcrop.c`, which ships in libtiff-tools; the render image installs only
+  libtiff6, so the vulnerable function is not in the image. None has a patched
+  package in trixie yet.
+- Accepted CVE-2026-9856 (transformers, HIGH) in `.trivyignore.tts`. It is a
+  `save_pretrained` path traversal through a chat template name, fixed in
+  5.10.0, and chatterbox-tts 0.1.7 pins 5.2.0 exactly, so
+  `uv lock --upgrade-package transformers` resolves to no change. The wrapper
+  never calls `save_pretrained`, and a TTS model carries no chat templates.
+
 ## [0.56.8] - 2026-08-23
 
 ### Fixed

@@ -95,3 +95,15 @@ CVE-2026-14456
 # no image ships git or ssh, and the HTTP stack is httpx, never libcurl.
 # Re-check each release and drop this entry when deb13u ships a fixed libssh2.
 CVE-2026-58050
+
+# CVE-2026-11822 / CVE-2026-11824 (libsqlite3-0, HIGH x2): memory corruption in
+# the FTS5 full-text extension, reachable only by opening a crafted database
+# and running an FTS5 MATCH query against it. No fixed package in Debian trixie
+# as of 2026-09-02 (trivy status: affected, empty fixed-version); the fix is
+# upstream SQLite 3.53.2 and the base ships 3.46.1-7+deb13u1. Present in all
+# three images because Python's sqlite3 links the system library. Audicle
+# creates no FTS5 tables and issues no MATCH queries, and it only ever opens
+# the database it owns in its own volume, never an operator- or user-supplied
+# file. Re-check each release and drop these when deb13u ships a fixed sqlite3.
+CVE-2026-11822
+CVE-2026-11824
