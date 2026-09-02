@@ -19,7 +19,7 @@ FROM ghcr.io/astral-sh/uv:0.12.7 AS uv
 # Pinned BtbN GPL static build, sha256-verified. Audicle only subprocesses the
 # ffmpeg binary, so a static binary is a drop-in -- and it removes apt ffmpeg's
 # mesa/GL/SDL/pango/mbedcrypto dependency tree. ffprobe/ffplay are not shipped
-# (nothing uses them). The tarball (BtbN autobuild-2026-07-10-13-44) is mirrored
+# (nothing uses them). The tarball (BtbN autobuild-2026-09-01-13-13) is mirrored
 # to this repo's releases: BtbN deletes daily autobuilds after ~14 days. To
 # bump: mirror the new BtbN asset to a new release tag, update URL + sha256 together.
 FROM debian:trixie-slim AS ffmpeg
@@ -31,8 +31,8 @@ RUN [ "$TARGETARCH" = "amd64" ] || { \
       echo "ERROR: the pinned static ffmpeg is amd64-only; build with --platform linux/amd64" >&2; \
       exit 1; \
     }
-ADD --checksum=sha256:8a3a9d2919b687602dfed430e0397779405589357e7108950e506a3291af9371 \
-    https://github.com/ttlequals0/Audicle/releases/download/ffmpeg-static-n8.1.2-22-g94138f6973/ffmpeg-n8.1.2-22-g94138f6973-linux64-gpl-8.1.tar.xz \
+ADD --checksum=sha256:6f180db3c615393bb7e4a1b25d4a63395f97c850ee93244bb5428b8b15080ddc \
+    https://github.com/ttlequals0/Audicle/releases/download/ffmpeg-static-n9.0.1-11-ge47273f4d9/ffmpeg-n9.0.1-11-ge47273f4d9-linux64-gpl-9.0.tar.xz \
     /tmp/ffmpeg.tar.xz
 RUN apt-get update && apt-get install -y --no-install-recommends xz-utils \
     && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp \
