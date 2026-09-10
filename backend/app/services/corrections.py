@@ -137,7 +137,9 @@ def validate_lexicon(dictionary: Any, *, max_entries: int) -> ValidationResult:
             spoken = raw_value.get("spoken")
             mode = raw_value.get("mode")
             if mode is not None and mode not in pronounce_convert.MODES:
-                failures.append(ValidationFailure(key=str(raw_key), reason=f"invalid mode {mode!r}"))
+                failures.append(
+                    ValidationFailure(key=str(raw_key), reason=f"invalid mode {mode!r}")
+                )
             cs = raw_value.get("case_sensitive")
             if cs is not None and not isinstance(cs, bool):
                 failures.append(

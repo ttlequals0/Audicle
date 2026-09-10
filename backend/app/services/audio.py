@@ -24,12 +24,14 @@ Per-chunk WAVs and the concatenated WAV are removed by the caller in a
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
 import math
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -101,13 +103,41 @@ def transcode_to_wav(data: bytes, *, max_seconds: int = 70) -> bytes:
         # Bound wall-clock decode time: this path runs on untrusted uploads, and a
         # crafted file could otherwise hang ffmpeg and pin the calling thread.
         try:
-            completed = subprocess.run(
-                cmd, capture_output=True, text=True, check=False, timeout=60
-            )
+            completed = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=60)
         except subprocess.TimeoutExpired as exc:
             raise FfmpegError(-1, f"ffmpeg transcode timed out after {exc.timeout}s") from exc
         if completed.returncode != 0 or not dst.is_file():
             raise FfmpegError(completed.returncode, completed.stderr)
+        return dst.read_bytes()
+
+
+async def decode_to_pcm_wav(data: bytes) -> bytes:
+    """Decode untrusted audio to PCM without changing its duration or layout."""
+
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "in"
+        dst = Path(tmp) / "out.wav"
+        src.write_bytes(data)
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-protocol_whitelist",
+            "file,pipe",
+            "-f",
+            "wav",
+            "-i",
+            str(src),
+            "-c:a",
+            "pcm_s16le",
+            "-f",
+            "wav",
+            str(dst),
+        ]
+        returncode, stderr = await _run_ffmpeg(cmd, 60)
+        if returncode != 0 or not dst.is_file():
+            raise FfmpegError(returncode, stderr)
         return dst.read_bytes()
 
 
@@ -168,9 +198,7 @@ def embed_chapters(
         element_ids = [f"chp{i}" for i in range(len(chapter_starts))]
         for i, (start_secs, title) in enumerate(chapter_starts):
             end_secs = (
-                chapter_starts[i + 1][0]
-                if i + 1 < len(chapter_starts)
-                else total_duration_secs
+                chapter_starts[i + 1][0] if i + 1 < len(chapter_starts) else total_duration_secs
             )
             tags.add(
                 CHAP(
@@ -446,7 +474,33 @@ _POST_LOUDNORM_FILTERS = (
 )
 
 
-def _measure_loudness(input_wav: Path, settings: Settings) -> dict[str, float] | None:
+async def _stop_process(process: asyncio.subprocess.Process) -> None:
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(process.pid, signal.SIGTERM)
+    try:
+        await asyncio.wait_for(process.communicate(), timeout=2.0)
+    except TimeoutError:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+        await process.communicate()
+
+
+async def _run_ffmpeg(cmd: list[str], timeout_seconds: float) -> tuple[int, str]:
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        _stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
+    except (TimeoutError, asyncio.CancelledError):
+        await asyncio.shield(_stop_process(process))
+        raise
+    return process.returncode or 0, stderr.decode(errors="replace")
+
+
+async def _measure_loudness(input_wav: Path, settings: Settings) -> dict[str, float] | None:
     """First loudnorm pass: measure the input as the loudnorm filter will see
     it (after the gate/denoise/compressor stages) and return the measured_*
     values for the linear second pass. Returns None on any failure -- the
@@ -469,22 +523,22 @@ def _measure_loudness(input_wav: Path, settings: Settings) -> dict[str, float] |
         "-",
     ]
     try:
-        completed = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    except OSError as exc:
+        returncode, stderr = await _run_ffmpeg(cmd, settings.JOB_STALL_SECONDS)
+    except (OSError, TimeoutError) as exc:
         logger.warning(
             "loudnorm measurement pass could not run; falling back to single-pass",
             extra={"event": "audio_loudnorm_measure_failed", "error": str(exc)},
         )
         return None
-    if completed.returncode != 0:
+    if returncode != 0:
         logger.warning(
             "loudnorm measurement pass failed; falling back to single-pass",
-            extra={"event": "audio_loudnorm_measure_failed", "code": completed.returncode},
+            extra={"event": "audio_loudnorm_measure_failed", "code": returncode},
         )
         return None
-    start, end = completed.stderr.rfind("{"), completed.stderr.rfind("}")
+    start, end = stderr.rfind("{"), stderr.rfind("}")
     try:
-        stats = json.loads(completed.stderr[start : end + 1])
+        stats = json.loads(stderr[start : end + 1])
         measured = {
             "measured_i": float(stats["input_i"]),
             "measured_tp": float(stats["input_tp"]),
@@ -508,7 +562,7 @@ def _measure_loudness(input_wav: Path, settings: Settings) -> dict[str, float] |
     return measured
 
 
-def normalize_and_encode(
+async def normalize_and_encode(
     input_wav: Path,
     output_mp3: Path,
     settings: Settings,
@@ -520,7 +574,7 @@ def normalize_and_encode(
     """
 
     output_mp3.parent.mkdir(parents=True, exist_ok=True)
-    measured = _measure_loudness(input_wav, settings)
+    measured = await _measure_loudness(input_wav, settings)
     if measured:
         gain_db = settings.LOUDNORM_TARGET_LUFS - measured["measured_i"] + measured["offset"]
         stages = [
@@ -575,9 +629,12 @@ def normalize_and_encode(
             "mp3_channels": settings.MP3_CHANNELS,
         },
     )
-    completed = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if completed.returncode != 0:
-        raise FfmpegError(completed.returncode, completed.stderr)
+    try:
+        returncode, stderr = await _run_ffmpeg(cmd, settings.JOB_STALL_SECONDS)
+    except TimeoutError as exc:
+        raise FfmpegError(-1, "ffmpeg encode timed out") from exc
+    if returncode != 0:
+        raise FfmpegError(returncode, stderr)
 
     duration = _read_mp3_duration(output_mp3)
     logger.info(

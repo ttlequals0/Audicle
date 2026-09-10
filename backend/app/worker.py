@@ -12,7 +12,7 @@ import asyncio
 import contextlib
 import logging
 import signal
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from app.config import RUNTIME_SETTING_BOUNDS, Settings, clamp_to_bounds, get_settings
 from app.core import database
@@ -22,22 +22,42 @@ from app.services import (
     reachability,
     retention,
     runtime_settings,
+    settings_store,
     tts,
     tts_cache,
 )
 from app.startup import bootstrap
+from app.utils.logging import apply_level
 
 logger = logging.getLogger("app.worker")
+
+_RETENTION_SWEEP_DAY_KEY = "retention_sweep_day"
 
 
 async def _crash_recovery(data_dir) -> None:
     conn = database.connect(database.db_path(data_dir))
     try:
         reset = database.reset_processing_to_queued(conn)
+        staged = 0
+        for row in conn.execute("SELECT id, episode_id FROM jobs WHERE status = 'staging'"):
+            with database.upload_staging_lock(
+                data_dir, row["episode_id"], blocking=False
+            ) as available:
+                if available:
+                    conn.execute(
+                        "UPDATE jobs SET status = 'cancelled', error = 'upload interrupted before queueing' WHERE id = ? AND status = 'staging'",
+                        (row["id"],),
+                    )
+                    staged += 1
         if reset:
             logger.info(
                 "Reset stuck processing jobs",
                 extra={"event": "crash_recovery", "reset": reset, "stage": "startup"},
+            )
+        if staged:
+            logger.info(
+                "Cancelled interrupted staged uploads",
+                extra={"event": "staging_recovery", "reset": staged},
             )
     finally:
         conn.close()
@@ -53,6 +73,16 @@ async def _pickup_once(settings: Settings) -> jobs.Job | None:
         conn.close()
 
 
+async def _refresh_log_level(settings: Settings, shutdown: asyncio.Event) -> None:
+    while not shutdown.is_set():
+        try:
+            apply_level(runtime_settings.overlay(settings).LOG_LEVEL)
+        except Exception:
+            logger.exception("runtime log level refresh failed")
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(shutdown.wait(), timeout=1)
+
+
 def _maybe_run_retention_sweep(settings: Settings, last_sweep_day: str | None) -> str | None:
     """Run the retention sweep at most once per UTC day, at the configured
     hour. Returns the new value of ``last_sweep_day`` so the caller can
@@ -64,10 +94,12 @@ def _maybe_run_retention_sweep(settings: Settings, last_sweep_day: str | None) -
     """
 
     now = datetime.now(UTC)
-    today = now.strftime("%Y-%m-%d")
-    if now.hour != settings.RETENTION_SWEEP_HOUR_UTC:
-        return last_sweep_day
-    if last_sweep_day == today:
+    due_day = (
+        now.date()
+        if now.hour >= settings.RETENTION_SWEEP_HOUR_UTC
+        else now.date() - timedelta(days=1)
+    ).isoformat()
+    if last_sweep_day is not None and last_sweep_day >= due_day:
         return last_sweep_day
     try:
         # Apply DB overrides so RETENTION_DAYS set via PUT /api/v1/settings
@@ -93,13 +125,15 @@ def _maybe_run_retention_sweep(settings: Settings, last_sweep_day: str | None) -
             RUNTIME_SETTING_BOUNDS["TTS_CACHE_RETENTION_DAYS"],
         )
         tts_cache.purge_older_than(overlaid.DATA_DIR, int(retention_days))
+        with database.connection(settings.DATA_DIR) as conn:
+            settings_store.set_(conn, _RETENTION_SWEEP_DAY_KEY, due_day)
     except Exception:
         logger.exception(
             "Retention sweep failed; will retry next iteration",
             extra={"event": "retention_sweep_failed"},
         )
         return last_sweep_day
-    return today
+    return due_day
 
 
 async def _process_one(settings: Settings) -> bool:
@@ -210,33 +244,40 @@ async def run() -> None:
     await _crash_recovery(settings.DATA_DIR)
 
     poll_interval = settings.QUEUE_POLL_INTERVAL_SECONDS
-    last_sweep_day: str | None = None
-    while not shutdown.is_set():
-        # The sweep is sync (SQLite + file unlinks); run it in a worker thread
-        # so a large purge doesn't block signal handling or the
-        # ``shutdown.wait()`` that lets SIGTERM exit cleanly.
-        last_sweep_day = await asyncio.to_thread(
-            _maybe_run_retention_sweep, settings, last_sweep_day
-        )
-        # Anything that escapes process_job (DB locked during pickup, OSError
-        # on the data dir, ...) must not kill the worker. Log it and back off
-        # one poll interval so we don't spin against a hard failure.
-        try:
-            processed = await _process_one(settings)
-        except Exception:
-            logger.exception(
-                "Worker iteration failed; backing off",
-                extra={"event": "worker_iteration_failed"},
+    with database.connection(settings.DATA_DIR) as conn:
+        last_sweep_day = settings_store.get(conn, _RETENTION_SWEEP_DAY_KEY)
+    log_refresh = asyncio.create_task(_refresh_log_level(settings, shutdown))
+    try:
+        while not shutdown.is_set():
+            # The sweep is sync (SQLite + file unlinks); run it in a worker thread
+            # so a large purge doesn't block signal handling or the
+            # ``shutdown.wait()`` that lets SIGTERM exit cleanly.
+            last_sweep_day = await asyncio.to_thread(
+                _maybe_run_retention_sweep, settings, last_sweep_day
             )
-            processed = False
-        if processed:
-            await _maybe_restart_idle_wrapper(settings)
-            # Loop right back: a job may have arrived while we were working.
-            continue
-        with contextlib.suppress(asyncio.TimeoutError):
-            await asyncio.wait_for(shutdown.wait(), timeout=poll_interval)
-
-    logger.info("Worker stopped", extra={"event": "worker_stopped"})
+            # Anything that escapes process_job (DB locked during pickup, OSError
+            # on the data dir, ...) must not kill the worker. Log it and back off
+            # one poll interval so we don't spin against a hard failure.
+            try:
+                processed = await _process_one(settings)
+            except Exception:
+                logger.exception(
+                    "Worker iteration failed; backing off",
+                    extra={"event": "worker_iteration_failed"},
+                )
+                processed = False
+            if processed:
+                await _maybe_restart_idle_wrapper(settings)
+                # Loop right back: a job may have arrived while we were working.
+                continue
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(shutdown.wait(), timeout=poll_interval)
+    finally:
+        shutdown.set()
+        log_refresh.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await log_refresh
+        logger.info("Worker stopped", extra={"event": "worker_stopped"})
 
 
 if __name__ == "__main__":

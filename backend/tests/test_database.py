@@ -37,6 +37,10 @@ def test_run_migrations_creates_tables(tmp_path: Path) -> None:
         "024_reimport_seed_lexicon",
         "025_episode_chapters_json",
         "026_lexicon_input_text_index",
+        "027_episode_generations",
+        "028_lexicon_generations",
+        "029_feed_revision",
+        "030_episode_audio_generation",
     ]
 
     conn = database.connect(database.db_path(tmp_path))
@@ -79,6 +83,10 @@ def test_second_run_is_a_noop(tmp_path: Path) -> None:
         "024_reimport_seed_lexicon",
         "025_episode_chapters_json",
         "026_lexicon_input_text_index",
+        "027_episode_generations",
+        "028_lexicon_generations",
+        "029_feed_revision",
+        "030_episode_audio_generation",
     ]
     assert second == []
 
@@ -223,6 +231,71 @@ def test_backup_when_pending_migration_runs_against_populated_db(
     assert applied == ["002_fake"]
     backups = sorted(tmp_path.glob(f"{database.BACKUP_PREFIX}*"))
     assert len(backups) == 1
+
+
+def test_backup_includes_committed_wal_frames_held_by_reader(tmp_path: Path) -> None:
+    database.run_migrations(tmp_path)
+    path = database.db_path(tmp_path)
+    path.chmod(0o600)
+    reader = database.connect(path)
+    writer = database.connect(path)
+    try:
+        writer.execute(
+            "INSERT INTO jobs (id, url, episode_id, status) VALUES (?, ?, ?, ?)",
+            ("snapshot-job", "https://x.test/snapshot", "snapshot", "queued"),
+        )
+        reader.execute("BEGIN")
+        reader.execute("SELECT * FROM jobs").fetchall()
+        writer.execute(
+            "INSERT INTO jobs (id, url, episode_id, status) VALUES (?, ?, ?, ?)",
+            ("wal-job", "https://x.test/wal", "wal", "queued"),
+        )
+        checkpoint = writer.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
+        assert checkpoint[1] > checkpoint[2]
+        backup = database._backup_db(writer, path)
+        assert backup is not None
+        assert backup.stat().st_mode & 0o777 == 0o600
+    finally:
+        reader.close()
+        writer.close()
+
+    restored = sqlite3.connect(backup)
+    try:
+        row = restored.execute("SELECT id FROM jobs WHERE id = 'wal-job'").fetchone()
+        assert row == ("wal-job",)
+    finally:
+        restored.close()
+
+
+def test_backup_failure_prevents_migration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    database.run_migrations(tmp_path)
+    conn = database.connect(database.db_path(tmp_path))
+    try:
+        conn.execute(
+            "INSERT INTO jobs (id, url, episode_id, status) VALUES (?, ?, ?, ?)",
+            ("j1", "https://x.test/a", "abc", "queued"),
+        )
+    finally:
+        conn.close()
+
+    def _migration(conn: sqlite3.Connection) -> None:
+        conn.execute("CREATE TABLE should_not_exist (id TEXT)")
+
+    def _failed_backup(conn: sqlite3.Connection, path: Path) -> None:
+        raise OSError("backup target unavailable")
+
+    monkeypatch.setattr(database, "_backup_db", _failed_backup)
+    monkeypatch.setattr(database, "MIGRATIONS", [*database.MIGRATIONS, ("027_test", _migration)])
+    with pytest.raises(OSError, match="backup target unavailable"):
+        database.run_migrations(tmp_path)
+
+    conn = database.connect(database.db_path(tmp_path))
+    try:
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'should_not_exist'"
+        ).fetchone() is None
+    finally:
+        conn.close()
 
 
 def test_failing_migration_rolls_back_atomically(

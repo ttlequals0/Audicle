@@ -58,13 +58,6 @@ def test_session_cookie_secure_defaults_true(env: Path, monkeypatch: pytest.Monk
     assert get_settings().SESSION_COOKIE_SECURE is True
 
 
-def test_cors_origin_list_splits_and_trims(monkeypatch: pytest.MonkeyPatch, env: Path) -> None:
-    monkeypatch.setenv("CORS_ORIGINS", " https://a.test , https://b.test ,")
-    get_settings.cache_clear()
-    settings = get_settings()
-    assert settings.cors_origin_list == ["https://a.test", "https://b.test"]
-
-
 def test_default_artwork_url_points_at_branding_jpg():
     from app.config import Settings
 

@@ -31,6 +31,9 @@ def _seed(env: Path, *, id_: str = "ep1", duration: int = 1800, vtt: str | None 
             silence_ms=0,
         )
     conn = database.connect(database.db_path(env))
+    from app.config import get_settings
+
+    audio_path = media_dir(get_settings()) / f"{id_}.mp3"
     try:
         episodes.upsert(
             conn,
@@ -39,7 +42,7 @@ def _seed(env: Path, *, id_: str = "ep1", duration: int = 1800, vtt: str | None 
             original_url="https://example.test/a",
             title="An Article",
             author="Author",
-            audio_path=f"/data/media/{id_}.mp3",
+            audio_path=str(audio_path),
             artwork_path=None,
             transcript_vtt=vtt,
             duration_secs=duration,
@@ -100,6 +103,48 @@ def test_regenerate_embeds_frames_when_the_mp3_exists(
     assert embedded["total"] == 1800
 
 
+def test_regenerate_copies_audio_before_retagging(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.config import get_settings
+    from app.services import pipeline
+
+    _seed(env)
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _fake_llm)
+    media = media_dir(get_settings())
+    media.mkdir(parents=True, exist_ok=True)
+    original = media / "ep1.mp3"
+    original.write_bytes(b"OLD_AUDIO")
+
+    def _retag(path, _pairs, _total):
+        path.write_bytes(path.read_bytes() + b"_CHAPTERS")
+
+    monkeypatch.setattr(pipeline.audio, "embed_chapters", _retag)
+    conn = database.connect(database.db_path(env))
+    try:
+        before = episodes.get_by_id(conn, "ep1")
+    finally:
+        conn.close()
+    assert before is not None and before.generation_token
+
+    with _client(env) as client:
+        assert client.post("/api/v1/episodes/ep1/chapters").status_code == 200
+
+    conn = database.connect(database.db_path(env))
+    try:
+        after = episodes.get_by_id(conn, "ep1")
+        old_generation = episodes.generation(conn, "ep1", before.generation_token)
+    finally:
+        conn.close()
+    assert after is not None and after.audio_path
+    assert old_generation is not None
+    assert original.read_bytes() == b"OLD_AUDIO"
+    assert Path(after.audio_path).read_bytes() == b"OLD_AUDIO_CHAPTERS"
+    assert after.audio_size_bytes == len(b"OLD_AUDIO_CHAPTERS")
+    assert after.audio_generation_token == after.generation_token
+    assert after.guid_generation_token == before.guid_generation_token
+
+
 def test_regenerate_404_for_unknown_episode(env: Path) -> None:
     database.run_migrations(env)
     with _client(env) as client:
@@ -137,10 +182,10 @@ def test_regenerate_422_when_the_llm_returns_nothing_usable(
         conn.close()
 
 
-def test_regenerate_keeps_the_episode_guid_stable(
+def test_regenerate_publishes_a_new_generation_without_changing_revision(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Audio is unchanged, so subscribers must not be made to re-download it."""
+    """Chapter retagging is copy-on-write and advances the media generation."""
 
     from app.services import pipeline
 
@@ -159,7 +204,9 @@ def test_regenerate_keeps_the_episode_guid_stable(
     finally:
         conn.close()
     assert after.revision == before.revision
-    assert after.updated_at == before.updated_at
+    assert after.generation_token != before.generation_token
+    assert after.audio_generation_token == before.audio_generation_token
+    assert after.guid_generation_token == before.guid_generation_token
 
 
 def test_regenerate_uses_runtime_settings_not_just_env(

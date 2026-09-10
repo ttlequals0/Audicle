@@ -6,6 +6,7 @@ import {
   postForm,
   readCsrf,
   FeedAuthStatus,
+  LlmConnectionTestResponse,
   LlmModelsResponse,
   SettingsPayload,
   VoiceSlot,
@@ -887,6 +888,7 @@ export default function SettingsRoute() {
                     <ModelField
                       value={draft[key] ?? ""}
                       provider={draft["LLM_PROVIDER"] ?? ""}
+                      draft={draft}
                       onChange={(v) => setDraft((p) => ({ ...p, [key]: v }))}
                     />
                   ) : isBool ? (
@@ -1015,10 +1017,12 @@ function formatUptime(seconds: number | undefined): string {
 function ModelField({
   value,
   provider,
+  draft,
   onChange,
 }: {
   value: string;
   provider: string;
+  draft: Record<string, string>;
   onChange: (v: string) => void;
 }) {
   const qc = useQueryClient();
@@ -1049,6 +1053,56 @@ function ModelField({
   // saved model that the endpoint no longer reports isn't silently dropped.
   const isOrphan = value !== "" && !ids.includes(value);
   const [freeText, setFreeText] = useState(false);
+  const testConfigKey = JSON.stringify({
+    provider,
+    openaiBaseUrl: draft.OPENAI_BASE_URL,
+    ollamaBaseUrl: draft.OLLAMA_BASE_URL,
+    openaiKey: draft.OPENAI_API_KEY,
+    anthropicKey: draft.ANTHROPIC_API_KEY,
+    openrouterKey: draft.OPENROUTER_API_KEY,
+  });
+  const testM = useMutation({
+    mutationFn: (_configKey: string) => {
+      const baseUrl =
+        provider === "ollama" ? draft.OLLAMA_BASE_URL : draft.OPENAI_BASE_URL;
+      const keyName =
+        provider === "anthropic"
+          ? "ANTHROPIC_API_KEY"
+          : provider === "openrouter"
+            ? "OPENROUTER_API_KEY"
+            : "OPENAI_API_KEY";
+      const draftKey = draft[keyName];
+      return api<LlmConnectionTestResponse>("/api/v1/llm/test", {
+        method: "POST",
+        body: JSON.stringify({
+          provider,
+          base_url: baseUrl || null,
+          api_key: draftKey ?? "",
+        }),
+      });
+    },
+  });
+
+  const testControl = (
+    <>
+      <button
+        type="button"
+        className="btn-ghost"
+        disabled={testM.isPending || provider === ""}
+        onClick={() => testM.mutate(testConfigKey)}
+      >
+        {testM.isPending ? "testing..." : "test provider"}
+      </button>
+      {testM.data && testM.variables === testConfigKey && (
+        <span className={`mono-xs ${testM.data.ok ? "text-accent" : "text-danger"}`}>
+          {testM.data.detail}
+        </span>
+      )}
+      {testM.isError && testM.variables === testConfigKey && (
+        <span className="mono-xs text-danger">provider test failed</span>
+      )}
+    </>
+  );
 
   if (freeText) {
     return (
@@ -1063,6 +1117,7 @@ function ModelField({
         <button type="button" className="btn-ghost" onClick={() => setFreeText(false)}>
           list
         </button>
+        {testControl}
       </div>
     );
   }
@@ -1095,6 +1150,7 @@ function ModelField({
       <button type="button" className="btn-ghost" onClick={() => setFreeText(true)}>
         custom
       </button>
+      {testControl}
     </div>
   );
 }

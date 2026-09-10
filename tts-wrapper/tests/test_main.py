@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import io
+import threading
+import time
 import wave
 from pathlib import Path
 
@@ -18,6 +20,7 @@ from fastapi.testclient import TestClient
 import main
 from engine import Engine, GenerationParams, GPUOutOfMemoryError, InferenceBusyError
 from main import create_app
+from config import Config
 
 
 def _silent_wav(duration_secs: float = 0.5, sample_rate: int = 24000) -> bytes:
@@ -31,6 +34,12 @@ def _silent_wav(duration_secs: float = 0.5, sample_rate: int = 24000) -> bytes:
         wf.setframerate(sample_rate)
         wf.writeframes(b"\x00\x00" * n_samples)
     return buf.getvalue()
+
+
+def test_negative_idle_unload_timeout_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TTS_IDLE_UNLOAD_SECONDS", "-1")
+    with pytest.raises(ValueError, match="TTS_IDLE_UNLOAD_SECONDS"):
+        Config.from_env()
 
 
 class FakeEngine:
@@ -67,6 +76,7 @@ class FakeEngine:
         # Ordered trace of select/synthesize so a test can prove the voice
         # switch happens BEFORE the inference it is meant to condition.
         self.events: list[str] = []
+        self.unload_calls = 0
 
     def load(self) -> None:
         if self.fail_load:
@@ -98,6 +108,11 @@ class FakeEngine:
         self.reload_calls += 1
         self.reference_loaded = True
 
+    def unload(self) -> None:
+        self.unload_calls += 1
+        self.model_loaded = False
+        self.reference_loaded = False
+
 
 class FakeVerifier:
     """Stand-in for WhisperVerifier; never imports faster-whisper."""
@@ -119,6 +134,81 @@ class FakeVerifier:
         if self.raises:
             raise RuntimeError("simulated whisper failure")
         return self.returns
+
+    def unload(self) -> None:
+        self.loaded = False
+
+
+def test_idle_unload_keeps_liveness_and_reloads_on_generate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TTS_IDLE_UNLOAD_SECONDS", "1")
+    engine = FakeEngine()
+    verifier = FakeVerifier()
+    with _client_with_verifier(engine, verifier, tmp_path) as client:
+        deadline = time.monotonic() + 2.0
+        while engine.model_loaded and time.monotonic() < deadline:
+            time.sleep(0.05)
+        live = client.get("/health/live")
+        assert live.status_code == 200
+        assert live.json() == {"ok": True, "model_loaded": False}
+        assert client.get("/health").status_code == 503
+        generated = client.post(
+            "/generate",
+            json={"text": "hello", "episode_id": "ep-1", "chunk_index": 0, "verify": True},
+        )
+        assert generated.status_code == 200
+    assert engine.unload_calls == 1
+    assert verifier.load_calls == 2
+
+
+def test_inference_timeout_returns_while_gpu_work_remains_exclusive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    release = threading.Event()
+
+    class SlowEngine(FakeEngine):
+        async def synthesize(self, text: str, params: GenerationParams) -> bytes:
+            await asyncio.to_thread(release.wait)
+            return await super().synthesize(text, params)
+
+    monkeypatch.setattr(main, "_REQUEST_INFERENCE_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setenv("TTS_IDLE_UNLOAD_SECONDS", "1")
+    engine = SlowEngine()
+    with _client(engine, tmp_path) as client:
+        started = time.monotonic()
+        response = client.post(
+            "/generate", json={"text": "hello", "episode_id": "ep-1", "chunk_index": 0}
+        )
+        assert response.status_code == 504
+        assert time.monotonic() - started < 0.5
+        time.sleep(1.1)
+        assert engine.unload_calls == 0
+        release.set()
+        deadline = time.monotonic() + 2.2
+        while engine.unload_calls == 0 and time.monotonic() < deadline:
+            time.sleep(0.05)
+    assert engine.unload_calls == 1
+
+
+def test_failed_lazy_reload_is_not_reported_live(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TTS_IDLE_UNLOAD_SECONDS", "1")
+    engine = FakeEngine()
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    app = create_app(engine=engine, data_dir=data_dir)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        deadline = time.monotonic() + 2.0
+        while engine.model_loaded and time.monotonic() < deadline:
+            time.sleep(0.05)
+        engine.fail_load = True
+        response = client.post(
+            "/generate", json={"text": "hello", "episode_id": "ep-1", "chunk_index": 0}
+        )
+        assert response.status_code == 500
+        assert client.get("/health/live").status_code == 503
 
 
 def _client(engine: Engine, tmp_path: Path) -> TestClient:
@@ -230,7 +320,10 @@ def test_health_live_200_without_reference(tmp_path: Path) -> None:
 # --- /generate ------------------------------------------------------------
 
 
-def test_generate_writes_wav_and_returns_path_duration_rate(tmp_path: Path) -> None:
+def test_generate_writes_wav_and_returns_path_duration_rate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(main, "rss_mb", lambda: 128)
     engine = FakeEngine(synthesize_returns=_silent_wav(duration_secs=2.0))
     with _client(engine, tmp_path) as client:
         response = client.post(
@@ -281,6 +374,49 @@ def test_generate_verify_returns_transcript(tmp_path: Path) -> None:
     assert len(verifier.calls) == 1  # transcribed the produced audio once
     assert isinstance(body["verify_ms"], int)
     assert body["verify_ms"] >= 0
+
+
+def test_transcribe_existing_cached_wav(tmp_path: Path) -> None:
+    engine = FakeEngine()
+    verifier = FakeVerifier(returns="cached words")
+    wav_path = tmp_path / "data" / "media" / "cached.wav"
+    with _client_with_verifier(engine, verifier, tmp_path) as client:
+        engine.model_loaded = False
+        wav_path.parent.mkdir(parents=True)
+        wav_path.write_bytes(_silent_wav())
+        response = client.post("/transcribe", json={"wav_path": str(wav_path)})
+    assert response.status_code == 200
+    assert response.json() == {"transcript": "cached words"}
+    assert verifier.calls == [_silent_wav()]
+    assert engine.model_loaded is False
+
+
+def test_transcribe_rejects_path_outside_media(tmp_path: Path) -> None:
+    outside = tmp_path / "outside.wav"
+    outside.write_bytes(_silent_wav())
+    with _client_with_verifier(FakeEngine(), FakeVerifier(), tmp_path) as client:
+        response = client.post("/transcribe", json={"wav_path": str(outside)})
+    assert response.status_code == 400
+
+
+def test_transcribe_timeout_returns_controlled_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    verifier = FakeVerifier()
+
+    def _slow_transcribe(wav_bytes: bytes, language: str = "en") -> str:
+        time.sleep(0.1)
+        return "late"
+
+    verifier.transcribe = _slow_transcribe
+    monkeypatch.setattr(main, "_REQUEST_INFERENCE_TIMEOUT_SECONDS", 0.01)
+    wav_path = tmp_path / "data" / "media" / "cached.wav"
+    with _client_with_verifier(FakeEngine(), verifier, tmp_path) as client:
+        wav_path.parent.mkdir(parents=True)
+        wav_path.write_bytes(_silent_wav())
+        response = client.post("/transcribe", json={"wav_path": str(wav_path)})
+    assert response.status_code == 504
+    assert response.json()["detail"] == "Whisper verification timed out"
 
 
 def test_generate_without_verify_skips_transcription(tmp_path: Path) -> None:
@@ -719,9 +855,7 @@ def test_select_model_load_failure_rolls_back(tmp_path: Path) -> None:
     failing.name = "bad"
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    app = create_app(
-        engine=engine, data_dir=data_dir, engine_registry={"bad": lambda: failing}
-    )
+    app = create_app(engine=engine, data_dir=data_dir, engine_registry={"bad": lambda: failing})
     with TestClient(app) as client:
         response = client.post("/select-model", json={"model": "bad"})
         assert response.status_code == 500
@@ -734,10 +868,13 @@ def test_select_model_load_failure_rolls_back(tmp_path: Path) -> None:
 # --- memory ladder (0.55.0) ------------------------------------------------
 
 
-def test_generate_logs_rss_per_chunk(tmp_path: Path, caplog) -> None:
+def test_generate_logs_rss_per_chunk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
     """The per-chunk RSS series is what makes the growth curve visible instead
     of only being discoverable from a kernel OOM report after the fact."""
 
+    monkeypatch.setattr(main, "rss_mb", lambda: 128)
     engine = FakeEngine(synthesize_returns=_silent_wav(duration_secs=0.5))
     with caplog.at_level("INFO"):
         with _client(engine, tmp_path) as client:
@@ -761,6 +898,7 @@ def test_generate_restarts_when_over_the_hard_limit(
 
     restarts: list[str] = []
     monkeypatch.setattr(main, "_request_restart", lambda: restarts.append("restart"))
+    monkeypatch.setattr(main, "over_hard_limit", lambda _limit: True)
     monkeypatch.setenv("TTS_MEMORY_HARD_LIMIT_MB", "1")
     monkeypatch.setenv("TTS_MEMORY_SOFT_LIMIT_MB", "1")
 

@@ -114,7 +114,7 @@ def test_build_chapters_json_uses_integer_start_times() -> None:
     ]
 
 
-def test_embed_chapters_writes_chap_and_ctoc_frames(env, tmp_path) -> None:
+async def test_embed_chapters_writes_chap_and_ctoc_frames(env, tmp_path) -> None:
     import numpy as np
     import soundfile as sf
     from app.config import get_settings
@@ -125,7 +125,7 @@ def test_embed_chapters_writes_chap_and_ctoc_frames(env, tmp_path) -> None:
     t = np.arange(24000 * 2) / 24000
     sf.write(str(src_wav), (0.3 * np.sin(2 * np.pi * 220 * t)).astype("float32"), 24000)
     mp3 = tmp_path / "out.mp3"
-    audio.normalize_and_encode(src_wav, mp3, get_settings())
+    await audio.normalize_and_encode(src_wav, mp3, get_settings())
 
     audio.embed_chapters(mp3, [(0.0, "One"), (1.0, "Two")], total_duration_secs=2.0)
 
@@ -139,7 +139,7 @@ def test_embed_chapters_writes_chap_and_ctoc_frames(env, tmp_path) -> None:
     assert list(ctoc[0].child_element_ids) == [c.element_id for c in chaps]
 
 
-def test_embed_chapters_replaces_existing_frames(env, tmp_path) -> None:
+async def test_embed_chapters_replaces_existing_frames(env, tmp_path) -> None:
     """A regenerate must not stack chapters on top of the old ones."""
 
     import numpy as np
@@ -152,7 +152,7 @@ def test_embed_chapters_replaces_existing_frames(env, tmp_path) -> None:
     t = np.arange(24000 * 2) / 24000
     sf.write(str(src_wav), (0.3 * np.sin(2 * np.pi * 220 * t)).astype("float32"), 24000)
     mp3 = tmp_path / "out.mp3"
-    audio.normalize_and_encode(src_wav, mp3, get_settings())
+    await audio.normalize_and_encode(src_wav, mp3, get_settings())
 
     audio.embed_chapters(mp3, [(0.0, "One"), (1.0, "Two")], total_duration_secs=2.0)
     audio.embed_chapters(mp3, [(0.0, "Only one now")], total_duration_secs=2.0)

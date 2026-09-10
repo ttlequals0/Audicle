@@ -7,7 +7,7 @@ import pytest
 from app.config import get_settings
 from app.core import database
 from app.main import create_app
-from app.services import auth
+from app.services import auth, runtime_settings
 from fastapi.testclient import TestClient
 
 PASSWORD = "correct-horse"
@@ -45,9 +45,16 @@ def _client() -> TestClient:
     return TestClient(create_app())
 
 
-def test_login_rate_limit_uses_config_value(
-    monkeypatch: pytest.MonkeyPatch, env: Path
-) -> None:
+def _enable_feed_auth(env: Path) -> None:
+    conn = database.connect(database.db_path(env))
+    try:
+        runtime_settings.set_value(conn, "FEED_AUTH_KEY", "a" * 64)
+        runtime_settings.set_value(conn, "FEED_AUTH_ENABLED", True)
+    finally:
+        conn.close()
+
+
+def test_login_rate_limit_uses_config_value(monkeypatch: pytest.MonkeyPatch, env: Path) -> None:
     """LOGIN_RATE_LIMIT now drives the limiter: a 2/minute limit blocks the third
     attempt with 429 (the limiter fronts the route before the password check)."""
 
@@ -81,6 +88,51 @@ def test_login_returns_401_on_wrong_password(auth_env) -> None:
     with _client() as client:
         response = client.post("/api/v1/auth/login", json={"password": "wrong"})
     assert response.status_code == 401
+
+
+def test_password_over_bcrypt_byte_limit_is_controlled(open_env) -> None:
+    with _client() as client:
+        response = client.put("/api/v1/auth/password", json={"new_password": "x" * 73})
+    assert response.status_code == 400
+
+
+def test_multibyte_password_uses_utf8_byte_limit(open_env) -> None:
+    with _client() as client:
+        response = client.put("/api/v1/auth/password", json={"new_password": "\u00e9" * 37})
+    assert response.status_code == 400
+
+
+def test_password_rotation_revokes_other_session(auth_env) -> None:
+    _enable_feed_auth(get_settings().DATA_DIR)
+    with _client() as first, _client() as second:
+        first_login = first.post("/api/v1/auth/login", json=auth_env)
+        second_login = second.post("/api/v1/auth/login", json=auth_env)
+        response = first.put(
+            "/api/v1/auth/password",
+            json={"current_password": PASSWORD, "new_password": "replacement-password"},
+            headers={"X-CSRF-Token": first_login.json()["csrf_token"]},
+        )
+        assert response.status_code == 200
+        assert second_login.status_code == 200
+        assert second.get("/api/v1/settings").status_code == 401
+        assert second.get("/rss/test_feed.xml").status_code == 401
+
+
+def test_revoke_all_sessions_revokes_every_cookie(auth_env) -> None:
+    _enable_feed_auth(get_settings().DATA_DIR)
+    with _client() as first, _client() as second:
+        first_login = first.post("/api/v1/auth/login", json=auth_env)
+        second_login = second.post("/api/v1/auth/login", json=auth_env)
+        response = first.post(
+            "/api/v1/auth/revoke-sessions",
+            headers={"X-CSRF-Token": first_login.json()["csrf_token"]},
+        )
+        assert response.status_code == 200
+        assert second_login.status_code == 200
+        assert first.get("/api/v1/settings").status_code == 401
+        assert second.get("/api/v1/settings").status_code == 401
+        assert first.get("/rss/test_feed.xml").status_code == 401
+        assert second.get("/rss/test_feed.xml").status_code == 401
 
 
 def test_login_returns_423_after_lockout_threshold(auth_env) -> None:
@@ -135,7 +187,12 @@ def test_every_v1_get_route_is_gated_when_password_set(auth_env) -> None:
     live route table so a future router added outside the require_admin group
     fails here instead of silently shipping unauthenticated."""
 
-    exempt = {"/api/v1/openapi.json", "/api/v1/docs", "/api/v1/docs/oauth2-redirect", "/api/v1/redoc"}
+    exempt = {
+        "/api/v1/openapi.json",
+        "/api/v1/docs",
+        "/api/v1/docs/oauth2-redirect",
+        "/api/v1/redoc",
+    }
     app = create_app()
     get_paths = {
         route.path

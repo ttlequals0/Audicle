@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.56.2
+  version: 0.56.9
 paths:
   /health/live:
     get:
@@ -48,6 +48,21 @@ paths:
                 additionalProperties: true
                 type: object
                 title: Response Health Ready Health Ready Get
+  /health/ingestion:
+    get:
+      tags:
+      - health
+      summary: Health Ingestion
+      operationId: health_ingestion_health_ingestion_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Health Ingestion Health Ingestion Get
   /api/v1/auth/status:
     get:
       tags:
@@ -80,12 +95,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AuthActionResponse'
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
   /api/v1/auth/logout:
     post:
       tags:
@@ -121,12 +136,32 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AuthActionResponse'
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/auth/revoke-sessions:
+    post:
+      tags:
+      - auth
+      summary: Revoke Sessions
+      operationId: revoke_sessions_api_v1_auth_revoke_sessions_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: boolean
+                type: object
+                title: Response Revoke Sessions Api V1 Auth Revoke Sessions Post
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/submit:
     post:
       tags:
@@ -146,12 +181,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SubmitResponse'
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/upload:
     post:
       tags:
@@ -171,12 +210,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SubmitResponse'
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/upload/{episode_id}/reprocess:
     post:
       tags:
@@ -197,12 +240,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SubmitResponse'
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/status/{job_id}:
     get:
       tags:
@@ -223,12 +270,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/app__api__v1__status__StatusResponse'
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
   /api/v1/prompt:
     get:
       tags:
@@ -257,12 +307,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PromptResponse'
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
     put:
       tags:
       - prompt
@@ -296,12 +349,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PromptResponse'
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
     delete:
       tags:
       - prompt
@@ -329,12 +386,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PromptResponse'
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/corrections:
     get:
       tags:
@@ -350,6 +411,9 @@ paths:
                 additionalProperties: true
                 type: object
                 title: Response Read Corrections Api V1 Corrections Get
+      security:
+      - {}
+      - AdminSession: []
     put:
       tags:
       - corrections
@@ -372,12 +436,16 @@ paths:
                 additionalProperties: true
                 type: object
                 title: Response Write Corrections Api V1 Corrections Put
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
     delete:
       tags:
       - corrections
@@ -392,6 +460,10 @@ paths:
                 additionalProperties: true
                 type: object
                 title: Response Reset Corrections Api V1 Corrections Delete
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/corrections/seed:
     get:
       tags:
@@ -407,6 +479,9 @@ paths:
                 additionalProperties: true
                 type: object
                 title: Response Read Seed Corrections Api V1 Corrections Seed Get
+      security:
+      - {}
+      - AdminSession: []
   /api/v1/corrections/lookup:
     get:
       tags:
@@ -431,12 +506,15 @@ paths:
                 type: object
                 additionalProperties: true
                 title: Response Lookup Correction Api V1 Corrections Lookup Get
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
   /api/v1/corrections/export:
     get:
       tags:
@@ -458,12 +536,15 @@ paths:
           content:
             application/json:
               schema: {}
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
   /api/v1/source-fallbacks:
     get:
       tags:
@@ -479,6 +560,9 @@ paths:
                 additionalProperties: true
                 type: object
                 title: Response Read Source Fallbacks Api V1 Source Fallbacks Get
+      security:
+      - {}
+      - AdminSession: []
     put:
       tags:
       - source-fallbacks
@@ -501,12 +585,16 @@ paths:
                 additionalProperties: true
                 type: object
                 title: Response Write Source Fallbacks Api V1 Source Fallbacks Put
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/source-fallbacks/test:
     post:
       tags:
@@ -540,12 +628,16 @@ paths:
                 type: object
                 title: Response Test Source Fallback Api V1 Source Fallbacks Test
                   Post
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/purge:
     post:
       tags:
@@ -580,12 +672,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PurgeResponse'
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/feed/recreate:
     post:
       tags:
@@ -609,12 +705,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FeedRecreateResponse'
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/feed-auth:
     get:
       tags:
@@ -628,6 +728,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FeedAuthStatus'
+      security:
+      - {}
+      - AdminSession: []
     post:
       tags:
       - feed-auth
@@ -660,12 +763,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FeedAuthStatus'
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/feed-auth/regenerate:
     post:
       tags:
@@ -686,6 +793,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FeedAuthStatus'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/settings:
     get:
       tags:
@@ -699,6 +810,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SettingsResponse'
+      security:
+      - {}
+      - AdminSession: []
     put:
       tags:
       - settings
@@ -719,12 +833,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SettingsResponse'
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/settings/ocr/languages:
     get:
       tags:
@@ -740,6 +858,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OcrLanguagesResponse'
+      security:
+      - {}
+      - AdminSession: []
   /api/v1/episodes:
     get:
       tags:
@@ -783,12 +904,15 @@ paths:
                 items:
                   $ref: '#/components/schemas/EpisodeListItem'
                 title: Response List Episodes Api V1 Episodes Get
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
   /api/v1/episodes/{episode_id}/chapters:
     post:
       tags:
@@ -819,12 +943,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ChaptersRegenResponse'
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/episodes/{episode_id}:
     delete:
       tags:
@@ -845,12 +973,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeleteEpisodeResponse'
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/jobs:
     get:
       tags:
@@ -864,6 +996,7 @@ paths:
         schema:
           anyOf:
           - enum:
+            - staging
             - queued
             - processing
             - done
@@ -899,12 +1032,15 @@ paths:
                 items:
                   $ref: '#/components/schemas/JobListItem'
                 title: Response List Jobs Api V1 Jobs Get
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
     delete:
       tags:
       - jobs
@@ -935,12 +1071,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ClearJobsResponse'
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/jobs/{job_id}/requeue:
     post:
       tags:
@@ -961,12 +1101,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SubmitResponse'
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/jobs/{job_id}/cancel:
     post:
       tags:
@@ -983,12 +1127,16 @@ paths:
       responses:
         '204':
           description: Successful Response
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/jobs/{job_id}:
     delete:
       tags:
@@ -1009,12 +1157,16 @@ paths:
       responses:
         '204':
           description: Successful Response
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/reference/slots:
     get:
       tags:
@@ -1031,6 +1183,9 @@ paths:
                   $ref: '#/components/schemas/SlotInfo'
                 type: array
                 title: Response List Slots Api V1 Reference Slots Get
+      security:
+      - {}
+      - AdminSession: []
   /api/v1/reference/slots/{slot}:
     post:
       tags:
@@ -1065,12 +1220,16 @@ paths:
                 type: object
                 additionalProperties: true
                 title: Response Upload Slot Api V1 Reference Slots  Slot  Post
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
     delete:
       tags:
       - reference
@@ -1094,12 +1253,16 @@ paths:
                 type: object
                 additionalProperties: true
                 title: Response Clear Slot Api V1 Reference Slots  Slot  Delete
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/reference/slots/{slot}/label:
     put:
       tags:
@@ -1130,12 +1293,16 @@ paths:
                 type: object
                 additionalProperties: true
                 title: Response Rename Slot Api V1 Reference Slots  Slot  Label Put
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/reference/slots/{slot}/preview:
     get:
       tags:
@@ -1157,12 +1324,15 @@ paths:
           content:
             application/json:
               schema: {}
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
   /api/v1/reference/slots/{slot}/audition:
     post:
       tags:
@@ -1196,12 +1366,16 @@ paths:
           content:
             application/json:
               schema: {}
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/llm/models:
     get:
       tags:
@@ -1224,12 +1398,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ModelsResponse'
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
   /api/v1/llm/models/refresh:
     post:
       tags:
@@ -1252,12 +1429,45 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ModelsResponse'
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
+  /api/v1/llm/test:
+    post:
+      tags:
+      - llm
+      summary: Test Provider
+      operationId: test_provider_api_v1_llm_test_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectionTestRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionTestResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/webhooks/test:
     post:
       tags:
@@ -1275,6 +1485,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/WebhookTestResult'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/chime:
     get:
       tags:
@@ -1290,6 +1504,9 @@ paths:
                 additionalProperties: true
                 type: object
                 title: Response Get Chime Api V1 Chime Get
+      security:
+      - {}
+      - AdminSession: []
     post:
       tags:
       - chime
@@ -1310,12 +1527,16 @@ paths:
                 additionalProperties: true
                 type: object
                 title: Response Upload Chime Api V1 Chime Post
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
     delete:
       tags:
       - chime
@@ -1324,6 +1545,10 @@ paths:
       responses:
         '204':
           description: Successful Response
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/chime/preview:
     get:
       tags:
@@ -1336,6 +1561,9 @@ paths:
           content:
             application/json:
               schema: {}
+      security:
+      - {}
+      - AdminSession: []
   /api/v1/tts/models:
     get:
       tags:
@@ -1349,52 +1577,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TtsModelsResponse'
+      security:
+      - {}
+      - AdminSession: []
   /rss/{slug}.xml:
-    get:
-      tags:
-      - rss
-      summary: Get Rss
-      operationId: get_rss_rss__slug__xml_get
-      parameters:
-      - name: slug
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Slug
-      - name: if-modified-since
-        in: header
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: If-Modified-Since
-      - name: if-none-match
-        in: header
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: If-None-Match
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
     head:
       tags:
       - rss
       summary: Get Rss
-      operationId: get_rss_rss__slug__xml_get
+      operationId: head_rss_feed
       parameters:
       - name: slug
         in: path
@@ -1424,42 +1615,66 @@ paths:
           content:
             application/json:
               schema: {}
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - FeedKey: []
+      - AdminSession: []
+    get:
+      tags:
+      - rss
+      summary: Get Rss
+      operationId: get_rss_feed
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Slug
+      - name: if-modified-since
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: If-Modified-Since
+      - name: if-none-match
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: If-None-Match
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - FeedKey: []
+      - AdminSession: []
   /media/{episode_id}.mp3:
-    get:
-      tags:
-      - media
-      summary: Get Mp3
-      operationId: get_mp3_media__episode_id__mp3_get
-      parameters:
-      - name: episode_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Episode Id
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
     head:
       tags:
       - media
       summary: Get Mp3
-      operationId: get_mp3_media__episode_id__mp3_get
+      operationId: head_media_mp3
       parameters:
       - name: episode_id
         in: path
@@ -1467,48 +1682,72 @@ paths:
         schema:
           type: string
           title: Episode Id
+      - name: v
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: V
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
               schema: {}
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - FeedKey: []
+      - AdminSession: []
+    get:
+      tags:
+      - media
+      summary: Get Mp3
+      operationId: get_media_mp3
+      parameters:
+      - name: episode_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Episode Id
+      - name: v
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: V
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - FeedKey: []
+      - AdminSession: []
   /media/{episode_id}.jpg:
-    get:
-      tags:
-      - media
-      summary: Get Jpg
-      operationId: get_jpg_media__episode_id__jpg_get
-      parameters:
-      - name: episode_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Episode Id
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
     head:
       tags:
       - media
       summary: Get Jpg
-      operationId: get_jpg_media__episode_id__jpg_get
+      operationId: head_media_jpg
       parameters:
       - name: episode_id
         in: path
@@ -1516,48 +1755,72 @@ paths:
         schema:
           type: string
           title: Episode Id
+      - name: v
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: V
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
               schema: {}
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - FeedKey: []
+      - AdminSession: []
+    get:
+      tags:
+      - media
+      summary: Get Jpg
+      operationId: get_media_jpg
+      parameters:
+      - name: episode_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Episode Id
+      - name: v
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: V
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - FeedKey: []
+      - AdminSession: []
   /media/{episode_id}.vtt:
-    get:
-      tags:
-      - media
-      summary: Get Vtt
-      operationId: get_vtt_media__episode_id__vtt_get
-      parameters:
-      - name: episode_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Episode Id
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
     head:
       tags:
       - media
       summary: Get Vtt
-      operationId: get_vtt_media__episode_id__vtt_get
+      operationId: head_media_vtt
       parameters:
       - name: episode_id
         in: path
@@ -1565,46 +1828,67 @@ paths:
         schema:
           type: string
           title: Episode Id
+      - name: v
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: V
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
               schema: {}
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - FeedKey: []
+      - AdminSession: []
+    get:
+      tags:
+      - media
+      summary: Get Vtt
+      operationId: get_media_vtt
+      parameters:
+      - name: episode_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Episode Id
+      - name: v
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: V
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - FeedKey: []
+      - AdminSession: []
   /media/{episode_id}.chapters.json:
-    get:
-      tags:
-      - media
-      summary: Get Chapters
-      description: 'The Podcasting 2.0 chapters document, served from the ``chapters_json``
-
-        column. 404 for episodes without chapters (short, disabled, or pre-0.51.0).'
-      operationId: get_chapters_media__episode_id__chapters_json_get
-      parameters:
-      - name: episode_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Episode Id
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
     head:
       tags:
       - media
@@ -1612,7 +1896,7 @@ paths:
       description: 'The Podcasting 2.0 chapters document, served from the ``chapters_json``
 
         column. 404 for episodes without chapters (short, disabled, or pre-0.51.0).'
-      operationId: get_chapters_media__episode_id__chapters_json_get
+      operationId: head_media_chapters
       parameters:
       - name: episode_id
         in: path
@@ -1620,47 +1904,70 @@ paths:
         schema:
           type: string
           title: Episode Id
+      - name: v
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: V
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
               schema: {}
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - FeedKey: []
+      - AdminSession: []
+    get:
+      tags:
+      - media
+      summary: Get Chapters
+      description: 'The Podcasting 2.0 chapters document, served from the ``chapters_json``
+
+        column. 404 for episodes without chapters (short, disabled, or pre-0.51.0).'
+      operationId: get_media_chapters
+      parameters:
+      - name: episode_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Episode Id
+      - name: v
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: V
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - FeedKey: []
+      - AdminSession: []
   /media/{episode_id}.txt:
-    get:
-      tags:
-      - media
-      summary: Get Cleaned Text
-      description: 'The cleaned article text (the exact input to TTS), served from
-        the
-
-        ``cleaned_text`` column. 404 for episodes processed before 0.6.0 (NULL).'
-      operationId: get_cleaned_text_media__episode_id__txt_get
-      parameters:
-      - name: episode_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Episode Id
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
     head:
       tags:
       - media
@@ -1669,7 +1976,7 @@ paths:
         the
 
         ``cleaned_text`` column. 404 for episodes processed before 0.6.0 (NULL).'
-      operationId: get_cleaned_text_media__episode_id__txt_get
+      operationId: head_media_text
       parameters:
       - name: episode_id
         in: path
@@ -1677,18 +1984,70 @@ paths:
         schema:
           type: string
           title: Episode Id
+      - name: v
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: V
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
               schema: {}
-        '422':
-          description: Validation Error
+        '400':
+          description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - FeedKey: []
+      - AdminSession: []
+    get:
+      tags:
+      - media
+      summary: Get Cleaned Text
+      description: 'The cleaned article text (the exact input to TTS), served from
+        the
+
+        ``cleaned_text`` column. 404 for episodes processed before 0.6.0 (NULL).'
+      operationId: get_media_text
+      parameters:
+      - name: episode_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Episode Id
+      - name: v
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: V
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - FeedKey: []
+      - AdminSession: []
 components:
   schemas:
     AuthActionResponse:
@@ -1803,6 +2162,50 @@ components:
       required:
       - removed
       title: ClearJobsResponse
+    ConnectionTestRequest:
+      properties:
+        provider:
+          type: string
+          title: Provider
+        base_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Base Url
+        api_key:
+          anyOf:
+          - type: string
+            maxLength: 4096
+          - type: 'null'
+          title: Api Key
+      additionalProperties: false
+      type: object
+      required:
+      - provider
+      title: ConnectionTestRequest
+    ConnectionTestResponse:
+      properties:
+        ok:
+          type: boolean
+          title: Ok
+        reachable:
+          type: boolean
+          title: Reachable
+        status:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Status
+        detail:
+          type: string
+          title: Detail
+      additionalProperties: false
+      type: object
+      required:
+      - ok
+      - reachable
+      - detail
+      title: ConnectionTestResponse
     DeleteEpisodeResponse:
       properties:
         id:
@@ -2395,3 +2798,32 @@ components:
       - created_at
       - updated_at
       title: StatusResponse
+    ErrorEnvelope:
+      type: object
+      required:
+      - error
+      - status
+      properties:
+        error:
+          type: string
+        status:
+          type: integer
+        details:
+          type: object
+          additionalProperties: true
+  securitySchemes:
+    AdminSession:
+      type: apiKey
+      in: cookie
+      name: audicle_session
+      description: Required for the admin API when a password is configured.
+    CsrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+      description: Required with the admin session for unsafe methods.
+    FeedKey:
+      type: apiKey
+      in: query
+      name: key
+      description: Required for protected feeds and non-artwork media.

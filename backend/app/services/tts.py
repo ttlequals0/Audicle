@@ -20,12 +20,14 @@ through.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import io
 import logging
 import wave
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -37,7 +39,8 @@ from tenacity import (
 )
 
 from app.config import Settings
-from app.services import tts_cache
+from app.core.paths import media_dir
+from app.services import tts_cache, tts_remote
 
 logger = logging.getLogger("app.services.tts")
 
@@ -232,7 +235,7 @@ async def generate_chunk(
         "text": text,
         "episode_id": episode_id,
         "chunk_index": chunk_index,
-        "verify": verify,
+        "verify": verify and settings.WHISPER_BACKEND == "wrapper",
         # The worker snapshots settings once per job, so a Settings change
         # applies to the next job; no restart.
         **generation_params(
@@ -273,6 +276,12 @@ async def generate_chunk(
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise TTSRequestError(f"Unexpected TTS response shape: {exc}") from exc
+    if verify and settings.WHISPER_BACKEND == "openai-api":
+        audio = await asyncio.to_thread(_read_generated_wav, result.wav_path, settings)
+        transcript = await tts_remote.transcribe(audio, settings)
+        if transcript is None and settings.WHISPER_API_STRICT:
+            raise TTSProviderError("remote ASR unavailable and WHISPER_API_STRICT is on")
+        result = replace(result, transcript=transcript)
     return result
 
 
@@ -281,6 +290,43 @@ def _optional_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _read_generated_wav(path: str, settings: Settings) -> bytes:
+    resolved = Path(path).resolve()
+    try:
+        resolved.relative_to(media_dir(settings).resolve())
+    except ValueError as exc:
+        raise TTSRequestError("generated WAV path is outside the media directory") from exc
+    try:
+        return resolved.read_bytes()
+    except OSError as exc:
+        raise TTSRequestError(f"generated WAV could not be read for verification: {exc}") from exc
+
+
+async def transcribe_wrapper_wav(path: str, settings: Settings) -> str | None:
+    resolved = Path(path).resolve()
+    try:
+        resolved.relative_to(media_dir(settings).resolve())
+    except ValueError as exc:
+        raise TTSRequestError("cached WAV path is outside the media directory") from exc
+    response = await _post(
+        "/transcribe", settings, {"wav_path": str(resolved)}, "Whisper verification"
+    )
+    if response.is_server_error:
+        raise TTSProviderError(
+            f"Whisper verification returned {response.status_code}: {response.text[:200]}"
+        )
+    if response.is_client_error:
+        raise TTSRequestError(
+            f"Whisper verification rejected request ({response.status_code}): {response.text[:200]}"
+        )
+    try:
+        body = response.json()
+        transcript = body["transcript"]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise TTSRequestError(f"Unexpected Whisper response shape: {exc}") from exc
+    return str(transcript) if transcript is not None else None
 
 
 def _wav_duration_seconds(audio: bytes) -> tuple[float, int]:
@@ -307,8 +353,6 @@ async def _generate_chunk_remote(
     A remote server returns audio and nothing else, so the transcript the
     wrapper would have supplied is fetched with its own ASR call when
     verification is on and pointed at a remote transcriber."""
-
-    from app.services import tts_remote
 
     wav_path, audio = await tts_remote.synthesize(text, episode_id, chunk_index, settings)
     try:
@@ -512,12 +556,18 @@ async def list_models(settings: Settings) -> dict[str, Any]:
 
     response = await _get("/models", settings, "model list")
     if not response.is_success:
-        raise TTSProviderError(
-            f"model list returned {response.status_code}: {response.text[:200]}"
-        )
+        raise TTSProviderError(f"model list returned {response.status_code}: {response.text[:200]}")
     body = response.json()
     if not isinstance(body, dict):
         raise TTSRequestError(f"model list returned non-object JSON: {type(body).__name__}")
+    models = body.get("models")
+    if isinstance(models, list):
+        body["models"] = sorted(
+            models,
+            key=lambda model: (
+                str(model.get("name", "")).casefold() if isinstance(model, dict) else ""
+            ),
+        )
     return body
 
 

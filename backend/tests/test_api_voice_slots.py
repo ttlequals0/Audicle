@@ -101,7 +101,8 @@ def test_upload_rejects_oversize_clip(client: TestClient) -> None:
         "/api/v1/reference/slots/1",
         files={"voice": ("huge.wav", b"\x00" * (6 * 1024 * 1024), "audio/wav")},
     )
-    assert r.status_code == 400
+    assert r.status_code == 413
+    assert r.json() == {"error": "request body too large", "status": 413}
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required for mp3 transcode")

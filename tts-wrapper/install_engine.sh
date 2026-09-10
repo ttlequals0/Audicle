@@ -1,26 +1,17 @@
 #!/bin/sh
-# Install the Chatterbox TTS engine plus the optional ASR-verify backend and the
-# security patch upgrades, shared by Dockerfile and Dockerfile.cpu so the install
-# logic lives in one place.
+# Install the Chatterbox TTS engine plus the optional ASR-verify backend from
+# the reviewed lock, shared by Dockerfile and Dockerfile.cpu.
 #
-# chatterbox-tts pins transformers==5.2.0 itself, so no pre-pin is needed. torch
-# 2.6.0 is preinstalled by both Dockerfiles (CUDA wheels in Dockerfile, CPU wheels
-# in Dockerfile.cpu); chatterbox-tts pins torch==2.6.0, satisfied by that build.
+# Torch is preinstalled by both Dockerfiles from the required CUDA or CPU index.
 set -eu
 
-pip install --no-cache-dir ".[chatterbox]"
-
-# faster-whisper (CTranslate2) for the optional post-TTS ASR verification pass.
-# Installed as its own step so it resolves against the already-installed engine;
-# CTranslate2 is independent of the engine's torch stack. The image always ships
-# it, but the model loads only when an operator sets WHISPER_ENABLED=true.
-pip install --no-cache-dir ".[whisper]"
-
-# Patch transitive deps the resolver pins to vulnerable versions. setuptools is
-# capped <81: >=78.1.1 clears CVE-2025-47273, but setuptools 81 removed the
-# bundled pkg_resources, which resemble-perth (chatterbox's watermarker) imports
-# at load time -- without the cap the wrapper crash-loops on model load.
-pip install --no-cache-dir -U \
-  "urllib3>=2.7.0" "cryptography>=46.0.5" "pillow>=12.2.0" \
-  "Brotli>=1.2.0" "setuptools>=78.1.1,<81" "wheel>=0.46.2" \
-  "soupsieve>=2.8.4"
+# Chatterbox declares Gradio for its standalone demo scripts, but the engine
+# package never imports it. The uv lock excludes that unused dependency so the
+# wrapper can run a patched Starlette. Torch is installed by the Dockerfile from
+# the platform-specific CUDA or CPU index, so omit the lock's development CPU
+# source and retain the already-installed matching build.
+uv export --locked --no-dev --extra chatterbox --extra whisper \
+  --no-hashes --no-emit-project --output-file /tmp/requirements.txt
+sed -i '/^torch==/d; /^torchaudio==/d' /tmp/requirements.txt
+uv pip install --system --no-cache -r /tmp/requirements.txt
+uv pip install --system --no-cache --no-deps .

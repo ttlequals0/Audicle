@@ -9,22 +9,25 @@ every downstream stage breaks.
 from __future__ import annotations
 
 import io
+import subprocess
 import wave
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 from app.config import Settings, get_settings
+from app.services import audio as audio_service
 from app.services import tts, tts_remote
 
 
-def _wav_bytes(duration_secs: float = 1.0, rate: int = 24000) -> bytes:
+def _wav_bytes(duration_secs: float = 1.0, rate: int = 24000, channels: int = 1) -> bytes:
     buf = io.BytesIO()
     with wave.open(buf, "wb") as handle:
-        handle.setnchannels(1)
+        handle.setnchannels(channels)
         handle.setsampwidth(2)
         handle.setframerate(rate)
-        handle.writeframes(b"\x00\x00" * int(rate * duration_secs))
+        handle.writeframes(b"\x00\x00" * int(rate * duration_secs) * channels)
     return buf.getvalue()
 
 
@@ -120,7 +123,10 @@ async def test_remote_synthesis_writes_the_path_the_pipeline_expects(
     result = await tts.generate_chunk("hello", "ep1", 5, settings)
 
     assert result.wav_path.endswith("ep1_chunk_5.wav")
-    assert Path(result.wav_path).read_bytes() == audio
+    normalized = Path(result.wav_path).read_bytes()
+    with wave.open(io.BytesIO(normalized), "rb") as handle:
+        assert handle.getcomptype() == "NONE"
+        assert handle.getsampwidth() == 2
     assert 1.95 <= result.duration_secs <= 2.05
     assert result.sample_rate == 24000
     # No transcript: a speech endpoint returns audio only.
@@ -180,8 +186,77 @@ async def test_remote_synthesis_rejects_non_wav_audio(
 
     settings = _remote_env(monkeypatch)
     _patch_client(monkeypatch, httpx.MockTransport(lambda r: httpx.Response(200, content=b"ID3junk")))
-    with pytest.raises(tts.TTSRequestError, match="not WAV"):
+    with pytest.raises(tts.TTSRequestError, match="invalid audio"):
         await tts.generate_chunk("hello", "ep1", 0, settings)
+
+
+async def test_remote_synthesis_normalizes_ima_adpcm_before_audio_library_reads(
+    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pcm_path = tmp_path / "pcm.wav"
+    pcm_path.write_bytes(_wav_bytes(duration_secs=1.0))
+    compressed = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(pcm_path),
+            "-c:a",
+            "adpcm_ima_wav",
+            "-f",
+            "wav",
+            "pipe:1",
+        ],
+        capture_output=True,
+        check=True,
+    ).stdout
+    assert compressed[20:22] == b"\x11\x00"
+
+    monkeypatch.setattr(
+        audio_service.sf,
+        "read",
+        lambda *_args, **_kwargs: pytest.fail("libsndfile read provider audio"),
+    )
+    monkeypatch.setattr(
+        audio_service.sf,
+        "info",
+        lambda *_args, **_kwargs: pytest.fail("libsndfile inspected provider audio"),
+    )
+    settings = _remote_env(monkeypatch)
+    _patch_client(
+        monkeypatch,
+        httpx.MockTransport(lambda _request: httpx.Response(200, content=compressed)),
+    )
+
+    result = await tts.generate_chunk("hello", "ep1", 0, settings)
+
+    with wave.open(result.wav_path, "rb") as handle:
+        assert handle.getcomptype() == "NONE"
+        assert handle.getsampwidth() == 2
+        assert handle.getframerate() == 24000
+
+
+async def test_remote_synthesis_preserves_long_stereo_audio(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    provider_audio = _wav_bytes(duration_secs=71.0, rate=44100, channels=2)
+    settings = _remote_env(monkeypatch)
+    _patch_client(
+        monkeypatch,
+        httpx.MockTransport(lambda _request: httpx.Response(200, content=provider_audio)),
+    )
+
+    result = await tts.generate_chunk("hello", "ep1", 0, settings)
+
+    with wave.open(result.wav_path, "rb") as handle:
+        assert handle.getnchannels() == 2
+        assert handle.getframerate() == 44100
+        assert handle.getsampwidth() == 2
+        assert handle.getnframes() == 71 * 44100
+    assert result.duration_secs == 71.0
+    assert result.sample_rate == 44100
 
 
 async def test_remote_synthesis_rejects_an_empty_body(
@@ -191,6 +266,34 @@ async def test_remote_synthesis_rejects_an_empty_body(
     _patch_client(monkeypatch, httpx.MockTransport(lambda r: httpx.Response(200, content=b"")))
     with pytest.raises(tts.TTSProviderError):
         await tts.generate_chunk("hello", "ep1", 0, settings)
+
+
+@pytest.mark.parametrize(
+    ("failure", "error_type", "message"),
+    [
+        (TimeoutError("raw timeout"), tts.TTSTimeoutError, "normalization timed out"),
+        (OSError("raw path"), tts.TTSProviderError, "normalization failed"),
+    ],
+)
+async def test_remote_synthesis_sanitizes_normalization_failures(
+    env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+    error_type: type[Exception],
+    message: str,
+) -> None:
+    settings = _remote_env(monkeypatch)
+    _patch_client(
+        monkeypatch,
+        httpx.MockTransport(lambda _request: httpx.Response(200, content=_wav_bytes())),
+    )
+    monkeypatch.setattr(
+        audio_service, "decode_to_pcm_wav", AsyncMock(side_effect=failure)
+    )
+
+    with pytest.raises(error_type, match=message) as caught:
+        await tts.generate_chunk("hello", "ep1", 0, settings)
+    assert "raw" not in str(caught.value)
 
 
 # --- remote ASR ------------------------------------------------------------

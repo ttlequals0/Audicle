@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.config import get_settings
 from app.core import database
 from app.main import create_app
 from app.services import runtime_settings
@@ -40,6 +41,7 @@ def _stub_probes(monkeypatch) -> None:
         return "ok", {"version": "0.1.0", "device": "cpu", "model_loaded": True}
 
     monkeypatch.setattr(health_mod, "_probe_http", _ok)
+    monkeypatch.setattr(health_mod, "_probe_llm_provider", _ok)
     monkeypatch.setattr(health_mod, "_probe_tts_wrapper", _ok_tts)
     monkeypatch.setattr(health_mod, "_ffmpeg_version", lambda: "stub")
 
@@ -52,8 +54,8 @@ def test_health_ready_ok(env: Path, monkeypatch) -> None:
     body = response.json()
     assert body["ok"] is True
     assert body["checks"]["db"] == "ok"
-    assert body["components"]["app"]
-    assert body["components"]["python"]
+    assert body["checks"]["media"] == "ok"
+    assert "components" not in body
 
 
 def test_health_ready_reflects_runtime_settings_overlay(env: Path, monkeypatch) -> None:
@@ -65,7 +67,7 @@ def test_health_ready_reflects_runtime_settings_overlay(env: Path, monkeypatch) 
     with database.connection(env) as conn:
         runtime_settings.set_value(conn, "LLM_MODEL", "operator-chosen-model")
     with _client(env) as client:
-        body = client.get("/health/ready").json()
+        body = client.get("/health/ingestion").json()
     assert body["components"]["llm"]["model"] == "operator-chosen-model"
 
 
@@ -75,10 +77,42 @@ def test_health_ready_render_component_present_and_not_gating(env: Path, monkeyp
     # readiness.
     _stub_probes(monkeypatch)
     with _client(env) as client:
-        body = client.get("/health/ready").json()
-    assert body["components"]["render"]["reachable"] is True
+        body = client.get("/health/ingestion").json()
+    assert body["components"]["render"]["reachable"] is False
     assert body["components"]["render"]["url"] is None
     assert "render" not in body["checks"]
+
+
+def test_ingestion_fails_when_selected_remote_tts_is_unconfigured(env: Path, monkeypatch) -> None:
+    from app.api import health as health_mod
+
+    _stub_probes(monkeypatch)
+    base = get_settings()
+    monkeypatch.setattr(
+        health_mod.runtime_settings,
+        "overlay",
+        lambda _settings: base.model_copy(
+            update={"TTS_BACKEND": "openai-api", "TTS_API_BASE_URL": ""}
+        ),
+    )
+    with _client(env) as client:
+        response = client.get("/health/ingestion")
+    assert response.status_code == 503
+    assert response.json()["checks"]["tts_remote"] == "unconfigured"
+
+
+def test_skipped_component_is_not_reported_reachable(env: Path, monkeypatch) -> None:
+    _stub_probes(monkeypatch)
+    from app.api import health as health_mod
+
+    async def _skip_unconfigured(base, *_args, **_kwargs):
+        return "ok" if base else "skipped"
+
+    monkeypatch.setattr(health_mod, "_probe_http", _skip_unconfigured)
+    with _client(env) as client:
+        body = client.get("/health/ingestion").json()
+    assert body["components"]["firecrawl"]["status"] == "skipped"
+    assert body["components"]["firecrawl"]["reachable"] is False
 
 
 async def test_probe_render_returns_version(monkeypatch) -> None:
@@ -110,7 +144,6 @@ def test_health_alias_returns_same_shape(env: Path, monkeypatch) -> None:
         ready = client.get("/health/ready").json()
         alias = client.get("/health").json()
     assert ready["checks"] == alias["checks"]
-    assert ready["components"] == alias["components"]
 
 
 async def test_probe_tts_wrapper_surfaces_whisper_fields(monkeypatch) -> None:

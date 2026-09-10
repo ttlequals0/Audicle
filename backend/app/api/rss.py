@@ -8,120 +8,154 @@ Channel metadata comes from ``Settings``; episodes come from the
 ``episodes`` table; ``podcast:guid`` is initialized once and persisted via
 ``services.settings_store``.
 
-HTTP caching: ``Last-Modified`` is set from the newest episode's
-``updated_at`` (or the channel build time if there are no episodes), and
-``If-Modified-Since`` round-trips to a ``304 Not Modified`` so podcast
-clients don't refetch the full body on every poll.
+HTTP validators come from a persistent feed representation revision. HEAD and
+unchanged conditional requests resolve that small state before loading episode
+rows, and rendered bytes are cached by the same complete identity.
 """
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
-import zlib
+from collections import OrderedDict
 from datetime import UTC, datetime
 from email.utils import format_datetime, parsedate_to_datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 
-from app.api.deps import get_conn, get_effective_settings, require_feed_key
-from app.config import Settings
-from app.services import episodes, feed, feed_auth, settings_store
+from app.api.deps import get_conn, require_feed_key
+from app.config import Settings, get_settings
+from app.services import episodes, feed, feed_auth, feed_revision, runtime_settings, settings_store
 from app.services import slug as slug_module
 
 # require_feed_key gates the whole feed when FEED_AUTH_ENABLED (no-op otherwise).
 router = APIRouter(prefix="/rss", tags=["rss"], dependencies=[Depends(require_feed_key)])
+_rendered_feeds: OrderedDict[tuple[str, int, str, str], bytes] = OrderedDict()
+_RENDERED_FEED_CACHE_SIZE = 8
+_RENDERED_FEED_CACHE_BYTES = 16 * 1024 * 1024
 
 
 # GET + HEAD: Apple Podcasts and other platforms issue a HEAD before GET and
 # treat a 405 as a hard failure, so the feed must answer HEAD with the same
 # headers and an empty body.
-@router.api_route("/{slug}.xml", methods=["GET", "HEAD"])
+@router.get("/{slug}.xml", operation_id="get_rss_feed")
+@router.head("/{slug}.xml", operation_id="head_rss_feed")
 async def get_rss(
     slug: str,
     request: Request,
-    settings: Annotated[Settings, Depends(get_effective_settings)],
+    settings: Annotated[Settings, Depends(get_settings)],
     conn: Annotated[sqlite3.Connection, Depends(get_conn)],
     if_modified_since: Annotated[str | None, Header()] = None,
     if_none_match: Annotated[str | None, Header()] = None,
 ) -> Response:
-    # ``settings`` is the runtime_settings overlay (shared with the feed-key
-    # guard via get_effective_settings), so an operator PUT to /api/v1/settings
-    # (FEED_TITLE, FEED_DESCRIPTION, etc.) reflects on the next render, no restart.
+    # Resolve settings and feed identity from one database snapshot so a
+    # concurrent settings save cannot pair new metadata with an old validator.
     # The feed lives at exactly one slug -- the current FEED_TITLE's. Any other
     # slug (the old /rss/rss.xml, or a pre-rename name) is a different feed and
     # 404s, per the "rename = new feed" contract.
+    settings_store.get_or_init_podcast_guid(conn, settings.BASE_URL)
+    settings, identity = _feed_snapshot(conn, settings)
+    require_feed_key(request, conn, settings)
     if slug != slug_module.feed_slug(settings.FEED_TITLE):
         raise HTTPException(status_code=404, detail="not found")
-    rows = episodes.list_published(conn)
-    latest = episodes.latest_updated_at(conn)
-    guid = settings_store.get_or_init_podcast_guid(conn, settings.BASE_URL)
+    guid = settings_store.get(conn, settings_store.PODCAST_GUID_KEY)
+    if guid is None:
+        raise RuntimeError("podcast GUID initialization failed")
     guid_epoch = settings_store.get_feed_guid_epoch(conn)
 
-    last_build = _last_build_datetime(latest)
-    # Fold feed-key state into the ETag so enabling, disabling, or rotating the
-    # key changes the validator -- a client holding a cached keyless feed then
-    # gets a 200 with keyed URLs instead of a 304 with stale ones.
+    last_build = identity.modified_at
     key = feed_auth.active_key(settings)
-    etag = _feed_etag(last_build, guid_epoch, len(rows), key)
+    etag = _feed_etag(identity)
     media_type = "application/rss+xml; charset=utf-8"
     headers = {
         "Last-Modified": format_datetime(last_build, usegmt=True),
-        "Cache-Control": f"public, max-age={settings.RSS_CACHE_MAX_AGE_SECONDS}",
+        "Cache-Control": feed_auth.cache_control(
+            conn, settings, settings.RSS_CACHE_MAX_AGE_SECONDS
+        ),
         "ETag": etag,
     }
     # RFC 7232: when the request carries If-None-Match, ignore If-Modified-Since
-    # and validate on the ETag alone. This is also what makes the feed-key ETag
-    # self-heal work -- enabling/rotating changes the ETag but not last_build, so
-    # an IMS-only comparison would 304 and leave a client on its keyless feed.
+    # and validate on the ETag alone.
     if if_none_match is not None:
         not_modified = _etag_matches(if_none_match, etag)
     else:
-        not_modified = _is_not_modified(if_modified_since, last_build)
+        not_modified = not identity.ims_ambiguous and _is_not_modified(
+            if_modified_since, last_build
+        )
     if not_modified:
         return Response(status_code=304, headers=headers)
     # HEAD: headers only, and skip the (gzip-able) render entirely.
     if request.method == "HEAD":
         return Response(status_code=200, headers=headers, media_type=media_type)
 
-    body = feed.render(
-        rows,
-        settings=settings,
-        podcast_guid=guid,
-        last_build=last_build,
-        feed_guid_epoch=guid_epoch,
-        feed_auth_key=key,
+    database_path = conn.execute("PRAGMA database_list").fetchone()[2]
+    cache_key = (
+        database_path,
+        identity.revision,
+        identity.modified_at.isoformat(),
+        identity.settings_fingerprint,
     )
+    body = _rendered_feeds.get(cache_key)
+    if body is None:
+        rows = episodes.list_for_feed(conn)
+        body = feed.render(
+            rows,
+            settings=settings,
+            podcast_guid=guid,
+            last_build=last_build,
+            feed_guid_epoch=guid_epoch,
+            feed_auth_key=key,
+        )
+        if len(body) <= _RENDERED_FEED_CACHE_BYTES:
+            _rendered_feeds[cache_key] = body
+            _rendered_feeds.move_to_end(cache_key)
+            while (
+                len(_rendered_feeds) > _RENDERED_FEED_CACHE_SIZE
+                or sum(map(len, _rendered_feeds.values())) > _RENDERED_FEED_CACHE_BYTES
+            ):
+                _rendered_feeds.popitem(last=False)
     return Response(content=body, media_type=media_type, headers=headers)
 
 
-def _feed_etag(
-    last_build: datetime, guid_epoch: int, episode_count: int, feed_auth_key: str | None
-) -> str:
-    """Weak validator: changes when an episode updates (last_build), the feed is
-    recreated (guid_epoch), the episode count changes, or the feed-key state
-    changes -- the same inputs that drive Last-Modified plus the key state, so a
-    client re-fetches after an enable/disable/rotate. The key itself is never in
-    the ETag; a CRC32 discriminator stands in for it -- a cache validator, not a
-    security check (auth uses hmac.compare_digest on the raw key), so a plain
-    non-cryptographic checksum is the right primitive and cannot leak the key."""
-
-    key_token = f"{zlib.crc32(feed_auth_key.encode()):08x}" if feed_auth_key else "0"
-    return f'W/"{int(last_build.timestamp())}-{guid_epoch}-{episode_count}-{key_token}"'
+def _feed_etag(identity: feed_revision.FeedIdentity) -> str:
+    value = (
+        f"{identity.revision}:{identity.modified_at.isoformat()}:"
+        f"{identity.settings_fingerprint}"
+    )
+    return f'"{hashlib.sha256(value.encode()).hexdigest()[:32]}"'
 
 
 def _etag_matches(if_none_match: str | None, etag: str) -> bool:
     if not if_none_match:
         return False
     candidates = {token.strip() for token in if_none_match.split(",")}
-    return etag in candidates or "*" in candidates
+    opaque = etag.removeprefix("W/")
+    return "*" in candidates or any(token.removeprefix("W/") == opaque for token in candidates)
 
 
-def _last_build_datetime(latest: str | None) -> datetime:
-    if latest is None:
-        return datetime.now(UTC).replace(microsecond=0)
-    parsed = feed._parse_iso(latest)
-    return parsed.astimezone(UTC) if parsed else datetime.now(UTC).replace(microsecond=0)
+def _feed_snapshot(
+    conn: sqlite3.Connection, base_settings: Settings
+) -> tuple[Settings, feed_revision.FeedIdentity]:
+    while True:
+        conn.execute("BEGIN")
+        settings = runtime_settings.validated_overlay(
+            base_settings, runtime_settings.get_all(conn)
+        )
+        identity = feed_revision.current(conn)
+        if identity.settings_fingerprint == feed_revision.fingerprint(settings):
+            return settings, identity
+        conn.rollback()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            settings = runtime_settings.validated_overlay(
+                base_settings, runtime_settings.get_all(conn)
+            )
+            feed_revision.identity(conn, settings)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
 
 def _is_not_modified(if_modified_since: str | None, last_build: datetime) -> bool:

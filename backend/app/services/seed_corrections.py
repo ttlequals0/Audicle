@@ -92,9 +92,7 @@ def build_lexicon_rows(entries: list[SeedEntry]) -> dict[str, dict]:
     }
 
 
-def format_reference(
-    entries: list[SeedEntry], user_dict: dict[str, str] | None = None
-) -> str:
+def format_reference(entries: list[SeedEntry], user_dict: dict[str, str] | None = None) -> str:
     """Format the full correction set as an LLM reference for the pronunciation
     pass: one ``- input -> replacement  (notes)`` line per term.
 
@@ -122,10 +120,3 @@ def format_reference(
             line += f"  ({notes})"
         lines.append(line)
     return "\n".join(lines)
-
-
-def load_reference(user_dict: dict[str, str] | None = None) -> str:
-    """Load the bundled seed and format the full correction set (seed + user
-    dictionary) as the LLM pronunciation reference."""
-
-    return format_reference(load_seed(seed_path()), user_dict)

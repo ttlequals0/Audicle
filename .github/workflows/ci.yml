@@ -70,3 +70,16 @@ jobs:
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  docker-build-render-egress:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: render/egress-proxy
+          tags: audicle-render-egress-ci
+          push: false
+          cache-from: type=gha,scope=render-egress
+          cache-to: type=gha,mode=max,scope=render-egress

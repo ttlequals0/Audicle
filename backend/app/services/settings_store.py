@@ -100,7 +100,9 @@ def get_feed_guid_epoch(conn: sqlite3.Connection) -> int:
         return 0
 
 
-def rotate_feed_guids(conn: sqlite3.Connection, base_url: str) -> tuple[str, int]:
+def rotate_feed_guids(
+    conn: sqlite3.Connection, base_url: str, *, commit: bool = True
+) -> tuple[str, int]:
     """Force a new feed identity: bump the epoch and rotate the channel guid.
 
     The new channel ``podcast:guid`` stays a spec-shaped UUIDv5 (same namespace
@@ -112,9 +114,21 @@ def rotate_feed_guids(conn: sqlite3.Connection, base_url: str) -> tuple[str, int
     new_epoch = get_feed_guid_epoch(conn) + 1
     salted = f"{_canonical_feed_url(base_url)}#{new_epoch}"
     new_guid = str(uuid.uuid5(_PODCAST_GUID_NAMESPACE, salted))
-    set_(conn, PODCAST_GUID_KEY, new_guid)
-    set_(conn, FEED_GUID_EPOCH_KEY, str(new_epoch))
+    if commit:
+        set_(conn, PODCAST_GUID_KEY, new_guid)
+        set_(conn, FEED_GUID_EPOCH_KEY, str(new_epoch))
+    else:
+        _set_without_commit(conn, PODCAST_GUID_KEY, new_guid)
+        _set_without_commit(conn, FEED_GUID_EPOCH_KEY, str(new_epoch))
     return new_guid, new_epoch
+
+
+def _set_without_commit(conn: sqlite3.Connection, key: str, value: str) -> None:
+    conn.execute(
+        "INSERT INTO settings(key,value,updated_at) VALUES(?,?,strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+        (key, value),
+    )
 
 
 def get_or_init_session_secret(conn: sqlite3.Connection) -> str:

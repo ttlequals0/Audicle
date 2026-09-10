@@ -4,9 +4,10 @@ from email.utils import format_datetime, parsedate_to_datetime
 from pathlib import Path
 
 import defusedxml.ElementTree as DET
+from app.config import get_settings
 from app.core import database
 from app.main import create_app
-from app.services import episodes
+from app.services import episodes, feed, settings_store
 from fastapi.testclient import TestClient
 
 _PODCAST_NS = "https://podcastindex.org/namespace/1.0"
@@ -54,6 +55,22 @@ def test_get_rss_returns_200_with_xml_body(env: Path) -> None:
     assert len(items) == 1
 
 
+def test_feed_projection_renders_same_xml_as_full_rows(env: Path) -> None:
+    _seed(env)
+    with database.connection(env) as conn:
+        settings = get_settings()
+        guid = settings_store.get_or_init_podcast_guid(conn, settings.BASE_URL)
+        kwargs = {
+            "settings": settings,
+            "podcast_guid": guid,
+            "last_build": parsedate_to_datetime("Thu, 28 May 2026 18:00:00 GMT"),
+            "feed_guid_epoch": settings_store.get_feed_guid_epoch(conn),
+        }
+        full = feed.render(episodes.list_published(conn), **kwargs)
+        projected = feed.render(episodes.list_for_feed(conn), **kwargs)
+    assert projected == full
+
+
 def test_head_rss_returns_200_with_headers_and_no_body(env: Path) -> None:
     # Apple Podcasts and other platforms issue HEAD before GET; the route must
     # answer HEAD with 200 + headers, not 405 (feed-validator FATAL).
@@ -67,11 +84,44 @@ def test_head_rss_returns_200_with_headers_and_no_body(env: Path) -> None:
     assert response.content == b""
 
 
+def test_head_and_conditional_requests_skip_episode_projection(
+    env: Path, monkeypatch
+) -> None:
+    _seed(env)
+    with _client(env) as client:
+        first = client.get("/rss/test_feed.xml")
+
+        def _unexpected(_conn):
+            raise AssertionError("episode projection should not be loaded")
+
+        monkeypatch.setattr(episodes, "list_for_feed", _unexpected)
+        head = client.head("/rss/test_feed.xml")
+        rendered_cache_hit = client.get("/rss/test_feed.xml")
+        cached = client.get(
+            "/rss/test_feed.xml", headers={"If-None-Match": first.headers["etag"]}
+        )
+    assert head.status_code == 200
+    assert rendered_cache_hit.status_code == 200
+    assert rendered_cache_hit.content == first.content
+    assert cached.status_code == 304
+
+
 def test_get_rss_emits_etag(env: Path) -> None:
     _seed(env)
     with _client(env) as client:
         response = client.get("/rss/test_feed.xml")
     assert response.headers.get("etag")
+
+
+def test_get_rss_weak_if_none_match_uses_weak_comparison(env: Path) -> None:
+    _seed(env)
+    with _client(env) as client:
+        first = client.get("/rss/test_feed.xml")
+        response = client.get(
+            "/rss/test_feed.xml",
+            headers={"If-None-Match": f"W/{first.headers['etag']}"},
+        )
+    assert response.status_code == 304
 
 
 def test_get_rss_emits_cache_control_header(env: Path) -> None:
@@ -97,6 +147,44 @@ def test_get_rss_last_modified_round_trips_to_304(env: Path) -> None:
     assert not_modified.status_code == 304
     assert not_modified.headers["last-modified"] == last_modified
     assert not_modified.content == b""
+
+
+def test_feed_metadata_change_invalidates_etag_and_last_modified(env: Path) -> None:
+    _seed(env)
+    with _client(env) as client:
+        first = client.get("/rss/test_feed.xml")
+        changed = client.put(
+            "/api/v1/settings", json={"FEED_DESCRIPTION": "A changed description"}
+        )
+        assert changed.status_code == 200
+        refreshed = client.get(
+            "/rss/test_feed.xml",
+            headers={
+                "If-None-Match": first.headers["etag"],
+                "If-Modified-Since": first.headers["last-modified"],
+            },
+        )
+        ims_only = client.get(
+            "/rss/test_feed.xml",
+            headers={"If-Modified-Since": first.headers["last-modified"]},
+        )
+    assert refreshed.status_code == 200
+    assert ims_only.status_code == 200
+    assert refreshed.headers["etag"] != first.headers["etag"]
+
+
+def test_environment_feed_change_invalidates_after_restart(env: Path, monkeypatch) -> None:
+    _seed(env)
+    with _client(env) as client:
+        first = client.get("/rss/test_feed.xml")
+    monkeypatch.setenv("FEED_DESCRIPTION", "Changed through the environment")
+    get_settings.cache_clear()
+    with _client(env) as client:
+        refreshed = client.get(
+            "/rss/test_feed.xml", headers={"If-None-Match": first.headers["etag"]}
+        )
+    assert refreshed.status_code == 200
+    assert refreshed.headers["etag"] != first.headers["etag"]
 
 
 def test_get_rss_returns_full_body_when_client_is_older(env: Path) -> None:

@@ -4,6 +4,46 @@ All notable changes to Audicle are recorded here. Format follows Keep a Changelo
 (https://keepachangelog.com). Versioning is semver once a release ships; pre-release
 work lives under `[Unreleased]`.
 
+## [Unreleased]
+
+### Added
+
+- LLM settings can test draft provider credentials and URLs before saving. Model lists are sorted alphabetically.
+- The TTS wrapper unloads idle TTS and Whisper models after a configurable timeout, then reloads them on demand.
+- Processing dependency checks moved to `/health/ingestion`. `/health/ready` now covers only the database and published-media path needed to serve podcasts.
+
+### Security
+
+- Feed credentials are removed from application request logs, including malformed and encoded artwork key candidates. Protected feed and media responses disable shared caching.
+- Administrative sessions carry a persisted generation. Password changes and revoke-all invalidate old cookies, including their feed-access bypass. A bounded executor handles password hashing. Inputs over bcrypt's 72-byte limit return a client error.
+- Upload body limits now run before multipart parsing, including chunked requests and trailing-slash aliases, and return the standard 413 error envelope.
+- Remote TTS responses are decoded to PCM by cancellable ffmpeg before libsndfile, ASR, or the chunk cache can read them.
+- Public-content fetches require globally routable HTTP or HTTPS destinations. The renderer runs without privileges behind a dedicated proxy. Kernel rules reject private, shared, special-use, loopback, and IPv6 destinations.
+- The stock application listener binds to loopback. Deployment documentation now provides a credential-safe public route allowlist and keeps administration private.
+
+### Fixed
+
+- Fresh defaults render a valid RSS feed. Feed validators advance for every representation change. Unchanged HEAD and conditional requests avoid loading full episode rows.
+- Queued upload originals survive retention. Retention also runs once when a scheduled sweep becomes overdue.
+- Reprocessing builds an immutable staged generation. It publishes audio, artwork, chapters, transcript, and metadata together. A failure or cancellation preserves the prior generation.
+- ffmpeg stages use cancellable subprocesses with deadlines, terminate their process group on timeout, and leave published files untouched until completion.
+- Chapter regeneration updates enclosure length and media versions. Runtime settings changes validate and commit as one complete configuration.
+- Remote TTS works without a local voice slot. Synthesis and transcription backends dispatch independently, including local synthesis with remote ASR.
+- Cached audio is checked against the current quality policy before reuse. Live log-level changes apply in both processes.
+- Password setup handles concurrent bootstrap attempts without overwriting newer credentials.
+
+### Changed
+
+- The TTS wrapper now uses the same MIT license as the rest of Audicle. Third-party licenses remain listed separately.
+- Frontend `fast-uri` moves from 3.1.5 to 3.1.7, and Docker build stages use uv 0.12.10.
+- The wrapper removes its unused Gradio dependency and updates torch to 2.13.0,
+  torchaudio to 2.11.0, transformers to 5.17.0, and diffusers to 0.38.0. The GPU
+  image now requires a host driver that exposes CUDA 12.6 or newer.
+- Migration backups use SQLite's online backup API and verify the snapshot before a migration begins.
+- Lexicon imports use bounded transactions and less memory. The measured import took 6.085808542091399 seconds and 141148160 bytes peak RSS. Its database grew from 191303680 bytes to 214462464 bytes.
+- Release tooling pins and scans four stack images, including the renderer egress proxy. Each image has its own reviewed Trivy exceptions.
+- API validation errors are documented as HTTP 400 envelopes, authentication schemes are described in OpenAPI, and GET and HEAD operations have unique IDs.
+
 ## [0.56.9] - 2026-09-02
 
 ### Security

@@ -80,6 +80,9 @@ def test_is_public_url_rejects_private_and_loopback() -> None:
     assert not is_public_url("http://10.0.0.5/x")
     assert not is_public_url("http://192.168.1.10/x")
     assert not is_public_url("https://[::1]/x")
+    assert not is_public_url("http://100.64.0.1/x")
+    assert not is_public_url("http://[::ffff:224.0.0.1]/x")
+    assert not is_public_url("file:///etc/passwd")
     assert not is_public_url("not a url")
 
 

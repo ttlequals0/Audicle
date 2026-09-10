@@ -2,7 +2,7 @@
 
 The LLM does four jobs: cleaning the extracted page down to the article, the pronunciation pass in normalize, the episode summary, and picking chapter titles. All four go through one configured provider.
 
-Set the provider, model, and key in Settings under LLM (or env; see [Environment variables](environment-variables.md#llm-provider)). Everything here is live-tunable: switch providers and the next job uses the new one. Keys are stored masked, and the model dropdown fetches the provider's live model list.
+Set the provider, model, and key in Settings under LLM (or env; see [Environment variables](environment-variables.md#llm-provider)). Everything here is live-tunable: switch providers and the next job uses the new one. Keys are stored masked. The model dropdown fetches the provider's live model list and sorts it alphabetically. Use "Test connection" before saving to check a draft URL and credential without generating content.
 
 | Provider | Needs | Notes |
 |---|---|---|

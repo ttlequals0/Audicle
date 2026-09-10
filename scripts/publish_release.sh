@@ -47,7 +47,7 @@ git rev-parse "v$VERSION" >/dev/null 2>&1 \
 # The images must exist before the release points at them. Skipped on a dry run
 # so the notes can be previewed before anything is built.
 if [ "$DRY_RUN" != "--dry-run" ]; then
-  for image in audicle audicle-tts audicle-render; do
+  for image in audicle audicle-tts audicle-render audicle-render-egress; do
     docker manifest inspect "ttlequals0/${image}:${VERSION}" >/dev/null 2>&1 \
       || { echo "ttlequals0/${image}:${VERSION} is not on Docker Hub; push the images first" >&2; exit 1; }
   done

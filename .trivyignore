@@ -2,12 +2,11 @@
 # remove it. The Trivy gate in the release flow must pass with ONLY these
 # suppressions -- a new finding means a new decision, not a new entry by reflex.
 #
-# SCOPE: this file holds Debian trixie base CVEs that appear in ALL THREE images
-# (app, tts, render). Image-specific acceptances live in .trivyignore.tts and
-# .trivyignore.render; scripts/trivy_gate.sh concatenates the appropriate pair
-# before passing --ignorefile to each trivy invocation. This eliminates the
-# global-masking problem where a single ignorefile silently suppresses CVEs
-# across images that do not trigger them.
+# SCOPE: this file is the complete app-image allowlist. The release gate builds
+# the tts and render allowlists from reviewed static per-image membership before
+# adding their image-specific files; it explicitly removes the app/tts-only
+# libsndfile entry from the render allowlist.
+# Owner: Audicle maintainers. Recheck all retained entries: 2026-10-10.
 
 # -- Debian trixie base (python:*-slim): no fixed package released yet.
 # Remove each when `apt-get upgrade` in a rebuild clears it from the scan.
@@ -27,18 +26,11 @@ CVE-2026-9538
 CVE-2026-13221
 CVE-2026-57432
 
-# curl / libcurl4t64 / libcurl3t64-gnutls (HIGH x10):
+# curl / libcurl4t64 / libcurl3t64-gnutls (HIGH x3):
 # system curl ships in base; backend Python httpx does not use system libcurl.
 CVE-2026-12064
-CVE-2026-5773
-CVE-2026-6276
 CVE-2026-8286
 CVE-2026-8927
-CVE-2026-8932
-CVE-2026-9079
-CVE-2026-9080
-CVE-2026-9545
-CVE-2026-9547
 
 # ncurses (libncursesw6, libtinfo6, ncurses-base, ncurses-bin) (HIGH x1):
 # terminal handling in base; Audicle runs headless in a container.
@@ -47,16 +39,17 @@ CVE-2025-69720
 # gzip (HIGH x1): compression utility in base; not invoked by application code.
 CVE-2026-41992
 
-# util-linux family (bsdutils, libblkid1, liblastlog2-2, libmount1, libsmartcols1,
-# libuuid1, login, mount, util-linux) (HIGH x1):
-# standard system utilities in the slim base; not exposed to untrusted input.
-CVE-2026-53615
-
 # libacl1 (HIGH x1): POSIX ACL library in base; no ACL operations in Audicle.
 CVE-2026-54369
 
-# libsndfile1 (HIGH x1): audio file library in the Debian base;
-# Audicle uses soundfile (Python binding) for read/write only, no untrusted files.
+# libsndfile1 (HIGH x1): CVE-2026-37555 is an integer overflow in the IMA
+# ADPCM WAV parser. Reference uploads accepted directly by Python's wave module
+# are PCM; every other reference format and every chime upload is decoded by
+# ffmpeg and stored as PCM before soundfile reads it. Bundled TTS chunks are also
+# PCM. Audio from an explicitly configured remote TTS provider is decoded by the
+# controlled ffmpeg subprocess to PCM16 before storage, ASR, caching, duration
+# inspection, or soundfile, so provider bytes cannot reach the vulnerable IMA
+# ADPCM parser. No Debian fix is available.
 # Present in app and tts images; included here so the app scan (shared-only) passes.
 CVE-2026-37555
 
@@ -75,25 +68,15 @@ CVE-2026-57433
 # release and drop this entry when deb13u ships a fixed curl.
 CVE-2026-8458
 
-# CVE-2026-14456 (openssl / libssl3t64 / openssl-provider-legacy, HIGH):
-# denial of service via unbounded memory growth in the QUIC SERVER path. No
-# fixed package in Debian trixie as of 2026-08-23 (trivy status: fix_deferred,
-# empty fixed-version), and 0.56.7 already ships the same 3.5.6-1~deb13u2, so
-# this is a newly published finding rather than a new exposure. Present in all
-# three images because openssl rides in the Debian base. Nothing here runs a
-# QUIC server: the app serves HTTP through uvicorn, and the wrapper and render
-# sidecars are internal HTTP too. Re-check each release and drop this entry
-# when deb13u ships a fixed openssl.
-CVE-2026-14456
-
-# CVE-2026-58050 (libssh2-1t64, HIGH): heap buffer overflow via integer
-# overflow in publickey attribute allocation. No fixed package in Debian trixie
-# as of 2026-08-11 (trivy status: affected, empty fixed-version). Present in all
-# three images as a transitive dependency of libcurl4t64, which is installed
-# only for the localhost healthcheck. The bug sits in libssh2's SSH
-# authentication path, reachable only through an scp:// or sftp:// transfer;
-# no image ships git or ssh, and the HTTP stack is httpx, never libcurl.
-# Re-check each release and drop this entry when deb13u ships a fixed libssh2.
+# CVE-2026-58050 (libssh2-1t64, HIGH): the publickey-subsystem attribute-count
+# multiplication can overflow only on 32-bit platforms; the release app and GPU
+# wrapper images are amd64. libssh2 arrives through healthcheck curl, which makes
+# only localhost HTTP requests. The wrapper Dockerfile also installs git for its
+# dependency-install layer and currently retains it in the GPU runtime, but the
+# lock resolves dependencies from PyPI, runtime code never invokes git, no SSH
+# client is installed, and neither git+HTTPS nor curl HTTP calls libssh2's
+# publickey-list API. No fixed trixie package is available. Remove this entry
+# when deb13u ships a fixed libssh2.
 CVE-2026-58050
 
 # CVE-2026-11822 / CVE-2026-11824 (libsqlite3-0, HIGH x2): memory corruption in
@@ -107,3 +90,14 @@ CVE-2026-58050
 # file. Re-check each release and drop these when deb13u ships a fixed sqlite3.
 CVE-2026-11822
 CVE-2026-11824
+
+# Owner: Audicle maintainers. Recheck: 2026-10-10.
+# CVE-2026-16742 affects systemd-homed record verification. None of the images
+# runs systemd-homed. The four util-linux findings affect privileged mount and
+# nsenter operations; the services run as nonroot with no capabilities and do
+# not invoke those tools. Debian 13 has no fixed package versions for these IDs.
+CVE-2026-16742
+CVE-2026-76642
+CVE-2026-78408
+CVE-2026-78409
+CVE-2026-78410

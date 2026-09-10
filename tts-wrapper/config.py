@@ -21,6 +21,13 @@ def _int_env(name: str, default: int) -> int:
     return default if raw is None or raw == "" else int(raw)
 
 
+def _nonnegative_int_env(name: str, default: int) -> int:
+    value = _int_env(name, default)
+    if value < 0:
+        raise ValueError(f"{name} must be at least 0")
+    return value
+
+
 def _bool_env(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None or raw == "":
@@ -72,6 +79,7 @@ class Config:
     # Zero disables either stage.
     memory_soft_limit_mb: int
     memory_hard_limit_mb: int
+    idle_unload_seconds: int
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -92,6 +100,7 @@ class Config:
             ),
             memory_soft_limit_mb=_int_env("TTS_MEMORY_SOFT_LIMIT_MB", 8000),
             memory_hard_limit_mb=_int_env("TTS_MEMORY_HARD_LIMIT_MB", 14000),
+            idle_unload_seconds=_nonnegative_int_env("TTS_IDLE_UNLOAD_SECONDS", 300),
         )
 
     def slot_path(self, slot: int) -> Path:

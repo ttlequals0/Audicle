@@ -60,6 +60,31 @@ def test_purge_older_than_removes_old_rows_and_files(env: Path) -> None:
         conn.close()
 
 
+def test_purge_keeps_episode_and_upload_source_while_reprocess_is_active(env: Path) -> None:
+    media = _seed(env, id_="old", pub_date="2020-01-01T00:00:00Z")
+    source = media / "old.source.pdf"
+    source.write_bytes(b"document")
+    conn = database.connect(database.db_path(env))
+    try:
+        conn.execute(
+            "INSERT INTO jobs (id, url, episode_id, status, reprocess) "
+            "VALUES ('active', 'upload://old/report.pdf', 'old', 'processing', 1)"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = retention.purge_older_than(get_settings(), older_than_days=30)
+
+    assert result.rows_deleted == 0
+    assert source.read_bytes() == b"document"
+    conn = database.connect(database.db_path(env))
+    try:
+        assert episodes.get_by_id(conn, "old") is not None
+    finally:
+        conn.close()
+
+
 def test_purge_expired_jobs_reaps_old_terminal_unreferenced(env: Path) -> None:
     """Old done/failed job rows with no live episode reference are reaped;
     queued jobs, recent jobs, and jobs a live episode points at survive."""

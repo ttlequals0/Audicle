@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from urllib.parse import urlsplit
 
 from camoufox.async_api import AsyncCamoufox
@@ -138,7 +139,9 @@ class CamoufoxRenderer:
 
     async def render(self, url: str, expand: bool, email: str | None = None) -> RenderResult:
         if not is_public_url(url):
-            logger.warning("refused non-public render target", extra={"event": "render_blocked_host"})
+            logger.warning(
+                "refused non-public render target", extra={"event": "render_blocked_host"}
+            )
             return RenderResult(status="error")
         # Bound the whole retry loop so it can't outrun the backend's read timeout. On the
         # cap, report "captcha" -- the backend then keeps whatever the cascade already had,
@@ -174,7 +177,9 @@ class CamoufoxRenderer:
 
         submitted = False
         try:
-            async with AsyncCamoufox(headless=False) as browser:
+            proxy_url = os.environ.get("RENDER_PROXY_URL")
+            proxy = {"server": proxy_url} if proxy_url else None
+            async with AsyncCamoufox(headless=False, proxy=proxy) as browser:
                 page = await browser.new_page()
                 await page.goto(url, wait_until="networkidle", timeout=_NAV_TIMEOUT_MS)
                 clicks = await _run_expand(page) if expand else 0
@@ -207,7 +212,9 @@ class CamoufoxRenderer:
                         "render reached a CAPTCHA gate",
                         extra={"event": "render_captcha", "clicks": clicks, "attempt": attempt},
                     )
-                    return RenderResult(status="captcha", clicks=clicks, word_estimate=words), submitted
+                    return RenderResult(
+                        status="captcha", clicks=clicks, word_estimate=words
+                    ), submitted
                 logger.info(
                     "render complete",
                     extra={

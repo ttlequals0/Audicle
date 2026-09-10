@@ -155,9 +155,7 @@ def test_cache_identity_wrapper_needs_model_and_slot(
     get_settings.cache_clear()
 
 
-def test_cache_identity_none_when_seed_is_unset(
-    env: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cache_identity_none_when_seed_is_unset(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Seed 0 means the wrapper rolls a random seed per call, so a stored take
     # would freeze one re-roll for the whole retention window.
     monkeypatch.setenv("TTS_MODEL", "chatterbox-turbo")
@@ -208,9 +206,31 @@ async def test_generate_chunk_verify_flag_sets_payload_field(
     assert body["verify"] is True
 
 
-async def test_generate_chunk_parses_transcript(
+async def test_wrapper_synthesis_dispatches_verification_to_remote_asr(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    wav_path = env / "media" / "chunk.wav"
+    wav_path.parent.mkdir()
+    wav_path.write_bytes(b"wav data")
+    transport, captured = _capture_transport(response=_ok_generate(wav_path=str(wav_path)))
+    _patch_async_client(monkeypatch, transport)
+    monkeypatch.setenv("WHISPER_BACKEND", "openai-api")
+    monkeypatch.setenv("WHISPER_API_BASE_URL", "https://asr.example/v1")
+    monkeypatch.setenv("WHISPER_API_MODEL", "whisper-1")
+    get_settings.cache_clear()
+
+    async def transcribe(audio: bytes, _settings: Settings) -> str:
+        assert audio == b"wav data"
+        return "remote transcript"
+
+    monkeypatch.setattr(tts.tts_remote, "transcribe", transcribe)
+    result = await tts.generate_chunk("hello", "ep-1", 3, get_settings(), verify=True)
+
+    assert json.loads(captured["request"].content)["verify"] is False
+    assert result.transcript == "remote transcript"
+
+
+async def test_generate_chunk_parses_transcript(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     response = httpx.Response(
         200,
         content=json.dumps(
@@ -562,9 +582,7 @@ async def test_generate_payload_carries_language(
     assert body["language"] == get_settings().TTS_LANGUAGE
 
 
-async def test_select_model_posts_model_name(
-    env: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_select_model_posts_model_name(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ok = httpx.Response(
         200,
         content=json.dumps({"ok": True, "model": "chatterbox-multilingual"}).encode(),
@@ -578,9 +596,7 @@ async def test_select_model_posts_model_name(
     assert json.loads(request.content) == {"model": "chatterbox-multilingual"}
 
 
-async def test_list_models_gets_wrapper_models(
-    env: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_list_models_gets_wrapper_models(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ok = httpx.Response(
         200,
         content=json.dumps(

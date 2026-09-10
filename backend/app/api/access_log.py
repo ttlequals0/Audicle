@@ -10,6 +10,7 @@ is silenced in ``utils.logging``.
 from __future__ import annotations
 
 import logging
+import re
 import time
 import uuid
 
@@ -22,6 +23,17 @@ logger = logging.getLogger("app.access")
 # Header a reverse proxy sets with the real client IP. Logged as-is for
 # observability; not used for any security decision.
 _FORWARDED_FOR = b"x-forwarded-for"
+_KEYED_ARTWORK_RE = re.compile(r"^(/media/(?:[0-9a-f]{12}|default))-.*(\.(?:jpg|png))$")
+
+
+def safe_path(path: str) -> str:
+    return _KEYED_ARTWORK_RE.sub(r"\1-[REDACTED]\2", path)
+
+
+def safe_query(raw: bytes | None) -> str | None:
+    if not raw:
+        return None
+    return "[REDACTED]"
 
 
 class AccessLogMiddleware:
@@ -59,14 +71,13 @@ class AccessLogMiddleware:
             forwarded = next(
                 (v for k, v in scope.get("headers") or () if k == _FORWARDED_FOR), None
             )
-            qs = scope.get("query_string")
-            query = qs.decode("latin-1") if qs else None
+            query = safe_query(scope.get("query_string"))
             logger.info(
                 "http_access",
                 extra={
                     "event": "http_access",
                     "method": scope.get("method"),
-                    "path": scope.get("path"),
+                    "path": safe_path(scope.get("path") or ""),
                     "query": query,
                     "status": status_holder["code"],
                     "duration_ms": duration_ms,

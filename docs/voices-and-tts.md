@@ -16,6 +16,8 @@ The TTS model and narration language are switchable in Settings under TTS: `chat
 
 Generation tuning (temperature, repetition penalty, top-p, top-k, seed, per-call character cap) lives in the TTS generation group and rides on every request to the wrapper, so a change applies to the next job.
 
+The wrapper unloads its TTS and Whisper models after 300 idle seconds by default, releasing their GPU memory. The next synthesis request reloads the configured models before it runs. Set `TTS_IDLE_UNLOAD_SECONDS=0` to keep models resident, or choose another nonnegative timeout.
+
 ## End-of-episode chime
 
 Settings has an "end chime" section: upload one short clip that plays at the end of every episode, so back-to-back episodes are easy to tell apart on autoplay. Turn it on with the toggle in that same section (`CHIME_ENABLED`); the clip is transcoded and loudness-matched to the narration. Upload WAV/MP3/M4A/FLAC/OGG, trimmed to about 15 seconds. Delete it to stop.

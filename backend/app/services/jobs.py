@@ -17,7 +17,7 @@ from typing import Any
 
 logger = logging.getLogger("app.services.jobs")
 
-JobStatus = str  # queued | processing | done | failed | cancelled
+JobStatus = str  # staging | queued | processing | done | failed | cancelled
 JobStage = str  # extract | cleanup | normalize | chunk | tts | audio | artwork | transcript | finalize | done
 
 
@@ -142,6 +142,7 @@ def create_job(
     *,
     reprocess: bool = False,
     voice_id: str | None = None,
+    staging: bool = False,
 ) -> CreateJobResult:
     """Insert a new ``queued`` job for ``url``.
 
@@ -168,7 +169,9 @@ def create_job(
 
     conn.execute("BEGIN IMMEDIATE")
     try:
-        in_flight = get_job_by_episode_id(conn, episode_id, statuses=("queued", "processing"))
+        in_flight = get_job_by_episode_id(
+            conn, episode_id, statuses=("staging", "queued", "processing")
+        )
         if in_flight is not None:
             conn.execute("ROLLBACK")
             raise DuplicateSubmissionError(
@@ -183,8 +186,8 @@ def create_job(
 
         conn.execute(
             "INSERT INTO jobs (id, url, episode_id, status, reprocess, voice_id) "
-            "VALUES (?, ?, ?, 'queued', ?, ?)",
-            (job_id, url, episode_id, int(reprocess), voice_id),
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (job_id, url, episode_id, "staging" if staging else "queued", int(reprocess), voice_id),
         )
         conn.execute("COMMIT")
     except DuplicateSubmissionError:
@@ -208,6 +211,18 @@ def create_job(
         },
     )
     return CreateJobResult(job=job, replaced_previous=replaced)
+
+
+def queue_staged(conn: sqlite3.Connection, job_id: str) -> Job:
+    conn.execute(
+        "UPDATE jobs SET status = 'queued', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') "
+        "WHERE id = ? AND status = 'staging'",
+        (job_id,),
+    )
+    job = get_job(conn, job_id)
+    if job is None or job.status != "queued":
+        raise RuntimeError(f"staged job {job_id} was not queued")
+    return job
 
 
 def claim_next_queued(conn: sqlite3.Connection) -> Job | None:
@@ -302,7 +317,7 @@ def mark_cancelled(conn: sqlite3.Connection, job_id: str) -> None:
     conn.execute(
         "UPDATE jobs SET status = 'cancelled', error = 'cancelled by user', "
         "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') "
-        "WHERE id = ? AND status IN ('queued', 'processing')",
+        "WHERE id = ? AND status IN ('staging', 'queued', 'processing')",
         (job_id,),
     )
 

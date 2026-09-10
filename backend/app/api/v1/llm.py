@@ -19,7 +19,7 @@ from typing import Annotated
 
 import httpx
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import Settings, get_settings
 from app.services import llm, runtime_settings
@@ -29,6 +29,7 @@ logger = logging.getLogger("app.api.v1.llm")
 router = APIRouter(prefix="/llm", tags=["llm"])
 
 ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models"
+OPENROUTER_AUTH_URL = "https://openrouter.ai/api/v1/auth/key"
 
 # Errors tolerated when listing models: a provider failure degrades to a fallback
 # / empty list rather than surfacing as a 500.
@@ -57,7 +58,9 @@ async def _list_anthropic_models(api_key: str | None) -> list[dict[str, str]]:
     headers = {"x-api-key": api_key, "anthropic-version": llm.ANTHROPIC_VERSION}
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(ANTHROPIC_MODELS_URL, params={"limit": 1000}, headers=headers)
+            response = await client.get(
+                ANTHROPIC_MODELS_URL, params={"limit": 1000}, headers=headers
+            )
             response.raise_for_status()
             data = response.json().get("data", [])
         models = [
@@ -72,6 +75,7 @@ async def _list_anthropic_models(api_key: str | None) -> list[dict[str, str]]:
             extra={"event": "llm_anthropic_models_failed", "detail": str(exc)},
         )
         return static
+
 
 # Per-process TTL cache keyed by "provider:base_url".
 _CACHE_TTL_SECONDS = 300.0
@@ -88,6 +92,25 @@ class ModelsResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
     provider: str
     models: list[ModelEntry]
+
+
+class ConnectionTestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provider: str
+    base_url: str | None = None
+    api_key: str | None = Field(default=None, max_length=4096)
+
+
+class ConnectionTestResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ok: bool
+    reachable: bool
+    status: int | None = None
+    detail: str
+
+
+def _sorted_models(models: list[dict[str, str]]) -> list[dict[str, str]]:
+    return sorted(models, key=lambda model: (model["name"].casefold(), model["id"].casefold()))
 
 
 def _cache_get(key: str) -> list[dict[str, str]] | None:
@@ -143,7 +166,9 @@ async def _list_ollama_models(client: httpx.AsyncClient, base: str) -> list[dict
         response = await client.get(f"{root}/api/tags")
         response.raise_for_status()
         names = [
-            m["name"] for m in response.json().get("models", []) if isinstance(m, dict) and m.get("name")
+            m["name"]
+            for m in response.json().get("models", [])
+            if isinstance(m, dict) and m.get("name")
         ]
         return [{"id": n, "name": n} for n in names]
     except _MODEL_LIST_ERRORS as exc:
@@ -161,7 +186,9 @@ def _cache_key(provider: str, base: str) -> str:
 _ANTHROPIC_CACHE_KEY = "anthropic:api"
 
 
-async def _cached(key: str, fetch: Callable[[], Awaitable[list[dict[str, str]]]]) -> list[dict[str, str]]:
+async def _cached(
+    key: str, fetch: Callable[[], Awaitable[list[dict[str, str]]]]
+) -> list[dict[str, str]]:
     """Return the cached model list for ``key``, else fetch, cache, and return."""
 
     cached = _cache_get(key)
@@ -189,8 +216,95 @@ async def _resolve_models(settings: Settings, provider: str) -> list[dict[str, s
 
 async def _models_response(overlaid: Settings, provider: str | None) -> ModelsResponse:
     selected = provider or overlaid.LLM_PROVIDER
-    models = await _resolve_models(overlaid, selected)
+    models = _sorted_models(await _resolve_models(overlaid, selected))
     return ModelsResponse(provider=selected, models=[ModelEntry(**m) for m in models])
+
+
+def _same_origin(left: str, right: str) -> bool:
+    try:
+        a, b = httpx.URL(left), httpx.URL(right)
+        return (a.scheme, a.host, a.port) == (b.scheme, b.host, b.port)
+    except ValueError:
+        return False
+
+
+def _provider_url(url: str) -> httpx.URL:
+    parsed = httpx.URL(url)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.host
+        or parsed.userinfo
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("invalid provider URL")
+    return parsed
+
+
+def _draft_key(request: ConnectionTestRequest, saved: str | None, same_origin: bool) -> str | None:
+    if (
+        "api_key" not in request.model_fields_set
+        or request.api_key == runtime_settings.MASK_SENTINEL
+    ):
+        return saved if same_origin else None
+    return request.api_key or None
+
+
+def provider_probe_request(
+    settings: Settings, request: ConnectionTestRequest
+) -> tuple[str, dict[str, str], str]:
+    provider = request.provider
+    if provider == "anthropic":
+        key = _draft_key(request, settings.ANTHROPIC_API_KEY, True)
+        return (
+            ANTHROPIC_MODELS_URL,
+            {
+                **({"x-api-key": key} if key else {}),
+                "anthropic-version": llm.ANTHROPIC_VERSION,
+            },
+            "anthropic",
+        )
+    if provider == "openrouter":
+        _base, saved_key, _extra = llm.openai_compatible_connection(settings, provider)
+        key = _draft_key(request, saved_key, True)
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+        return OPENROUTER_AUTH_URL, headers, "openrouter"
+    elif provider == "ollama":
+        base = (
+            request.base_url if "base_url" in request.model_fields_set else settings.OLLAMA_BASE_URL
+        )
+        base = base or ""
+        key, extra = None, {}
+    elif provider == "openai-compatible":
+        saved_base, saved_key, extra = llm.openai_compatible_connection(settings, provider)
+        base = request.base_url if "base_url" in request.model_fields_set else saved_base
+        base = base or ""
+        key = _draft_key(request, saved_key, _same_origin(base, saved_base))
+    else:
+        raise ValueError("unsupported provider")
+    headers = dict(extra)
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    parsed = _provider_url(base)
+    if provider == "ollama":
+        root = str(parsed).rstrip("/")
+        if root.endswith("/v1"):
+            root = root[:-3]
+        return f"{root}/api/tags", headers, "ollama"
+    return f"{str(parsed).rstrip('/')}/models", headers, "openai"
+
+
+def valid_provider_probe_response(kind: str, response: httpx.Response) -> bool:
+    try:
+        payload = response.json()
+    except ValueError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    if kind == "openrouter":
+        return isinstance(payload.get("data"), dict)
+    field = "models" if kind == "ollama" else "data"
+    return isinstance(payload.get(field), list)
 
 
 @router.get("/models", response_model=ModelsResponse)
@@ -215,3 +329,38 @@ async def refresh_models(
         base, _, _ = llm.openai_compatible_connection(overlaid, selected)
         _model_cache.pop(_cache_key(selected, base.rstrip("/")), None)
     return await _models_response(overlaid, provider)
+
+
+@router.post("/test", response_model=ConnectionTestResponse)
+async def test_provider(
+    body: ConnectionTestRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> ConnectionTestResponse:
+    overlaid = runtime_settings.overlay(settings)
+    try:
+        endpoint, headers, kind = provider_probe_request(overlaid, body)
+    except ValueError:
+        return ConnectionTestResponse(
+            ok=False, reachable=False, detail="Unsupported provider or invalid URL"
+        )
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(endpoint, headers=headers)
+    except (httpx.HTTPError, ValueError):
+        return ConnectionTestResponse(
+            ok=False, reachable=False, detail="Provider could not be reached"
+        )
+    if response.is_success and valid_provider_probe_response(kind, response):
+        return ConnectionTestResponse(
+            ok=True, reachable=True, status=response.status_code, detail="Connection succeeded"
+        )
+    detail = (
+        "Provider rejected the credentials"
+        if response.status_code in {401, 403}
+        else "Provider returned an invalid response"
+        if response.is_success
+        else "Provider returned an error"
+    )
+    return ConnectionTestResponse(
+        ok=False, reachable=True, status=response.status_code, detail=detail
+    )

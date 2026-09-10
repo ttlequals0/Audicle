@@ -215,7 +215,6 @@ Anything guarding the login path stays out of the runtime allowlist: reaching th
 | `SESSION_SECRET_KEY` | `None` | env-only |
 | `SESSION_COOKIE_SECURE` | `True` | env-only |
 | `SESSION_COOKIE_MAX_AGE_SECONDS` | `86400 * 14` | env-only |
-| `CORS_ORIGINS` | `` | env-only |
 | `LOGIN_RATE_LIMIT` | `10/minute` | env-only |
 | `LOCKOUT_MAX_FAILED_ATTEMPTS` | `5` | env-only |
 | `LOCKOUT_WINDOW_SECONDS` | `15 * 60` | env-only |
@@ -229,6 +228,7 @@ Set on the `tts-wrapper` service, read at its startup:
 | Variable | Default | What it does |
 |---|---|---|
 | `TTS_DEVICE` | `cuda` | `cuda` or `cpu` |
+| `TTS_IDLE_UNLOAD_SECONDS` | `300` | Unload idle GPU models after this many seconds; `0` disables unloading |
 | `TTS_LANGUAGE` | `en` | Default narration language |
 | `TTS_REFERENCE_PATH` | `/app/reference/voice.wav` | Anchor for the voice slots directory |
 | `TTS_SAMPLE_RATE` | `24000` | Provisional; the model's own rate replaces it at load |
@@ -244,5 +244,14 @@ The memory limits are the [memory ladder](how-it-works.md#the-wrappers-memory-la
 ## The render sidecar's environment
 
 `RENDER_URL` on the app points at it; the sidecar itself reads `LOG_FORMAT`/`LOG_LEVEL` and its own timeouts. It is optional by design: when unset or down, the app falls back to the ordinary extraction cascade.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `RENDER_PROXY_IP` | `172.30.0.3` | Fixed IPv4 address of the renderer egress proxy on its internal network |
+| `RENDER_PROXY_PORT` | `3128` | Proxy listener port |
+| `RENDER_NETWORK_SUBNET` | `172.30.0.0/24` | Dedicated internal renderer-control subnet |
+| `RENDER_CLIENT_IP` | `172.30.0.2` | Fixed renderer IPv4 address allowed by the proxy |
+
+Choose an unused private subnet if the default overlaps another Docker network. Keep all four values consistent; startup fails closed when an address or port is invalid.
 
 [< Docs index](README.md)

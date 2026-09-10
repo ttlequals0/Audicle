@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from app.api.deps import get_conn, require_voice_loaded
 from app.api.v1.submit import SubmitResponse
 from app.config import Settings, get_settings
+from app.core import database
 from app.services import episodes as episodes_service
 from app.services import file_extraction, jobs, runtime_settings, voices
 from app.services.atomic_write import write_bytes_atomic
@@ -80,30 +81,34 @@ async def upload(
     source_uri = file_extraction.build_source_uri(content_hash, filename)
     episode_id = jobs.compute_episode_id(source_uri)
 
-    # Write the original before enqueueing so the worker can't claim the job before
-    # the file exists. A duplicate-without-reprocess 409 below leaves the file in
-    # place -- it is byte-identical to the existing episode's stored original.
-    write_bytes_atomic(file_extraction.source_path(settings, episode_id, filename), data)
-
-    voice_id = voices.resolve(conn, voice)
-    try:
-        result = jobs.create_job(conn, source_uri, reprocess=reprocess, voice_id=voice_id)
-    except jobs.DuplicateSubmissionError as exc:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": "Episode already exists",
-                "details": {
-                    "episode_id": exc.episode_id,
-                    "reason": exc.reason,
-                    "filename": filename,
+    with database.upload_staging_lock(settings.DATA_DIR, episode_id):
+        voice_id = voices.resolve(conn, voice)
+        try:
+            result = jobs.create_job(
+                conn, source_uri, reprocess=reprocess, voice_id=voice_id, staging=True
+            )
+        except jobs.DuplicateSubmissionError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "Episode already exists",
+                    "details": {
+                        "episode_id": exc.episode_id,
+                        "reason": exc.reason,
+                        "filename": filename,
+                    },
                 },
-            },
-        ) from exc
+            ) from exc
+        try:
+            write_bytes_atomic(file_extraction.source_path(settings, episode_id, filename), data)
+            job = jobs.queue_staged(conn, result.job.id)
+        except Exception:
+            jobs.mark_cancelled(conn, result.job.id)
+            raise
     return SubmitResponse(
-        job_id=result.job.id,
-        episode_id=result.job.episode_id,
-        status=result.job.status,
+        job_id=job.id,
+        episode_id=job.episode_id,
+        status=job.status,
         replaced_previous=result.replaced_previous,
     )
 

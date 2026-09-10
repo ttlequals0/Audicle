@@ -28,6 +28,13 @@ _REQUIRED = {
     "FEED_ARTWORK_URL": "https://audifeed.example.test/static/art.png",
 }
 
+_EXTERNAL_CREDENTIALS = (
+    "ANTHROPIC_API_KEY",
+    "OPENROUTER_API_KEY",
+    "TTS_API_KEY",
+    "WHISPER_API_KEY",
+)
+
 
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
@@ -97,6 +104,8 @@ def env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     monkeypatch.chdir(tmp_path)
+    for key in _EXTERNAL_CREDENTIALS:
+        monkeypatch.delenv(key, raising=False)
     for key, value in _REQUIRED.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setenv("DATA_DIR", str(data_dir))

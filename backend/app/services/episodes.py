@@ -9,9 +9,11 @@ than producing a second feed entry.
 from __future__ import annotations
 
 import sqlite3
+import uuid
 from dataclasses import dataclass
 
 from app.core.paths import file_size_or_zero
+from app.services import feed_revision
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,9 @@ class Episode:
     # retention and cleanup need no new handling. NULL when chapters were
     # skipped (short episode, disabled, or LLM failure).
     chapters_json: str | None = None
+    generation_token: str | None = None
+    audio_generation_token: str | None = None
+    guid_generation_token: str | None = None
 
 
 # cleaned_text is intentionally NOT in the default select: it's a large text
@@ -61,7 +66,7 @@ _SELECT_COLUMNS = (
     "id, job_id, title, author, original_url, audio_path, artwork_path, "
     "transcript_vtt, duration_secs, pub_date, created_at, updated_at, summary, "
     "audio_size_bytes, revision, source_type, source_filename, voice_label, "
-    "chapters_json"
+    "chapters_json, generation_token, audio_generation_token, guid_generation_token"
 )
 
 
@@ -86,6 +91,9 @@ def _row_to_episode(row: sqlite3.Row) -> Episode:
         source_filename=row["source_filename"],
         voice_label=row["voice_label"],
         chapters_json=row["chapters_json"],
+        generation_token=row["generation_token"],
+        audio_generation_token=row["audio_generation_token"],
+        guid_generation_token=row["guid_generation_token"],
     )
 
 
@@ -122,9 +130,7 @@ def get_cleaned_text(conn: sqlite3.Connection, episode_id: str) -> str | None:
     body). Kept separate from the default select so the large text isn't loaded
     on every list/RSS read."""
 
-    row = conn.execute(
-        "SELECT cleaned_text FROM episodes WHERE id = ?", (episode_id,)
-    ).fetchone()
+    row = conn.execute("SELECT cleaned_text FROM episodes WHERE id = ?", (episode_id,)).fetchone()
     return row["cleaned_text"] if row is not None else None
 
 
@@ -135,9 +141,7 @@ def set_chapters(conn: sqlite3.Connection, episode_id: str, chapters_json: str |
     unchanged, and both feed into the episode GUID, so bumping them would make
     every subscriber re-download the file over a metadata edit."""
 
-    conn.execute(
-        "UPDATE episodes SET chapters_json = ? WHERE id = ?", (chapters_json, episode_id)
-    )
+    conn.execute("UPDATE episodes SET chapters_json = ? WHERE id = ?", (chapters_json, episode_id))
     conn.commit()
 
 
@@ -173,8 +177,11 @@ def upsert(
     regenerated audio. ``revision`` still increments here as an audit counter.
     """
 
-    conn.execute(
-        """
+    token = uuid.uuid4().hex
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            """
         INSERT INTO episodes (
             id, job_id, title, author, original_url, audio_path,
             artwork_path, transcript_vtt, duration_secs, summary,
@@ -202,26 +209,52 @@ def upsert(
             pub_date         = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
             updated_at       = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
         """,
-        (
-            id,
-            job_id,
-            title,
-            author,
-            original_url,
-            audio_path,
-            artwork_path,
-            transcript_vtt,
-            duration_secs,
-            summary,
-            cleaned_text,
-            audio_size_bytes,
-            source_type,
-            source_filename,
-            voice_label,
-            chapters_json,
-        ),
-    )
-    conn.commit()
+            (
+                id,
+                job_id,
+                title,
+                author,
+                original_url,
+                audio_path,
+                artwork_path,
+                transcript_vtt,
+                duration_secs,
+                summary,
+                cleaned_text,
+                audio_size_bytes,
+                source_type,
+                source_filename,
+                voice_label,
+                chapters_json,
+            ),
+        )
+        conn.execute(
+            """INSERT INTO episode_generations (
+                episode_id, token, audio_path, artwork_path, transcript_vtt,
+                chapters_json, cleaned_text, audio_size_bytes, duration_secs
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                id,
+                token,
+                audio_path,
+                artwork_path,
+                transcript_vtt,
+                chapters_json,
+                cleaned_text,
+                audio_size_bytes,
+                duration_secs,
+            ),
+        )
+        conn.execute(
+            "UPDATE episodes SET generation_token = ?, audio_generation_token = ?, "
+            "guid_generation_token = ? WHERE id = ?",
+            (token, token, token, id),
+        )
+        feed_revision.bump(conn)
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
     # _SELECT_COLUMNS is a fixed module constant -- no user input.
     row = conn.execute(
         "SELECT " + _SELECT_COLUMNS + " FROM episodes WHERE id = ?",
@@ -242,6 +275,238 @@ def get_by_id(conn: sqlite3.Connection, episode_id: str) -> Episode | None:
     return None if row is None else _row_to_episode(row)
 
 
+def generation(conn: sqlite3.Connection, episode_id: str, token: str | None) -> sqlite3.Row | None:
+    if token is None:
+        row = conn.execute(
+            "SELECT generation_token FROM episodes WHERE id = ?", (episode_id,)
+        ).fetchone()
+        token = row["generation_token"] if row else None
+    if not token:
+        return None
+    return conn.execute(
+        "SELECT * FROM episode_generations WHERE episode_id = ? AND token = ?", (episode_id, token)
+    ).fetchone()
+
+
+_GENERATION_VALUE_QUERIES = {
+    field: (
+        f"SELECT g.{field} AS value FROM episodes e "
+        "JOIN episode_generations g ON g.episode_id = e.id "
+        "AND g.token = COALESCE(?, e.generation_token) WHERE e.id = ?"
+    )
+    for field in ("audio_path", "artwork_path", "transcript_vtt", "chapters_json", "cleaned_text")
+}
+
+
+def generation_value(
+    conn: sqlite3.Connection, episode_id: str, token: str | None, field: str
+) -> object | None:
+    query = _GENERATION_VALUE_QUERIES.get(field)
+    if query is None:
+        raise ValueError(f"unsupported generation field: {field}")
+    row = conn.execute(query, (token, episode_id)).fetchone()
+    return None if row is None else row["value"]
+
+
+def publish_generation(
+    conn: sqlite3.Connection,
+    episode_id: str,
+    expected_token: str | None,
+    values: dict[str, object],
+    *,
+    token: str | None = None,
+) -> str:
+    token = token or uuid.uuid4().hex
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        current = conn.execute(
+            "SELECT generation_token FROM episodes WHERE id = ?", (episode_id,)
+        ).fetchone()
+        if current is None or current["generation_token"] != expected_token:
+            raise RuntimeError("episode generation changed")
+        base = generation(conn, episode_id, expected_token)
+        if base is None:
+            base = conn.execute(
+                "SELECT audio_path, artwork_path, transcript_vtt, chapters_json, cleaned_text, audio_size_bytes, duration_secs FROM episodes WHERE id = ?",
+                (episode_id,),
+            ).fetchone()
+            if base is None:
+                raise RuntimeError("current generation missing")
+        merged = {
+            key: values.get(key, base[key])
+            for key in (
+                "audio_path",
+                "artwork_path",
+                "transcript_vtt",
+                "chapters_json",
+                "cleaned_text",
+                "audio_size_bytes",
+                "duration_secs",
+            )
+        }
+        conn.execute(
+            "INSERT INTO episode_generations (episode_id, token, audio_path, artwork_path, transcript_vtt, chapters_json, cleaned_text, audio_size_bytes, duration_secs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (episode_id, token, *merged.values()),
+        )
+        updated = conn.execute(
+            "UPDATE episodes SET generation_token = ?, audio_path = ?, artwork_path = ?, transcript_vtt = ?, chapters_json = ?, cleaned_text = ?, audio_size_bytes = ?, duration_secs = ?, audio_generation_token = CASE WHEN ? THEN ? ELSE audio_generation_token END WHERE id = ? AND generation_token IS ?",
+            (
+                token,
+                *merged.values(),
+                "audio_path" in values,
+                token,
+                episode_id,
+                expected_token,
+            ),
+        )
+        if updated.rowcount != 1:
+            raise RuntimeError("episode generation changed")
+        feed_revision.bump(conn)
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return token
+
+
+def publish_episode_generation(
+    conn: sqlite3.Connection,
+    *,
+    token: str,
+    expected_token: str | None,
+    create: bool,
+    id: str,
+    job_id: str | None,
+    original_url: str,
+    title: str | None,
+    author: str | None,
+    audio_path: str,
+    artwork_path: str | None,
+    transcript_vtt: str,
+    duration_secs: int,
+    summary: str | None,
+    cleaned_text: str | None,
+    audio_size_bytes: int,
+    source_type: str,
+    source_filename: str | None,
+    voice_label: str | None,
+    chapters_json: str | None,
+) -> None:
+    """Atomically publish a complete generation if the episode is unchanged."""
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        job = conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        if job is None or job["status"] != "processing":
+            raise RuntimeError("job is no longer processing")
+        current = conn.execute(
+            "SELECT generation_token FROM episodes WHERE id = ?", (id,)
+        ).fetchone()
+        if create:
+            if current is not None:
+                raise RuntimeError("episode generation changed")
+            conn.execute(
+                """INSERT INTO episodes (
+                    id, job_id, title, author, original_url, audio_path,
+                    artwork_path, transcript_vtt, duration_secs, summary,
+                    cleaned_text, audio_size_bytes, source_type, source_filename,
+                    voice_label, chapters_json, generation_token,
+                    audio_generation_token, guid_generation_token
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    id,
+                    job_id,
+                    title,
+                    author,
+                    original_url,
+                    audio_path,
+                    artwork_path,
+                    transcript_vtt,
+                    duration_secs,
+                    summary,
+                    cleaned_text,
+                    audio_size_bytes,
+                    source_type,
+                    source_filename,
+                    voice_label,
+                    chapters_json,
+                    token,
+                    token,
+                    token,
+                ),
+            )
+        else:
+            if current is None or current["generation_token"] != expected_token:
+                raise RuntimeError("episode generation changed")
+            updated = conn.execute(
+                """UPDATE episodes SET
+                    job_id = ?, title = ?, author = ?, original_url = ?,
+                    audio_path = ?, artwork_path = ?, transcript_vtt = ?,
+                    duration_secs = ?, summary = ?, cleaned_text = ?,
+                    audio_size_bytes = ?, source_type = ?, source_filename = ?,
+                    voice_label = ?, chapters_json = ?, generation_token = ?,
+                    audio_generation_token = ?, guid_generation_token = ?,
+                    revision = revision + 1,
+                    pub_date = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                WHERE id = ? AND generation_token = ?""",
+                (
+                    job_id,
+                    title,
+                    author,
+                    original_url,
+                    audio_path,
+                    artwork_path,
+                    transcript_vtt,
+                    duration_secs,
+                    summary,
+                    cleaned_text,
+                    audio_size_bytes,
+                    source_type,
+                    source_filename,
+                    voice_label,
+                    chapters_json,
+                    token,
+                    token,
+                    token,
+                    id,
+                    expected_token,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise RuntimeError("episode generation changed")
+        conn.execute(
+            """INSERT INTO episode_generations (
+                episode_id, token, audio_path, artwork_path, transcript_vtt,
+                chapters_json, cleaned_text, audio_size_bytes, duration_secs
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                id,
+                token,
+                audio_path,
+                artwork_path,
+                transcript_vtt,
+                chapters_json,
+                cleaned_text,
+                audio_size_bytes,
+                duration_secs,
+            ),
+        )
+        finished = conn.execute(
+            "UPDATE jobs SET status = 'done', stage = 'finalize', error = NULL, "
+            "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') "
+            "WHERE id = ? AND status = 'processing'",
+            (job_id,),
+        )
+        if finished.rowcount != 1:
+            raise RuntimeError("job is no longer processing")
+        feed_revision.bump(conn)
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+
 def list_published(conn: sqlite3.Connection) -> list[Episode]:
     """Return episodes in newest-first order for RSS rendering.
 
@@ -254,6 +519,20 @@ def list_published(conn: sqlite3.Connection) -> list[Episode]:
         "SELECT " + _SELECT_COLUMNS + " "
         "FROM episodes "
         "WHERE audio_path IS NOT NULL "
+        "ORDER BY pub_date DESC, created_at DESC"
+    ).fetchall()
+    return [_row_to_episode(row) for row in rows]
+
+
+def list_for_feed(conn: sqlite3.Connection) -> list[Episode]:
+    """Return feed rows without materializing transcript and chapter bodies."""
+
+    columns = _SELECT_COLUMNS.replace(
+        "transcript_vtt",
+        "CASE WHEN length(transcript_vtt) > 0 THEN '1' END AS transcript_vtt",
+    ).replace("chapters_json", "CASE WHEN length(chapters_json) > 0 THEN '1' END AS chapters_json")
+    rows = conn.execute(
+        "SELECT " + columns + " FROM episodes WHERE audio_path IS NOT NULL "
         "ORDER BY pub_date DESC, created_at DESC"
     ).fetchall()
     return [_row_to_episode(row) for row in rows]

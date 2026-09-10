@@ -86,6 +86,36 @@ def test_put_settings_persists_and_coerces_types(env: Path) -> None:
     assert values["FEED_EXPLICIT"] is True
 
 
+def test_put_log_level_applies_after_persist(env: Path, monkeypatch) -> None:
+    from app.api.v1 import settings as settings_api
+
+    applied: list[str] = []
+    monkeypatch.setattr(settings_api, "apply_level", applied.append)
+    with _client(env) as client:
+        assert client.put("/api/v1/settings", json={"LOG_LEVEL": "DEBUG"}).status_code == 200
+    assert applied == ["DEBUG"]
+
+
+def test_put_rejects_invalid_complete_backend_configuration_atomically(env: Path) -> None:
+    secret = "should-not-appear-in-validation"
+    with _client(env) as client:
+        response = client.put(
+            "/api/v1/settings",
+            json={
+                "TTS_BACKEND": "openai-api",
+                "TTS_API_BASE_URL": "https://tts.example.test/v1",
+                "WHISPER_BACKEND": "wrapper",
+                "WHISPER_VERIFY_ENABLED": True,
+                "TTS_API_KEY": secret,
+            },
+        )
+        assert response.status_code == 400
+        assert secret not in response.text
+        values = client.get("/api/v1/settings").json()["values"]
+    assert "TTS_BACKEND" not in values
+    assert "TTS_API_BASE_URL" not in values
+
+
 def test_put_settings_rejects_unknown_keys(env: Path) -> None:
     with _client(env) as client:
         response = client.put(

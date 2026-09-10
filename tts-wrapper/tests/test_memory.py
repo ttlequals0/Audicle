@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import memory
+import pytest
 
 
 def test_rss_mb_reports_a_plausible_size() -> None:
@@ -10,13 +13,18 @@ def test_rss_mb_reports_a_plausible_size() -> None:
     this returns a constant."""
 
     value = memory.rss_mb()
+    if not Path("/proc/self/statm").exists():
+        assert value == 0
+        return
     assert value > 0
     # A Python process with pytest loaded is comfortably inside this range;
     # the point is to catch a unit error (bytes or pages read as MB).
     assert value < 100_000
 
 
-def test_cleanup_reports_before_and_after() -> None:
+def test_cleanup_reports_before_and_after(monkeypatch: pytest.MonkeyPatch) -> None:
+    readings = iter((123, 120))
+    monkeypatch.setattr(memory, "rss_mb", lambda: next(readings))
     stats = memory.cleanup()
     assert stats["rss_before_mb"] > 0
     assert stats["rss_after_mb"] > 0
@@ -33,7 +41,8 @@ def test_maybe_cleanup_is_a_no_op_below_the_soft_limit() -> None:
     assert memory.maybe_cleanup(soft_limit_mb=10_000_000) is None
 
 
-def test_maybe_cleanup_runs_once_over_the_soft_limit() -> None:
+def test_maybe_cleanup_runs_once_over_the_soft_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(memory, "rss_mb", lambda: 10)
     stats = memory.maybe_cleanup(soft_limit_mb=1)
     assert stats is not None
     assert stats["rss_before_mb"] > 0
@@ -43,14 +52,15 @@ def test_zero_soft_limit_disables_cleanup() -> None:
     assert memory.maybe_cleanup(soft_limit_mb=0) is None
 
 
-def test_hard_limit_checks_and_zero_disables() -> None:
+def test_hard_limit_checks_and_zero_disables(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(memory, "rss_mb", lambda: 10)
     assert memory.over_hard_limit(1) is True
     assert memory.over_hard_limit(10_000_000) is False
     # Disabled, so never trips regardless of actual usage.
     assert memory.over_hard_limit(0) is False
 
 
-def test_cleanup_tolerates_a_torch_module_that_raises() -> None:
+def test_cleanup_tolerates_a_torch_module_that_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     """A torch build whose cuda probe throws must not take down a chunk that
     already synthesized successfully."""
 
@@ -60,6 +70,7 @@ def test_cleanup_tolerates_a_torch_module_that_raises() -> None:
             def is_available():
                 raise RuntimeError("driver gone")
 
+    monkeypatch.setattr(memory, "rss_mb", lambda: 10)
     stats = memory.cleanup(Exploding())
     assert stats["rss_before_mb"] > 0
 

@@ -71,7 +71,10 @@ export default function Home() {
   const filledSlots = (slotsQ.data ?? []).filter((s) => s.filled);
   // Slots-only: the backend rejects submit/upload with 400 when no voice is loaded.
   // Gate on isSuccess so the button isn't disabled while the slots query is in flight.
-  const noVoiceLoaded = slotsQ.isSuccess && filledSlots.length === 0;
+  const effectiveTtsBackend =
+    settingsQ.data?.values.TTS_BACKEND ?? settingsQ.data?.defaults.TTS_BACKEND ?? "wrapper";
+  const noVoiceLoaded =
+    effectiveTtsBackend === "wrapper" && slotsQ.isSuccess && filledSlots.length === 0;
   const voiceChoiceLabel =
     voice === "random"
       ? "random"
@@ -326,9 +329,9 @@ export default function Home() {
   const jobs = jobsQ.data ?? [];
   // FIFO queue order: oldest first, so the job actually processing leads.
   const active = jobs
-    .filter((j) => j.status === "queued" || j.status === "processing")
+    .filter((j) => ["staging", "queued", "processing"].includes(j.status))
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
-  const history = jobs.filter((j) => j.status !== "queued" && j.status !== "processing");
+  const history = jobs.filter((j) => !["staging", "queued", "processing"].includes(j.status));
   const failedHistoryCount = history.filter(
     (j) => j.status === "failed" || j.status === "cancelled"
   ).length;
@@ -491,8 +494,9 @@ export default function Home() {
               // no voice loaded. add a voice slot in settings first
             </p>
           )}
-          <div>
-            <button
+          {effectiveTtsBackend === "wrapper" && (
+            <div>
+              <button
               type="button"
               className="mono-xs text-mute flex items-center gap-1.5 hover:text-fg"
               onClick={() => setVoiceOpen(!voiceOpen)}
@@ -502,9 +506,9 @@ export default function Home() {
                 &rsaquo;
               </span>
               // voice: {voiceChoiceLabel}
-            </button>
-            {voiceOpen && (
-              <>
+              </button>
+              {voiceOpen && (
+                <>
                 <select
                   className="field mt-2"
                   value={voice}
@@ -524,9 +528,10 @@ export default function Home() {
                     // no voice loaded. add a slot in settings first
                   </p>
                 )}
-              </>
-            )}
-          </div>
+                </>
+              )}
+            </div>
+          )}
         </form>
         {error && <p className="text-danger text-xs font-mono mt-2 break-words">{error}</p>}
         {rejected.length > 0 && (
@@ -563,7 +568,7 @@ export default function Home() {
                   </p>
                 </div>
                 <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                  <span className={`tag ${statusTag(j.status)}`}>{j.status}</span>
+                  <span className={`tag ${statusTag(j.status)}`}>{statusLabel(j.status)}</span>
                   <button
                     className="btn-ghost text-xs"
                     disabled={cancelM.isPending}
@@ -748,4 +753,8 @@ function statusTag(status: JobStatus): string {
     default:
       return "tag-queued";
   }
+}
+
+function statusLabel(status: JobStatus): string {
+  return status === "staging" ? "uploading" : status;
 }

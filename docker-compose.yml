@@ -3,7 +3,7 @@
 
 services:
   app:
-    image: ttlequals0/audicle:latest
+    image: ttlequals0/audicle:${BUILD_VERSION:?set BUILD_VERSION}
     # The image already runs as a non-root user (uid 1000). If you set `user:`
     # or bind-mount host dirs, make those dirs writable by uid 1000:
     #   chown -R 1000:1000 ./data ./backend/app/prompts ./backend/app/corrections ./backend/app/reference
@@ -11,7 +11,7 @@ services:
     # which only works if uid 1000 can write to them.
     # user: "1000:1000"
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     env_file: .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -33,6 +33,9 @@ services:
       # deadlock -- the wrapper is 503 until a voice slot is uploaded.
       tts-wrapper:
         condition: service_started
+    networks:
+      - app-network
+      - render-control
       # No depends_on for the render sidecar: it is optional enrichment and the app
       # tolerates it being down or absent (render.fetch fails closed to the cascade
       # result), so it must not gate app startup or block `up` if its image is missing.
@@ -58,22 +61,39 @@ services:
     # "EXPAND TO CONTINUE READING" gate to recover full article bodies (e.g.
     # inc.com). Internal only -- never expose this; the app reaches it at
     # RENDER_URL=http://render:8000 (set in .env). Disable by clearing RENDER_URL.
-    image: ttlequals0/audicle-render:latest
+    image: ttlequals0/audicle-render:${BUILD_VERSION:?set BUILD_VERSION}
+    environment:
+      - RENDER_PROXY_URL=http://${RENDER_PROXY_IP:-172.30.0.3}:3128
+      - RENDER_PROXY_IP=${RENDER_PROXY_IP:-172.30.0.3}
+      - RENDER_PROXY_PORT=3128
     # Headful Firefox needs a large /dev/shm or it crashes mid-render; the Docker
     # default (64m) is too small.
     shm_size: "1gb"
+    depends_on:
+      render-egress:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
+      test: ["CMD-SHELL", "setpriv --reuid=1001 --regid=1001 --clear-groups --inh-caps=-all --bounding-set=-all --no-new-privs curl -fsS http://localhost:8000/health/live || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 60s
     restart: unless-stopped
-    # no-new-privileges, but NOT cap_drop: ALL like the other services -- a headful
-    # Firefox under xvfb can need more latitude than a plain web app. Tighten with
-    # cap_drop once validated against the live browser if you want to harden further.
+    # The root entrypoint receives only the capabilities needed to install its
+    # fail-closed egress rules and change UID. It drops them before starting
+    # Xvfb, uvicorn, or the browser.
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+      - SETUID
+      - SETGID
+      - SETPCAP
+    networks:
+      render-control:
+        ipv4_address: ${RENDER_CLIENT_IP:-172.30.0.2}
     logging:
       driver: json-file
       options:
@@ -83,7 +103,9 @@ services:
   tts-wrapper:
     # GPU-pinned, one uvicorn worker. For CPU-only hosts use the
     # ttlequals0/audicle-tts:*-cpu image and set TTS_DEVICE=cpu (5-10x slower).
-    image: ttlequals0/audicle-tts:latest
+    image: ttlequals0/audicle-tts:${BUILD_VERSION:?set BUILD_VERSION}
+    networks:
+      - app-network
     environment:
       - TTS_DEVICE=${TTS_DEVICE:-cuda}
       - TTS_LANGUAGE=${TTS_LANGUAGE:-en}
@@ -113,6 +135,7 @@ services:
       # being SIGKILLed mid-request. Set either to 0 to disable that stage.
       - TTS_MEMORY_SOFT_LIMIT_MB=${TTS_MEMORY_SOFT_LIMIT_MB:-8000}
       - TTS_MEMORY_HARD_LIMIT_MB=${TTS_MEMORY_HARD_LIMIT_MB:-14000}
+      - TTS_IDLE_UNLOAD_SECONDS=${TTS_IDLE_UNLOAD_SECONDS:-300}
       # glibc allocates up to 8 arenas per core for threaded processes and never
       # returns them to the kernel, which is the suspected bulk of that growth.
       # Capping arenas bounds the fragmentation before malloc_trim has to.
@@ -157,3 +180,37 @@ services:
       options:
         max-size: "50m"
         max-file: "3"
+
+  render-egress:
+    image: ttlequals0/audicle-render-egress:${BUILD_VERSION:?set BUILD_VERSION}
+    build: ./render/egress-proxy
+    environment:
+      - RENDER_CLIENT_IP=${RENDER_CLIENT_IP:-172.30.0.2}
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+      - SETUID
+      - SETGID
+      - SETPCAP
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "setpriv --reuid=1001 --regid=1001 --clear-groups --inh-caps=-all --bounding-set=-all --no-new-privs nc -z 127.0.0.1 3128"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      render-control:
+        ipv4_address: ${RENDER_PROXY_IP:-172.30.0.3}
+      proxy-out:
+
+networks:
+  app-network:
+  render-control:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${RENDER_NETWORK_SUBNET:-172.30.0.0/24}
+  proxy-out:

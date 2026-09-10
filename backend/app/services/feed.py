@@ -31,9 +31,7 @@ logger = logging.getLogger("app.services.feed")
 # A GitHub *blob* URL (github.com/<o>/<r>/blob/<branch>/<path>) is the HTML web
 # page, not the file -- an easy mistake when pasting a cover URL from the address
 # bar. Rewrite it to the raw form so the artwork actually resolves to an image.
-_GITHUB_BLOB_RE = re.compile(
-    r"^https?://github\.com/([^/]+)/([^/]+)/blob/(.+)$", re.IGNORECASE
-)
+_GITHUB_BLOB_RE = re.compile(r"^https?://github\.com/([^/]+)/([^/]+)/blob/(.+)$", re.IGNORECASE)
 
 
 def _raw_github_url(url: str) -> str:
@@ -91,11 +89,14 @@ def render(
     title = settings.FEED_TITLE or slug.DEFAULT_FEED_TITLE
     author = {
         key: value
-        for key, value in (("name", settings.FEED_AUTHOR), ("email", _clean_email(settings.FEED_EMAIL)))
+        for key, value in (
+            ("name", settings.FEED_AUTHOR),
+            ("email", _clean_email(settings.FEED_EMAIL)),
+        )
         if value
     }
     fg.title(title)
-    fg.description(settings.FEED_DESCRIPTION)
+    fg.description(settings.FEED_DESCRIPTION.strip() or "Articles read aloud by Audicle.")
     if author:
         fg.author(author)
     fg.language(settings.FEED_LANGUAGE)
@@ -145,8 +146,9 @@ def render(
 
     for ep in episodes:
         item = fg.add_entry(order="append")
-        # The updated_at epoch versions both the GUID and the enclosure ?v=.
-        bust = _cache_bust(ep.updated_at)
+        representation_bust = ep.generation_token or _cache_bust(ep.updated_at)
+        audio_bust = ep.audio_generation_token or representation_bust
+        guid_bust = ep.guid_generation_token or audio_bust
         guid_value = f"{ep.id}-{feed_guid_epoch}" if feed_guid_epoch else ep.id
         # Append the version token so any audio regeneration gets a fresh GUID: an
         # in-place reprocess OR a delete-then-resubmit, which resets `revision` to 1
@@ -154,8 +156,8 @@ def render(
         # downloaded" on the GUID, so a stable GUID leaves them on the old enclosure.
         # The token moves only on finalize, so an unchanged episode keeps a stable
         # GUID across renders.
-        if bust is not None:
-            guid_value = f"{guid_value}-v{bust}"
+        if guid_bust is not None:
+            guid_value = f"{guid_value}-v{guid_bust}"
         item.id(guid_value)
         item.guid(guid_value, permalink=False)
         if ep.title:
@@ -170,7 +172,7 @@ def render(
         item.podcast.itunes_summary(_episode_summary(ep))
         item.pubDate(_parse_iso(ep.pub_date) or last_build)
         if ep.audio_path:
-            audio_url = _media_url(settings.BASE_URL, ep.id, "mp3", bust, key=feed_auth_key)
+            audio_url = _media_url(settings.BASE_URL, ep.id, "mp3", audio_bust, key=feed_auth_key)
             item.enclosure(
                 url=audio_url,
                 length=str(audio_size(ep) or 0),
@@ -184,7 +186,7 @@ def render(
         # png or jpg", crashing the whole feed render with a 500. The URL is
         # extension-clean (no ?v=) so Apple/podcast apps accept the cover.
         item.podcast.itunes_image(
-            _media_url(settings.BASE_URL, ep.id, "jpg", key=feed_auth_key)
+            _media_url(settings.BASE_URL, ep.id, "jpg", representation_bust, key=feed_auth_key)
             if ep.artwork_path
             else artwork_url
         )
@@ -252,7 +254,9 @@ def _episode_summary(ep: Episode) -> str:
     if ep.summary:
         lines.append(ep.summary)
     lines.append(
-        f"Source: {label} (uploaded)" if ep.source_type == "upload" else f"Source: {ep.original_url}"
+        f"Source: {label} (uploaded)"
+        if ep.source_type == "upload"
+        else f"Source: {ep.original_url}"
     )
     if ep.voice_label:
         lines.append(f"Voice: {ep.voice_label}")
@@ -334,7 +338,7 @@ def _inject_pc2_tags(
                 settings.BASE_URL,
                 ep.id,
                 "chapters.json",
-                _cache_bust(ep.updated_at),
+                ep.generation_token or _cache_bust(ep.updated_at),
                 key=feed_auth_key,
             )
             ET.SubElement(
@@ -345,7 +349,11 @@ def _inject_pc2_tags(
         if not ep.transcript_vtt:
             continue
         transcript_url = _media_url(
-            settings.BASE_URL, ep.id, "vtt", _cache_bust(ep.updated_at), key=feed_auth_key
+            settings.BASE_URL,
+            ep.id,
+            "vtt",
+            ep.generation_token or _cache_bust(ep.updated_at),
+            key=feed_auth_key,
         )
         ET.SubElement(
             item_el,
@@ -386,7 +394,8 @@ def _media_url(
         # and CDNs reject query-string image URLs -- the same reason there is no
         # ?v= here). Both id and key are hyphen-free hex, so the serving side
         # splits the token on the last hyphen.
-        stem = f"{episode_id}-{key}" if key else episode_id
+        stem = f"{episode_id}-v{version}" if version is not None else episode_id
+        stem = f"{stem}-{key}" if key else stem
         return f"{base}/media/{stem}.jpg"
     url = f"{base}/media/{episode_id}.{ext}"
     url = _append_version(url, version) or url
@@ -454,5 +463,3 @@ def _parse_iso(value: str) -> datetime | None:
             extra={"event": "feed_timestamp_parse_failed", "value": value},
         )
     return parsed
-
-

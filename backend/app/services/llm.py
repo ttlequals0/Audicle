@@ -122,7 +122,8 @@ async def generate(
         # configured value is bad and should surface, not be silently dropped.
         message = str(exc).lower()
         value_complaint = any(
-            p in message for p in ("must be", "between", "greater than", "less than", "out of range")
+            p in message
+            for p in ("must be", "between", "greater than", "less than", "out of range")
         )
         if effective_temp is not None and "temperature" in message and not value_complaint:
             logger.warning(

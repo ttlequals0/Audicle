@@ -83,7 +83,7 @@ The [docs index](docs/README.md) links everything. The short version:
 ```
 backend/        FastAPI app, SQLite, the job pipeline
 tts-wrapper/    TTS model server (Chatterbox; separate GPU container)
-render/         full-article render sidecar (Camoufox + xvfb; clicks expand gates)
+render/         full-article render sidecar and its restricted egress proxy
 frontend/       React + Tailwind operator UI
 docs/           documentation and screenshots
 data/           runtime artifacts (gitignored: SQLite, MP3, JPG, VTT)
@@ -115,7 +115,10 @@ CodeQL runs on every PR through GitHub's default-setup code scanning (there is n
 The application code is MIT. A few things downstream of it have their own terms:
 
 - **Chatterbox** is the TTS engine. The `chatterbox-tts` library and its model weights are MIT, so there's no non-commercial restriction on the model itself. Every output carries Resemble's inaudible PerTh watermark for provenance, with no flag to turn it off.
-- **Wrapper Python pin**: the wrapper runs Python 3.11 from its `python:3.11-slim` base with torch 2.6.0 installed from PyPI (the CUDA-enabled cu124 wheel). The Python ceiling tracks `chatterbox-tts`'s `torch==2.6.0` pin. The backend is separate: Python `>=3.13`, shipped on `python:3.14-slim`.
+- **Wrapper runtime**: the wrapper runs Python 3.11 from `python:3.11-slim`.
+  Its GPU image uses the CUDA 12.6 torch wheels and requires a host driver that
+  exposes CUDA 12.6 or newer. The backend is separate: Python `>=3.13`, shipped
+  on `python:3.14-slim`.
 
 The Audicle name and logo are reserved; see `branding/README.md`.
 

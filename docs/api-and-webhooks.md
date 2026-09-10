@@ -12,9 +12,9 @@ The API lives under `/api/v1`, with interactive docs at `/api/v1/docs` (linked f
 | Feed | `GET/POST /feed-auth`, `POST /feed-auth/regenerate`, `POST /feed/recreate?confirm=true` (global GUID reset: every subscriber re-downloads) |
 | Settings | `GET/PUT /settings` (the runtime allowlist), `GET/PUT /prompt`, corrections, source-fallbacks, reference voice slots, chime |
 | Ops | `POST /purge?confirm=true&older_than_days=N`, `POST /webhooks/test` |
-| Health | `GET /health/live`, `GET /health/ready` (outside `/api/v1`) |
+| Health | `GET /health/live`, `GET /health/ready`, `GET /health/ingestion` (outside `/api/v1`) |
 
-Media is served under `/media/`: `{id}.mp3`, `{id}.vtt`, `{id}.chapters.json`, `{id}.txt` (the cleaned article), `{id}.jpg`.
+Media is served under `/media/`: `{id}.mp3`, `{id}.vtt`, `{id}.chapters.json`, `{id}.txt` (the cleaned article), and `{id}.jpg`. Published URLs add `?v=<generation>` to non-artwork media. Artwork carries the generation in its filename.
 
 ## Webhooks
 

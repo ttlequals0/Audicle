@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from app.core import database
 from app.services import lexicon, settings_store
 
@@ -10,8 +11,8 @@ from app.services import lexicon, settings_store
 def test_migration_creates_table_and_imports_seed(env: Path) -> None:
     database.run_migrations(env)
     with database.connection(env) as conn:
-        counts = lexicon.counts_by_origin(conn)
-        assert counts.get("seed", 0) > 100  # the curated CSV is imported read-only
+        seed_count = conn.execute("SELECT COUNT(*) FROM lexicon WHERE origin = 'seed'").fetchone()[0]
+        assert seed_count > 100  # the curated CSV is imported read-only
         # A real-word swap ships in the seed and must be a read-only seed row.
         sql = lexicon.lookup(conn, "SQL")
         assert sql is not None
@@ -102,6 +103,7 @@ def test_sync_base_artifact_imports_and_gates_on_version(env: Path, tmp_path: Pa
         # Nguyen is base-only (Qatar now also ships in the seed, which would
         # shadow the base row), so this cleanly verifies the base import.
         assert lexicon.lookup(conn, "Nguyen").spoken == "win"
+        assert lexicon.lookup(conn, "SQL").origin == "seed"
         # Same version -> no re-import.
         assert lexicon.sync_base_artifact(conn, artifact, "v1") is False
         # User rows survive the import.
@@ -113,7 +115,7 @@ def test_reference_text_includes_homograph_notes(env: Path) -> None:
     # carry them so the pronunciation pass can pick the right reading by context.
     database.run_migrations(env)
     with database.connection(env) as conn:
-        ref = lexicon.reference_text(conn)
+        ref = "\n".join(line for _, line in lexicon.reference_entries(conn))
     assert "read (present) -> reed" in ref
     assert "Present tense" in ref  # the note context is preserved
 
@@ -121,7 +123,7 @@ def test_reference_text_includes_homograph_notes(env: Path) -> None:
 def test_migration_023_adds_live_homographs(env: Path) -> None:
     database.run_migrations(env)
     with database.connection(env) as conn:
-        ref = lexicon.reference_text(conn)
+        ref = "\n".join(line for _, line in lexicon.reference_entries(conn))
     assert "live (verb) -> liv" in ref
     assert "live (adjective) -> lyve" in ref
 
@@ -198,9 +200,14 @@ def test_bulk_import_keeps_wal_bounded(env: Path, tmp_path: Path) -> None:
         peak = 0
         with database.connection(env) as conn:
             conn.execute("PRAGMA wal_autocheckpoint=0")
+            statements: list[str] = []
+            conn.set_trace_callback(statements.append)
             lexicon.import_readonly(conn, "base", entries)
+            conn.set_trace_callback(None)
             peak = max(peak, wal.stat().st_size if wal.exists() else 0)
             assert conn.execute("SELECT COUNT(*) FROM lexicon WHERE origin='base'").fetchone()[0] == rows
+            assert sum(statement == "BEGIN IMMEDIATE" for statement in statements) >= 6
+            assert sum(statement == "COMMIT" for statement in statements) >= 6
         db_size = database.db_path(env).stat().st_size
         # Unbatched, the WAL would hold every page written for all 120k rows.
         # Batched, it should stay far below the finished database size.
@@ -231,6 +238,86 @@ def test_sync_gate_is_artifact_content_not_app_version(env: Path, tmp_path: Path
         )
         assert lexicon.sync_base_artifact(conn, artifact, "0.3.0") is True
         assert lexicon.lookup(conn, "Beta").spoken == "BAY-tuh"
+
+
+def test_interrupted_import_keeps_previous_generation_active(
+    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    old_artifact = tmp_path / "old.jsonl"
+    old_artifact.write_text('{"input_text":"Old","spoken":"old"}\n', encoding="utf-8")
+    new_artifact = tmp_path / "new.jsonl"
+    new_artifact.write_text(
+        '{"input_text":"New1","spoken":"new one"}\n'
+        '{"input_text":"New2","spoken":"new two"}\n',
+        encoding="utf-8",
+    )
+    with database.connection(env) as conn:
+        assert lexicon.sync_base_artifact(conn, old_artifact, "old")
+        original = lexicon._write_batch
+        calls = 0
+
+        def _interrupt(connection, rows):
+            nonlocal calls
+            calls += 1
+            original(connection, rows)
+            if calls == 1:
+                with database.connection(env) as reader:
+                    assert lexicon.lookup(reader, "Old").spoken == "old"
+                    assert lexicon.lookup(reader, "New1") is None
+                raise RuntimeError("interrupted")
+
+        monkeypatch.setattr(lexicon, "_IMPORT_BATCH_ROWS", 1)
+        monkeypatch.setattr(lexicon, "_write_batch", _interrupt)
+        with pytest.raises(RuntimeError, match="interrupted"):
+            lexicon.sync_base_artifact(conn, new_artifact, "new")
+        assert lexicon.lookup(conn, "Old").spoken == "old"
+        assert lexicon.lookup(conn, "New1") is None
+        assert conn.execute(
+            "SELECT COUNT(*) FROM lexicon WHERE origin='base' AND generation <> ?",
+            (lexicon._active_generation(conn, "base"),),
+        ).fetchone()[0] == 0
+        monkeypatch.setattr(lexicon, "_write_batch", original)
+        assert lexicon.sync_base_artifact(conn, new_artifact, "new")
+        assert lexicon.lookup(conn, "Old") is None
+        assert lexicon.lookup(conn, "New2").spoken == "new two"
+
+
+def test_replace_user_entries_rolls_back_on_insert_failure(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    with database.connection(env) as conn:
+        lexicon.replace_user_entries(conn, {"Old": {"spoken": "old"}})
+
+        def _fail(connection, origin, entries, **kwargs):
+            connection.execute(
+                "INSERT INTO lexicon(origin,input_text,input_fold,mode,spoken,read_only) "
+                "VALUES('user','Partial','partial','override','partial',0)"
+            )
+            raise RuntimeError("insert failed")
+
+        monkeypatch.setattr(lexicon, "insert_entries", _fail)
+        with pytest.raises(RuntimeError, match="insert failed"):
+            lexicon.replace_user_entries(conn, {"New": {"spoken": "new"}})
+        assert lexicon.get_user_entries(conn) == {
+            "Old": {"mode": "override", "spoken": "old", "case_sensitive": False}
+        }
+
+
+def test_import_cleanup_does_not_delete_another_staged_generation(env: Path) -> None:
+    database.run_migrations(env)
+    with database.connection(env) as conn:
+        lexicon._write_batch(
+            conn,
+            [lexicon._entry_row("base", 999, "Staged", {"spoken": "staged"}, True)],
+        )
+        lexicon.import_readonly(conn, "base", {"Active": {"spoken": "active"}})
+        assert lexicon.lookup(conn, "Active").spoken == "active"
+        assert lexicon.lookup(conn, "Staged") is None
+        assert conn.execute(
+            "SELECT COUNT(*) FROM lexicon WHERE origin='base' AND generation=999"
+        ).fetchone()[0] == 1
 
 
 def test_sync_reimports_once_when_upgrading_from_a_version_keyed_install(

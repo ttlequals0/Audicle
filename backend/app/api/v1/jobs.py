@@ -24,7 +24,7 @@ from app.services import jobs as jobs_service
 
 router = APIRouter(tags=["jobs"])
 
-_StatusFilter = Literal["queued", "processing", "done", "failed", "cancelled"]
+_StatusFilter = Literal["staging", "queued", "processing", "done", "failed", "cancelled"]
 
 
 def _source_filename(url: str) -> str | None:
@@ -166,11 +166,11 @@ async def cancel_job(
     job = jobs_service.get_job(conn, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
-    if job.status not in ("queued", "processing"):
+    if job.status not in ("staging", "queued", "processing"):
         # done / failed / cancelled are terminal; nothing to stop.
         raise HTTPException(
             status_code=409,
-            detail=f"job is {job.status}; only a queued or processing job can be cancelled",
+            detail=f"job is {job.status}; only a staging, queued, or processing job can be cancelled",
         )
     jobs_service.mark_cancelled(conn, job_id)
     return Response(status_code=204)
@@ -195,7 +195,7 @@ async def delete_job(
     job = jobs_service.get_job(conn, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
-    if job.status in ("queued", "processing"):
+    if job.status in ("staging", "queued", "processing"):
         raise HTTPException(
             status_code=409,
             detail=f"job is {job.status}; cancel it before removing it",
@@ -213,7 +213,9 @@ async def clear_jobs(
     conn: Annotated[sqlite3.Connection, Depends(get_conn)],
     scope: Annotated[
         Literal["all", "failed"],
-        Query(description="'failed' clears failed and cancelled runs; 'all' clears every finished run."),
+        Query(
+            description="'failed' clears failed and cancelled runs; 'all' clears every finished run."
+        ),
     ],
 ) -> ClearJobsResponse:
     """Bulk removal for the Recents list. Queued and processing jobs always

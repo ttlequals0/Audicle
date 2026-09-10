@@ -19,6 +19,7 @@ The RSS feed is served at a slug derived from the feed name, so `FEED_TITLE="Art
 | `app` | `ttlequals0/audicle` | FastAPI API, the web UI, the RSS feed, and the job worker |
 | `tts-wrapper` | `ttlequals0/audicle-tts` | The Chatterbox TTS server, GPU-pinned by default |
 | `render` | `ttlequals0/audicle-render` | Headful-browser sidecar for expand-gated pages; optional, the app tolerates it being down |
+| `render-egress` | `ttlequals0/audicle-render-egress` | Egress proxy that blocks renderer access to private and special-use networks |
 
 The backend and wrapper share a `/data` volume so the backend can read the audio the wrapper produces. The wrapper is a separate container so GPU memory stays isolated and the model reloads only when the voice changes.
 

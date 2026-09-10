@@ -1,12 +1,9 @@
 """Content-addressed cache of synthesized TTS chunks.
 
-A chunk's synthesized audio is deterministic-enough-to-reuse once it has
-already cleared the quality-check loop in ``pipeline._generate_chunk_quality_checked``:
-same backend, model, voice, language, text and generation params should not
-pay for a fresh wrapper round-trip (and a fresh regen budget) on a resumed or
-re-run job. Entries are keyed on a sha256 of those inputs so a change to any
-of them -- including an operator editing a Chatterbox knob -- misses the
-cache rather than serving stale audio.
+A chunk's synthesized audio is deterministic-enough-to-reuse when backend,
+model, voice, language, text, and generation params match. Every hit still
+runs the current quality policy because thresholds and pitch context are not
+part of the synthesis identity.
 
 Storage: ``<data_dir>/tts_cache/<key>.wav`` + ``<key>.json`` (duration_secs,
 sample_rate, transcript, qa_passed, median_f0_hz). The cache is best-effort:
@@ -21,6 +18,7 @@ import json
 import os
 import shutil
 import time
+import wave
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -39,13 +37,11 @@ class CachedChunk:
     sample_rate: int
     transcript: str | None
     qa_passed: bool = False
-    """True when the stored take cleared the quality-check loop. A take stored
-    by a QA-off deployment is False, so a later QA-on run treats it as a miss
-    instead of inheriting audio nothing ever checked."""
+    """Whether the stored take passed the policy active when it was written.
+    Retained for backward-compatible metadata; callers rerun current checks."""
     median_f0_hz: float | None = None
-    """Median F0 of the stored take, so a cache hit can keep feeding the
-    pipeline's pitch tracker instead of re-warming it from zero at the resume
-    point. None when no audio analysis measured it."""
+    """Median F0 measured when stored. Current policy recomputes it because
+    pitch acceptance depends on preceding chunks."""
 
 
 def cache_dir(data_dir: Path) -> Path:
@@ -89,6 +85,9 @@ def lookup(data_dir: Path, key: str) -> CachedChunk | None:
     if not wav_path.is_file():
         return None
     try:
+        with wave.open(str(wav_path), "rb") as handle:
+            if handle.getcomptype() != "NONE" or handle.getsampwidth() not in {1, 2, 3, 4}:
+                raise ValueError("cached audio is not uncompressed PCM")
         payload = json.loads(json_path.read_text())
         duration_secs = float(payload["duration_secs"])
         sample_rate = int(payload["sample_rate"])
@@ -97,7 +96,7 @@ def lookup(data_dir: Path, key: str) -> CachedChunk | None:
         qa_passed = bool(payload.get("qa_passed", False))
         raw_f0 = payload.get("median_f0_hz")
         median_f0_hz = float(raw_f0) if raw_f0 is not None else None
-    except (OSError, ValueError, TypeError, KeyError):
+    except (OSError, EOFError, ValueError, TypeError, KeyError, wave.Error):
         wav_path.unlink(missing_ok=True)
         json_path.unlink(missing_ok=True)
         return None

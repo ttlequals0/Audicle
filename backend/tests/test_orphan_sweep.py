@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from app.config import get_settings
 from app.core import database
 from app.core.paths import media_dir
-from app.services import episodes, retention
+from app.services import episodes, jobs, retention
 
 
 def test_orphan_sweep_removes_files_with_no_episode_row(env: Path) -> None:
@@ -62,6 +63,49 @@ def test_orphan_sweep_is_no_op_when_media_dir_missing(env: Path) -> None:
     database.run_migrations(env)
     removed = retention.sweep_orphan_media(get_settings())
     assert removed == 0
+
+
+def test_orphan_sweep_rechecks_upload_created_after_snapshot(env: Path, monkeypatch) -> None:
+    database.run_migrations(env)
+    settings = get_settings()
+    media = media_dir(settings)
+    media.mkdir(parents=True, exist_ok=True)
+    snapshot_taken = threading.Event()
+    continue_iteration = threading.Event()
+    real_iterdir = Path.iterdir
+
+    def _paused_iterdir(path: Path):
+        if path == media:
+            snapshot_taken.set()
+            assert continue_iteration.wait(timeout=5)
+        return real_iterdir(path)
+
+    monkeypatch.setattr(Path, "iterdir", _paused_iterdir)
+    result: list[int] = []
+    sweep = threading.Thread(target=lambda: result.append(retention.sweep_orphan_media(settings)))
+    sweep.start()
+    assert snapshot_taken.wait(timeout=5)
+
+    source_uri = "upload://newupload/report.pdf"
+    episode_id = jobs.compute_episode_id(source_uri)
+    with database.upload_staging_lock(env, episode_id):
+        conn = database.connect(database.db_path(env))
+        try:
+            created = jobs.create_job(
+                conn,
+                source_uri,
+                staging=True,
+            )
+            source = media / f"{episode_id}.source.pdf"
+            source.write_bytes(b"document")
+            jobs.queue_staged(conn, created.job.id)
+        finally:
+            conn.close()
+    continue_iteration.set()
+    sweep.join(timeout=5)
+    assert not sweep.is_alive()
+    assert result == [0]
+    assert source.read_bytes() == b"document"
 
 
 def test_orphan_sweep_keeps_a_live_episodes_narration_and_reaps_a_dead_jobs(env: Path) -> None:
