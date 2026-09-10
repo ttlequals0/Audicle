@@ -72,5 +72,7 @@ jobs:
           # carries Google's LicenseRef-scancode-protobuf tag (a BSD-3-Clause
           # variant) that the action cannot match against SPDX ids -- both
           # exempted by package.
-          allow-dependencies-licenses: pkg:pypi/pysle, pkg:pypi/hf-xet, pkg:pypi/praatio, pkg:pypi/regex, pkg:pypi/trafilatura, pkg:pypi/pykakasi, pkg:pypi/audioop-lts, pkg:pypi/standard-aifc, pkg:pypi/standard-chunk, pkg:pypi/standard-sunau, pkg:pypi/rapidocr, pkg:pypi/protobuf
+          # cffi, llvmlite, numpy, and typing-extensions also report compound
+          # SPDX expressions for their permissively licensed bundled code.
+          allow-dependencies-licenses: pkg:pypi/pysle, pkg:pypi/hf-xet, pkg:pypi/praatio, pkg:pypi/regex, pkg:pypi/trafilatura, pkg:pypi/pykakasi, pkg:pypi/audioop-lts, pkg:pypi/standard-aifc, pkg:pypi/standard-chunk, pkg:pypi/standard-sunau, pkg:pypi/rapidocr, pkg:pypi/protobuf, pkg:pypi/cffi, pkg:pypi/llvmlite, pkg:pypi/numpy, pkg:pypi/typing-extensions
           comment-summary-in-pr: on-failure
