@@ -31,6 +31,7 @@ RUN pip install --no-cache-dir ".[render]" \
 # Camoufox browser into that user's home so it ships in the image.
 RUN useradd --create-home --uid 1000 render \
     && useradd --no-create-home --uid 1001 healthcheck \
+    && install -d -o render -g render /home/render/.cache/camoufox \
     && chmod +x entrypoint.sh \
     && chown -R render:render /app
 ENV HOME=/home/render

@@ -25,6 +25,7 @@ work lives under `[Unreleased]`.
 
 ### Fixed
 
+- Renderer builds create the non-root Camoufox cache before downloading the browser.
 - Fresh defaults render a valid RSS feed. Feed validators advance for every representation change. Unchanged HEAD and conditional requests avoid loading full episode rows.
 - Queued upload originals survive retention. Retention also runs once when a scheduled sweep becomes overdue.
 - Reprocessing builds an immutable staged generation. It publishes audio, artwork, chapters, transcript, and metadata together. A failure or cancellation preserves the prior generation.
