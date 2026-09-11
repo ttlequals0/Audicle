@@ -33,6 +33,15 @@ def configure_service(name: str) -> None:
     _service = name
 
 
+def apply_level(level: str) -> None:
+    resolved = getattr(logging, level.upper(), None)
+    if not isinstance(resolved, int):
+        raise ValueError(f"invalid log level: {level}")
+    logging.getLogger().setLevel(resolved)
+    for handler in logging.getLogger().handlers:
+        handler.setLevel(resolved)
+
+
 # Anything stuffed into the LogRecord by stdlib logging itself or by our
 # ContextFilter that we don't want surfaced as a "user context" field. Anything
 # else passed via extra={...} flows through to the output untouched.

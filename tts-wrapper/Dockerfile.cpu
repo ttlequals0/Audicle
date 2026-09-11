@@ -8,7 +8,9 @@
 # Python base (matching the wrapper's 3.11 pin) and installs the CPU-only torch
 # wheel from PyTorch's CPU index before the rest of the deps, so chatterbox-tts
 # reuses it instead of pulling the much larger CUDA build.
+FROM ghcr.io/astral-sh/uv:0.12.10 AS uv
 FROM python:3.11-slim AS runtime
+COPY --from=uv /uv /uvx /bin/
 
 # Cache locations target writable paths so the image runs as a non-root user
 # (the compose ``user: 1000:1000``). Model caches live on the persistent
@@ -34,16 +36,12 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY pyproject.toml ./
+COPY pyproject.toml uv.lock LICENSE ./
 # Every module main.py imports must be listed here (see Dockerfile).
 COPY config.py engine.py log_setup.py main.py memory.py chatterbox_engine.py whisper_verify.py install_engine.sh ./
-# torch AND torchaudio are installed first from the CPU index with matching
-# versions: chatterbox imports torchaudio, and if it comes from PyPI while torch
-# is the CPU-index build the native extension fails to load (ABI mismatch).
-# chatterbox-tts pins torch==2.6.0/torchaudio==2.6.0, satisfied by this install.
-# install_engine.sh (shared with the GPU Dockerfile) then installs the Chatterbox
-# engine plus the optional faster-whisper backend and security patches.
-RUN pip install --no-cache-dir torch==2.6.0 torchaudio==2.6.0 \
+# Install torch and torchaudio from the CPU index before the remaining locked
+# dependencies. TorchAudio 2.11 uses PyTorch's stable ABI for PyTorch 2.11+.
+RUN pip install --no-cache-dir torch==2.13.0 torchaudio==2.11.0 \
         --index-url https://download.pytorch.org/whl/cpu \
     && sh install_engine.sh \
     # The build toolchain (and with it linux-libc-dev, a magnet for unfixable

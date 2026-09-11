@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -119,21 +120,20 @@ def test_maybe_run_retention_sweep_skips_when_already_ran_today(
         conn.close()
 
 
-def test_maybe_run_retention_sweep_does_nothing_when_hour_does_not_match(
+def test_maybe_run_retention_sweep_runs_previous_due_sweep_before_today_hour(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    settings = get_settings()
-    off_hour = (settings.RETENTION_SWEEP_HOUR_UTC + 1) % 24
-    fake_now = datetime(2026, 5, 28, off_hour, 30, 0, tzinfo=UTC)
+    settings = get_settings().model_copy(update={"RETENTION_SWEEP_HOUR_UTC": 1})
+    fake_now = datetime(2026, 5, 28, 0, 30, 0, tzinfo=UTC)
     _freeze_now(monkeypatch, fake_now)
     _seed_old(env, id_="old")
 
     unchanged = worker._maybe_run_retention_sweep(settings, last_sweep_day=None)
-    assert unchanged is None
+    assert unchanged == "2026-05-27"
 
     conn = database.connect(database.db_path(env))
     try:
-        assert episodes.get_by_id(conn, "old") is not None
+        assert episodes.get_by_id(conn, "old") is None
     finally:
         conn.close()
 
@@ -160,6 +160,29 @@ def test_maybe_run_retention_sweep_logs_and_returns_unchanged_on_failure(
     monkeypatch.setattr(retention, "purge_older_than", _boom)
     with caplog.at_level(logging.ERROR, logger="app.worker"):
         result = worker._maybe_run_retention_sweep(settings, last_sweep_day=None)
+    assert result is None
+    assert any(getattr(rec, "event", "") == "retention_sweep_failed" for rec in caplog.records)
+
+
+def test_maybe_run_retention_sweep_retries_when_state_persistence_fails(
+    env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    settings = get_settings()
+    fake_now = datetime(2026, 5, 28, settings.RETENTION_SWEEP_HOUR_UTC, 30, 0, tzinfo=UTC)
+    _freeze_now(monkeypatch, fake_now)
+    monkeypatch.setattr(
+        worker.settings_store,
+        "set_",
+        lambda *_args: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="app.worker"):
+        result = worker._maybe_run_retention_sweep(settings, last_sweep_day=None)
+
     assert result is None
     assert any(getattr(rec, "event", "") == "retention_sweep_failed" for rec in caplog.records)
 
@@ -253,4 +276,6 @@ def test_maybe_run_retention_sweep_clamps_tts_cache_retention_days(
 
     monkeypatch.setattr(tts_cache, "purge_older_than", _capture)
     worker._maybe_run_retention_sweep(settings, last_sweep_day=None)
-    assert captured["days"] == 1  # clamped to RUNTIME_SETTING_BOUNDS["TTS_CACHE_RETENTION_DAYS"]["ge"]
+    assert (
+        captured["days"] == 1
+    )  # clamped to RUNTIME_SETTING_BOUNDS["TTS_CACHE_RETENTION_DAYS"]["ge"]

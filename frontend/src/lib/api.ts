@@ -147,6 +147,13 @@ export interface LlmModelsResponse {
   models: LlmModel[];
 }
 
+export interface LlmConnectionTestResponse {
+  ok: boolean;
+  reachable: boolean;
+  status: number | null;
+  detail: string;
+}
+
 export interface Episode {
   id: string;
   title: string | null;
@@ -168,7 +175,7 @@ export interface Episode {
   voice_label: string | null;
 }
 
-export type JobStatus = "queued" | "processing" | "done" | "failed" | "cancelled";
+export type JobStatus = "staging" | "queued" | "processing" | "done" | "failed" | "cancelled";
 
 export interface JobRow {
   id: string;

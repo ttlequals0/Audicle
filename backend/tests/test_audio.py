@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import shutil
 import subprocess
+import sys
+import time
 import wave
 from pathlib import Path
 
@@ -265,12 +268,74 @@ def test_concat_with_padding_compresses_internal_silence(
 # --- normalize_and_encode (real ffmpeg) ------------------------------------
 
 
-def test_normalize_and_encode_produces_valid_mp3(env: Path, tmp_path: Path) -> None:
+async def test_subprocess_timeout_kills_group_and_allows_next_run() -> None:
+    ticks = 0
+
+    async def _tick() -> None:
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.01)
+            ticks += 1
+
+    ticker = asyncio.create_task(_tick())
+    started = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError):
+            await audio._run_ffmpeg(
+                [
+                    sys.executable,
+                    "-c",
+                    "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)",
+                ],
+                0.05,
+            )
+    finally:
+        ticker.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await ticker
+    assert time.monotonic() - started < 3.0
+    assert ticks > 0
+    code, stderr = await audio._run_ffmpeg(
+        [sys.executable, "-c", "import sys; sys.stderr.write('next')"], 1.0
+    )
+    assert (code, stderr) == (0, "next")
+
+
+async def test_subprocess_cancellation_kills_group() -> None:
+    task = asyncio.create_task(
+        audio._run_ffmpeg(
+            [
+                sys.executable,
+                "-c",
+                "import os; chunk=b'x'*65536\nwhile True: os.write(2,chunk)",
+            ],
+            60.0,
+        )
+    )
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_subprocess_timeout_kills_descendant_after_leader_exits() -> None:
+    command = (
+        "import subprocess,sys; "
+        "subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); "
+        "sys.exit(0)"
+    )
+    started = time.monotonic()
+    with pytest.raises(TimeoutError):
+        await audio._run_ffmpeg([sys.executable, "-c", command], 0.05)
+    assert time.monotonic() - started < 3.0
+
+
+async def test_normalize_and_encode_produces_valid_mp3(env: Path, tmp_path: Path) -> None:
     src_wav = tmp_path / "in.wav"
     out_mp3 = tmp_path / "out.mp3"
     _write_tone_wav(src_wav, duration_secs=0.5)
 
-    result = audio.normalize_and_encode(src_wav, out_mp3, get_settings())
+    result = await audio.normalize_and_encode(src_wav, out_mp3, get_settings())
     assert result.mp3_path == out_mp3
     assert out_mp3.exists()
     # mutagen-read duration should be close to the 0.5s input.
@@ -315,7 +380,7 @@ def _measure_integrated_lufs(mp3_path: Path) -> float:
     return float(re.findall(r"I:\s+(-?[\d.]+) LUFS", r.stderr)[-1])
 
 
-def test_normalize_and_encode_hits_loudness_target(env: Path, tmp_path: Path) -> None:
+async def test_normalize_and_encode_hits_loudness_target(env: Path, tmp_path: Path) -> None:
     """2c acceptance: the encoded episode lands within 0.5 LU of
     LOUDNORM_TARGET_LUFS even on peaky material (two-pass linear loudnorm)."""
 
@@ -323,12 +388,12 @@ def test_normalize_and_encode_hits_loudness_target(env: Path, tmp_path: Path) ->
     out_mp3 = tmp_path / "out.mp3"
     _write_peaky_wav(src_wav)
     settings = get_settings()
-    audio.normalize_and_encode(src_wav, out_mp3, settings)
+    await audio.normalize_and_encode(src_wav, out_mp3, settings)
     measured = _measure_integrated_lufs(out_mp3)
     assert abs(measured - settings.LOUDNORM_TARGET_LUFS) <= 0.5, measured
 
 
-def test_normalize_and_encode_falls_back_to_single_pass_on_measure_failure(
+async def test_normalize_and_encode_falls_back_to_single_pass_on_measure_failure(
     env: Path, tmp_path: Path, monkeypatch
 ) -> None:
     """A broken measurement pass must not become a new failure mode: the encode
@@ -337,19 +402,22 @@ def test_normalize_and_encode_falls_back_to_single_pass_on_measure_failure(
     src_wav = tmp_path / "in.wav"
     out_mp3 = tmp_path / "out.mp3"
     _write_tone_wav(src_wav, duration_secs=0.5)
-    monkeypatch.setattr(audio, "_measure_loudness", lambda *_a, **_k: None)
-    result = audio.normalize_and_encode(src_wav, out_mp3, get_settings())
+    async def no_measurement(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(audio, "_measure_loudness", no_measurement)
+    result = await audio.normalize_and_encode(src_wav, out_mp3, get_settings())
     assert out_mp3.exists()
     assert result.duration_secs > 0
 
 
-def test_normalize_and_encode_raises_ffmpeg_error_on_missing_input(
+async def test_normalize_and_encode_raises_ffmpeg_error_on_missing_input(
     env: Path, tmp_path: Path
 ) -> None:
     src_wav = tmp_path / "does_not_exist.wav"
     out_mp3 = tmp_path / "out.mp3"
     with pytest.raises(audio.FfmpegError):
-        audio.normalize_and_encode(src_wav, out_mp3, get_settings())
+        await audio.normalize_and_encode(src_wav, out_mp3, get_settings())
 
 
 # --- remove_quietly --------------------------------------------------------
@@ -448,11 +516,11 @@ def test_append_clip_rejects_rate_mismatch(tmp_path: Path) -> None:
 # --- embed_cover -----------------------------------------------------------
 
 
-def _real_mp3(tmp_path: Path, env: Path) -> Path:
+async def _real_mp3(tmp_path: Path, env: Path) -> Path:
     src = tmp_path / "in.wav"
     out = tmp_path / "ep.mp3"
     _write_tone_wav(src, duration_secs=0.5)
-    audio.normalize_and_encode(src, out, get_settings())
+    await audio.normalize_and_encode(src, out, get_settings())
     return out
 
 
@@ -464,10 +532,10 @@ def _jpeg_bytes(color: tuple[int, int, int] = (200, 60, 60)) -> bytes:
     return buf.getvalue()
 
 
-def test_embed_cover_adds_apic_frame(tmp_path: Path, env: Path) -> None:
+async def test_embed_cover_adds_apic_frame(tmp_path: Path, env: Path) -> None:
     from mutagen.id3 import ID3
 
-    mp3 = _real_mp3(tmp_path, env)
+    mp3 = await _real_mp3(tmp_path, env)
     cover = _jpeg_bytes()
     audio.embed_cover(mp3, cover)
 
@@ -481,13 +549,13 @@ def test_embed_cover_adds_apic_frame(tmp_path: Path, env: Path) -> None:
     assert frames[0].data == cover
 
 
-def test_embed_cover_is_idempotent_on_reprocess(tmp_path: Path, env: Path) -> None:
+async def test_embed_cover_is_idempotent_on_reprocess(tmp_path: Path, env: Path) -> None:
     """A reprocess re-embeds; delall('APIC') keeps a single, current cover instead
     of stacking frames."""
 
     from mutagen.id3 import ID3
 
-    mp3 = _real_mp3(tmp_path, env)
+    mp3 = await _real_mp3(tmp_path, env)
     audio.embed_cover(mp3, _jpeg_bytes((10, 20, 30)))
     second = _jpeg_bytes((90, 90, 90))
     audio.embed_cover(mp3, second)

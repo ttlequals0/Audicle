@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import get_conn
 from app.config import Settings, get_settings
-from app.services import settings_store
+from app.services import feed_revision, settings_store
 
 router = APIRouter(tags=["maintenance"])
 
@@ -47,5 +47,12 @@ async def post_feed_recreate(
             status_code=400,
             detail="confirm=true is required to acknowledge the disruptive action",
         )
-    guid, epoch = settings_store.rotate_feed_guids(conn, settings.BASE_URL)
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        guid, epoch = settings_store.rotate_feed_guids(conn, settings.BASE_URL, commit=False)
+        feed_revision.bump(conn)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     return FeedRecreateResponse(podcast_guid=guid, guid_epoch=epoch)

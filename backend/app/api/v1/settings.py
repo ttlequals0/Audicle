@@ -15,12 +15,13 @@ import sqlite3
 from typing import Annotated, Any, Literal, get_args, get_origin
 
 from fastapi import APIRouter, Body, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.api.deps import get_conn
 from app.config import RUNTIME_SETTING_BOUNDS, Settings, get_settings
-from app.services import feed, feed_auth, runtime_settings, settings_store, slug
+from app.services import feed, feed_auth, feed_revision, runtime_settings, settings_store, slug
 from app.services.ocr import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES
+from app.utils.logging import apply_level
 
 router = APIRouter(tags=["settings"])
 
@@ -102,39 +103,50 @@ async def put_settings_overrides(
     # The current feed slug, before applying, so a FEED_TITLE rename can be
     # detected below. Derived live from the effective title (no stored copy
     # to drift from the live FEED_TITLE the feed is actually served at).
-    old_slug = slug.feed_slug(_effective_title(runtime_settings.get_all(conn), settings))
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        stored_before = runtime_settings.get_all(conn)
+        old_slug = slug.feed_slug(_effective_title(stored_before, settings))
+        updates: dict[str, Any | None] = {}
+        proposed = dict(stored_before)
+        for key, value in payload.items():
+            if key in runtime_settings.MASKED_KEYS and value == runtime_settings.MASK_SENTINEL:
+                continue
+            if value == "":
+                updates[key] = None
+                proposed.pop(key, None)
+                continue
+            _validate_value(key, value, settings)
+            updates[key] = value
+            proposed[key] = runtime_settings._serialize(value)
 
-    # Validate every value before applying any, so a bad value in a multi-key save
-    # can't partially apply -- and an invalid enum (e.g. EXTRACTION_ENGINE) is
-    # rejected here instead of being stored and crashing/mis-routing at overlay time.
-    for key, value in payload.items():
-        # Re-saving the form sends the mask sentinel back for an unchanged secret,
-        # and "" for any key means clear -- neither is a value to validate.
-        if key in runtime_settings.MASKED_KEYS and value == runtime_settings.MASK_SENTINEL:
-            continue
-        if value == "":
-            continue
-        _validate_value(key, value, settings)
+        try:
+            effective = runtime_settings.validated_overlay(settings, proposed)
+        except ValidationError as exc:
+            raise HTTPException(status_code=400, detail=_validation_errors(exc)) from exc
+        runtime_settings.apply(conn, updates, manage_transaction=False)
+        stored = runtime_settings.get_all(conn)
+        if (
+            "FEED_TITLE" in payload
+            and slug.feed_slug(_effective_title(stored, settings)) != old_slug
+        ):
+            settings_store.rotate_feed_guids(conn, settings.BASE_URL, commit=False)
+        if any(key.startswith("FEED_") for key in updates):
+            feed_revision.bump(conn, effective)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    if "LOG_LEVEL" in updates:
+        apply_level(effective.LOG_LEVEL)
 
-    for key, value in payload.items():
-        if key in runtime_settings.MASKED_KEYS and value == runtime_settings.MASK_SENTINEL:
-            continue  # unchanged secret: keep what is stored
-        if value == "":
-            # Clearing a field drops the override so the key reverts to its env
-            # value. Storing "" instead would pin an empty FEED_TITLE/language.
-            runtime_settings.delete(conn, key)
-            continue
-        runtime_settings.set_value(conn, key, value)
-
-    stored = runtime_settings.get_all(conn)
-    # Rename = new feed: if FEED_TITLE's slug changed, rotate the channel
-    # podcast:guid and bump the epoch (which re-salts every episode <guid>),
-    # so podcast apps treat it as a fresh feed and re-download. new_slug comes
-    # from the stored value (always a coerced string), so a non-string
-    # FEED_TITLE in the payload can't reach slugify.
-    if "FEED_TITLE" in payload and slug.feed_slug(_effective_title(stored, settings)) != old_slug:
-        settings_store.rotate_feed_guids(conn, settings.BASE_URL)
     return _masked_response(stored, settings, _effective_feed_key(conn, settings))
+
+
+def _validation_errors(exc: ValidationError) -> list[dict[str, Any]]:
+    return [
+        {"type": error["type"], "loc": error["loc"], "msg": error["msg"]} for error in exc.errors()
+    ]
 
 
 def _effective_feed_key(conn: sqlite3.Connection, settings: Settings) -> str | None:

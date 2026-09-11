@@ -194,6 +194,40 @@ def test_delete_episode_removes_row_and_files(env: Path) -> None:
         conn.close()
 
 
+def test_delete_episode_removes_every_generation(env: Path) -> None:
+    _seed(env, id_="del", with_files=True)
+    media = media_dir(get_settings())
+    newer = media / "del.new.mp3"
+    newer.write_bytes(b"NEW")
+    conn = database.connect(database.db_path(env))
+    try:
+        episode = episodes.get_by_id(conn, "del")
+        assert episode is not None
+        episodes.publish_generation(
+            conn,
+            "del",
+            episode.generation_token,
+            {"audio_path": str(newer), "audio_size_bytes": 3},
+        )
+    finally:
+        conn.close()
+
+    with _client(env) as client:
+        response = client.delete("/api/v1/episodes/del")
+
+    assert response.status_code == 200
+    assert not (media / "del.mp3").exists()
+    assert not newer.exists()
+    conn = database.connect(database.db_path(env))
+    try:
+        assert (
+            conn.execute("SELECT 1 FROM episode_generations WHERE episode_id = 'del'").fetchone()
+            is None
+        )
+    finally:
+        conn.close()
+
+
 def test_delete_episode_returns_404_when_missing(env: Path) -> None:
     with _client(env) as client:
         response = client.delete("/api/v1/episodes/unknown")

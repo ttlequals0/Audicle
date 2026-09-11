@@ -12,7 +12,17 @@ import httpx
 import pytest
 from app.config import get_settings
 from app.core import database
-from app.services import extraction, jobs, llm, pipeline, transcript
+from app.services import (
+    episodes,
+    extraction,
+    jobs,
+    llm,
+    pipeline,
+    transcript,
+    tts,
+    tts_cache,
+    tts_remote,
+)
 from PIL import Image
 
 
@@ -60,7 +70,7 @@ def _stub_tts_and_audio(monkeypatch: pytest.MonkeyPatch) -> None:
         output_path.write_bytes(b"FAKE_WAV")
         return output_path, 24000, [1.0] * len(_paths)
 
-    def _fake_encode(_input_wav, output_mp3, _settings):
+    async def _fake_encode(_input_wav, output_mp3, _settings):
         output_mp3.parent.mkdir(parents=True, exist_ok=True)
         output_mp3.write_bytes(b"FAKE_MP3")
         return audio.EncodeResult(mp3_path=output_mp3, duration_secs=2.5)
@@ -81,6 +91,17 @@ def _seed_job(env: Path, url: str = "https://example.test/article") -> jobs.Job:
     try:
         jobs.create_job(conn, url)
         # Move it to processing so process_job sees the same state the worker would.
+        claimed = jobs.claim_next_queued(conn)
+        assert claimed is not None
+        return claimed
+    finally:
+        conn.close()
+
+
+def _seed_reprocess_job(env: Path, url: str) -> jobs.Job:
+    conn = database.connect(database.db_path(env))
+    try:
+        jobs.create_job(conn, url, reprocess=True)
         claimed = jobs.claim_next_queued(conn)
         assert claimed is not None
         return claimed
@@ -503,7 +524,15 @@ async def test_pipeline_writes_artwork_jpg_and_reaches_transcript(
     assert after.status == "done"
     assert after.stage == "finalize"
 
-    expected_jpg = env / "media" / f"{job.episode_id}.jpg"
+    from app.services import episodes as episodes_service
+
+    conn = database.connect(database.db_path(env))
+    try:
+        episode = episodes_service.get_by_id(conn, job.episode_id)
+    finally:
+        conn.close()
+    assert episode is not None
+    expected_jpg = Path(episode.artwork_path or "")
     assert expected_jpg.exists()
     # Confirm it really is a JPG that Pillow can re-open at the configured size.
     out = Image.open(expected_jpg)
@@ -567,7 +596,11 @@ async def test_pipeline_embeds_cover_when_artwork_present(
     await pipeline.process_job(job, get_settings())
 
     assert _job_after(env, job.id).status == "done"
-    assert embedded["mp3_path"] == env / "media" / f"{job.episode_id}.mp3"
+    embedded_path = embedded["mp3_path"]
+    assert isinstance(embedded_path, Path)
+    assert embedded_path.parent == env / "media"
+    assert embedded_path.name.startswith(f"{job.episode_id}.")
+    assert embedded_path.suffix == ".mp3"
     # The embed copy is a real JPEG at the configured embed size.
     img = Image.open(io.BytesIO(embedded["bytes"]))
     img.load()
@@ -653,7 +686,9 @@ async def test_pipeline_transcript_stage_rejects_length_mismatch(
         result = await _stub_tts_for_extra(text, episode_id, chunk_index, settings)
         return result
 
-    async def _stub_tts_for_extra(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+    async def _stub_tts_for_extra(
+        text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw
+    ):
         return tts_module.GenerateResult(
             wav_path=f"/tmp/{episode_id}_chunk_{chunk_index}.wav",
             duration_secs=1.0,
@@ -725,12 +760,176 @@ async def test_pipeline_finalize_upserts_episode_row(
     assert row.title == "Test Article"
     assert row.author == "Test Author"
     assert row.original_url == job.url
-    assert row.audio_path and row.audio_path.endswith(f"/{job.episode_id}.mp3")
+    assert row.audio_path
+    assert Path(row.audio_path).name == f"{job.episode_id}.{row.generation_token}.mp3"
     # No ogImage in metadata -> artwork falls back to feed-level art.
     assert row.artwork_path is None
     assert row.transcript_vtt and row.transcript_vtt.startswith("WEBVTT")
     # Stubbed encode returns 2.5s; round() uses banker's rounding -> 2.
     assert row.duration_secs == 2
+
+
+async def test_failed_first_publication_is_not_servable(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+
+    async def _fail_transcript(*_args, **_kwargs):
+        raise RuntimeError("transcript failed after encode")
+
+    monkeypatch.setattr(pipeline, "_stage_transcript", _fail_transcript)
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+
+    conn = database.connect(database.db_path(env))
+    try:
+        assert episodes.get_by_id(conn, job.episode_id) is None
+    finally:
+        conn.close()
+    assert list((env / "media").glob(f"{job.episode_id}.*.mp3")) == []
+
+
+async def test_failed_reprocess_preserves_published_generation(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+    url = "https://example.test/reprocess"
+    first = _seed_job(env, url)
+    await pipeline.process_job(first, get_settings())
+
+    conn = database.connect(database.db_path(env))
+    try:
+        before = episodes.get_by_id(conn, first.episode_id)
+    finally:
+        conn.close()
+    assert before is not None and before.audio_path
+    old_bytes = Path(before.audio_path).read_bytes()
+
+    async def _fail_transcript(*_args, **_kwargs):
+        raise RuntimeError("transcript failed after encode")
+
+    monkeypatch.setattr(pipeline, "_stage_transcript", _fail_transcript)
+    replacement = _seed_reprocess_job(env, url)
+    await pipeline.process_job(replacement, get_settings())
+
+    conn = database.connect(database.db_path(env))
+    try:
+        after = episodes.get_by_id(conn, first.episode_id)
+    finally:
+        conn.close()
+    assert after is not None
+    assert after.generation_token == before.generation_token
+    assert after.audio_path == before.audio_path
+    assert Path(after.audio_path).read_bytes() == old_bytes
+    assert len(list((env / "media").glob(f"{first.episode_id}.*.mp3"))) == 1
+
+
+async def test_successful_reprocess_keeps_old_generation_available(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+    url = "https://example.test/reprocess-success"
+    first = _seed_job(env, url)
+    await pipeline.process_job(first, get_settings())
+    conn = database.connect(database.db_path(env))
+    try:
+        before = episodes.get_by_id(conn, first.episode_id)
+    finally:
+        conn.close()
+    assert before is not None and before.audio_path and before.generation_token
+
+    replacement = _seed_reprocess_job(env, url)
+    await pipeline.process_job(replacement, get_settings())
+    conn = database.connect(database.db_path(env))
+    try:
+        after = episodes.get_by_id(conn, first.episode_id)
+        old = episodes.generation(conn, first.episode_id, before.generation_token)
+    finally:
+        conn.close()
+    assert after is not None and after.generation_token != before.generation_token
+    assert old is not None and old["audio_path"] == before.audio_path
+    assert Path(before.audio_path).is_file()
+    assert Path(after.audio_path or "").is_file()
+
+
+async def test_deleted_episode_is_not_resurrected_by_reprocess_finalize(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+    url = "https://example.test/delete-during-reprocess"
+    first = _seed_job(env, url)
+    await pipeline.process_job(first, get_settings())
+    conn = database.connect(database.db_path(env))
+    try:
+        published = episodes.get_by_id(conn, first.episode_id)
+    finally:
+        conn.close()
+    assert published is not None and published.audio_path
+    replacement = _seed_reprocess_job(env, url)
+    real_finalize = pipeline._stage_finalize
+
+    async def _delete_then_finalize(job, **kwargs):
+        conn = database.connect(database.db_path(env))
+        try:
+            conn.execute("DELETE FROM episodes WHERE id = ?", (job.episode_id,))
+            conn.commit()
+        finally:
+            conn.close()
+        await real_finalize(job, **kwargs)
+
+    monkeypatch.setattr(pipeline, "_stage_finalize", _delete_then_finalize)
+    await pipeline.process_job(replacement, get_settings())
+    conn = database.connect(database.db_path(env))
+    try:
+        assert episodes.get_by_id(conn, first.episode_id) is None
+    finally:
+        conn.close()
+    assert _job_after(env, replacement.id).status == "failed"
+    assert list((env / "media").glob(f"{first.episode_id}.*.mp3")) == [Path(published.audio_path)]
+
+
+async def test_cancelled_reprocess_preserves_published_generation(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+    url = "https://example.test/cancel-reprocess"
+    first = _seed_job(env, url)
+    await pipeline.process_job(first, get_settings())
+    conn = database.connect(database.db_path(env))
+    try:
+        before = episodes.get_by_id(conn, first.episode_id)
+    finally:
+        conn.close()
+    assert before is not None and before.audio_path
+
+    replacement = _seed_reprocess_job(env, url)
+    real_finalize = pipeline._stage_finalize
+
+    async def _cancel_then_finalize(job, **kwargs):
+        conn = database.connect(database.db_path(env))
+        try:
+            jobs.mark_cancelled(conn, job.id)
+        finally:
+            conn.close()
+        await real_finalize(job, **kwargs)
+
+    monkeypatch.setattr(pipeline, "_stage_finalize", _cancel_then_finalize)
+    await pipeline.process_job(replacement, get_settings())
+    conn = database.connect(database.db_path(env))
+    try:
+        after = episodes.get_by_id(conn, first.episode_id)
+    finally:
+        conn.close()
+    assert after is not None
+    assert after.generation_token == before.generation_token
+    assert _job_after(env, replacement.id).status == "cancelled"
+    assert Path(after.audio_path or "").read_bytes() == Path(before.audio_path).read_bytes()
+    assert len(list((env / "media").glob(f"{first.episode_id}.*.mp3"))) == 1
 
 
 async def test_pipeline_finalize_falls_back_author_to_feed_author(
@@ -856,9 +1055,7 @@ def test_corrections_user_entry_applies_via_lexicon(env: Path) -> None:
 
     database.run_migrations(env)
     with database.connection(env) as conn:
-        lexicon.replace_user_entries(
-            conn, {"widget": {"mode": "override", "spoken": "wid jet"}}
-        )
+        lexicon.replace_user_entries(conn, {"widget": {"mode": "override", "spoken": "wid jet"}})
     out = asyncio.run(pipeline._apply_corrections("a widget here", get_settings()))
     assert "wid jet" in out
 
@@ -976,9 +1173,7 @@ async def test_normalize_runs_llm_pass_then_deterministic_backstop(
     seen: dict = {}
     monkeypatch.setattr(pipeline, "_llm_with_retry", _echo_window(seen))
     job = _seed_job(env)
-    out = await pipeline._stage_normalize(
-        job, ["I ran a SQL query today."], get_settings()
-    )
+    out = await pipeline._stage_normalize(job, ["I ran a SQL query today."], get_settings())
     assert seen.get("called")  # the LLM pass ran
     assert "sequel" in out[0]  # backstop applied the seed correction
 
@@ -1017,9 +1212,7 @@ async def test_normalize_llm_strips_preamble_via_marker_contract(
         )
 
     monkeypatch.setattr(pipeline, "_llm_with_retry", _preamble)
-    out = "\n\n".join(
-        await pipeline._pronounce_chunks_with_llm("job", [body], get_settings())
-    )
+    out = "\n\n".join(await pipeline._pronounce_chunks_with_llm("job", [body], get_settings()))
     assert "reproduced in full" not in out
     assert "No pronunciation reference" not in out
     assert "council approved the SQL budget" in out
@@ -1047,9 +1240,7 @@ async def test_normalize_llm_retries_when_model_ignores_markers(
         return next(outputs)
 
     monkeypatch.setattr(pipeline, "_llm_with_retry", _fake)
-    out = "\n\n".join(
-        await pipeline._pronounce_chunks_with_llm("job", [body], get_settings())
-    )
+    out = "\n\n".join(await pipeline._pronounce_chunks_with_llm("job", [body], get_settings()))
     assert calls["n"] == 2  # retried once when the first reply had no markers
     assert "reproduced in full" not in out
     assert "council approved the SQL budget" in out
@@ -1069,9 +1260,7 @@ async def test_normalize_llm_no_markers_keeps_window_verbatim(
         return window  # never wraps in markers, on either attempt
 
     monkeypatch.setattr(pipeline, "_llm_with_retry", _no_markers)
-    out = "\n\n".join(
-        await pipeline._pronounce_chunks_with_llm("job", [window], get_settings())
-    )
+    out = "\n\n".join(await pipeline._pronounce_chunks_with_llm("job", [window], get_settings()))
     assert "Here is the key finding" in out  # not stripped as a preamble
     assert "SQL budget passed after a long debate" in out
 
@@ -1134,7 +1323,8 @@ async def test_cleanup_ships_real_article_when_model_refuses_via_no_article(
     article = (
         "REG AD\n\nPublished Thu 2 Jul 2026 // 08:00 UTC\n\n"
         "Share it with us at tips@example.com. Anonymity is available upon request.\n\n"
-        + "The red teamers shoveled snow to gain physical access to the building. " * 8
+        + "The red teamers shoveled snow to gain physical access to the building. "
+        * 8
     )
     monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _md, _n: [article])
 
@@ -1446,10 +1636,11 @@ def test_normalize_for_tts_strips_code_artifacts() -> None:
 def test_normalize_currency_expands_magnitude_suffix() -> None:
     assert pipeline._normalize_currency("raised $500k") == "raised five hundred thousand dollars"
     assert (
-        pipeline._normalize_currency("a $3.5M round")
-        == "a three point five million dollars round"
+        pipeline._normalize_currency("a $3.5M round") == "a three point five million dollars round"
     )
-    assert pipeline._normalize_currency("worth $1.2B now") == "worth one point two billion dollars now"
+    assert (
+        pipeline._normalize_currency("worth $1.2B now") == "worth one point two billion dollars now"
+    )
 
 
 def test_normalize_currency_plain_and_grouped_and_symbols() -> None:
@@ -1539,7 +1730,9 @@ def _write_drone_wav(path: Path) -> None:
     import soundfile as sf
 
     t = np.arange(int(24000 * 1.0)) / 24000
-    sf.write(str(path), (0.5 * np.sin(2 * np.pi * 440 * t)).astype("float32"), 24000, subtype="PCM_16")
+    sf.write(
+        str(path), (0.5 * np.sin(2 * np.pi * 440 * t)).astype("float32"), 24000, subtype="PCM_16"
+    )
 
 
 def _write_speechlike_wav(path: Path, carrier: float = 180.0) -> None:
@@ -1734,9 +1927,7 @@ async def test_chunk_quality_check_disabled_calls_once(
 
     monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
     job = _seed_job(env)
-    await pipeline._generate_chunk_quality_checked(
-        job, "two words here now", 0, get_settings()
-    )
+    await pipeline._generate_chunk_quality_checked(job, "two words here now", 0, get_settings())
     assert calls["n"] == 1
 
 
@@ -1754,9 +1945,7 @@ async def test_chunk_asr_verify_regenerates_on_divergence(
     calls = {"n": 0}
     verifies: list[bool] = []
 
-    async def _fake_tts(
-        text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw
-    ):
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
         calls["n"] += 1
         verifies.append(verify)
         # Diverge on the first attempt, match the asked-for text on the regen.
@@ -1837,18 +2026,14 @@ async def test_chunk_asr_short_chunk_regenerates_on_gross_mismatch(
             wav_path=str(tmp_path / "ep_chunk_0.wav"),
             duration_secs=1.0,
             sample_rate=24000,
-            transcript=(
-                "totally unrelated garbage instead" if calls["n"] == 1 else text
-            ),
+            transcript=("totally unrelated garbage instead" if calls["n"] == 1 else text),
         )
 
     monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
     job = _seed_job(env)
     # Short chunks (< WHISPER_VERIFY_MIN_WORDS) are still transcribed and fail
     # on gross mismatch -- a fully wrong 3-word chunk must not slip through.
-    result, _attempts = await pipeline._generate_chunk_quality_checked(
-        job, text, 0, get_settings()
-    )
+    result, _attempts = await pipeline._generate_chunk_quality_checked(job, text, 0, get_settings())
     assert calls["n"] == 2
     assert all(verifies)
     assert result.transcript == text
@@ -1879,9 +2064,7 @@ async def test_chunk_asr_short_chunk_tolerates_mild_divergence(
 
     monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
     job = _seed_job(env)
-    await pipeline._generate_chunk_quality_checked(
-        job, "by Edsger Dijkstra", 0, get_settings()
-    )
+    await pipeline._generate_chunk_quality_checked(job, "by Edsger Dijkstra", 0, get_settings())
     assert calls["n"] == 1
 
 
@@ -1946,9 +2129,7 @@ async def test_chunk_asr_missing_transcript_logged_and_passes(
             job, "this chunk has clearly more than eight spoken words in it", 0, get_settings()
         )
     assert calls["n"] == 1
-    assert any(
-        getattr(r, "event", None) == "asr_transcript_missing" for r in caplog.records
-    )
+    assert any(getattr(r, "event", None) == "asr_transcript_missing" for r in caplog.records)
 
 
 async def test_tts_cache_hit_skips_synthesis_on_second_call(
@@ -2020,13 +2201,9 @@ async def test_tts_cache_disabled_always_resynthesizes(
 
     settings = get_settings()
     job1 = _seed_job(env, url="https://example.test/article-three")
-    await pipeline._generate_chunk_quality_checked(
-        job1, "two words here now", 0, settings, slot=1
-    )
+    await pipeline._generate_chunk_quality_checked(job1, "two words here now", 0, settings, slot=1)
     job2 = _seed_job(env, url="https://example.test/article-four")
-    await pipeline._generate_chunk_quality_checked(
-        job2, "two words here now", 0, settings, slot=1
-    )
+    await pipeline._generate_chunk_quality_checked(job2, "two words here now", 0, settings, slot=1)
     assert calls["n"] == 2  # cache disabled: no reuse
 
 
@@ -2101,24 +2278,18 @@ async def test_tts_cache_keys_on_the_effective_adaptive_max_chars(
     # The unmodified baseline is a different key, so it must not serve the
     # audio synthesized under the lowered max_chars.
     job3 = _seed_job(env, url="https://example.test/article-adaptive-three")
-    await pipeline._generate_chunk_quality_checked(
-        job3, "two words here now", 0, settings, slot=1
-    )
+    await pipeline._generate_chunk_quality_checked(job3, "two words here now", 0, settings, slot=1)
     assert calls["n"] == 2
 
 
-async def test_tts_cache_qa_off_store_is_not_reused_once_qa_is_on(
+async def test_tts_cache_qa_off_audio_is_rechecked_once_qa_is_on(
     env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A QA-off deployment still populates the cache (its take is the only
-    take), but that entry was never checked -- so a later QA-on run must
-    re-synthesize instead of inheriting unverified audio."""
+    """A QA-off cache entry reuses synthesis but runs the newly enabled QA."""
     monkeypatch.setenv("TTS_MODEL", "chatterbox-turbo")
     monkeypatch.setenv("AUDIO_ANALYSIS_ENABLED", "false")
     get_settings.cache_clear()
     database.run_migrations(env)
-    from app.services import tts, tts_cache
-
     calls = {"n": 0}
 
     async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
@@ -2131,9 +2302,7 @@ async def test_tts_cache_qa_off_store_is_not_reused_once_qa_is_on(
 
     qa_off = get_settings()
     job1 = _seed_job(env, url="https://example.test/article-qa-off-one")
-    await pipeline._generate_chunk_quality_checked(
-        job1, "two words here now", 0, qa_off, slot=1
-    )
+    await pipeline._generate_chunk_quality_checked(job1, "two words here now", 0, qa_off, slot=1)
     assert calls["n"] == 1
 
     # Stored, and stored as unverified.
@@ -2151,11 +2320,9 @@ async def test_tts_cache_qa_off_store_is_not_reused_once_qa_is_on(
     assert cached is not None
     assert cached.qa_passed is False
 
-    # Another QA-off run reuses it; a QA-on run does not.
+    # Both runs reuse the audio. The QA-on run analyzes it under current policy.
     job2 = _seed_job(env, url="https://example.test/article-qa-off-two")
-    await pipeline._generate_chunk_quality_checked(
-        job2, "two words here now", 0, qa_off, slot=1
-    )
+    await pipeline._generate_chunk_quality_checked(job2, "two words here now", 0, qa_off, slot=1)
     assert calls["n"] == 1
 
     monkeypatch.setenv("AUDIO_ANALYSIS_ENABLED", "true")
@@ -2164,39 +2331,126 @@ async def test_tts_cache_qa_off_store_is_not_reused_once_qa_is_on(
     await pipeline._generate_chunk_quality_checked(
         job3, "two words here now", 0, get_settings(), slot=1
     )
-    assert calls["n"] == 2
+    assert calls["n"] == 1
+    assert tts_cache.lookup(get_settings().DATA_DIR, key).qa_passed is True
 
 
-async def test_tts_cache_miss_when_verify_on_and_entry_has_no_transcript(
+async def test_tts_cache_wrapper_asr_rechecks_existing_audio(
     env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A hit bypasses the ASR check entirely, so an entry stored without a
-    transcript cannot stand in for a run that verifies."""
     monkeypatch.setenv("TTS_MODEL", "chatterbox-turbo")
     get_settings.cache_clear()
     database.run_migrations(env)
-    from app.services import tts
-
-    calls = {"n": 0}
+    calls = {"synth": 0, "asr": 0}
 
     async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
-        calls["n"] += 1
-        wav = tmp_path / f"synth_{calls['n']}.wav"
+        calls["synth"] += 1
+        wav = tmp_path / f"synth_{calls['synth']}.wav"
         _write_speechlike_wav(wav)
         return tts.GenerateResult(wav_path=str(wav), duration_secs=2.0, sample_rate=24000)
 
+    async def _transcribe(path, settings):
+        calls["asr"] += 1
+        assert Path(path).is_file()
+        return "this chunk has clearly more than eight spoken words in it"
+
     monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    monkeypatch.setattr(tts, "transcribe_wrapper_wav", _transcribe)
 
     text = "this chunk has clearly more than eight spoken words in it"
     job1 = _seed_job(env, url="https://example.test/article-verify-one")
     await pipeline._generate_chunk_quality_checked(job1, text, 0, get_settings(), slot=1)
-    assert calls["n"] == 1
+    assert calls == {"synth": 1, "asr": 0}
 
     monkeypatch.setenv("WHISPER_VERIFY_ENABLED", "true")
     get_settings.cache_clear()
     job2 = _seed_job(env, url="https://example.test/article-verify-two")
     await pipeline._generate_chunk_quality_checked(job2, text, 0, get_settings(), slot=1)
-    assert calls["n"] == 2
+    assert calls == {"synth": 1, "asr": 1}
+
+
+async def test_tts_cache_remote_asr_is_rerun_and_strict_failure_propagates(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("TTS_MODEL", "chatterbox-turbo")
+    get_settings.cache_clear()
+    database.run_migrations(env)
+    calls = {"synth": 0, "asr": 0}
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        calls["synth"] += 1
+        wav = tmp_path / "remote-asr.wav"
+        _write_speechlike_wav(wav)
+        return tts.GenerateResult(wav_path=str(wav), duration_secs=2.0, sample_rate=24000)
+
+    async def _transcribe(audio_bytes, settings):
+        calls["asr"] += 1
+        assert audio_bytes
+        return "this chunk has clearly more than eight spoken words in it"
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    monkeypatch.setattr(tts_remote, "transcribe", _transcribe)
+    text = "this chunk has clearly more than eight spoken words in it"
+    first = _seed_job(env, url="https://example.test/article-remote-asr-one")
+    await pipeline._generate_chunk_quality_checked(first, text, 0, get_settings(), slot=1)
+
+    monkeypatch.setenv("WHISPER_VERIFY_ENABLED", "true")
+    monkeypatch.setenv("WHISPER_BACKEND", "openai-api")
+    monkeypatch.setenv("WHISPER_API_BASE_URL", "https://speech.example.test")
+    monkeypatch.setenv("WHISPER_API_STRICT", "true")
+    get_settings.cache_clear()
+    second = _seed_job(env, url="https://example.test/article-remote-asr-two")
+    await pipeline._generate_chunk_quality_checked(second, text, 0, get_settings(), slot=1)
+    assert calls == {"synth": 1, "asr": 1}
+
+    async def _unavailable(audio_bytes, settings):
+        return None
+
+    monkeypatch.setattr(tts_remote, "transcribe", _unavailable)
+    third = _seed_job(env, url="https://example.test/article-remote-asr-three")
+    with pytest.raises(tts.TTSProviderError, match="remote ASR unavailable"):
+        await pipeline._generate_chunk_quality_checked(third, text, 0, get_settings(), slot=1)
+    assert calls["synth"] == 1
+
+
+async def test_tts_cache_rechecks_stricter_divergence_threshold(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("TTS_MODEL", "chatterbox-turbo")
+    monkeypatch.setenv("WHISPER_VERIFY_ENABLED", "true")
+    monkeypatch.setenv("WHISPER_DIVERGENCE_THRESHOLD", "0.5")
+    monkeypatch.setenv("WHISPER_MAX_DIVERGENT_RUN", "100")
+    monkeypatch.setenv("AUDIO_ANALYSIS_MAX_REGEN", "1")
+    get_settings.cache_clear()
+    database.run_migrations(env)
+    calls = {"synth": 0, "asr": 0}
+    expected = "one two three four five six seven eight nine ten"
+    heard = "one two wrong wrong five six seven eight nine ten"
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        calls["synth"] += 1
+        wav = tmp_path / f"threshold-{calls['synth']}.wav"
+        _write_speechlike_wav(wav)
+        return tts.GenerateResult(
+            wav_path=str(wav), duration_secs=2.0, sample_rate=24000, transcript=heard
+        )
+
+    async def _transcribe(path, settings):
+        calls["asr"] += 1
+        return heard
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    monkeypatch.setattr(tts, "transcribe_wrapper_wav", _transcribe)
+    first = _seed_job(env, url="https://example.test/article-threshold-one")
+    await pipeline._generate_chunk_quality_checked(first, expected, 0, get_settings(), slot=1)
+    assert calls["synth"] == 1
+
+    monkeypatch.setenv("WHISPER_DIVERGENCE_THRESHOLD", "0.1")
+    get_settings.cache_clear()
+    second = _seed_job(env, url="https://example.test/article-threshold-two")
+    await pipeline._generate_chunk_quality_checked(second, expected, 0, get_settings(), slot=1)
+    assert calls["asr"] == 1
+    assert calls["synth"] == 2
 
 
 async def test_tts_cache_hit_feeds_the_pitch_tracker(
@@ -2209,7 +2463,10 @@ async def test_tts_cache_hit_feeds_the_pitch_tracker(
     database.run_migrations(env)
     from app.services import audio_analysis, tts
 
+    calls = {"n": 0}
+
     async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        calls["n"] += 1
         wav = tmp_path / "synth.wav"
         _write_speechlike_wav(wav)
         return tts.GenerateResult(wav_path=str(wav), duration_secs=2.0, sample_rate=24000)
@@ -2231,6 +2488,15 @@ async def test_tts_cache_hit_feeds_the_pitch_tracker(
         job2, "two words here now", 0, settings, 1, hit_tracker
     )
     assert list(hit_tracker._accepted) == accepted
+
+    context_tracker = audio_analysis.PitchTracker(settings)
+    for _ in range(settings.AUDIO_ANALYSIS_F0_WARMUP_CHUNKS):
+        context_tracker.accept(accepted[0] / 2)
+    job3 = _seed_job(env, url="https://example.test/article-pitch-three")
+    await pipeline._generate_chunk_quality_checked(
+        job3, "two words here now", 0, settings, 1, context_tracker
+    )
+    assert calls["n"] > 1
 
 
 async def test_tts_cache_store_failure_does_not_fail_chunk(
@@ -2618,9 +2884,7 @@ def test_intro_line_disabled_or_untitled_returns_none(
     monkeypatch.setenv("INTRO_READ_ENABLED", "false")
     get_settings.cache_clear()
     try:
-        assert (
-            pipeline._intro_read_line({"title": "The Big Story"}, get_settings()) is None
-        )
+        assert pipeline._intro_read_line({"title": "The Big Story"}, get_settings()) is None
     finally:
         get_settings.cache_clear()
 

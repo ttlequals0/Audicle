@@ -72,9 +72,7 @@ class RenderResult:
 
 
 class Renderer(Protocol):
-    async def render(
-        self, url: str, expand: bool, email: str | None = None
-    ) -> RenderResult: ...
+    async def render(self, url: str, expand: bool, email: str | None = None) -> RenderResult: ...
 
 
 def _normalize(text: str) -> str:
@@ -180,7 +178,10 @@ def is_public_url(url: str) -> bool:
     sidecar can reach the internal Docker network, so it re-checks every resolved
     address. Returns False on an unparseable host or a DNS failure (fail closed)."""
 
-    host = (urlsplit(url).hostname or "").strip()
+    parts = urlsplit(url)
+    if parts.scheme.lower() not in {"http", "https"}:
+        return False
+    host = (parts.hostname or "").strip()
     if not host:
         return False
     try:
@@ -192,6 +193,8 @@ def is_public_url(url: str) -> bool:
     # (100.64.0.0/10), which a hand-rolled predicate list misses. Reject if ANY
     # resolved address is non-global.
     for info in infos:
-        if not ipaddress.ip_address(info[4][0]).is_global:
+        ip = ipaddress.ip_address(info[4][0])
+        classified = getattr(ip, "ipv4_mapped", None) or ip
+        if not classified.is_global or classified.is_multicast:
             return False
     return True

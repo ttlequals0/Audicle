@@ -104,7 +104,6 @@ class ChatterboxEngine:
             self._model = None
             self.model_loaded = False
             self.reference_loaded = False
-            self._current_ref = None
             if self._torch is not None and self._torch.cuda.is_available():
                 self._torch.cuda.empty_cache()
         finally:
@@ -141,7 +140,11 @@ class ChatterboxEngine:
         # not a separate committed voice.wav. No slots yet just leaves
         # reference_loaded=false and /generate returning 503 -- the wrapper stays up
         # so the operator can upload a clip.
-        ref_path = self._boot_reference_path()
+        ref_path = (
+            self._current_ref
+            if self._current_ref is not None and self._current_ref.exists()
+            else self._boot_reference_path()
+        )
         if ref_path is None:
             logger.warning(
                 "No voice slots yet; upload one via the UI. /generate is "
@@ -363,8 +366,29 @@ class ChatterboxMultilingualEngine(ChatterboxEngine):
     name = "chatterbox-multilingual"
     # Fallback list; replaced by the package's own table at load time.
     languages: tuple[str, ...] = (
-        "ar", "da", "de", "el", "en", "es", "fi", "fr", "he", "hi", "it", "ja",
-        "ko", "ms", "nl", "no", "pl", "pt", "ru", "sv", "sw", "tr", "zh",
+        "ar",
+        "da",
+        "de",
+        "el",
+        "en",
+        "es",
+        "fi",
+        "fr",
+        "he",
+        "hi",
+        "it",
+        "ja",
+        "ko",
+        "ms",
+        "nl",
+        "no",
+        "pl",
+        "pt",
+        "ru",
+        "sv",
+        "sw",
+        "tr",
+        "zh",
     )
 
     def _load_model(self, device: str):

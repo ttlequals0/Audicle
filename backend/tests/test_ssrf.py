@@ -27,6 +27,9 @@ async def test_resolve_public_host_accepts_public_ip() -> None:
         "169.254.0.1",  # link-local
         "::1",  # IPv6 loopback
         "0.0.0.0",  # unspecified
+        "100.64.0.1",  # shared address space
+        "224.0.0.1",  # multicast
+        "::ffff:224.0.0.1",  # IPv4-mapped multicast
     ],
 )
 async def test_resolve_public_host_blocks_non_public(host: str) -> None:
@@ -67,6 +70,12 @@ async def test_assert_url_public_blocks_loopback_url() -> None:
 
 async def test_assert_url_public_allows_public_url() -> None:
     await ssrf.assert_url_public("http://8.8.8.8/article")  # no raise
+
+
+async def test_assert_url_public_rejects_non_http_scheme() -> None:
+    with pytest.raises(ssrf.BlockedHostError) as excinfo:
+        await ssrf.assert_url_public("file:///etc/passwd")
+    assert excinfo.value.reason == "unsupported_scheme"
 
 
 def test_pin_url_to_ip_rewrites_host_preserving_path_and_port() -> None:

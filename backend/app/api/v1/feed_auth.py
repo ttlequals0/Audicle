@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict
 from app.api.deps import get_conn
 from app.api.v1.auth import _LOGIN_LIMITER
 from app.config import Settings, get_settings
-from app.services import feed, feed_auth, runtime_settings
+from app.services import feed, feed_auth, feed_revision, runtime_settings
 
 router = APIRouter(tags=["feed-auth"])
 
@@ -76,10 +76,20 @@ async def set_feed_auth_enabled(
     via Pydantic, so a stringly-typed ``"false"`` can't slip through as True.
     """
 
-    if body.enabled:
-        runtime_settings.set_if_absent(conn, "FEED_AUTH_KEY", feed_auth.generate_key())
-    runtime_settings.set_value(conn, "FEED_AUTH_ENABLED", body.enabled)
-    return _effective_status(settings)
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        stored = runtime_settings.get_all(conn)
+        updates: dict[str, object] = {"FEED_AUTH_ENABLED": body.enabled}
+        if body.enabled and not stored.get("FEED_AUTH_KEY"):
+            updates["FEED_AUTH_KEY"] = feed_auth.generate_key()
+        runtime_settings.apply(conn, updates, manage_transaction=False)
+        effective = runtime_settings.validated_overlay(settings, runtime_settings.get_all(conn))
+        feed_revision.bump(conn, effective)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return _status(effective)
 
 
 @router.post("/feed-auth/regenerate", response_model=FeedAuthStatus)
@@ -98,5 +108,17 @@ async def regenerate_feed_auth_key(
         raise HTTPException(
             status_code=409, detail="enable authenticated feeds before rotating the key"
         )
-    runtime_settings.set_value(conn, "FEED_AUTH_KEY", feed_auth.generate_key())
-    return _effective_status(settings)
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        runtime_settings.apply(
+            conn,
+            {"FEED_AUTH_KEY": feed_auth.generate_key()},
+            manage_transaction=False,
+        )
+        effective = runtime_settings.validated_overlay(settings, runtime_settings.get_all(conn))
+        feed_revision.bump(conn, effective)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return _status(effective)

@@ -4,13 +4,13 @@
 
 The RSS feed is served at a slug derived from the feed name: `FEED_TITLE="Articles of Interest"` becomes `/rss/articles_of_interest.xml`. The Feed page always shows the exact URL to paste into a podcatcher. Renaming the feed changes the slug and mints new feed and episode GUIDs, so subscribers resubscribe to the new URL.
 
-Episodes carry a Podcasting 2.0 `podcast:transcript` (WebVTT), `podcast:chapters` (JSON), and the usual iTunes tags. A reprocessed episode bumps a revision that folds into its GUID, so clients re-download the regenerated audio without any manual poking.
+Episodes carry a Podcasting 2.0 `podcast:transcript` (WebVTT), `podcast:chapters` (JSON), and the usual iTunes tags. A successful reprocess publishes a new immutable generation. Its token appears in the episode GUID, the media query string, and the artwork filename, so clients fetch one consistent set of audio, artwork, transcript, and chapters. A failed or cancelled reprocess leaves the previous generation published.
 
 ## Authenticated feeds
 
-The feed is open by default: anyone with the URL can read it. The "authenticated feeds" section in Settings puts a 64-hex key on every feed and media URL: `?key=<key>` on the RSS, MP3, and transcript URLs, and a `/media/<id>-<key>.jpg` path token for artwork (podcast apps drop query strings on image URLs, so art carries the key in the path). With the toggle on, a request without a valid key gets a 401.
+The feed is open by default: anyone with the URL can read it. The "authenticated feeds" section in Settings puts a 64-hex key on every feed and media URL: `?key=<key>` on the RSS, MP3, transcript, chapters, and text URLs, and `/media/<id>-v<generation>-<key>.jpg` for artwork. Podcast apps can drop query strings from image URLs, so artwork carries both tokens in the path. With the toggle on, a request without a valid key gets a 401. Protected responses use `Cache-Control: private, no-store`, so a shared cache cannot keep serving a revoked key.
 
-The Feed page shows the subscribe URL with the key included. Regenerating the key (or flipping the toggle) changes every URL, so existing subscriptions break and need a resubscribe. The same controls sit behind `GET`/`POST /api/v1/feed-auth` and `POST /api/v1/feed-auth/regenerate`.
+The Feed page shows the subscribe URL with the key included. Regenerating the key changes every protected URL, so existing subscriptions need the new feed URL. Disabling authentication removes the key from generated URLs. The same controls sit behind `GET`/`POST /api/v1/feed-auth` and `POST /api/v1/feed-auth/regenerate`.
 
 ## Episode artwork
 

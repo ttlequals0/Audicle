@@ -12,6 +12,7 @@ clear stale content without waiting for the cron-style trigger.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -19,6 +20,7 @@ from pathlib import Path
 from app.config import Settings
 from app.core import database
 from app.core.paths import media_dir
+from app.services import feed_revision
 
 logger = logging.getLogger("app.services.retention")
 
@@ -66,18 +68,37 @@ def purge_older_than(
 
     conn = database.connect(database.db_path(settings.DATA_DIR))
     try:
+        conn.execute("BEGIN IMMEDIATE")
         rows = conn.execute(
             """
             SELECT id, audio_path, artwork_path
             FROM episodes
             WHERE pub_date < ?
+              AND id NOT IN (
+                  SELECT episode_id FROM jobs
+                  WHERE status IN ('staging', 'queued', 'processing')
+              )
             """,
             (cutoff_iso,),
         ).fetchall()
         episode_ids = tuple(row["id"] for row in rows)
+        generation_rows = []
+        if episode_ids:
+            placeholders = ",".join("?" for _ in episode_ids)
+            generation_rows = conn.execute(
+                "SELECT audio_path, artwork_path FROM episode_generations "
+                f"WHERE episode_id IN ({placeholders})",
+                episode_ids,
+            ).fetchall()
         for row in rows:
             conn.execute("DELETE FROM episodes WHERE id = ?", (row["id"],))
-        conn.commit()
+        if rows:
+            feed_revision.bump(conn)
+        conn.execute("COMMIT")
+    except Exception:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
     finally:
         conn.close()
 
@@ -96,6 +117,10 @@ def purge_older_than(
         # remove it alongside the audio/artwork (episode ids are hex, no glob meta).
         for src in out_root.glob(f"{row['id']}.source.*"):
             if _remove_path(src, root_guard=out_root):
+                files_removed += 1
+    for row in generation_rows:
+        for path_str in (row["audio_path"], row["artwork_path"]):
+            if path_str and _remove_path(Path(path_str), root_guard=out_root):
                 files_removed += 1
 
     logger.info(
@@ -130,7 +155,10 @@ def sweep_orphan_media(settings: Settings) -> int:
         return 0
     conn = database.connect(database.db_path(settings.DATA_DIR))
     try:
-        rows = conn.execute("SELECT id FROM episodes").fetchall()
+        rows = conn.execute(
+            "SELECT id FROM episodes UNION SELECT episode_id AS id FROM jobs "
+            "WHERE status IN ('staging', 'queued', 'processing')"
+        ).fetchall()
     finally:
         conn.close()
     live_ids = {row["id"] for row in rows}
@@ -146,15 +174,27 @@ def sweep_orphan_media(settings: Settings) -> int:
         stem = (
             child.stem.removesuffix("_combined").removesuffix(".source").removesuffix(".narration")
         )
-        if stem in live_ids:
+        owner_id = re.split(r"[._]", stem, maxsplit=1)[0]
+        if owner_id in live_ids:
             continue
         # Skip the operator's reference voice clip, the bundled default podcast
         # artwork (seeded at startup, served as /media/default.jpg), the optional
         # end-of-episode chime, and other non-episode artifacts.
         if child.name in ("voice.wav", "source.png", "default.jpg", "chime.wav"):
             continue
-        if _remove_path(child, root_guard=out_root):
-            removed += 1
+        with database.upload_staging_lock(settings.DATA_DIR, owner_id):
+            conn = database.connect(database.db_path(settings.DATA_DIR))
+            try:
+                live = conn.execute(
+                    "SELECT 1 FROM episodes WHERE id = ? UNION ALL "
+                    "SELECT 1 FROM jobs WHERE episode_id = ? "
+                    "AND status IN ('staging', 'queued', 'processing') LIMIT 1",
+                    (owner_id, owner_id),
+                ).fetchone()
+            finally:
+                conn.close()
+            if live is None and _remove_path(child, root_guard=out_root):
+                removed += 1
     if removed:
         logger.info(
             "Orphan media sweep removed files",

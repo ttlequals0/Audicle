@@ -1,13 +1,14 @@
 #!/bin/sh
 # trivy_gate.sh -- release-time CVE gate for the Audicle images: app, tts
-# (GPU and -cpu tags), render.
+# (GPU and -cpu tags), render, and the render egress proxy.
 #
 # Usage: scripts/trivy_gate.sh <version>   (e.g. 0.47.0)
 #
 # Runs trivy HIGH/CRITICAL on each image with the correct per-image ignorefile:
 #   app   -- .trivyignore only
-#   tts   -- .trivyignore + .trivyignore.tts (concatenated)
-#   render -- .trivyignore + .trivyignore.render (concatenated)
+#   tts   -- .trivyignore + .trivyignore.tts
+#   render -- .trivyignore except app-only entries + .trivyignore.render
+#   render egress -- .trivyignore.egress only
 #
 # Per-image concatenation exists because trivy's --ignorefile applies globally:
 # a single shared file silently suppresses CVEs across images that do not trigger
@@ -28,6 +29,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SHARED="$REPO_ROOT/.trivyignore"
 IGNORE_TTS="$REPO_ROOT/.trivyignore.tts"
 IGNORE_RENDER="$REPO_ROOT/.trivyignore.render"
+IGNORE_EGRESS="$REPO_ROOT/.trivyignore.egress"
 
 TMP_TTS=$(mktemp)
 TMP_RENDER=$(mktemp)
@@ -38,7 +40,9 @@ cleanup() {
 trap cleanup EXIT
 
 cat "$SHARED" "$IGNORE_TTS" > "$TMP_TTS"
-cat "$SHARED" "$IGNORE_RENDER" > "$TMP_RENDER"
+# libsndfile is present in app and tts, but absent from the render image.
+sed '/^CVE-2026-37555$/d' "$SHARED" > "$TMP_RENDER"
+cat "$IGNORE_RENDER" >> "$TMP_RENDER"
 
 FAILED=0
 
@@ -78,6 +82,7 @@ scan "audicle:${VERSION}"         "$SHARED"
 scan "audicle-tts:${VERSION}"     "$TMP_TTS"
 scan "audicle-tts:${VERSION}-cpu" "$TMP_TTS"
 scan "audicle-render:${VERSION}"  "$TMP_RENDER"
+scan "audicle-render-egress:${VERSION}" "$IGNORE_EGRESS"
 
 if [ "$FAILED" -ne 0 ]; then
     echo "One or more images failed the CVE gate." >&2

@@ -21,6 +21,7 @@ import logging
 import re
 import sqlite3
 import time
+import uuid
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +39,10 @@ LEXICON_VERSION_KEY = "lexicon_version"
 # byte-identical, which it usually is (#126 follow-up). Keying on content means
 # a release that does not touch the lexicon does no work at all.
 LEXICON_ARTIFACT_KEY = "lexicon_artifact_sha256"
+_ACTIVE_GENERATION_KEYS = {
+    "seed": "lexicon_active_seed_generation",
+    "base": "lexicon_active_base_generation",
+}
 
 
 def default_artifact_path() -> Path:
@@ -100,51 +105,78 @@ def artifact_digest(path: Path) -> str:
 def _sync_base_artifact_locked(
     conn: sqlite3.Connection, artifact_path: Path, version: str, digest: str
 ) -> bool:
-    from app.services import settings_store  # local import avoids a cycle
-
-    by_origin: dict[str, dict[str, dict]] = {"seed": {}, "base": {}}
-    opener = gzip.open if artifact_path.suffix == ".gz" else open
-    with opener(artifact_path, "rt", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            obj = json.loads(line)
-            origin = obj.get("origin", "base")
-            if origin not in by_origin or not obj.get("input_text") or not obj.get("spoken"):
-                continue
-            by_origin[origin][obj["input_text"]] = obj
+    started = time.monotonic()
+    generations = {origin: _new_generation() for origin in ("seed", "base")}
+    previous = {origin: _active_generation(conn, origin) for origin in generations}
+    batches: dict[str, list[tuple]] = {"seed": [], "base": []}
+    counts = {"seed": 0, "base": 0}
     logger.info(
         "Base lexicon import starting",
         extra={
             "event": "lexicon_sync_started",
             "version": version,
-            "seed": len(by_origin["seed"]),
-            "base": len(by_origin["base"]),
             "batch_rows": _IMPORT_BATCH_ROWS,
         },
     )
-    started = time.monotonic()
-    for origin, entries in by_origin.items():
-        if entries:
-            import_readonly(conn, origin, entries)
-    settings_store.set_(conn, LEXICON_VERSION_KEY, version)
-    settings_store.set_(conn, LEXICON_ARTIFACT_KEY, digest)  # commits; the gate
+    opener = gzip.open if artifact_path.suffix == ".gz" else open
+    try:
+        with opener(artifact_path, "rt", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                obj = json.loads(line)
+                origin = obj.get("origin", "base")
+                if origin not in batches or not obj.get("input_text") or not obj.get("spoken"):
+                    continue
+                batches[origin].append(
+                    _entry_row(origin, generations[origin], obj["input_text"], obj, True)
+                )
+                if len(batches[origin]) >= _IMPORT_BATCH_ROWS:
+                    _write_batch(conn, batches[origin])
+                    counts[origin] += len(batches[origin])
+                    batches[origin].clear()
+        for origin, batch in batches.items():
+            if batch:
+                _write_batch(conn, batch)
+                counts[origin] += len(batch)
+    except Exception:
+        for origin, generation in generations.items():
+            _delete_generation(conn, origin, generation)
+        raise
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        for origin, generation in generations.items():
+            if counts[origin]:
+                _set_setting(conn, _ACTIVE_GENERATION_KEYS[origin], generation)
+        _set_setting(conn, LEXICON_VERSION_KEY, version)
+        _set_setting(conn, LEXICON_ARTIFACT_KEY, digest)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        for origin, generation in generations.items():
+            _delete_generation(conn, origin, generation)
+        raise
+    for origin, generation in generations.items():
+        if counts[origin] and previous[origin] != generation:
+            _delete_generation(conn, origin, previous[origin])
     logger.info(
         "Base lexicon imported",
         extra={
             "event": "lexicon_import",
             "version": version,
-            "seed": len(by_origin["seed"]),
-            "base": len(by_origin["base"]),
+            "seed": counts["seed"],
+            "base": counts["base"],
             "duration_ms": int((time.monotonic() - started) * 1000),
         },
     )
     return True
 
+
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS lexicon (
     origin TEXT NOT NULL,
+    generation INTEGER NOT NULL DEFAULT 0,
     input_text TEXT NOT NULL,
     input_fold TEXT NOT NULL,
     mode TEXT NOT NULL,
@@ -154,11 +186,11 @@ CREATE TABLE IF NOT EXISTS lexicon (
     source TEXT,
     notes TEXT,
     read_only INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (origin, input_text)
+    PRIMARY KEY (origin, generation, input_text)
 );
 """
 _CREATE_INDEX_SQL = "CREATE INDEX IF NOT EXISTS idx_lexicon_fold ON lexicon(input_fold);"
-# The PK (origin, input_text) cannot serve a bare input_text probe (origin
+# The PK cannot serve a bare input_text probe (origin
 # leads), so exact-case lookups need their own index; without it every
 # ``lookup`` is a full scan of the 1.3M-row base lexicon.
 _CREATE_TEXT_INDEX_SQL = "CREATE INDEX IF NOT EXISTS idx_lexicon_input_text ON lexicon(input_text);"
@@ -214,8 +246,12 @@ def lookup(conn: sqlite3.Connection, token: str) -> LexEntry | None:
     rows = conn.execute(
         """
         SELECT * FROM lexicon WHERE case_sensitive = 1 AND input_text = ?
+          AND (origin = 'user' OR generation = CAST(COALESCE(
+            (SELECT value FROM settings WHERE key = 'lexicon_active_' || origin || '_generation'), '0') AS INTEGER))
         UNION ALL
         SELECT * FROM lexicon WHERE case_sensitive = 0 AND input_fold = ?
+          AND (origin = 'user' OR generation = CAST(COALESCE(
+            (SELECT value FROM settings WHERE key = 'lexicon_active_' || origin || '_generation'), '0') AS INTEGER))
         """,
         (token, fold),
     ).fetchall()
@@ -244,7 +280,9 @@ def apply_pairs_by_case(conn: sqlite3.Connection) -> tuple[dict[str, str], dict[
     rows: dict[str, tuple[str, bool]] = {}
     for origin in ("seed", "user"):  # user last so it overwrites seed (case flag and all)
         for row in conn.execute(
-            "SELECT input_text, spoken, case_sensitive FROM lexicon WHERE origin = ?",
+            "SELECT input_text, spoken, case_sensitive FROM lexicon WHERE origin = ? "
+            "AND (origin = 'user' OR generation = CAST(COALESCE((SELECT value FROM settings "
+            "WHERE key = 'lexicon_active_' || origin || '_generation'), '0') AS INTEGER))",
             (origin,),
         ):
             rows[row["input_text"]] = (row["spoken"], bool(row["case_sensitive"]))
@@ -262,6 +300,8 @@ def reference_entries(conn: sqlite3.Connection) -> list[tuple[str, str]]:
     entries: list[tuple[str, str]] = []
     for row in conn.execute(
         "SELECT input_text, spoken, notes FROM lexicon WHERE origin IN ('seed', 'user') "
+        "AND (origin = 'user' OR generation = CAST(COALESCE((SELECT value FROM settings "
+        "WHERE key = 'lexicon_active_' || origin || '_generation'), '0') AS INTEGER)) "
         "ORDER BY origin DESC, input_text"
     ):
         line = f"- {row['input_text']} -> {row['spoken']}"
@@ -271,20 +311,11 @@ def reference_entries(conn: sqlite3.Connection) -> list[tuple[str, str]]:
     return entries
 
 
-def reference_text(conn: sqlite3.Connection) -> str:
-    """The full LLM pronunciation reference, one ``- input -> spoken`` line
-    per seed/user term."""
-
-    return "\n".join(line for _, line in reference_entries(conn))
-
-
 def get_user_entries(conn: sqlite3.Connection) -> dict[str, dict]:
     """User rows as ``{input_text: {mode, spoken, case_sensitive}}``."""
 
     out: dict[str, dict] = {}
-    for row in conn.execute(
-        "SELECT * FROM lexicon WHERE origin = 'user' ORDER BY input_text"
-    ):
+    for row in conn.execute("SELECT * FROM lexicon WHERE origin = 'user' ORDER BY input_text"):
         out[row["input_text"]] = {
             "mode": row["mode"],
             "spoken": row["spoken"],
@@ -296,9 +327,14 @@ def get_user_entries(conn: sqlite3.Connection) -> dict[str, dict]:
 def replace_user_entries(conn: sqlite3.Connection, entries: dict[str, dict]) -> None:
     """Replace all user rows with ``entries`` (read-only rows untouched)."""
 
-    conn.execute("DELETE FROM lexicon WHERE origin = 'user'")
-    insert_entries(conn, "user", entries, read_only=False)
-    conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("DELETE FROM lexicon WHERE origin = 'user'")
+        insert_entries(conn, "user", entries, read_only=False)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 # Rows per insert batch during a bulk import. With wal_autocheckpoint off for
@@ -312,18 +348,35 @@ _IMPORT_BATCH_ROWS = 50_000
 def import_readonly(conn: sqlite3.Connection, origin: str, entries: dict[str, dict]) -> None:
     """Replace all read-only rows of ``origin`` (seed/base) with ``entries``.
 
-    User rows are never touched. The insert is committed and checkpointed in
-    batches rather than as one transaction: peak WAL matters more here than
-    atomicity, because the version key is only written after a full import, so
-    an interrupted import simply re-runs from the start on the next boot
-    (leaving a partial read-only layer in the meantime, which degrades
-    pronunciation slightly but corrupts nothing).
+    User rows are never touched. A new generation is written and checkpointed
+    in bounded transactions, then activated with one settings update. Readers
+    keep seeing the previous complete generation until that update commits.
     """
 
     if origin not in ("seed", "base"):
         raise ValueError(f"import_readonly origin must be seed/base, got {origin}")
-    conn.execute("DELETE FROM lexicon WHERE origin = ?", (origin,))
-    insert_entries(conn, origin, entries, read_only=True, checkpoint_between_batches=True)
+    previous = _active_generation(conn, origin)
+    generation = _new_generation()
+    try:
+        insert_entries(conn, origin, entries, read_only=True, generation=generation)
+    except Exception:
+        if not conn.in_transaction:
+            _delete_generation(conn, origin, generation)
+        raise
+    if conn.in_transaction:
+        _set_setting(conn, _ACTIVE_GENERATION_KEYS[origin], generation)
+        conn.execute("DELETE FROM lexicon WHERE origin = ? AND generation = ?", (origin, previous))
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        _set_setting(conn, _ACTIVE_GENERATION_KEYS[origin], generation)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        _delete_generation(conn, origin, generation)
+        raise
+    if previous != generation:
+        _delete_generation(conn, origin, previous)
 
 
 def insert_entries(
@@ -332,50 +385,100 @@ def insert_entries(
     entries: dict[str, dict],
     *,
     read_only: bool,
-    checkpoint_between_batches: bool = False,
+    generation: int = 0,
 ) -> None:
-    # Sorted by key so the bulk import walks the (origin, input_text) PK and
-    # the input_text index in order instead of random-writing B-tree pages;
-    # on the 1.3M-row base layer that locality is a large I/O win (#126).
-    rows = [
-        (
-            origin,
-            key,
-            key.casefold(),
-            entry.get("mode", "override"),
-            entry["spoken"],
-            1 if entry.get("case_sensitive") else 0,
-            float(entry.get("confidence", 1.0)),
-            entry.get("source"),
-            entry.get("notes"),
-            1 if read_only else 0,
-        )
-        for key, entry in sorted(entries.items())
-    ]
-    statement = """
+    batch: list[tuple] = []
+    for key, entry in entries.items():
+        batch.append(_entry_row(origin, generation, key, entry, read_only))
+        if len(batch) >= _IMPORT_BATCH_ROWS:
+            _write_batch(conn, batch)
+            batch.clear()
+    if batch:
+        _write_batch(conn, batch)
+
+
+_INSERT_SQL = """
         INSERT OR REPLACE INTO lexicon
-            (origin, input_text, input_fold, mode, spoken,
+            (origin, generation, input_text, input_fold, mode, spoken,
              case_sensitive, confidence, source, notes, read_only)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
-    for start in range(0, len(rows), _IMPORT_BATCH_ROWS):
-        batch = rows[start : start + _IMPORT_BATCH_ROWS]
-        conn.executemany(statement, batch)
-        if not checkpoint_between_batches:
-            continue
-        # TRUNCATE rather than PASSIVE: PASSIVE leaves the file at its high
-        # water mark, which is the number this is trying to bound.
-        with suppress(sqlite3.OperationalError):
-            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        logger.debug(
-            "Lexicon import progress",
-            extra={
-                "event": "lexicon_import_progress",
-                "origin": origin,
-                "rows_written": min(start + _IMPORT_BATCH_ROWS, len(rows)),
-                "rows_total": len(rows),
-            },
-        )
+
+
+def _entry_row(origin: str, generation: int, key: str, entry: dict, read_only: bool) -> tuple:
+    return (
+        origin,
+        generation,
+        key,
+        key.casefold(),
+        entry.get("mode", "override"),
+        entry["spoken"],
+        1 if entry.get("case_sensitive") else 0,
+        float(entry.get("confidence", 1.0)),
+        entry.get("source"),
+        entry.get("notes"),
+        1 if read_only else 0,
+    )
+
+
+def _write_batch(conn: sqlite3.Connection, rows: list[tuple]) -> None:
+    if conn.in_transaction:
+        conn.executemany(_INSERT_SQL, rows)
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.executemany(_INSERT_SQL, rows)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    with suppress(sqlite3.OperationalError):
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+
+def _set_setting(conn: sqlite3.Connection, key: str, value: str | int) -> None:
+    conn.execute(
+        "INSERT INTO settings(key,value,updated_at) VALUES(?,?,strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+        (key, str(value)),
+    )
+
+
+def _new_generation() -> int:
+    return uuid.uuid4().int & ((1 << 63) - 1)
+
+
+def _active_generation(conn: sqlite3.Connection, origin: str) -> int:
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key = ?", (_ACTIVE_GENERATION_KEYS[origin],)
+    ).fetchone()
+    return 0 if row is None else int(row[0])
+
+
+def _delete_generation(conn: sqlite3.Connection, origin: str, generation: int) -> None:
+    while True:
+        rowids = [
+            row[0]
+            for row in conn.execute(
+                "SELECT rowid FROM lexicon WHERE origin = ? AND generation = ? LIMIT ?",
+                (origin, generation, _IMPORT_BATCH_ROWS),
+            )
+        ]
+        if not rowids:
+            return
+        _delete_rowids(conn, rowids)
+
+
+def _delete_rowids(conn: sqlite3.Connection, rowids: list[int]) -> None:
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.executemany("DELETE FROM lexicon WHERE rowid = ?", ((rowid,) for rowid in rowids))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    with suppress(sqlite3.OperationalError):
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
 
 WORD_TOKEN_RE = re.compile("[A-Za-z][A-Za-z'\u2019-]*")
@@ -388,16 +491,12 @@ def iter_entries(conn: sqlite3.Connection, scope: str = "user"):
     if scope == "user":
         where = "WHERE origin = 'user'"
     elif scope == "all":
-        where = ""
+        where = (
+            "WHERE origin = 'user' OR generation = CAST(COALESCE((SELECT value FROM settings "
+            "WHERE key = 'lexicon_active_' || origin || '_generation'), '0') AS INTEGER)"
+        )
     else:
         raise ValueError(f"scope must be user/all, got {scope}")
     cursor = conn.execute(f"SELECT * FROM lexicon {where} ORDER BY input_text")
     for row in cursor:
         yield _row_to_entry(row)
-
-
-def counts_by_origin(conn: sqlite3.Connection) -> dict[str, int]:
-    return {
-        row["origin"]: row["n"]
-        for row in conn.execute("SELECT origin, COUNT(*) AS n FROM lexicon GROUP BY origin")
-    }

@@ -26,6 +26,7 @@ from app.config import Settings
 # tell a cover token's optional key suffix from the episode id (hyphen-free hex)
 # and to prefilter a supplied key before the constant-time compare.
 KEY_RE = re.compile(r"[0-9a-f]{64}")
+GENERATION_RE = re.compile(r"(?:[0-9a-f]{32}|[0-9]{1,20})")
 
 
 def generate_key() -> str:
@@ -59,6 +60,13 @@ def effective_auth(conn: sqlite3.Connection, settings: Settings) -> tuple[bool, 
     return bool(enabled), (key or None)
 
 
+def cache_control(conn: sqlite3.Connection, settings: Settings, public_max_age: int) -> str:
+    enabled, _ = effective_auth(conn, settings)
+    if enabled:
+        return "private, no-store"
+    return f"public, max-age={public_max_age}"
+
+
 def active_key(settings: Settings) -> str | None:
     """The enforced key, or ``None`` when auth is off or no key is stored.
 
@@ -87,6 +95,17 @@ def split_cover_token(token: str | None) -> tuple[str | None, str | None]:
         return None, None
     head, sep, tail = token.rpartition("-")
     if sep and KEY_RE.fullmatch(tail):
+        return head, tail
+    return token, None
+
+
+def split_cover_generation(token: str | None) -> tuple[str | None, str | None]:
+    """Split an optional ``-v<generation>`` suffix from a cover-art stem."""
+
+    if not token:
+        return None, None
+    head, sep, tail = token.rpartition("-v")
+    if sep and head and GENERATION_RE.fullmatch(tail):
         return head, tail
     return token, None
 

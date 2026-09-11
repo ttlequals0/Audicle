@@ -72,6 +72,24 @@ def test_upload_md_creates_job_and_stores_original(env: Path) -> None:
         conn.close()
 
 
+def test_upload_source_survives_sweep_during_staging(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.api.v1 import uploads
+    from app.services import retention
+
+    original_write = uploads.write_bytes_atomic
+
+    def _write_after_sweep(path: Path, data: bytes) -> None:
+        retention.sweep_orphan_media(get_settings())
+        original_write(path, data)
+
+    monkeypatch.setattr(uploads, "write_bytes_atomic", _write_after_sweep)
+    with _client(env) as client:
+        response = client.post("/api/v1/upload", files={"file": ("notes.md", b"# note", "text/markdown")})
+    assert response.status_code == 201
+    episode_id = response.json()["episode_id"]
+    assert (media_dir(get_settings()) / f"{episode_id}.source.md").is_file()
+
+
 def test_upload_rejects_with_400_when_no_voice_loaded(
     env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

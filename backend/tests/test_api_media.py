@@ -18,6 +18,9 @@ def _seed_episode(
     env: Path, *, id_: str, transcript_vtt: str | None, cleaned_text: str | None = None
 ) -> Path:
     database.run_migrations(env)
+    from app.config import get_settings
+
+    media = media_dir(get_settings())
     conn = database.connect(database.db_path(env))
     try:
         episodes.upsert(
@@ -27,17 +30,15 @@ def _seed_episode(
             original_url="https://example.test/a",
             title="An Article",
             author="Author",
-            audio_path=f"/data/media/{id_}.mp3",
-            artwork_path=f"/data/media/{id_}.jpg",
+            audio_path=str(media / f"{id_}.mp3"),
+            artwork_path=str(media / f"{id_}.jpg"),
             transcript_vtt=transcript_vtt,
             duration_secs=10,
             cleaned_text=cleaned_text,
         )
     finally:
         conn.close()
-    from app.config import get_settings
-
-    return media_dir(get_settings())
+    return media
 
 
 def test_get_mp3_serves_disk_file_with_audio_content_type(env: Path) -> None:
@@ -60,6 +61,61 @@ def test_get_jpg_serves_disk_file_with_image_content_type(env: Path) -> None:
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/jpeg"
     assert response.content == b"FAKE_JPG"
+
+
+def test_versioned_jpg_path_serves_exact_generation(env: Path) -> None:
+    media = _seed_episode(env, id_="abc", transcript_vtt=None)
+    media.mkdir(parents=True, exist_ok=True)
+    old = media / "abc.old.jpg"
+    old.write_bytes(b"OLD_JPG")
+    conn = database.connect(database.db_path(env))
+    try:
+        episode = episodes.get_by_id(conn, "abc")
+        assert episode is not None
+        token = "a" * 32
+        episodes.publish_generation(
+            conn,
+            "abc",
+            episode.generation_token,
+            {"artwork_path": str(old)},
+            token=token,
+        )
+    finally:
+        conn.close()
+    with _client(env) as client:
+        response = client.get(f"/media/abc-v{token}.jpg")
+    assert response.status_code == 200
+    assert response.content == b"OLD_JPG"
+
+
+def test_old_audio_generation_remains_range_readable_after_publish(env: Path) -> None:
+    media = _seed_episode(env, id_="abc", transcript_vtt="OLD VTT")
+    media.mkdir(parents=True, exist_ok=True)
+    old_audio = media / "abc.mp3"
+    old_audio.write_bytes(b"OLD_AUDIO")
+    new_audio = media / "abc.new.mp3"
+    new_audio.write_bytes(b"NEW_AUDIO")
+    conn = database.connect(database.db_path(env))
+    try:
+        before = episodes.get_by_id(conn, "abc")
+        assert before is not None and before.generation_token
+        old_token = before.generation_token
+        new_token = "b" * 32
+        episodes.publish_generation(
+            conn,
+            "abc",
+            old_token,
+            {"audio_path": str(new_audio), "audio_size_bytes": len(b"NEW_AUDIO")},
+            token=new_token,
+        )
+    finally:
+        conn.close()
+    with _client(env) as client:
+        current = client.get("/media/abc.mp3")
+        old = client.get(f"/media/abc.mp3?v={old_token}", headers={"Range": "bytes=0-2"})
+    assert current.content == b"NEW_AUDIO"
+    assert old.status_code == 206
+    assert old.content == b"OLD"
 
 
 def test_head_jpg_returns_200_with_headers_and_no_body(env: Path) -> None:
@@ -168,11 +224,14 @@ def test_get_chapters_json_serves_stored_document(env: Path) -> None:
     _seed_episode(env, id_="abc", transcript_vtt=None)
     conn = database.connect(database.db_path(env))
     try:
-        conn.execute(
-            "UPDATE episodes SET chapters_json = ? WHERE id = 'abc'",
-            ('{"version": "1.2.0", "chapters": []}',),
+        episode = episodes.get_by_id(conn, "abc")
+        assert episode is not None
+        episodes.publish_generation(
+            conn,
+            "abc",
+            episode.generation_token,
+            {"chapters_json": '{"version": "1.2.0", "chapters": []}'},
         )
-        conn.commit()
     finally:
         conn.close()
     with _client(env) as client:

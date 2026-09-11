@@ -11,14 +11,17 @@ The pipeline from a submitted URL (or uploaded document) to a finished episode.
 URL --> extract (direct / Firecrawl) --> cleanup (LLM)
                                               |
                                               v
-                          normalize (LLM pronunciation pass +
-                          base lexicon + regex corrections)
+                              spoken intro + summary (LLM)
                                               |
                                               v
-                              summary (LLM episode description)
+                                      chunk text
                                               |
                                               v
-                                   chunk + TTS (Chatterbox)
+                          normalize pronunciation per chunk
+                          (LLM + base lexicon + corrections)
+                                              |
+                                              v
+                                    TTS (Chatterbox)
                                               |
                                               v
                         quality gate: audio QA + optional
@@ -37,9 +40,9 @@ The default `direct` engine fetches the page in-process and parses it with trafi
 
 Uploads skip extraction: a PDF, DOCX, Markdown, text, or HTML file is read directly, and a scan or image goes through on-device OCR (RapidOCR on CPU, models shipped in the image). A text PDF never pays the OCR cost, and a scan too blurry to read fails the job with a clear error instead of narrating noise. The `OCR_*` knobs (page cap, DPI, confidence floor, language) are in Settings under Uploads.
 
-## Cleanup, normalize, summary
+## Cleanup, summary, chunking, and pronunciation
 
-Three LLM passes. Cleanup strips the page down to the article. Normalize rewrites for narration: an LLM pronunciation pass plus the built-in base lexicon and your [pronunciation corrections](configuration.md#pronunciation-corrections). Summary writes the episode description that lands in the feed.
+Cleanup strips the page down to the article. The pipeline then builds the spoken intro, writes the episode summary, and splits the cleaned text into TTS chunks. Each chunk passes through the LLM pronunciation pass, the base lexicon, and your [pronunciation corrections](configuration.md#pronunciation-corrections) before synthesis. The stored cleaned transcript remains separate from pronunciation-adjusted speech text.
 
 The pronunciation pass normally sends each whole chunk to the LLM. `PRONUNCIATION_SCOPE=sentence` sends only the sentences that matched a correction term, as numbered lines, and splices the respelled sentences back in place. That cuts tokens on long chunks with one correction in them. If the model breaks the numbered-reply format, the pass falls back to the whole-chunk call, and after the first such failure the job stops trying sentence scope at all, so a model that cannot follow the protocol costs one wasted call, not one per chunk.
 

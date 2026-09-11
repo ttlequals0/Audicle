@@ -13,7 +13,7 @@ ENV PYTHONUNBUFFERED=1 \
 # (same approach as the wrapper).
 RUN apt-get update \
     && apt-get upgrade -y \
-    && apt-get install -y --no-install-recommends xvfb xauth curl ca-certificates \
+    && apt-get install -y --no-install-recommends xvfb xauth curl ca-certificates iptables util-linux \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -30,18 +30,19 @@ RUN pip install --no-cache-dir ".[render]" \
 # Run the browser as a non-root user (Firefox is happier non-root) and bake the
 # Camoufox browser into that user's home so it ships in the image.
 RUN useradd --create-home --uid 1000 render \
+    && useradd --no-create-home --uid 1001 healthcheck \
+    && install -d -o render -g render /home/render/.cache/camoufox \
     && chmod +x entrypoint.sh \
     && chown -R render:render /app
-USER render
 ENV HOME=/home/render
-RUN python -m camoufox fetch
+RUN setpriv --reuid=1000 --regid=1000 --init-groups python -m camoufox fetch
 
 EXPOSE 8000
 
 # Generous start-period: the first request still pays browser spin-up, but the
 # browser is already baked, so liveness comes up quickly.
 HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=60s \
-    CMD curl -fsS http://localhost:8000/health/live || exit 1
+    CMD setpriv --reuid=1001 --regid=1001 --clear-groups --inh-caps=-all --bounding-set=-all --no-new-privs curl -fsS http://localhost:8000/health/live || exit 1
 
 # entrypoint.sh starts Xvfb then exec's uvicorn (one worker -> one browser context
 # at a time, bounded memory). See the script for why xvfb-run is not used here.

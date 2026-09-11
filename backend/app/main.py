@@ -18,9 +18,11 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.api import errors as error_handlers
 from app.api.access_log import AccessLogMiddleware
+from app.api.body_limit import UploadBodyLimitMiddleware
 from app.api.errors import envelope
 from app.api.health import router as health_router
 from app.api.media import router as media_router
+from app.api.openapi import schema_for
 from app.api.rss import router as rss_router
 from app.api.v1.auth import _LOGIN_LIMITER
 from app.api.v1.router import router as v1_router
@@ -51,6 +53,7 @@ def create_app() -> FastAPI:
     )
     _attach_session_middleware(app, settings)
     _attach_rate_limiter(app)
+    app.add_middleware(UploadBodyLimitMiddleware, settings=settings)
     # Always on, added last so it wraps the others: request_id is set + the timer
     # starts before any inner middleware/handler runs.
     app.add_middleware(AccessLogMiddleware)
@@ -60,6 +63,11 @@ def create_app() -> FastAPI:
     app.include_router(media_router)
     error_handlers.register(app)
     _mount_static_ui(app)
+
+    def _openapi() -> dict:
+        return schema_for(app)
+
+    app.openapi = _openapi
     return app
 
 

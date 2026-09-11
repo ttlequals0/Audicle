@@ -60,7 +60,7 @@ def test_live_homograph_rows_present() -> None:
     assert entries["live (adjective)"].replacement_text == "lyve"
 
 
-# --- format_reference() / load_reference() ---------------------------------
+# --- format_reference() ----------------------------------------------------
 
 
 def test_format_reference_includes_every_category_with_notes() -> None:
@@ -90,15 +90,6 @@ def test_format_reference_layers_user_dict_over_seed() -> None:
 def test_format_reference_skips_blank_rows() -> None:
     entries = [SeedEntry("Homograph", "", "x", ""), SeedEntry("Homograph", "y", "", "")]
     assert seed_corrections.format_reference(entries) == ""
-
-
-def test_load_reference_from_bundled_csv() -> None:
-    block = seed_corrections.load_reference()
-    assert block  # the shipped CSV has rows
-    # A known homograph carries its context annotation through to the reference.
-    assert "read (present) -> reed" in block
-    # A real-word swap is shown to the LLM.
-    assert "SQL -> sequel" in block
 
 
 # --- load_seed() error handling --------------------------------------------

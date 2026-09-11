@@ -1,0 +1,46 @@
+# Owner: Audicle maintainers. Recheck: 2026-10-10.
+# Debian 13 has no fixed package versions. The affected mount/nsenter/login tools
+# are not invoked by the proxy, which runs as a nonroot UID with no capabilities.
+CVE-2026-76642
+CVE-2026-78408
+CVE-2026-78409
+CVE-2026-78410
+
+# Owner: Audicle maintainers. Recheck: 2026-10-10.
+# Debian 13 has no fixed package version. The proxy does not run systemd or
+# systemd-homed; libsystemd is present as an operating-system dependency.
+CVE-2026-16742
+
+# Owner: Audicle maintainers. Recheck: 2026-10-10.
+# Debian 13 has no fixed package version. Tinyproxy does not decompress LZH data
+# or call gzip; the package is inherited from the base image.
+CVE-2026-41992
+
+# Owner: Audicle maintainers. Recheck: 2026-10-10.
+# Debian 13 has no fixed package version. Tinyproxy does not read or write ACLs,
+# and the container has no capabilities or writable host mounts.
+CVE-2026-54369
+
+# Owner: Audicle maintainers. Recheck: 2026-10-10.
+# Debian 13 has no fixed package versions. Tinyproxy does not open SQLite
+# databases or expose FTS5 queries.
+CVE-2026-11822
+CVE-2026-11824
+
+# Owner: Audicle maintainers. Recheck: 2026-10-10.
+# Debian 13 has no fixed package version. The proxy does not accept terminal
+# descriptions or invoke ncurses tools.
+CVE-2025-69720
+
+# Owner: Audicle maintainers. Recheck: 2026-10-10.
+# Debian 13 has no fixed package versions. Tinyproxy does not invoke Perl,
+# compile caller-supplied expressions, deserialize Storable data, or extract
+# archives. The process runs as a nonroot UID with no capabilities.
+CVE-2026-13221
+CVE-2026-42496
+CVE-2026-42497
+CVE-2026-48962
+CVE-2026-57432
+CVE-2026-57433
+CVE-2026-8376
+CVE-2026-9538

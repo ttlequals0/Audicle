@@ -10,6 +10,7 @@ so the diff stays meaningful) and never decides quality itself.
 from __future__ import annotations
 
 import io
+import gc
 import logging
 import threading
 
@@ -39,6 +40,13 @@ class WhisperVerifier:
         download/init does not land inside the first /generate request)."""
 
         self._ensure_model()
+
+    def unload(self) -> None:
+        with self._load_lock:
+            model = self._model
+            self._model = None
+        del model
+        gc.collect()
 
     def _ensure_model(self):
         if self._model is None:

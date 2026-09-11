@@ -96,7 +96,9 @@ def test_raw_github_url_rewrites_blob_to_raw() -> None:
     assert feed._raw_github_url("https://example.com/cover.png") == "https://example.com/cover.png"
 
 
-def test_channel_artwork_rewrites_github_blob_url(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_channel_artwork_rewrites_github_blob_url(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # A pasted GitHub blob page URL (HTML) is rewritten to the raw image URL so
     # the cover actually resolves in podcast apps.
     monkeypatch.setenv(
@@ -327,7 +329,7 @@ def test_item_artwork_links_per_episode_jpg_when_present(env: Path) -> None:
     root = DET.fromstring(body)
     image = root.find(f"channel/item/{{{_ITUNES_NS}}}image")
     # Extension-clean (no ?v=): Apple/podcast apps require the URL to end in .jpg.
-    assert image.get("href").endswith(f"/media/{ep.id}.jpg")
+    assert image.get("href").endswith(f"/media/{ep.id}-v1779991200.jpg")
 
 
 def test_media_cache_buster_tracks_updated_at(env: Path, tmp_path: Path) -> None:
@@ -363,9 +365,9 @@ def test_media_cache_buster_tracks_updated_at(env: Path, tmp_path: Path) -> None
     enc1, img1, vtt1 = _urls("2026-05-28T18:00:00Z")
     enc2, img2, vtt2 = _urls("2026-05-28T19:30:00Z")
     assert "?v=" in enc1 and "?v=" in vtt1
-    assert "?v=" not in img1 and img1.endswith("/media/abc.jpg")
+    assert "?v=" not in img1 and img1.endswith("/media/abc-v1779991200.jpg")
     assert enc1 != enc2 and vtt1 != vtt2  # audio/transcript bust on reprocess
-    assert img1 == img2  # artwork URL stable + extension-clean
+    assert img1 != img2  # artwork version stays extension-clean
 
 
 def test_channel_cover_is_extension_clean(env: Path) -> None:

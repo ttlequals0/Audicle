@@ -20,7 +20,8 @@ import signal
 import tempfile
 import time
 import wave
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,7 @@ logger = logging.getLogger("tts.main")
 
 # The knob subset of GenerateRequest, forwarded to GenerationParams verbatim.
 _KNOB_FIELDS = frozenset(GenerationParams.__dataclass_fields__)
+
 
 # Wrapper's own version, surfaced in /health so the main app's
 # /health/ready can aggregate it into components.tts_wrapper.version. The repo
@@ -152,6 +154,15 @@ class GenerateResponse(BaseModel):
     rss_mb: int | None = None
 
 
+class TranscribeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    wav_path: str = Field(min_length=1, max_length=4096)
+
+
+class TranscribeResponse(BaseModel):
+    transcript: str | None
+
+
 class HealthResponse(BaseModel):
     ok: bool
     model_loaded: bool
@@ -240,6 +251,86 @@ def create_app(
             cfg.whisper_model, cfg.whisper_device, cfg.whisper_compute_type
         )
 
+    async def wait_for_gpu(app: FastAPI) -> None:
+        task = app.state.active_gpu_task
+        if task is None or task.done():
+            return
+        try:
+            await asyncio.shield(task)
+        except Exception:
+            pass
+
+    async def gpu_await(app: FastAPI, operation: Any) -> Any:
+        await wait_for_gpu(app)
+        task = asyncio.create_task(operation())
+        app.state.active_gpu_task = task
+
+        def finished(done: asyncio.Task) -> None:
+            if app.state.active_gpu_task is done:
+                app.state.active_gpu_task = None
+            app.state.last_gpu_use = time.monotonic()
+            if not done.cancelled():
+                done.exception()
+
+        task.add_done_callback(finished)
+        return await asyncio.shield(task)
+
+    async def gpu_thread(app: FastAPI, call: Any) -> Any:
+        return await gpu_await(app, lambda: asyncio.to_thread(call))
+
+    async def ensure_verifier_loaded(app: FastAPI) -> None:
+        if chosen_verifier is not None and not chosen_verifier.loaded:
+            try:
+                await gpu_thread(app, chosen_verifier.load)
+            except Exception:
+                logger.exception("Whisper load failed", extra={"event": "whisper_load_failed"})
+
+    async def ensure_loaded(app: FastAPI, *, load_verifier: bool = False) -> Engine:
+        current: Engine = app.state.engine
+        if not current.model_loaded:
+            app.state.intentionally_idle = False
+            await gpu_thread(app, current.load)
+        if load_verifier:
+            await ensure_verifier_loaded(app)
+        app.state.intentionally_idle = False
+        app.state.last_gpu_use = time.monotonic()
+        return current
+
+    async def idle_unload(app: FastAPI) -> None:
+        interval = max(1.0, min(30.0, cfg.idle_unload_seconds / 2))
+        while True:
+            await asyncio.sleep(interval)
+            if cfg.idle_unload_seconds == 0:
+                continue
+            if app.state.intentionally_idle:
+                continue
+            if time.monotonic() - app.state.last_gpu_use < cfg.idle_unload_seconds:
+                continue
+            active = app.state.active_gpu_task
+            if active is not None and not active.done():
+                continue
+            async with app.state.lock:
+                if time.monotonic() - app.state.last_gpu_use < cfg.idle_unload_seconds:
+                    continue
+                active = app.state.active_gpu_task
+                if active is not None and not active.done():
+                    continue
+                current: Engine = app.state.engine
+                unload = getattr(current, "unload", None)
+                did_unload = callable(unload) and current.model_loaded
+                try:
+                    if did_unload:
+                        await gpu_thread(app, unload)
+                    if chosen_verifier is not None:
+                        await gpu_thread(app, chosen_verifier.unload)
+                except Exception:
+                    logger.exception("Idle model unload failed", extra={"event": "gpu_idle_unload_failed"})
+                    app.state.last_gpu_use = time.monotonic()
+                    continue
+                if did_unload:
+                    app.state.intentionally_idle = True
+                    logger.info("Models unloaded after idle timeout", extra={"event": "gpu_idle_unload"})
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         try:
@@ -264,7 +355,12 @@ def create_app(
                 logger.info("Whisper model loaded", extra={"event": "whisper_ready"})
             except Exception:
                 logger.exception("Whisper load failed", extra={"event": "whisper_load_failed"})
+        unload_task = asyncio.create_task(idle_unload(app)) if cfg.idle_unload_seconds > 0 else None
         yield
+        if unload_task is not None:
+            unload_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await unload_task
         logger.info("TTS wrapper shutting down")
 
     app = FastAPI(
@@ -278,6 +374,9 @@ def create_app(
     # app.state.lock is no longer split between module init and lifespan.
     app.state.lock = asyncio.Lock()
     app.state.data_dir = chosen_data_dir
+    app.state.last_gpu_use = time.monotonic()
+    app.state.intentionally_idle = False
+    app.state.active_gpu_task = None
 
     def get_engine(request: Request) -> Engine:
         return request.app.state.engine
@@ -293,16 +392,23 @@ def create_app(
         # depends_on gates on this) and the operator could never reach the UI
         # to upload a voice. /health (readiness) stays 503 until a voice loads.
         model_loaded = bool(engine.model_loaded)
+        ok = model_loaded or bool(getattr(app.state, "intentionally_idle", False))
         return JSONResponse(
-            status_code=200 if model_loaded else 503,
-            content={"ok": model_loaded, "model_loaded": model_loaded},
+            status_code=200 if ok else 503,
+            content={"ok": ok, "model_loaded": model_loaded},
         )
 
     @app.get("/health")
     async def health(engine: Engine = Depends(get_engine)) -> JSONResponse:
         model_loaded = bool(engine.model_loaded)
         reference_loaded = bool(engine.reference_loaded)
-        ok = model_loaded and reference_loaded
+        intentionally_idle = bool(getattr(app.state, "intentionally_idle", False))
+        idle_reference_available = any(
+            cfg.slot_path(slot).exists() for slot in range(1, NUM_SLOTS + 1)
+        )
+        ok = (model_loaded and reference_loaded) or (
+            intentionally_idle and idle_reference_available
+        )
         current_rss = rss_mb()
         body: dict[str, Any] = {
             "ok": ok,
@@ -362,14 +468,8 @@ def create_app(
         body: GenerateRequest,
         request: Request,
         background_tasks: BackgroundTasks,
-        engine: Engine = Depends(get_engine),
         lock: asyncio.Lock = Depends(get_lock),
     ) -> GenerateResponse:
-        if not engine.reference_loaded:
-            raise HTTPException(
-                status_code=503,
-                detail="no reference voice loaded; upload one via the UI first",
-            )
         logger.info(
             "Generate request received",
             extra={
@@ -387,7 +487,12 @@ def create_app(
             # Re-resolve under the lock: a /select-model that won the lock first
             # may have unloaded and replaced the engine this request captured at
             # dispatch time.
-            engine = request.app.state.engine
+            engine = await ensure_loaded(request.app, load_verifier=body.verify)
+            if not engine.reference_loaded:
+                raise HTTPException(
+                    status_code=503,
+                    detail="no reference voice loaded; upload one via the UI first",
+                )
             if body.language is not None and body.language not in engine.languages:
                 raise HTTPException(
                     status_code=422,
@@ -403,7 +508,9 @@ def create_app(
                 # inference below. select_voice no-ops when the slot is already
                 # active, so per-chunk cost is a comparison.
                 try:
-                    await engine.select_voice(cfg.slot_path(body.slot))
+                    await gpu_await(
+                        request.app, lambda: engine.select_voice(cfg.slot_path(body.slot))
+                    )
                 except FileNotFoundError as exc:
                     raise HTTPException(
                         status_code=404, detail=f"voice slot {body.slot} is empty"
@@ -420,10 +527,12 @@ def create_app(
                     raise HTTPException(
                         status_code=500, detail=f"select-voice failed: {exc}"
                     ) from exc
+                finally:
+                    request.app.state.last_gpu_use = time.monotonic()
             inference_started = time.perf_counter()
             try:
                 wav_bytes = await asyncio.wait_for(
-                    engine.synthesize(body.text, params),
+                    gpu_await(request.app, lambda: engine.synthesize(body.text, params)),
                     timeout=_REQUEST_INFERENCE_TIMEOUT_SECONDS,
                 )
             except TimeoutError as exc:
@@ -467,9 +576,9 @@ def create_app(
                         "chunk_index": body.chunk_index,
                     },
                 )
-                raise HTTPException(
-                    status_code=503, detail={"error": "inference busy"}
-                ) from exc
+                raise HTTPException(status_code=503, detail={"error": "inference busy"}) from exc
+            finally:
+                request.app.state.last_gpu_use = time.monotonic()
 
             # Measure synthesis latency before the optional ASR step so
             # tts_chunk_done.inference_ms stays pure synth time.
@@ -485,7 +594,10 @@ def create_app(
                 verify_started = time.perf_counter()
                 try:
                     transcript = await asyncio.wait_for(
-                        asyncio.to_thread(chosen_verifier.transcribe, wav_bytes, cfg.language),
+                        gpu_thread(
+                            request.app,
+                            partial(chosen_verifier.transcribe, wav_bytes, cfg.language),
+                        ),
                         timeout=_REQUEST_INFERENCE_TIMEOUT_SECONDS,
                     )
                 except Exception as exc:
@@ -503,6 +615,7 @@ def create_app(
                     # Measured even on failure: the ASR call still spent this
                     # time before raising.
                     verify_ms = int((time.perf_counter() - verify_started) * 1000)
+            request.app.state.last_gpu_use = time.monotonic()
 
         out_dir = chosen_data_dir / "media"
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -577,6 +690,43 @@ def create_app(
             rss_mb=rss_mb(),
         )
 
+    @app.post("/transcribe", response_model=TranscribeResponse)
+    async def transcribe_existing(
+        body: TranscribeRequest,
+        request: Request,
+        lock: asyncio.Lock = Depends(get_lock),
+    ) -> TranscribeResponse:
+        media_root = os.path.realpath(chosen_data_dir / "media")
+        wav_real = os.path.realpath(body.wav_path)
+        if not wav_real.startswith(media_root + os.sep):
+            raise HTTPException(status_code=400, detail="wav_path escapes media directory")
+        try:
+            wav_bytes = await asyncio.to_thread(Path(wav_real).read_bytes)
+        except OSError as exc:
+            raise HTTPException(status_code=404, detail="wav_path is not readable") from exc
+        async with lock:
+            if chosen_verifier is None:
+                raise HTTPException(status_code=503, detail="Whisper verification is disabled")
+            await ensure_verifier_loaded(request.app)
+            if not chosen_verifier.loaded:
+                raise HTTPException(status_code=503, detail="Whisper verification is unavailable")
+            try:
+                transcript = await asyncio.wait_for(
+                    gpu_thread(
+                        request.app,
+                        partial(chosen_verifier.transcribe, wav_bytes, cfg.language),
+                    ),
+                    timeout=_REQUEST_INFERENCE_TIMEOUT_SECONDS,
+                )
+            except TimeoutError as exc:
+                raise HTTPException(status_code=504, detail="Whisper verification timed out") from exc
+            except InferenceBusyError as exc:
+                raise HTTPException(status_code=503, detail={"error": "inference busy"}) from exc
+            except Exception as exc:
+                logger.exception("Whisper verification failed", extra={"event": "whisper_verify_error"})
+                raise HTTPException(status_code=500, detail="Whisper verification failed") from exc
+        return TranscribeResponse(transcript=transcript)
+
     @app.post("/reload")
     async def reload(
         request: Request,
@@ -585,21 +735,21 @@ def create_app(
         async with lock:
             # Re-resolve under the lock: /select-model may have swapped the
             # engine after this request was dispatched.
-            engine = request.app.state.engine
+            engine = await ensure_loaded(request.app)
             try:
-                await engine.reload_reference()
+                await gpu_await(request.app, engine.reload_reference)
             except FileNotFoundError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
             except InferenceBusyError as exc:
                 # An inference (likely an orphaned post-timeout thread) still
                 # holds the GPU; recomputing embeddings now would run concurrent
                 # GPU work. 503 so the caller retries once the GPU frees.
-                raise HTTPException(
-                    status_code=503, detail={"error": "inference busy"}
-                ) from exc
+                raise HTTPException(status_code=503, detail={"error": "inference busy"}) from exc
             except Exception as exc:
                 logger.exception("reload failed", extra={"event": "tts_reload_failed"})
                 raise HTTPException(status_code=500, detail=f"reload failed: {exc}") from exc
+            finally:
+                request.app.state.last_gpu_use = time.monotonic()
         # { ok: true }.
         return {"ok": True}
 
@@ -613,10 +763,11 @@ def create_app(
                 languages = tuple(getattr(engine, "languages", languages))
             listed.append({"name": name, "languages": sorted(languages)})
         if active is not None and active not in registry_languages:
-            listed.append(
-                {"name": active, "languages": sorted(getattr(engine, "languages", ()))}
-            )
-        return {"active": active, "models": listed}
+            listed.append({"name": active, "languages": sorted(getattr(engine, "languages", ()))})
+        return {
+            "active": active,
+            "models": sorted(listed, key=lambda item: item["name"].casefold()),
+        }
 
     @app.post("/select-model")
     async def select_model(
@@ -625,8 +776,11 @@ def create_app(
         lock: asyncio.Lock = Depends(get_lock),
     ) -> dict[str, Any]:
         async with lock:
+            await wait_for_gpu(request.app)
             current: Engine = request.app.state.engine
+            request.app.state.last_gpu_use = time.monotonic()
             if getattr(current, "name", None) == body.model:
+                await ensure_loaded(request.app)
                 return {"ok": True, "model": body.model}
             factory = registry.get(body.model)
             if factory is None:
@@ -653,24 +807,22 @@ def create_app(
                     ) from exc
             new_engine = factory()
             try:
-                await asyncio.to_thread(new_engine.load)
+                await gpu_thread(request.app, new_engine.load)
             except Exception as exc:
-                logger.exception(
-                    "Model switch failed", extra={"event": "tts_model_switch_failed"}
-                )
+                logger.exception("Model switch failed", extra={"event": "tts_model_switch_failed"})
                 # Rollback so the wrapper isn't left with a dead engine; if
                 # this also fails, /health 503s and the healthcheck catches it.
                 try:
-                    await asyncio.to_thread(current.load)
+                    await gpu_thread(request.app, current.load)
                 except Exception:
                     logger.exception(
                         "Rollback reload of the previous model failed",
                         extra={"event": "tts_model_rollback_failed"},
                     )
-                raise HTTPException(
-                    status_code=500, detail=f"model load failed: {exc}"
-                ) from exc
+                raise HTTPException(status_code=500, detail=f"model load failed: {exc}") from exc
             request.app.state.engine = new_engine
+            request.app.state.last_gpu_use = time.monotonic()
+            request.app.state.intentionally_idle = False
         return {"ok": True, "model": body.model}
 
     @app.post("/select-voice")
@@ -684,9 +836,9 @@ def create_app(
         async with lock:
             # Re-resolve under the lock: /select-model may have swapped the
             # engine after this request was dispatched.
-            engine = request.app.state.engine
+            engine = await ensure_loaded(request.app)
             try:
-                await engine.select_voice(ref_path)
+                await gpu_await(request.app, lambda: engine.select_voice(ref_path))
             except FileNotFoundError as exc:
                 raise HTTPException(
                     status_code=404, detail=f"voice slot {body.slot} is empty"
@@ -694,12 +846,10 @@ def create_app(
             except InferenceBusyError as exc:
                 raise HTTPException(status_code=503, detail={"error": "inference busy"}) from exc
             except Exception as exc:
-                logger.exception(
-                    "select-voice failed", extra={"event": "tts_select_voice_failed"}
-                )
-                raise HTTPException(
-                    status_code=500, detail=f"select-voice failed: {exc}"
-                ) from exc
+                logger.exception("select-voice failed", extra={"event": "tts_select_voice_failed"})
+                raise HTTPException(status_code=500, detail=f"select-voice failed: {exc}") from exc
+            finally:
+                request.app.state.last_gpu_use = time.monotonic()
         return {"ok": True, "slot": body.slot}
 
     return app

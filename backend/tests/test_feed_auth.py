@@ -37,6 +37,7 @@ def _enable(env: Path, *, key: str = _KEY) -> None:
 
 def _seed_episode(env: Path) -> Path:
     database.run_migrations(env)
+    media = media_dir(get_settings())
     conn = database.connect(database.db_path(env))
     try:
         episodes.upsert(
@@ -46,8 +47,8 @@ def _seed_episode(env: Path) -> Path:
             original_url="https://example.test/a",
             title="An Article",
             author="Author",
-            audio_path="/data/media/ep.mp3",
-            artwork_path="/data/media/ep.jpg",
+            audio_path=str(media / "ep.mp3"),
+            artwork_path=str(media / "ep.jpg"),
             transcript_vtt="WEBVTT\n\n1\n00:00:00.000 --> 00:00:01.000\nhi\n",
             duration_secs=10,
         )
@@ -55,11 +56,20 @@ def _seed_episode(env: Path) -> Path:
         conn.commit()
     finally:
         conn.close()
-    media = media_dir(get_settings())
     media.mkdir(parents=True, exist_ok=True)
     (media / "ep.mp3").write_bytes(b"ID3fake")
     (media / "ep.jpg").write_bytes(b"\xff\xd8\xff")
     return media
+
+
+def _generation_token(env: Path) -> str:
+    conn = database.connect(database.db_path(env))
+    try:
+        episode = episodes.get_by_id(conn, "ep")
+    finally:
+        conn.close()
+    assert episode is not None and episode.generation_token
+    return episode.generation_token
 
 
 # --- pure helpers ----------------------------------------------------------
@@ -82,6 +92,13 @@ def test_split_cover_token() -> None:
     assert feed_auth.split_cover_token("ep") == ("ep", None)
     assert feed_auth.split_cover_token("ep-notakey") == ("ep-notakey", None)
     assert feed_auth.split_cover_token(None) == (None, None)
+
+
+def test_split_cover_generation() -> None:
+    token = "c" * 32
+    assert feed_auth.split_cover_generation(f"ep-v{token}") == ("ep", token)
+    assert feed_auth.split_cover_generation("ep-v1779991200") == ("ep", "1779991200")
+    assert feed_auth.split_cover_generation("ep-vinvalid") == ("ep-vinvalid", None)
 
 
 def test_active_key_gates_on_enabled() -> None:
@@ -118,7 +135,9 @@ def test_authenticated_admin_reads_media_without_key(env: Path) -> None:
         conn.close()
     with _client(env) as client:
         assert client.get("/media/ep.vtt").status_code == 401  # no session, no key
-        assert client.post("/api/v1/auth/login", json={"password": "s3cret-pass"}).status_code == 200
+        assert (
+            client.post("/api/v1/auth/login", json={"password": "s3cret-pass"}).status_code == 200
+        )
         # Same keyless requests now succeed via the session cookie.
         assert client.get("/media/ep.mp3").status_code == 200
         assert client.get("/media/ep.jpg").status_code == 200
@@ -156,6 +175,7 @@ def test_enabled_feed_accepts_correct_key(env: Path) -> None:
 
 def test_rendered_urls_carry_the_key(env: Path) -> None:
     _seed_episode(env)
+    token = _generation_token(env)
     _enable(env)
     with _client(env) as client:
         body = client.get(f"/rss/test_feed.xml?key={_KEY}").content
@@ -167,19 +187,20 @@ def test_rendered_urls_carry_the_key(env: Path) -> None:
     assert f"key={_KEY}" in transcript
     # Cover: key in the path token, and no query string at all.
     image = item.find("{http://www.itunes.com/dtds/podcast-1.0.dtd}image").get("href")
-    assert image.endswith(f"/media/ep-{_KEY}.jpg")
+    assert image.endswith(f"/media/ep-v{token}-{_KEY}.jpg")
     assert "?" not in image
 
 
 def test_rendered_urls_keyless_when_disabled(env: Path) -> None:
     _seed_episode(env)
+    token = _generation_token(env)
     with _client(env) as client:
         body = client.get("/rss/test_feed.xml").content
     root = DET.fromstring(body)
     item = root.find("channel/item")
     assert "key=" not in item.find("enclosure").get("url")
     image = item.find("{http://www.itunes.com/dtds/podcast-1.0.dtd}image").get("href")
-    assert image.endswith("/media/ep.jpg")
+    assert image.endswith(f"/media/ep-v{token}.jpg")
 
 
 def test_etag_changes_when_key_state_changes(env: Path) -> None:
@@ -274,9 +295,7 @@ def test_conditional_get_still_304s_when_unchanged(env: Path) -> None:
         assert client.get("/rss/test_feed.xml", headers={"If-None-Match": etag}).status_code == 304
         # No ETag sent -> fall back to If-Modified-Since -> 304.
         assert (
-            client.get(
-                "/rss/test_feed.xml", headers={"If-Modified-Since": last_mod}
-            ).status_code
+            client.get("/rss/test_feed.xml", headers={"If-Modified-Since": last_mod}).status_code
             == 304
         )
 

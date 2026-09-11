@@ -7,7 +7,7 @@ volume.
 
 ## License notes
 
-- **Code**: Audicle ships this wrapper under MPL 2.0.
+- **Code**: Audicle ships this wrapper under MIT, matching the root application.
 - **Model weights**: Chatterbox is MIT-licensed. The wrapper downloads the
   weights from Hugging Face on first run; Audicle does not redistribute them.
 - **Watermark**: every output carries Resemble's inaudible PerTh watermark.
@@ -48,6 +48,9 @@ docker build -t audicle-tts:dev -f tts-wrapper/Dockerfile tts-wrapper/
 ```
 
 Then pin that tag in `docker-compose.yml` and `docker compose up tts-wrapper`.
+The GPU image uses CUDA 12.6 wheels. The host driver must expose CUDA 12.6 or
+newer, or the container refuses to start. Use the CPU image when that requirement
+cannot be met.
 
 CPU-only hosts (5-10x slower):
 

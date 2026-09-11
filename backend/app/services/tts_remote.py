@@ -28,6 +28,7 @@ import httpx
 
 from app.config import Settings
 from app.core.paths import media_dir
+from app.services import audio as audio_service
 from app.services import ssrf
 from app.services.atomic_write import write_bytes_atomic
 
@@ -80,9 +81,8 @@ async def synthesize(
 ) -> tuple[Path, bytes]:
     """POST to an OpenAI-compatible ``/v1/audio/speech`` and store the audio.
 
-    Returns the written path and the raw bytes (the caller needs the bytes for
-    duration and for a remote ASR call, and re-reading the file to get them back
-    would be wasteful).
+    Returns the written path and normalized PCM bytes. Provider audio is decoded
+    by ffmpeg before the pipeline or ASR can pass it to an audio library.
 
     Errors are raised as the same typed exceptions the wrapper client uses, so
     the pipeline's retry classification applies unchanged to this backend.
@@ -130,9 +130,17 @@ async def synthesize(
             f"remote TTS rejected request ({response.status_code}): {response.text[:200]}"
         )
 
-    audio = response.content
-    if not audio:
+    provider_audio = response.content
+    if not provider_audio:
         raise TTSProviderError("remote TTS returned an empty body")
+    try:
+        audio = await audio_service.decode_to_pcm_wav(provider_audio)
+    except TimeoutError as exc:
+        raise TTSTimeoutError("remote TTS audio normalization timed out") from exc
+    except OSError as exc:
+        raise TTSProviderError("remote TTS audio normalization failed") from exc
+    except audio_service.FfmpegError as exc:
+        raise TTSRequestError("remote TTS returned invalid audio") from exc
 
     out_dir = media_dir(settings)
     out_dir.mkdir(parents=True, exist_ok=True)

@@ -81,14 +81,8 @@ async def resolve_public_host(host: str) -> str:
             ip = ipaddress.ip_address(addr)
         except ValueError:
             raise BlockedHostError(host, f"invalid_ip_{addr}") from None
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_multicast
-            or ip.is_reserved
-            or ip.is_unspecified
-        ):
+        classified = getattr(ip, "ipv4_mapped", None) or ip
+        if not classified.is_global or classified.is_multicast:
             raise BlockedHostError(host, f"non_public_address_{ip}")
         if public_ip is None:
             public_ip = str(ip)
@@ -123,4 +117,7 @@ async def assert_url_public(url: str) -> None:
     address. Used before handing a caller-supplied URL to an out-of-process
     fetcher (Firecrawl, FlareSolverr) where the app can't pin the connection."""
 
-    await resolve_public_host(urlsplit(url).hostname or "")
+    parts = urlsplit(url)
+    if parts.scheme.lower() not in {"http", "https"}:
+        raise BlockedHostError(parts.hostname or "", "unsupported_scheme")
+    await resolve_public_host(parts.hostname or "")

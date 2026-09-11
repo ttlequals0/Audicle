@@ -9,10 +9,13 @@ the DB row + on-disk media via the existing retention helpers.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
+import shutil
 import sqlite3
+import uuid
 from pathlib import Path
 from typing import Annotated
 
@@ -21,9 +24,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import get_conn
 from app.config import Settings, get_settings
-from app.core.paths import media_dir
+from app.core.paths import file_size_or_zero, media_dir
 from app.services import episodes as episodes_service
-from app.services import pipeline, runtime_settings, transcript
+from app.services import feed_revision, pipeline, runtime_settings, transcript
 from app.services.retention import _remove_path
 
 logger = logging.getLogger("app.api.episodes")
@@ -77,9 +80,7 @@ async def list_episodes(
     page_rows = episodes_service.list_published_page(
         conn, limit=per_page, offset=(page - 1) * per_page, q=q
     )
-    with_text = episodes_service.ids_with_cleaned_text(
-        conn, [ep.id for ep in page_rows]
-    )
+    with_text = episodes_service.ids_with_cleaned_text(conn, [ep.id for ep in page_rows])
     response.headers["X-Total-Count"] = str(total)
     return [
         EpisodeListItem(
@@ -154,16 +155,43 @@ async def regenerate_chapters(
     # Resolve the MP3 the same way the media route serves it, rather than
     # trusting the stored path. None when retention already pruned the audio;
     # the feed JSON still updates.
-    mp3_path: Path | None = media_dir(settings) / f"{episode_id}.mp3"
-    if not mp3_path.is_file():
-        mp3_path = None
-    document = await pipeline.generate_chapters_document(cues, duration, mp3_path, settings)
-    if document is None:
-        raise HTTPException(
-            status_code=422,
-            detail="chapter generation produced no chapters; existing chapters kept",
+    current = episodes_service.generation(conn, episode_id, episode.generation_token)
+    current_mp3 = Path(current["audio_path"]) if current and current["audio_path"] else None
+    token = uuid.uuid4().hex
+    staged_mp3 = media_dir(settings) / f"{episode_id}.{token}.mp3"
+    committed = False
+    try:
+        if current_mp3 is not None and current_mp3.is_file():
+            staged_mp3.parent.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(shutil.copy2, current_mp3, staged_mp3)
+            mp3_path: Path | None = staged_mp3
+        else:
+            mp3_path = None
+        document = await pipeline.generate_chapters_document(cues, duration, mp3_path, settings)
+        if document is None:
+            raise HTTPException(
+                status_code=422,
+                detail="chapter generation produced no chapters; existing chapters kept",
+            )
+        values: dict[str, object] = {"chapters_json": document}
+        if mp3_path is not None:
+            values["audio_path"] = str(mp3_path)
+            values["audio_size_bytes"] = file_size_or_zero(str(mp3_path))
+        episodes_service.publish_generation(
+            conn,
+            episode_id,
+            episode.generation_token,
+            values,
+            token=token,
         )
-    episodes_service.set_chapters(conn, episode_id, document)
+        committed = True
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=409, detail="episode changed during chapter regeneration"
+        ) from exc
+    finally:
+        if not committed:
+            staged_mp3.unlink(missing_ok=True)
     count = len(json.loads(document)["chapters"])
     logger.info(
         "Chapters regenerated",
@@ -188,15 +216,41 @@ async def delete_episode(
     episode = episodes_service.get_by_id(conn, episode_id)
     if episode is None:
         raise HTTPException(status_code=404, detail="episode not found")
-    conn.execute("DELETE FROM episodes WHERE id = ?", (episode_id,))
-    conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        active_job = conn.execute(
+            "SELECT 1 FROM jobs WHERE episode_id = ? "
+            "AND status IN ('staging', 'queued', 'processing') LIMIT 1",
+            (episode_id,),
+        ).fetchone()
+        if active_job is not None:
+            raise HTTPException(status_code=409, detail="episode is currently processing")
+        generations = conn.execute(
+            "SELECT audio_path, artwork_path FROM episode_generations WHERE episode_id = ?",
+            (episode_id,),
+        ).fetchall()
+        deleted = conn.execute(
+            "DELETE FROM episodes WHERE id = ? AND generation_token IS ?",
+            (episode_id, episode.generation_token),
+        )
+        if deleted.rowcount != 1:
+            raise HTTPException(status_code=409, detail="episode changed during deletion")
+        feed_revision.bump(conn)
+        conn.execute("COMMIT")
+    except Exception:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
     out_root = media_dir(settings)
-    from pathlib import Path
 
     files_removed = 0
     for path_str in (episode.audio_path, episode.artwork_path):
         if path_str and _remove_path(Path(path_str), root_guard=out_root):
             files_removed += 1
+    for generation in generations:
+        for path_str in (generation["audio_path"], generation["artwork_path"]):
+            if path_str and _remove_path(Path(path_str), root_guard=out_root):
+                files_removed += 1
     if _remove_path(out_root / f"{episode_id}.vtt", root_guard=out_root):
         files_removed += 1
     # An uploaded episode also has its stored original ({id}.source.{ext}).

@@ -21,13 +21,16 @@ import asyncio
 import fcntl
 import logging
 import os
-import shutil
 import sqlite3
+import stat
 import time
+import uuid
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
+
+from app.services import lexicon
 
 logger = logging.getLogger("app.core.database")
 
@@ -138,6 +141,26 @@ def lexicon_sync_lock(data_dir: Path) -> Iterator[None]:
         yield
 
 
+@contextmanager
+def upload_staging_lock(
+    data_dir: Path, episode_id: str, *, blocking: bool = True
+) -> Iterator[bool]:
+    data_dir.mkdir(parents=True, exist_ok=True)
+    fd = os.open(data_dir / f".upload-{episode_id}.lock", os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
 @asynccontextmanager
 async def reference_lock_async(data_dir: Path) -> AsyncIterator[None]:
     """Cross-process exclusive lock for the reference-voice critical section,
@@ -173,36 +196,38 @@ async def reference_lock_async(data_dir: Path) -> AsyncIterator[None]:
         os.close(fd)
 
 
-def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
-    row = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-        (name,),
-    ).fetchone()
-    return row is not None
-
-
 def _backup_db(conn: sqlite3.Connection, path: Path) -> Path | None:
-    """Copy the DB file to a timestamped backup before applying migrations.
-
-    Checkpoints the WAL via ``PRAGMA wal_checkpoint(TRUNCATE)`` first so the
-    main file is self-contained at the moment we copy it; the -wal and -shm
-    sidecars don't need to be included in the backup.
-
-    Returns the backup path, or None if the source DB doesn't exist yet.
-    """
+    """Write a verified, consistent SQLite snapshot before migrations."""
 
     if not path.exists():
         return None
-    try:
-        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-    except sqlite3.OperationalError as exc:
-        logger.warning(
-            "WAL checkpoint before backup failed; copy may miss un-checkpointed pages",
-            extra={"event": "backup_checkpoint_failed", "error": str(exc)},
-        )
     stamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
     dest = path.with_name(f"{BACKUP_PREFIX}{stamp}")
-    shutil.copy2(path, dest)
+    suffix = 1
+    while dest.exists():
+        dest = path.with_name(f"{BACKUP_PREFIX}{stamp}-{suffix}")
+        suffix += 1
+    temporary = path.with_name(f".{dest.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        os.close(fd)
+        backup_conn = sqlite3.connect(temporary)
+        try:
+            conn.backup(backup_conn)
+            backup_conn.execute("PRAGMA journal_mode=DELETE")
+            result = backup_conn.execute("PRAGMA integrity_check").fetchone()
+        finally:
+            backup_conn.close()
+        if result is None or result[0] != "ok":
+            raise sqlite3.DatabaseError("backup integrity check failed")
+        os.chmod(temporary, stat.S_IMODE(path.stat().st_mode))
+        os.replace(temporary, dest)
+    except Exception:
+        for artifact in (temporary, Path(f"{temporary}-wal"), Path(f"{temporary}-shm")):
+            with suppress(OSError):
+                artifact.unlink()
+        logger.exception("DB backup failed before migrations", extra={"event": "db_backup_failed"})
+        raise
     logger.info(
         "DB backup written before migrations",
         extra={"event": "db_backup", "path": str(dest)},
@@ -520,9 +545,7 @@ def _m015_upload_max_mb(conn: sqlite3.Connection) -> None:
     ).fetchone()
     if old is None:
         return
-    has_new = conn.execute(
-        "SELECT 1 FROM runtime_settings WHERE key = 'UPLOAD_MAX_MB'"
-    ).fetchone()
+    has_new = conn.execute("SELECT 1 FROM runtime_settings WHERE key = 'UPLOAD_MAX_MB'").fetchone()
     if has_new is None:
         try:
             mb = max(1, int(json.loads(old["value"])) // (1024 * 1024))
@@ -649,6 +672,79 @@ def _m026_lexicon_input_text_index(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_lexicon_input_text ON lexicon(input_text)")
 
 
+def _m027_episode_generations(conn: sqlite3.Connection) -> None:
+    conn.execute("ALTER TABLE episodes ADD COLUMN generation_token TEXT")
+    conn.execute(
+        """CREATE TABLE episode_generations (
+        episode_id TEXT NOT NULL, token TEXT NOT NULL, audio_path TEXT, artwork_path TEXT,
+        transcript_vtt TEXT, chapters_json TEXT, cleaned_text TEXT, audio_size_bytes INTEGER,
+        duration_secs INTEGER, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+        PRIMARY KEY (episode_id, token), FOREIGN KEY (episode_id) REFERENCES episodes(id) ON DELETE CASCADE)"""
+    )
+    rows = conn.execute(
+        "SELECT id, audio_path, artwork_path, transcript_vtt, chapters_json, "
+        "cleaned_text, audio_size_bytes, duration_secs, updated_at FROM episodes"
+    )
+    for row in rows:
+        token = str(
+            int(datetime.fromisoformat(row["updated_at"].replace("Z", "+00:00")).timestamp())
+        )
+        conn.execute(
+            "INSERT INTO episode_generations (episode_id, token, audio_path, artwork_path, transcript_vtt, chapters_json, cleaned_text, audio_size_bytes, duration_secs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                row["id"],
+                token,
+                row["audio_path"],
+                row["artwork_path"],
+                row["transcript_vtt"],
+                row["chapters_json"],
+                row["cleaned_text"],
+                row["audio_size_bytes"],
+                row["duration_secs"],
+            ),
+        )
+        conn.execute("UPDATE episodes SET generation_token = ? WHERE id = ?", (token, row["id"]))
+
+
+def _m028_lexicon_generations(conn: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(lexicon)")}
+    if "generation" in columns:
+        return
+    conn.execute("ALTER TABLE lexicon RENAME TO lexicon_old")
+    conn.execute("DROP INDEX IF EXISTS idx_lexicon_fold")
+    conn.execute("DROP INDEX IF EXISTS idx_lexicon_input_text")
+    lexicon.create_schema(conn)
+    conn.execute(
+        "INSERT INTO lexicon (origin, generation, input_text, input_fold, mode, spoken, "
+        "case_sensitive, confidence, source, notes, read_only) "
+        "SELECT origin, 0, input_text, input_fold, mode, spoken, case_sensitive, "
+        "confidence, source, notes, read_only FROM lexicon_old"
+    )
+    conn.execute("DROP TABLE lexicon_old")
+
+
+def _m029_feed_revision(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "CREATE TABLE feed_state (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL, "
+        "modified_at TEXT NOT NULL, settings_fingerprint TEXT NOT NULL DEFAULT '', "
+        "ims_ambiguous INTEGER NOT NULL DEFAULT 0)"
+    )
+    conn.execute(
+        "INSERT INTO feed_state(id,revision,modified_at) "
+        "VALUES(1,0,strftime('%Y-%m-%dT%H:%M:%fZ','now'))"
+    )
+
+
+def _m030_episode_audio_generation(conn: sqlite3.Connection) -> None:
+    conn.execute("ALTER TABLE episodes ADD COLUMN audio_generation_token TEXT")
+    conn.execute("ALTER TABLE episodes ADD COLUMN guid_generation_token TEXT")
+    conn.execute(
+        "UPDATE episodes SET audio_generation_token = generation_token, "
+        "guid_generation_token = generation_token "
+        "WHERE audio_path IS NOT NULL"
+    )
+
+
 def _m025_episode_chapters_json(conn: sqlite3.Connection) -> None:
     """0.51.0: Podcasting 2.0 chapters document per episode, stored like
     transcript_vtt. NULL for every pre-existing row (chapters are generated
@@ -732,6 +828,10 @@ MIGRATIONS: list[tuple[str, Migration]] = [
     ("024_reimport_seed_lexicon", _m024_reimport_seed_lexicon),
     ("025_episode_chapters_json", _m025_episode_chapters_json),
     ("026_lexicon_input_text_index", _m026_lexicon_input_text_index),
+    ("027_episode_generations", _m027_episode_generations),
+    ("028_lexicon_generations", _m028_lexicon_generations),
+    ("029_feed_revision", _m029_feed_revision),
+    ("030_episode_audio_generation", _m030_episode_audio_generation),
 ]
 
 

@@ -27,6 +27,7 @@ import logging
 import re
 import shutil
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -59,6 +60,7 @@ from app.services import (
     transcript,
     tts,
     tts_cache,
+    tts_remote,
     voices,
     webhooks,
 )
@@ -251,9 +253,7 @@ async def process_job(job: jobs.Job, settings: Settings) -> None:
         # A malformed created_at drops the field rather than break the pipeline.
         queued_at = parse_iso(job.created_at)
         if queued_at is not None:
-            start_log_extra["queue_wait_seconds"] = (
-                datetime.now(UTC) - queued_at
-            ).total_seconds()
+            start_log_extra["queue_wait_seconds"] = (datetime.now(UTC) - queued_at).total_seconds()
         logger.info("Pipeline starting", extra=start_log_extra)
         terminal_event = "episode.processed"
         try:
@@ -431,100 +431,128 @@ async def _run_stages(
     the caller can rescale the job timeout before the LLM-per-chunk normalize
     and (longest) TTS stages run."""
 
-    extraction_result = await _run_stage(
-        "extract", lambda: _stage_extract(job, settings), job.id, settings
-    )
-    cleaned = await _run_stage(
-        "cleanup",
-        lambda: _stage_cleanup(job.id, extraction_result.markdown, settings),
-        job.id,
-        settings,
-    )
-    intro = _intro_read_line(extraction_result.metadata, settings)
-    if intro:
-        cleaned = _strip_title_echo(cleaned, _coerce_str(extraction_result.metadata.get("title")))
-        cleaned = f"{intro}\n\n{cleaned}"
-    summary = await _run_stage(
-        "summary",
-        lambda: _stage_summary(cleaned, settings),
-        job.id,
-        settings,
-    )
-    chunks = await _run_stage(
-        "chunk",
-        lambda: _stage_chunk(cleaned, settings),
-        job.id,
-        settings,
-    )
-    # Rescale the job timeout now that the workload (chunk count) is known, before
-    # the per-chunk normalize and TTS stages -- the longest stages -- begin.
-    if on_chunk_count is not None:
-        on_chunk_count(len(chunks))
-    narrations = await _run_stage(
-        "normalize",
-        lambda: _stage_normalize(job, chunks, settings),
-        job.id,
-        settings,
-    )
-    chunk_results = await _run_stage(
-        "tts",
-        lambda: _stage_tts(job, narrations, settings),
-        job.id,
-        settings,
-    )
-    audio_result, chunk_durations = await _run_stage(
-        "audio",
-        lambda: _stage_audio(job, chunk_results, settings),
-        job.id,
-        settings,
-    )
-    artwork_result = await _run_stage(
-        "artwork",
-        lambda: _stage_artwork(job, extraction_result.metadata, settings),
-        job.id,
-        settings,
-    )
-    # Embed the episode cover into the MP3 so players that read only embedded art
-    # (Pocket Casts) show per-episode artwork -- they ignore the feed's itunes:image.
-    # Only for episodes with their OWN art; a None result means we fell back to feed art,
-    # which those players already display correctly, so embedding would just bloat the file.
-    if artwork_result is not None:
-        _embed_episode_cover(audio_result.mp3_path, artwork_result.embed_jpg_bytes)
-    chapters_json = await _run_stage(
-        "chapters",
-        lambda: _stage_chapters(
-            chunks,
-            chunk_durations,
-            audio_result.duration_secs,
-            audio_result.mp3_path,
+    publication_token = uuid.uuid4().hex
+    conn = database.connect(database.db_path(settings.DATA_DIR))
+    try:
+        previous = episodes.get_by_id(conn, job.episode_id)
+    finally:
+        conn.close()
+    expected_token = previous.generation_token if previous else None
+    create_episode = previous is None
+    staged_paths = [
+        media_dir(settings) / f"{job.episode_id}.{publication_token}.mp3",
+        media_dir(settings) / f"{job.episode_id}.{publication_token}.jpg",
+    ]
+    published = False
+    try:
+        extraction_result = await _run_stage(
+            "extract", lambda: _stage_extract(job, settings), job.id, settings
+        )
+        cleaned = await _run_stage(
+            "cleanup",
+            lambda: _stage_cleanup(job.id, extraction_result.markdown, settings),
+            job.id,
             settings,
-        ),
-        job.id,
-        settings,
-    )
-    vtt = await _run_stage(
-        "transcript",
-        lambda: _stage_transcript(chunks, chunk_durations, settings),
-        job.id,
-        settings,
-    )
-    await _run_stage(
-        "finalize",
-        lambda: _stage_finalize(
-            job,
-            metadata=extraction_result.metadata,
-            audio_result=audio_result,
-            artwork_result=artwork_result,
-            vtt=vtt,
-            summary=summary,
-            cleaned_text=cleaned,
-            chapters_json=chapters_json,
-            settings=settings,
-        ),
-        job.id,
-        settings,
-    )
-    _mark_done(job.id, final_stage="finalize", settings=settings)
+        )
+        intro = _intro_read_line(extraction_result.metadata, settings)
+        if intro:
+            cleaned = _strip_title_echo(
+                cleaned, _coerce_str(extraction_result.metadata.get("title"))
+            )
+            cleaned = f"{intro}\n\n{cleaned}"
+        summary = await _run_stage(
+            "summary",
+            lambda: _stage_summary(cleaned, settings),
+            job.id,
+            settings,
+        )
+        chunks = await _run_stage(
+            "chunk",
+            lambda: _stage_chunk(cleaned, settings),
+            job.id,
+            settings,
+        )
+        # Rescale the job timeout now that the workload (chunk count) is known, before
+        # the per-chunk normalize and TTS stages -- the longest stages -- begin.
+        if on_chunk_count is not None:
+            on_chunk_count(len(chunks))
+        narrations = await _run_stage(
+            "normalize",
+            lambda: _stage_normalize(job, chunks, settings),
+            job.id,
+            settings,
+        )
+        chunk_results = await _run_stage(
+            "tts",
+            lambda: _stage_tts(job, narrations, settings),
+            job.id,
+            settings,
+        )
+        audio_result, chunk_durations = await _run_stage(
+            "audio",
+            lambda: _stage_audio(job, chunk_results, publication_token, settings),
+            job.id,
+            settings,
+        )
+        artwork_result = await _run_stage(
+            "artwork",
+            lambda: _stage_artwork(job, extraction_result.metadata, publication_token, settings),
+            job.id,
+            settings,
+        )
+        # Embed the episode cover into the MP3 so players that read only embedded art
+        # (Pocket Casts) show per-episode artwork -- they ignore the feed's itunes:image.
+        # Only for episodes with their OWN art; a None result means we fell back to feed art,
+        # which those players already display correctly, so embedding would just bloat the file.
+        if artwork_result is not None:
+            _embed_episode_cover(audio_result.mp3_path, artwork_result.embed_jpg_bytes)
+        chapters_json = await _run_stage(
+            "chapters",
+            lambda: _stage_chapters(
+                chunks,
+                chunk_durations,
+                audio_result.duration_secs,
+                audio_result.mp3_path,
+                settings,
+            ),
+            job.id,
+            settings,
+        )
+        vtt = await _run_stage(
+            "transcript",
+            lambda: _stage_transcript(chunks, chunk_durations, settings),
+            job.id,
+            settings,
+        )
+        await _run_stage(
+            "finalize",
+            lambda: _stage_finalize(
+                job,
+                metadata=extraction_result.metadata,
+                audio_result=audio_result,
+                artwork_result=artwork_result,
+                vtt=vtt,
+                summary=summary,
+                cleaned_text=cleaned,
+                chapters_json=chapters_json,
+                publication_token=publication_token,
+                expected_token=expected_token,
+                create_episode=create_episode,
+                settings=settings,
+            ),
+            job.id,
+            settings,
+        )
+        published = True
+    finally:
+        if not published:
+            conn = database.connect(database.db_path(settings.DATA_DIR))
+            try:
+                committed = episodes.generation(conn, job.episode_id, publication_token)
+            finally:
+                conn.close()
+            if committed is None:
+                audio.remove_quietly(*staged_paths)
 
 
 async def _run_stage(
@@ -566,8 +594,9 @@ async def _run_stage(
 
 # Quote/dash variants that differ between the extraction metadata title and the
 # cleaned body (curly vs straight), which would otherwise defeat the comparison.
-_TITLE_PUNCT = str.maketrans({"\u2019": "'", "\u2018": "'", "\u201c": '"', "\u201d": '"',
-                              "\u2014": "-", "\u2013": "-"})
+_TITLE_PUNCT = str.maketrans(
+    {"\u2019": "'", "\u2018": "'", "\u201c": '"', "\u201d": '"', "\u2014": "-", "\u2013": "-"}
+)
 
 
 def _title_key(text: str) -> str:
@@ -730,9 +759,26 @@ _MAGNITUDE_WORDS = {"k": "thousand", "m": "million", "b": "billion", "t": "trill
 # license allow-list). Covers up to quintillions; beyond the scale table we fall
 # back to digit-by-digit, which is never wrong.
 _ONES = (
-    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
-    "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
-    "seventeen", "eighteen", "nineteen",
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
 )
 _TENS = ("", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
 _SCALES = ("", "thousand", "million", "billion", "trillion", "quadrillion", "quintillion")
@@ -899,27 +945,62 @@ _DOTTED_ACRONYM_RE = re.compile(r"(?:[A-Z]\.){2,}")
 def _normalize_dotted_acronyms(text: str) -> str:
     """Turn "A.I." into "A I" so the engine doesn't pause on the periods."""
 
-    return _DOTTED_ACRONYM_RE.sub(
-        lambda m: " ".join(ch for ch in m.group(0) if ch.isalpha()), text
-    )
+    return _DOTTED_ACRONYM_RE.sub(lambda m: " ".join(ch for ch in m.group(0) if ch.isalpha()), text)
 
 
 # Two-letter US state codes -> full names, expanded only in clear state context
 # so the engine says "Illinois" instead of spelling "I L".
 _US_STATES = {
-    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
-    "CA": "California", "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware",
-    "FL": "Florida", "GA": "Georgia", "HI": "Hawaii", "ID": "Idaho",
-    "IL": "Illinois", "IN": "Indiana", "IA": "Iowa", "KS": "Kansas",
-    "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
-    "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi",
-    "MO": "Missouri", "MT": "Montana", "NE": "Nebraska", "NV": "Nevada",
-    "NH": "New Hampshire", "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York",
-    "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma",
-    "OR": "Oregon", "PA": "Pennsylvania", "RI": "Rhode Island", "SC": "South Carolina",
-    "SD": "South Dakota", "TN": "Tennessee", "TX": "Texas", "UT": "Utah",
-    "VT": "Vermont", "VA": "Virginia", "WA": "Washington", "WV": "West Virginia",
-    "WI": "Wisconsin", "WY": "Wyoming",
+    "AL": "Alabama",
+    "AK": "Alaska",
+    "AZ": "Arizona",
+    "AR": "Arkansas",
+    "CA": "California",
+    "CO": "Colorado",
+    "CT": "Connecticut",
+    "DE": "Delaware",
+    "FL": "Florida",
+    "GA": "Georgia",
+    "HI": "Hawaii",
+    "ID": "Idaho",
+    "IL": "Illinois",
+    "IN": "Indiana",
+    "IA": "Iowa",
+    "KS": "Kansas",
+    "KY": "Kentucky",
+    "LA": "Louisiana",
+    "ME": "Maine",
+    "MD": "Maryland",
+    "MA": "Massachusetts",
+    "MI": "Michigan",
+    "MN": "Minnesota",
+    "MS": "Mississippi",
+    "MO": "Missouri",
+    "MT": "Montana",
+    "NE": "Nebraska",
+    "NV": "Nevada",
+    "NH": "New Hampshire",
+    "NJ": "New Jersey",
+    "NM": "New Mexico",
+    "NY": "New York",
+    "NC": "North Carolina",
+    "ND": "North Dakota",
+    "OH": "Ohio",
+    "OK": "Oklahoma",
+    "OR": "Oregon",
+    "PA": "Pennsylvania",
+    "RI": "Rhode Island",
+    "SC": "South Carolina",
+    "SD": "South Dakota",
+    "TN": "Tennessee",
+    "TX": "Texas",
+    "UT": "Utah",
+    "VT": "Vermont",
+    "VA": "Virginia",
+    "WA": "Washington",
+    "WV": "West Virginia",
+    "WI": "Wisconsin",
+    "WY": "Wyoming",
 }
 # Codes whose UPPERCASE form is a common non-state word/abbreviation in prose
 # (OK=okay, OR=or, ID=identification, AR=augmented reality, VA=Veterans Affairs,
@@ -943,9 +1024,7 @@ _US_STATE_CITY_RE = re.compile(
 # directly before a 5-digit ZIP (+4 optional). The comma anchor keeps a bare
 # "<CODE> 12345" quantity from expanding; same-line ([ \t], not \s) avoids merging
 # across a line break. Every code (including the ambiguous ones) expands here.
-_US_STATE_ZIP_RE = re.compile(
-    r"(,\s+)(" + "|".join(_US_STATES) + r")[ \t]+(?=\d{5}(?:-\d{4})?\b)"
-)
+_US_STATE_ZIP_RE = re.compile(r"(,\s+)(" + "|".join(_US_STATES) + r")[ \t]+(?=\d{5}(?:-\d{4})?\b)")
 
 
 def _normalize_us_states(text: str) -> str:
@@ -979,9 +1058,7 @@ def _normalize_for_tts(text: str) -> str:
         _normalize_currency(
             _normalize_ranges(
                 _normalize_date_months(
-                    _normalize_us_states(
-                        _strip_code_artifacts(_strip_heading_markers(text))
-                    )
+                    _normalize_us_states(_strip_code_artifacts(_strip_heading_markers(text)))
                 )
             )
         )
@@ -1187,20 +1264,6 @@ def _regen_params(
     )
 
 
-def _cache_entry_usable(
-    cached: tts_cache.CachedChunk, *, audio_enabled: bool, verify_enabled: bool
-) -> bool:
-    """Whether a cache entry may stand in for a fresh synthesis under the
-    checks this run has enabled. A hit bypasses the QA loop entirely, so an
-    entry that was never QA'd (stored by a QA-off run) or that carries no
-    transcript while ASR verification is on would silently ship audio this
-    run's settings say must be checked."""
-
-    if (audio_enabled or verify_enabled) and not cached.qa_passed:
-        return False
-    return not (verify_enabled and cached.transcript is None)
-
-
 def _cache_store_best_effort(
     settings: Settings,
     key: str,
@@ -1296,15 +1359,10 @@ async def _generate_chunk_quality_checked(
         max(0, settings.AUDIO_ANALYSIS_MAX_REGEN) if (audio_enabled or verify_enabled) else 0
     )
 
-    # Resumable chunk cache: a hit skips synthesis AND the QA loop entirely,
-    # so an entry is only reusable when it was checked at least as strictly as
-    # this run checks. An entry stored by a QA-off run (qa_passed False), or
-    # one with no transcript when ASR verification is now on, is treated as a
-    # miss. The key is computed once up front (even though the take that
-    # eventually passes may come from an escalated regen attempt) because the
-    # key identifies "what these settings would synthesize", not which attempt
-    # produced the stored take.
+    # Cache hits reuse synthesized audio, then pass through the current QA
+    # policy below. The key identifies synthesis inputs, not a prior QA result.
     cache_key_value: str | None = None
+    cached_result: tts.GenerateResult | None = None
     if settings.TTS_CHUNK_CACHE_ENABLED and model_confirmed:
         identity = tts.cache_identity(settings, slot)
         if identity is not None:
@@ -1319,29 +1377,36 @@ async def _generate_chunk_quality_checked(
             )
             try:
                 cached = tts_cache.lookup(settings.DATA_DIR, cache_key_value)
-                if cached is not None and _cache_entry_usable(
-                    cached, audio_enabled=audio_enabled, verify_enabled=verify_enabled
-                ):
+                if cached is not None:
                     dest = media_dir(settings) / f"{job.episode_id}_chunk_{index}.wav"
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     tts_cache.link_or_copy(cached.wav_path, dest)
-                    # Keep the pitch gate warm across hits: a resumed job whose
-                    # chunks all come from the cache would otherwise re-warm the
-                    # tracker from zero exactly at the resume point.
-                    if pitch_tracker is not None and cached.median_f0_hz is not None:
-                        pitch_tracker.accept(cached.median_f0_hz)
                     logger.info(
                         "TTS cache hit", extra={"event": "tts_cache_hit", "chunk_index": index}
                     )
-                    return (
-                        tts.GenerateResult(
-                            wav_path=str(dest),
-                            duration_secs=cached.duration_secs,
-                            sample_rate=cached.sample_rate,
-                            transcript=cached.transcript,
-                        ),
-                        1,
+                    transcript = cached.transcript
+                    if verify_enabled:
+                        if settings.WHISPER_BACKEND == "wrapper":
+                            transcript = await tts.transcribe_wrapper_wav(str(dest), settings)
+                        else:
+                            audio_bytes = await asyncio.to_thread(dest.read_bytes)
+                            transcript = await tts_remote.transcribe(audio_bytes, settings)
+                        if (
+                            transcript is None
+                            and settings.WHISPER_BACKEND == "openai-api"
+                            and settings.WHISPER_API_STRICT
+                        ):
+                            raise tts.TTSProviderError(
+                                "remote ASR unavailable and WHISPER_API_STRICT is on"
+                            )
+                    cached_result = tts.GenerateResult(
+                        wav_path=str(dest),
+                        duration_secs=cached.duration_secs,
+                        sample_rate=cached.sample_rate,
+                        transcript=transcript,
                     )
+            except tts.TTSProviderError:
+                raise
             except Exception as exc:
                 logger.warning(
                     "TTS cache lookup failed; falling through to synthesis",
@@ -1355,26 +1420,28 @@ async def _generate_chunk_quality_checked(
     best_pitch: tuple[float, tts.GenerateResult] | None = None
     for attempt in range(max_extra + 1):  # 1 baseline + up to max_extra regenerations
         max_chars, penalty = _regen_params(settings, attempt, base_max_chars)
-        result = await tts.generate_chunk_with_retry(
-            text=text,
-            episode_id=job.episode_id,
-            chunk_index=index,
-            settings=settings,
-            seed=None if attempt == 0 else _regen_seed(index, attempt),
-            verify=verify_enabled,
-            slot=slot,
-            max_chars=max_chars,
-            repetition_penalty=penalty,
-        )
+        if attempt == 0 and cached_result is not None:
+            result = cached_result
+        else:
+            result = await tts.generate_chunk_with_retry(
+                text=text,
+                episode_id=job.episode_id,
+                chunk_index=index,
+                settings=settings,
+                seed=None if attempt == 0 else _regen_seed(index, attempt),
+                verify=verify_enabled,
+                slot=slot,
+                max_chars=max_chars,
+                repetition_penalty=penalty,
+            )
         # Progress lands per completed chunk, but a single /generate can burn
         # TTS_RETRY_COUNT x TTS_HTTP_TIMEOUT_SECONDS against a hung wrapper.
         # Beat per attempt so the stall window is sized against one call, not
         # against a whole regen loop's worth of them.
         _beat()
         if not (audio_enabled or verify_enabled):
-            # No checks configured, so this take is the only take: cache it as
-            # unverified. A later run with QA on treats qa_passed False as a
-            # miss (_cache_entry_usable) rather than trusting it.
+            # No checks configured, so cache this take as unverified. A later
+            # run applies its current checks before accepting the cached audio.
             if cache_key_value is not None:
                 _cache_store_best_effort(
                     settings, cache_key_value, index, result, qa_passed=False, median_f0_hz=None
@@ -1389,7 +1456,11 @@ async def _generate_chunk_quality_checked(
             except audio.AudioError as exc:
                 logger.warning(
                     "Chunk audio analysis failed; passing chunk through",
-                    extra={"event": "chunk_analysis_error", "chunk_index": index, "error": str(exc)},
+                    extra={
+                        "event": "chunk_analysis_error",
+                        "chunk_index": index,
+                        "error": str(exc),
+                    },
                 )
                 return result, attempt + 1
             if not verdict.ok:
@@ -1628,9 +1699,7 @@ async def _stage_tts(
                 )
         # Wall time including any regens, against the produced audio's own
         # duration -- how many seconds of synthesis each second of audio cost.
-        rtf = (
-            synth_ms / 1000 / result.duration_secs if result.duration_secs > 0 else None
-        )
+        rtf = synth_ms / 1000 / result.duration_secs if result.duration_secs > 0 else None
         logger.info(
             "Chunk synthesized",
             extra={
@@ -1660,6 +1729,7 @@ async def _stage_tts(
 async def _stage_audio(
     job: jobs.Job,
     chunk_results: list[tts.GenerateResult],
+    publication_token: str,
     settings: Settings,
 ) -> tuple[audio.EncodeResult, list[float]]:
     """Trim / concat / normalize / encode the per-chunk WAVs into an MP3.
@@ -1672,13 +1742,11 @@ async def _stage_audio(
 
     out_root = media_dir(settings)
     chunk_paths = [Path(r.wav_path) for r in chunk_results]
-    combined_path = out_root / f"{job.episode_id}_combined.wav"
-    mp3_path = out_root / f"{job.episode_id}.mp3"
+    combined_path = out_root / f"{job.episode_id}.{publication_token}_combined.wav"
+    mp3_path = out_root / f"{job.episode_id}.{publication_token}.mp3"
 
     try:
-        _, _, chunk_durations = audio.concat_with_padding(
-            chunk_paths, combined_path, settings
-        )
+        _, _, chunk_durations = audio.concat_with_padding(chunk_paths, combined_path, settings)
         # Optional end-of-episode chime: appended before normalization so it is
         # loudness-matched to the episode. Kept off unless enabled AND a clip exists.
         # A chime is decorative -- a bad/mismatched clip must not fail the episode, so a
@@ -1693,7 +1761,7 @@ async def _stage_audio(
                     extra={"event": "chime_append_failed"},
                     exc_info=True,
                 )
-        result = audio.normalize_and_encode(combined_path, mp3_path, settings)
+        result = await audio.normalize_and_encode(combined_path, mp3_path, settings)
         logger.info(
             "Audio pipeline complete",
             extra={
@@ -1725,6 +1793,7 @@ def _embed_episode_cover(mp3_path: Path, cover_jpg_bytes: bytes) -> None:
 async def _stage_artwork(
     job: jobs.Job,
     metadata: dict[str, Any],
+    publication_token: str,
     settings: Settings,
 ) -> artwork.ArtworkResult | None:
     """Download + process the article's og:image.
@@ -1734,7 +1803,8 @@ async def _stage_artwork(
     artwork for episodes with no per-episode JPG on disk.
     """
 
-    result = await artwork.process_artwork(metadata, job.episode_id, media_dir(settings), settings)
+    generation_id = f"{job.episode_id}.{publication_token}"
+    result = await artwork.process_artwork(metadata, generation_id, media_dir(settings), settings)
     if result is None:
         logger.info(
             "Artwork falling back to feed-level art",
@@ -1883,6 +1953,9 @@ async def _stage_finalize(
     summary: str | None,
     cleaned_text: str | None,
     chapters_json: str | None,
+    publication_token: str,
+    expected_token: str | None,
+    create_episode: bool,
     settings: Settings,
 ) -> None:
     """Upsert the ``episodes`` row that the RSS feed and media handlers read.
@@ -1902,6 +1975,10 @@ async def _stage_finalize(
     artwork_path = str(artwork_result.jpg_path) if artwork_result else None
     duration_secs = round(audio_result.duration_secs)
     audio_size_bytes = file_size_or_zero(str(audio_result.mp3_path))
+    if audio_size_bytes <= 0:
+        raise RuntimeError("encoded audio is missing or empty")
+    if artwork_path is not None and not Path(artwork_path).is_file():
+        raise RuntimeError("processed artwork is missing")
 
     # Provenance: an uploaded document's ``original_url`` is the synthetic
     # ``upload://`` identifier; record source_type/source_filename so the feed and
@@ -1918,8 +1995,11 @@ async def _stage_finalize(
         # Snapshot the voice this job used (slot label, "Slot N", or "Default")
         # so the API, feed UI, and RSS description can show which voice narrated it.
         voice_label = voices.label_for(conn, job.voice_id)
-        episodes.upsert(
+        episodes.publish_episode_generation(
             conn,
+            token=publication_token,
+            expected_token=expected_token,
+            create=create_episode,
             id=job.episode_id,
             job_id=job.id,
             original_url=job.url,
@@ -2051,8 +2131,6 @@ async def _apply_corrections(text: str, settings: Settings) -> str:
 _PRONUNCIATION_MIN_RATIO = 0.5
 
 
-
-
 def _reference_matchers(
     entries: list[tuple[str, str]],
 ) -> list[tuple[re.Pattern[str], str]]:
@@ -2146,9 +2224,7 @@ async def _pronounce_chunks_with_llm(
     )
 
 
-async def _pronounce_window(
-    system_prompt: str, window: str, index: int, settings: Settings
-) -> str:
+async def _pronounce_window(system_prompt: str, window: str, index: int, settings: Settings) -> str:
     """One chunk's LLM pronunciation call, with the marker contract and the
     keep-verbatim fallbacks."""
 
@@ -2535,9 +2611,7 @@ def _timed_job_write(op: str, settings: Settings, write) -> None:
     elapsed = time.monotonic() - started
     if elapsed > _SLOW_DB_WRITE_SECONDS:
         try:
-            wal_bytes = (
-                database.db_path(settings.DATA_DIR).with_suffix(".db-wal").stat().st_size
-            )
+            wal_bytes = database.db_path(settings.DATA_DIR).with_suffix(".db-wal").stat().st_size
         except OSError:
             wal_bytes = None
         logger.warning(
@@ -2562,14 +2636,6 @@ def _set_progress(job_id: str, current: int, total: int, settings: Settings) -> 
         "set_progress", settings, lambda conn: jobs.set_progress(conn, job_id, current, total)
     )
     _beat()
-
-
-def _mark_done(job_id: str, *, final_stage: str, settings: Settings) -> None:
-    conn = database.connect(database.db_path(settings.DATA_DIR))
-    try:
-        jobs.mark_done(conn, job_id, final_stage=final_stage)
-    finally:
-        conn.close()
 
 
 def _persist_failure(job_id: str, *, stage: str, error: str, settings: Settings) -> None:

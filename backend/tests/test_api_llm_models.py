@@ -12,10 +12,12 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture(autouse=True)
-def _clear_model_cache():
+def _clear_model_cache(monkeypatch: pytest.MonkeyPatch):
+    get_settings.cache_clear()
     llm._model_cache.clear()
     yield
     llm._model_cache.clear()
+    get_settings.cache_clear()
 
 
 def _patch_async_client(monkeypatch: pytest.MonkeyPatch, transport: httpx.MockTransport) -> None:
@@ -53,7 +55,7 @@ def test_anthropic_returns_static_list_without_key(env: Path) -> None:
     body = response.json()
     assert body["provider"] == "anthropic"
     ids = [m["id"] for m in body["models"]]
-    assert ids == list(llm._ANTHROPIC_MODELS)
+    assert ids == sorted(llm._ANTHROPIC_MODELS)
 
 
 def test_anthropic_lists_models_live_when_key_set(
@@ -96,7 +98,7 @@ def test_openai_compatible_lists_models_from_endpoint(
         response = client.get("/api/v1/llm/models")
     assert response.status_code == 200
     ids = [m["id"] for m in response.json()["models"]]
-    assert ids == ["qwen3", "mistral"]
+    assert ids == ["mistral", "qwen3"]
 
 
 def test_openrouter_lists_models(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -174,3 +176,119 @@ def test_refresh_bypasses_cache(env: Path, monkeypatch: pytest.MonkeyPatch) -> N
         # A second GET would hit the cache; refresh must re-fetch.
         refreshed = client.post("/api/v1/llm/models/refresh")
         assert [m["id"] for m in refreshed.json()["models"]] == ["new-model"]
+
+
+def test_connection_uses_unsaved_key_and_validates_shape(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, httpx.Request] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["request"] = request
+        return httpx.Response(200, json={"data": []})
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    with _client(env) as client:
+        response = client.post(
+            "/api/v1/llm/test",
+            json={
+                "provider": "openai-compatible",
+                "base_url": "https://draft.example/v1",
+                "api_key": "draft-secret",
+            },
+        )
+    assert response.json() == {
+        "ok": True,
+        "reachable": True,
+        "status": 200,
+        "detail": "Connection succeeded",
+    }
+    assert captured["request"].headers["authorization"] == "Bearer draft-secret"
+
+
+def test_connection_does_not_send_saved_key_to_changed_origin(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "saved-secret")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://saved.example/v1")
+    get_settings.cache_clear()
+    captured: dict[str, httpx.Request] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["request"] = request
+        return httpx.Response(200, json={"data": []})
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    with _client(env) as client:
+        response = client.post(
+            "/api/v1/llm/test",
+            json={
+                "provider": "openai-compatible",
+                "base_url": "https://draft.example/v1",
+            },
+        )
+    assert response.json()["ok"] is True
+    assert "authorization" not in captured["request"].headers
+
+
+def test_connection_rejects_wrong_success_shape(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_async_client(monkeypatch, _transport(httpx.Response(200, text="login page")))
+    with _client(env) as client:
+        response = client.post(
+            "/api/v1/llm/test",
+            json={"provider": "openai-compatible", "base_url": "https://llm.example/v1"},
+        )
+    assert response.json() == {
+        "ok": False,
+        "reachable": True,
+        "status": 200,
+        "detail": "Provider returned an invalid response",
+    }
+
+
+def test_connection_rejects_unsafe_url_without_request(env: Path) -> None:
+    with _client(env) as client:
+        response = client.post(
+            "/api/v1/llm/test",
+            json={
+                "provider": "openai-compatible",
+                "base_url": "https://secret@example.test/v1",
+                "api_key": "do-not-log",
+            },
+        )
+    assert response.json()["reachable"] is False
+    assert "do-not-log" not in response.text
+
+
+def test_openrouter_connection_uses_authenticated_key_endpoint(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, httpx.Request] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["request"] = request
+        return httpx.Response(200, json={"data": {"label": "key"}})
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    with _client(env) as client:
+        response = client.post(
+            "/api/v1/llm/test",
+            json={"provider": "openrouter", "api_key": "draft-secret"},
+        )
+    assert response.json()["ok"] is True
+    assert str(captured["request"].url) == llm.OPENROUTER_AUTH_URL
+    assert captured["request"].headers["authorization"] == "Bearer draft-secret"
+
+
+def test_ollama_connection_handles_explicit_null_url(env: Path) -> None:
+    with _client(env) as client:
+        response = client.post(
+            "/api/v1/llm/test", json={"provider": "ollama", "base_url": None}
+        )
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": False,
+        "reachable": False,
+        "status": None,
+        "detail": "Unsupported provider or invalid URL",
+    }

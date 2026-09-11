@@ -42,6 +42,34 @@ def test_password_set_lifecycle(env: Path) -> None:
         conn.close()
 
 
+@pytest.mark.asyncio
+async def test_initial_setup_does_not_overwrite_concurrent_password(env: Path) -> None:
+    conn = _conn(env)
+    try:
+        auth.set_password(conn, "concurrent-password")
+        with pytest.raises(auth.CredentialsChangedError):
+            await auth.set_password_async(conn, "stale-setup-password", require_unset=True)
+        auth.verify_login(
+            conn,
+            password="concurrent-password",
+            identifier=IP,
+            settings=get_settings(),
+        )
+    finally:
+        conn.close()
+
+
+def test_open_mode_clear_does_not_remove_concurrent_password(env: Path) -> None:
+    conn = _conn(env)
+    try:
+        auth.set_password(conn, "concurrent-password")
+        with pytest.raises(auth.CredentialsChangedError):
+            auth.clear_password(conn, require_unset=True)
+        assert auth.is_password_set(conn) is True
+    finally:
+        conn.close()
+
+
 def test_verify_login_succeeds_with_correct_password(env: Path, settings_) -> None:
     conn = _conn(env)
     try:
@@ -73,6 +101,11 @@ def test_verify_login_rejects_when_no_password_set(env: Path, settings_) -> None
             auth.verify_login(conn, password="anything", identifier=IP, settings=settings_)
     finally:
         conn.close()
+
+
+def test_dummy_hash_is_valid(caplog: pytest.LogCaptureFixture) -> None:
+    assert auth._verify_password("anything", auth._DUMMY_HASH) is False
+    assert "Malformed bcrypt hash" not in caplog.text
 
 
 def test_lockout_triggers_after_threshold(env: Path, settings_) -> None:

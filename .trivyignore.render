@@ -1,39 +1,33 @@
 # Accepted residual CVEs for the render image (ttlequals0/audicle-render).
 # Concatenated with .trivyignore by scripts/trivy_gate.sh for the render scan.
 # Do not pass this file to the app or tts scans.
-
-# libexpat1 (HIGH x6): XML parser in base; Audicle does not parse untrusted XML.
-# Present in tts and render images (not app). Duplicated in .trivyignore.tts.
-CVE-2025-59375
-CVE-2026-25210
-CVE-2026-45186
-CVE-2026-56131
-CVE-2026-56407
-CVE-2026-56408
+# Owner: Audicle maintainers. Recheck all retained entries: 2026-10-10.
 
 # -- render image only (python:3.12-slim + xvfb + mesa for Camoufox browser):
 
-# xserver-common / xvfb (HIGH x3): Xvfb is required by Camoufox (headful browser
-# in a virtual display). CVE-2023-5574 fix_deferred; 2026-55999/56000 affected.
-# Remove when Debian ships a fix or the render image drops Xvfb.
+# Owner: Audicle maintainers. Recheck: 2026-10-10.
+# xserver-common / xvfb (HIGH x3): Xvfb runs as uid 1000 with one screen and
+# TCP disabled. CVE-2023-5574 requires legacy multi-screen Zaphod mode and a
+# cross-screen pointer warp during reset. CVE-2026-55999 requires a local X
+# client to submit a crafted PCF font; web fonts remain inside Gecko's decoder.
+# CVE-2026-56000 requires a local X client to issue a crafted GLX context-tag
+# sequence. Rendered pages cannot emit X11 protocol; Camoufox is the only X
+# client, and it shares Xvfb's unprivileged uid, leaving no privilege boundary.
+# A browser compromise could at most add a same-container DoS path through Xvfb.
+# Remove when Debian ships fixes or the render image drops Xvfb.
 CVE-2023-5574
 CVE-2026-55999
 CVE-2026-56000
 
-# libxfont2 (HIGH x3): X font library pulled in by xvfb; no direct Audicle use.
-# Remove when Debian ships fixes.
-CVE-2026-56001
-CVE-2026-56002
-CVE-2026-56003
-
-# mesa / libgbm1 / libgl1-mesa-dri / libglx-mesa0 / mesa-libgallium (CRITICAL x1
-# will_not_fix): GPU/display drivers pulled in by Camoufox browser dependencies.
-# Upstream will not fix; render container has no GPU access and no network exposure
-# beyond the internal Docker network. Remove if mesa ships a fix or render drops GL.
-CVE-2026-40393
-
-# libglib2.0-0t64 (CRITICAL x1, HIGH x6): GLib pulled in by mesa/Camoufox deps.
-# No fix released. Remove when Debian trixie ships a patched glib package.
+# Owner: Audicle maintainers. Recheck: 2026-10-10.
+# libglib2.0-0t64 (CRITICAL x1, HIGH x6): Camoufox's libmozgtk links GTK,
+# GLib, GObject, and GIO. The seven bugs require specific GLib inputs: malformed
+# GVariant tuple data (58010), an invalid GDateTime (58011), G_REGEX_RAW with
+# case-changing replacement escapes (58012), a multi-byte GIOChannel terminator
+# (58013), an untrusted key file (58014), a malicious D-Bus server (58015), or
+# malformed D-Bus introspection XML (58016). Page content is not passed to these
+# APIs, and the entrypoint launches no D-Bus server. The residual is limited to
+# local GTK/browser control data. No fixed trixie package is available.
 CVE-2026-58010
 CVE-2026-58011
 CVE-2026-58012
@@ -42,36 +36,47 @@ CVE-2026-58014
 CVE-2026-58015
 CVE-2026-58016
 
-# libtiff6 (HIGH x1): TIFF library pulled in by the render image's browser/mesa
-# dependency chain. No fix released. Remove when Debian ships a patched libtiff6.
-CVE-2026-12912
-
-# libcups2t64 (HIGH x1): CUPS printing library in the render image (browser dep).
-# No fix released. Remove when Debian ships a patch.
+# Owner: Audicle maintainers. Recheck: 2026-10-10.
+# libcups2t64 (HIGH x1): CVE-2026-34980 is in the cupsd scheduler's handling of
+# an unauthenticated Print-Job to a shared PostScript queue, followed by PPD
+# control-record reparsing. The image contains only libcups for GTK; it contains
+# no cupsd or cups-browsed daemon and configures no print queue, so the affected
+# server code and network endpoint are absent. Remove when Debian ships a patch.
 CVE-2026-34980
 
-# libxml2 (CRITICAL x1, "affected"): DoS via crafted XML input; no fix released.
-# System libxml2 rides in via browser deps; the render container is only
-# reachable on the internal Docker network. Added 0.48.2. Remove when Debian
-# trixie ships a patched libxml2.
+# Owner: Audicle maintainers. Recheck: 2026-10-10.
+# libxml2 (CRITICAL x1, "affected"): CVE-2026-6653 is a use-after-free in
+# xmlParseInternalSubset on crafted XML. The system library is linked by LLVM
+# and update-mime-database, but not by the Camoufox executable, libxul,
+# libmozgtk, or its bundled dependent-library list. Gecko parses hostile page
+# XML/SVG with its own parser; page bytes do not reach system libxml2. Added
+# 0.48.2. Remove when Debian trixie ships a patched libxml2.
 CVE-2026-6653
 
-# libtiff6 (HIGH x1, "will_not_fix"): DoS via large SamplesPerPixel tag
-# (CVE-2026-36849). TIFF support rides in via browser image deps; the render
-# sidecar only screenshots pages on the internal Docker network and never
-# processes operator-supplied TIFFs. Debian marks it will_not_fix for trixie.
-# Added 0.48.3. Remove if a patch ships.
+# Owner: Audicle maintainers. Recheck: 2026-10-10.
+# libtiff6 (HIGH x1, "will_not_fix"): CVE-2026-36849 is a DoS via a large
+# SamplesPerPixel tag. libtiff is linked only by GTK's dynamically loaded GDK
+# Pixbuf TIFF loader; Camoufox/Gecko does not link it and does not route hostile
+# page images through GDK Pixbuf. The sidecar has no path that asks GTK to open a
+# local TIFF, so the vulnerable decoder is installed but unreachable. Debian
+# marks it will_not_fix for trixie. Added 0.48.3. Remove if a patch ships.
 CVE-2026-36849
 
-# libexpat1 (HIGH x1, "affected"), added 0.56.9: CVE-2026-66046, quadratic
-# blowup in storeAtts() lets a few-megabyte XML document burn CPU. No fix
-# released. Same reasoning as the libexpat block above: nothing here parses
-# untrusted XML. Duplicated in the sibling ignorefile.
-CVE-2026-66046
-
+# Owner: Audicle maintainers. Recheck: 2026-10-10.
 # libtiff6 (HIGH x1, "affected"), added 0.56.9: CVE-2026-52490 is arbitrary
 # code execution in process_command_opts() in tools/tiffcrop.c. That code is
 # the tiffcrop CLI, which ships in libtiff-tools; the render image installs
 # only libtiff6, so the vulnerable function is not present in the image at all.
 # No fix released. Remove when Debian ships a patched libtiff.
 CVE-2026-52490
+
+# Owner: Audicle maintainers. Recheck: 2026-10-10.
+# Debian 13 has no fixed package versions. The system libxml2 is present through
+# shared-mime-info and Mesa; its vulnerable Python bindings are not installed.
+# Python lxml bundles libxml2 2.14.6. Camoufox's executable and dependent-library
+# list do not link system libxml2 or Expat. System Expat is used by fontconfig,
+# Mesa, and D-Bus for local configuration, not fetched page data.
+CVE-2026-74860
+CVE-2026-86140
+CVE-2026-76956
+CVE-2026-76957

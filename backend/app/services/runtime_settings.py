@@ -256,7 +256,6 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
 #   LOGIN_RATE_LIMIT              same (already live via an env-resolving callable)
 #   SESSION_COOKIE_SECURE         middleware built once at startup
 #   SESSION_COOKIE_MAX_AGE_SECONDS same
-#   CORS_ORIGINS                  same
 #   BASE_URL / UI_BASE_URL        deployment identity; BASE_URL is baked into
 #                                 published enclosure URLs
 #   DEFAULT_ARTWORK_URL           branding constant
@@ -310,6 +309,39 @@ def set_value(conn: sqlite3.Connection, key: str, value: Any) -> None:
     conn.commit()
 
 
+def apply(
+    conn: sqlite3.Connection, updates: dict[str, Any | None], *, manage_transaction: bool = True
+) -> None:
+    """Atomically apply runtime overrides, where ``None`` clears an override."""
+
+    for key in updates:
+        if key not in ALLOWED_KEYS:
+            raise KeyError(f"{key} is not an operator-tunable setting")
+    if manage_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        for key, value in updates.items():
+            if value is None:
+                conn.execute("DELETE FROM runtime_settings WHERE key = ?", (key,))
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO runtime_settings (key, value, updated_at)
+                    VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+                    ON CONFLICT(key) DO UPDATE SET
+                        value = excluded.value,
+                        updated_at = excluded.updated_at
+                    """,
+                    (key, _serialize(value)),
+                )
+        if manage_transaction:
+            conn.execute("COMMIT")
+    except Exception:
+        if manage_transaction:
+            conn.execute("ROLLBACK")
+        raise
+
+
 def set_if_absent(conn: sqlite3.Connection, key: str, value: Any) -> str:
     """Store ``value`` only if ``key`` has no row yet (atomic ``INSERT OR
     IGNORE``), then return the stored serialized value. The first writer wins a
@@ -350,13 +382,18 @@ def overlay(settings: Settings) -> Settings:
         stored = get_all(conn)
     if not stored:
         return settings
-    coerced: dict[str, Any] = {}
-    for key, raw_value in stored.items():
-        field = settings.__class__.model_fields.get(key)
-        if field is None:
-            continue
-        coerced[key] = _coerce_for_field(raw_value, field.annotation)
-    return settings.model_copy(update=coerced)
+    return validated_overlay(settings, stored)
+
+
+def validated_overlay(settings: Settings, stored: dict[str, str]) -> Settings:
+    """Validate a complete effective Settings object from stored overrides."""
+
+    coerced = {
+        key: _coerce_for_field(raw_value, field.annotation)
+        for key, raw_value in stored.items()
+        if (field := settings.__class__.model_fields.get(key)) is not None
+    }
+    return Settings.model_validate({**settings.model_dump(), **coerced})
 
 
 def _coerce_for_field(value: str, annotation: Any) -> Any:

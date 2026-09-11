@@ -1,11 +1,24 @@
 from __future__ import annotations
 
+import io
 import json
 import os
+import subprocess
 import time
+import wave
 from pathlib import Path
 
 from app.services import tts_cache
+
+
+def _wav_bytes() -> bytes:
+    output = io.BytesIO()
+    with wave.open(output, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(24000)
+        handle.writeframes(b"\x00\x00" * 2400)
+    return output.getvalue()
 
 
 def _base_key(**overrides) -> str:
@@ -40,7 +53,8 @@ def test_cache_key_changes_with_voice_fingerprint() -> None:
 def test_store_and_lookup_round_trip(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     src_wav = tmp_path / "src.wav"
-    src_wav.write_bytes(b"RIFF-fake-wav-bytes")
+    wav_bytes = _wav_bytes()
+    src_wav.write_bytes(wav_bytes)
     key = _base_key()
 
     tts_cache.store(
@@ -56,7 +70,7 @@ def test_store_and_lookup_round_trip(tmp_path: Path) -> None:
 
     cached = tts_cache.lookup(data_dir, key)
     assert cached is not None
-    assert cached.wav_path.read_bytes() == b"RIFF-fake-wav-bytes"
+    assert cached.wav_path.read_bytes() == wav_bytes
     assert cached.duration_secs == 1.5
     assert cached.sample_rate == 24000
     assert cached.transcript == "hi"
@@ -67,7 +81,7 @@ def test_store_and_lookup_round_trip(tmp_path: Path) -> None:
 def test_store_and_lookup_round_trip_no_transcript(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     src_wav = tmp_path / "src.wav"
-    src_wav.write_bytes(b"bytes")
+    src_wav.write_bytes(_wav_bytes())
     key = _base_key()
 
     tts_cache.store(
@@ -104,7 +118,7 @@ def test_lookup_payload_without_qa_passed_defaults_to_false(tmp_path: Path) -> N
     key = "somekey"
     cache_dir = tts_cache.cache_dir(data_dir)
     cache_dir.mkdir(parents=True)
-    (cache_dir / f"{key}.wav").write_bytes(b"wav")
+    (cache_dir / f"{key}.wav").write_bytes(_wav_bytes())
     (cache_dir / f"{key}.json").write_text(
         json.dumps({"duration_secs": 1.0, "sample_rate": 24000, "transcript": None})
     )
@@ -142,12 +156,48 @@ def test_lookup_malformed_json_returns_none_and_cleans_up(tmp_path: Path) -> Non
     assert not json_path.exists()
 
 
+def test_lookup_evicts_legacy_ima_adpcm_audio(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    key = "legacy-remote"
+    cache = tts_cache.cache_dir(data_dir)
+    cache.mkdir(parents=True)
+    pcm_path = tmp_path / "pcm.wav"
+    pcm_path.write_bytes(_wav_bytes())
+    compressed = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(pcm_path),
+            "-c:a",
+            "adpcm_ima_wav",
+            "-f",
+            "wav",
+            "pipe:1",
+        ],
+        capture_output=True,
+        check=True,
+    ).stdout
+    wav_path = cache / f"{key}.wav"
+    json_path = cache / f"{key}.json"
+    wav_path.write_bytes(compressed)
+    json_path.write_text(
+        json.dumps({"duration_secs": 0.1, "sample_rate": 24000, "transcript": None})
+    )
+
+    assert tts_cache.lookup(data_dir, key) is None
+    assert not wav_path.exists()
+    assert not json_path.exists()
+
+
 def test_purge_older_than_removes_only_old_entries(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     old_wav = tmp_path / "old.wav"
     new_wav = tmp_path / "new.wav"
-    old_wav.write_bytes(b"old")
-    new_wav.write_bytes(b"new")
+    old_wav.write_bytes(_wav_bytes())
+    new_wav.write_bytes(_wav_bytes())
 
     tts_cache.store(
         data_dir, "old_key", old_wav, 1.0, 24000, None, qa_passed=True, median_f0_hz=None

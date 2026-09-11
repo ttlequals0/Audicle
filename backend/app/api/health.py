@@ -1,14 +1,16 @@
 """Health endpoints.
 
 - /health/live: liveness probe, no dependency checks.
-- /health/ready: readiness probe, includes dependency status.
+- /health/ready: podcast-serving readiness, checks local storage only.
 - /health: alias for /health/ready (kept for backward compatibility).
+- /health/ingestion: selected processing dependency status.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import platform
 import subprocess
 import time
@@ -17,9 +19,11 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, Request, Response, status
 
-from app.config import get_settings
+from app.api.v1 import llm as llm_api
+from app.config import Settings, get_settings
 from app.core import database
-from app.services import llm, runtime_settings
+from app.core.paths import media_dir
+from app.services import runtime_settings
 from app.version import __version__
 
 logger = logging.getLogger("app.api.health")
@@ -43,6 +47,38 @@ def health_live(request: Request) -> dict[str, Any]:
 @router.get("/health/ready")
 @router.get("/health")
 async def health_ready(request: Request, response: Response) -> dict[str, Any]:
+    settings = get_settings()
+    checks: dict[str, str] = {}
+    try:
+        with database.connection(settings.DATA_DIR) as conn:
+            conn.execute("SELECT 1").fetchone()
+        checks["db"] = "ok"
+    except Exception as exc:
+        logger.warning(
+            "Readiness DB check failed",
+            extra={"event": "health_db_error", "error": str(exc)},
+            exc_info=True,
+        )
+        checks["db"] = "error"
+    media_path = media_dir(settings)
+    checks["media"] = (
+        "ok" if media_path.is_dir() and os.access(media_path, os.R_OK | os.X_OK) else "error"
+    )
+    body: dict[str, Any] = {
+        "ok": all(value == "ok" for value in checks.values()),
+        "version": __version__,
+        "uptime_seconds": int(
+            time.monotonic() - getattr(request.app.state, "started_at", time.monotonic())
+        ),
+        "checks": checks,
+    }
+    if not body["ok"]:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return body
+
+
+@router.get("/health/ingestion")
+async def health_ingestion(request: Request, response: Response) -> dict[str, Any]:
     # Apply the runtime_settings overlay (same as the pipeline / RSS) so the
     # probe reflects the operator's UI-set LLM model, Firecrawl/TTS URLs, etc. --
     # not the empty env defaults. Guarded: a DB failure here must not 500 the
@@ -68,30 +104,49 @@ async def health_ready(request: Request, response: Response) -> dict[str, Any]:
     # Fan probes out concurrently so one stuck upstream can't add its
     # timeout budget to the others'. return_exceptions=True ensures one
     # raising probe doesn't cancel the others and 500 the whole endpoint.
-    # Anthropic has no cheap unauthenticated probe (skip); the openai-compatible
-    # family (openai-compatible / openrouter / ollama) all expose {base}/models,
-    # resolved with the same base + auth the pipeline uses.
-    llm_url: str | None = None
-    llm_headers: dict[str, str] = {}
-    if llm.is_openai_compatible_provider(settings.LLM_PROVIDER):
-        base_url, api_key, extra_headers = llm.openai_compatible_connection(settings)
-        llm_url = base_url or None
-        llm_headers = dict(extra_headers)
-        if api_key:
-            llm_headers["Authorization"] = f"Bearer {api_key}"
-    tts_result, firecrawl_result, llm_result, render_result = await asyncio.gather(
-        _probe_tts_wrapper(settings.TTS_URL, 2.0),
+    # Probe each selected dependency using the same base and authentication
+    # contract as the corresponding client.
+    wrapper_selected = settings.TTS_BACKEND == "wrapper" or (
+        settings.verification_enabled and settings.WHISPER_BACKEND == "wrapper"
+    )
+    remote_tts_url = settings.TTS_API_BASE_URL if settings.TTS_BACKEND == "openai-api" else None
+    remote_asr_url = (
+        settings.WHISPER_API_BASE_URL
+        if settings.verification_enabled and settings.WHISPER_BACKEND == "openai-api"
+        else None
+    )
+    (
+        tts_result,
+        firecrawl_result,
+        llm_result,
+        render_result,
+        remote_tts,
+        remote_asr,
+    ) = await asyncio.gather(
+        _probe_tts_wrapper(settings.TTS_URL if wrapper_selected else None, 2.0),
         # Firecrawl's liveness is /v0/health/liveness (its /health path 404s);
         # the scrape API the pipeline uses is /v1/scrape on the same base.
-        _probe_http(settings.FIRECRAWL_URL, "/v0/health/liveness", 2.0),
-        _probe_http(llm_url, "/models", 2.0, llm_headers),
+        _probe_http(
+            settings.FIRECRAWL_URL if settings.EXTRACTION_ENGINE == "firecrawl" else None,
+            "/v0/health/liveness",
+            2.0,
+        ),
+        _probe_llm_provider(settings, 2.0),
         _probe_render(settings.RENDER_URL, 2.0),
+        _probe_http(remote_tts_url, "/models", 2.0, _bearer(settings.TTS_API_KEY)),
+        _probe_http(remote_asr_url, "/models", 2.0, _bearer(settings.WHISPER_API_KEY)),
         return_exceptions=True,
     )
     tts_check, tts_detail = _coerce_tts(tts_result)
-    checks["tts_wrapper"] = tts_check
-    checks["firecrawl"] = _coerce_result(firecrawl_result)
+    if wrapper_selected:
+        checks["tts_wrapper"] = tts_check
+    if settings.EXTRACTION_ENGINE == "firecrawl":
+        checks["firecrawl"] = _coerce_result(firecrawl_result)
     checks["llm"] = _coerce_result(llm_result)
+    if settings.TTS_BACKEND == "openai-api":
+        checks["tts_remote"] = _coerce_result(remote_tts) if remote_tts_url else "unconfigured"
+    if settings.verification_enabled and settings.WHISPER_BACKEND == "openai-api":
+        checks["asr_remote"] = _coerce_result(remote_asr) if remote_asr_url else "unconfigured"
     # Render is optional enrichment, so it is surfaced under components.render for
     # visibility but is NOT added to ``checks`` -- a down render sidecar must not
     # 503 readiness (the pipeline still produces episodes, just front-half only).
@@ -111,18 +166,29 @@ async def health_ready(request: Request, response: Response) -> dict[str, Any]:
         "tts_wrapper": {**tts_detail, "reachable": _reachable(tts_check)},
         "firecrawl": {
             "url": settings.FIRECRAWL_URL,
-            "reachable": _reachable(checks["firecrawl"]),
+            "selected": settings.EXTRACTION_ENGINE == "firecrawl",
+            "status": _coerce_result(firecrawl_result),
+            "reachable": _reachable(_coerce_result(firecrawl_result)),
         },
         "llm": {
             "provider": settings.LLM_PROVIDER,
             "model": settings.LLM_MODEL,
-            "base_url": llm_url,
             "reachable": _reachable(checks["llm"]),
         },
         "render": {
             "url": settings.RENDER_URL or None,
             **render_detail,
             "reachable": _reachable(render_check),
+        },
+        "tts_remote": {
+            "url": remote_tts_url,
+            "status": _coerce_result(remote_tts),
+            "reachable": _reachable(_coerce_result(remote_tts)),
+        },
+        "asr_remote": {
+            "url": remote_asr_url,
+            "status": _coerce_result(remote_asr),
+            "reachable": _reachable(_coerce_result(remote_asr)),
         },
     }
 
@@ -141,10 +207,28 @@ async def health_ready(request: Request, response: Response) -> dict[str, Any]:
 
 
 def _reachable(status: str) -> bool:
-    """A probe is "reachable" when it answered ok or was deliberately skipped
-    (no URL configured). Matches the top-level ``ok`` aggregation."""
+    """True only when a configured dependency answered successfully."""
 
-    return status in {"ok", "skipped"}
+    return status == "ok"
+
+
+def _bearer(api_key: str | None) -> dict[str, str]:
+    return {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+
+async def _probe_llm_provider(settings: Settings, timeout: float) -> str:
+    request = llm_api.ConnectionTestRequest(provider=settings.LLM_PROVIDER)
+    try:
+        url, headers, kind = llm_api.provider_probe_request(settings, request)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(url, headers=headers)
+        if not response.is_success:
+            return f"error_status_{response.status_code}"
+        return "ok" if llm_api.valid_provider_probe_response(kind, response) else "error_response"
+    except ValueError:
+        return "unconfigured"
+    except httpx.HTTPError as exc:
+        return f"error_{type(exc).__name__}"
 
 
 def _coerce_result(value: Any) -> str:

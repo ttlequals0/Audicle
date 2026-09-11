@@ -8,6 +8,7 @@ model. Real clone fidelity and inference are validated on the GPU host.
 from __future__ import annotations
 
 import io
+import sys
 import types
 import wave
 from pathlib import Path
@@ -109,9 +110,7 @@ def test_registry_factories_return_engine_classes() -> None:
     from main import ENGINE_REGISTRY
 
     assert isinstance(ENGINE_REGISTRY["chatterbox"](), ChatterboxEngine)
-    assert isinstance(
-        ENGINE_REGISTRY["chatterbox-multilingual"](), ChatterboxMultilingualEngine
-    )
+    assert isinstance(ENGINE_REGISTRY["chatterbox-multilingual"](), ChatterboxMultilingualEngine)
 
 
 def test_generation_params_defaults() -> None:
@@ -166,6 +165,32 @@ async def test_select_voice_skips_reencode_for_same_clip(tmp_path: Path) -> None
     ref2.write_bytes(b"y")
     await engine.select_voice(ref2)  # different clip -> re-encode
     assert len(model.prepare_calls) == 2
+
+
+def test_reload_after_unload_restores_selected_voice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    selected = tmp_path / "voices" / "slot3.wav"
+    selected.parent.mkdir()
+    selected.write_bytes(b"x")
+    engine = _loaded_engine()
+    engine._current_ref = selected
+    engine.reference_loaded = True
+    engine.unload()
+    replacement = FakeChatterboxModel()
+    monkeypatch.setattr(engine, "_load_model", lambda _device: replacement)
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        types.SimpleNamespace(
+            manual_seed=lambda _s: None,
+            cuda=types.SimpleNamespace(is_available=lambda: False, manual_seed_all=lambda _s: None),
+        ),
+    )
+
+    engine.load()
+
+    assert replacement.prepare_calls == [(str(selected), 0.0)]
 
 
 def test_boot_reference_path_picks_lowest_filled_slot(tmp_path: Path) -> None:
@@ -366,9 +391,7 @@ def test_run_inference_trims_piece_silence_tail() -> None:
 def test_generation_cap_injects_piece_max_gen_len() -> None:
     engine = _loaded_engine()
     recorded: list[dict] = []
-    engine._model.t3 = types.SimpleNamespace(
-        inference_turbo=lambda **kw: recorded.append(kw)
-    )
+    engine._model.t3 = types.SimpleNamespace(inference_turbo=lambda **kw: recorded.append(kw))
     engine._install_generation_cap()
     engine._piece_max_gen_len = 550
     engine._model.t3.inference_turbo(text_tokens="x")
@@ -378,9 +401,7 @@ def test_generation_cap_injects_piece_max_gen_len() -> None:
 def test_generation_cap_respects_explicit_caller_value() -> None:
     engine = _loaded_engine()
     recorded: list[dict] = []
-    engine._model.t3 = types.SimpleNamespace(
-        inference_turbo=lambda **kw: recorded.append(kw)
-    )
+    engine._model.t3 = types.SimpleNamespace(inference_turbo=lambda **kw: recorded.append(kw))
     engine._install_generation_cap()
     engine._piece_max_gen_len = 550
     engine._model.t3.inference_turbo(text_tokens="x", max_gen_len=42)

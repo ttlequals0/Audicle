@@ -18,6 +18,8 @@ verifier always re-reads it (no in-memory cache) so a manual
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import logging
 import sqlite3
 from dataclasses import dataclass
@@ -31,10 +33,15 @@ from app.services import settings_store
 # Precomputed valid-shape bcrypt hash whose checkpw of any input is False.
 # verify_login runs bcrypt against this even when no password is stored so the
 # wall-clock cost is constant regardless of whether a password is set.
-_DUMMY_HASH = "$2b$12$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.123"
+_DUMMY_HASH = "$2b$12$piQLO7tCxEv4uc0gVUKW6.stew3JJV6ec4nXivS2v.76ImP8Anmie"
 
 # Minimum length enforced when setting a password via the UI.
 MIN_PASSWORD_LENGTH = 8
+MAX_PASSWORD_BYTES = 72
+AUTH_GENERATION_KEY = "auth_generation"
+_BCRYPT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=4, thread_name_prefix="audicle-bcrypt"
+)
 
 logger = logging.getLogger("app.services.auth")
 
@@ -55,6 +62,10 @@ class LockedOutError(AuthError):
         self.locked_until = locked_until
 
 
+class CredentialsChangedError(AuthError):
+    pass
+
+
 @dataclass(frozen=True)
 class LockoutState:
     failed_attempts: int
@@ -66,12 +77,48 @@ def hash_password(plaintext: str) -> str:
     return bcrypt.hashpw(plaintext.encode("utf-8"), bcrypt.gensalt()).decode("ascii")
 
 
+def password_fits_bcrypt(plaintext: str) -> bool:
+    return len(plaintext.encode("utf-8")) <= MAX_PASSWORD_BYTES
+
+
+def auth_generation(conn: sqlite3.Connection) -> int:
+    raw = settings_store.get(conn, AUTH_GENERATION_KEY)
+    try:
+        return int(raw or 0)
+    except ValueError:
+        return 0
+
+
+def session_is_current(conn: sqlite3.Connection, value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and value.get("user") == "admin"
+        and value.get("generation") == auth_generation(conn)
+    )
+
+
+def revoke_all_sessions(conn: sqlite3.Connection) -> None:
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        generation = auth_generation(conn) + 1
+        conn.execute(
+            "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+            (AUTH_GENERATION_KEY, str(generation)),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def _verify_password(plaintext: str, stored_hash: str) -> bool:
     try:
         return bcrypt.checkpw(plaintext.encode("utf-8"), stored_hash.encode("ascii"))
     except (ValueError, TypeError):
         # Malformed stored hash. Treat as a non-match rather than 500.
-        logger.warning("stored password hash appears malformed", extra={"event": "auth_hash_malformed"})
+        logger.warning(
+            "stored password hash appears malformed", extra={"event": "auth_hash_malformed"}
+        )
         return False
 
 
@@ -81,17 +128,114 @@ def is_password_set(conn: sqlite3.Connection) -> bool:
     return bool(settings_store.get(conn, settings_store.APP_PASSWORD_KEY))
 
 
-def set_password(conn: sqlite3.Connection, plaintext: str) -> None:
+def set_password(conn: sqlite3.Connection, plaintext: str) -> int:
     """Store the bcrypt hash of ``plaintext`` as the admin password."""
 
-    settings_store.set_(conn, settings_store.APP_PASSWORD_KEY, hash_password(plaintext))
+    return _store_password(conn, hash_password(plaintext))
 
 
-def clear_password(conn: sqlite3.Connection) -> None:
+def _store_password(
+    conn: sqlite3.Connection,
+    password_hash: str | None,
+    expected: tuple[str | None, int] | None = None,
+) -> int:
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        generation = auth_generation(conn) + 1
+        if (
+            expected is not None
+            and (settings_store.get(conn, settings_store.APP_PASSWORD_KEY), generation - 1)
+            != expected
+        ):
+            raise CredentialsChangedError("credentials changed during password update")
+        if password_hash is None:
+            conn.execute("DELETE FROM settings WHERE key = ?", (settings_store.APP_PASSWORD_KEY,))
+        else:
+            conn.execute(
+                "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                (settings_store.APP_PASSWORD_KEY, password_hash),
+            )
+        conn.execute(
+            "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+            (AUTH_GENERATION_KEY, str(generation)),
+        )
+        conn.commit()
+        return generation
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def clear_password(
+    conn: sqlite3.Connection,
+    expected_generation: int | None = None,
+    *,
+    require_unset: bool = False,
+) -> int:
     """Remove the admin password (revert to open convenience mode)."""
 
-    conn.execute("DELETE FROM settings WHERE key = ?", (settings_store.APP_PASSWORD_KEY,))
-    conn.commit()
+    expected = None
+    if expected_generation is not None or require_unset:
+        expected = (
+            settings_store.get(conn, settings_store.APP_PASSWORD_KEY),
+            expected_generation if expected_generation is not None else auth_generation(conn),
+        )
+    if require_unset and expected is not None and expected[0] is not None:
+        raise CredentialsChangedError("credentials changed during password update")
+    return _store_password(conn, None, expected)
+
+
+async def set_password_async(
+    conn: sqlite3.Connection,
+    plaintext: str,
+    expected_generation: int | None = None,
+    *,
+    require_unset: bool = False,
+) -> int:
+    expected = (
+        settings_store.get(conn, settings_store.APP_PASSWORD_KEY),
+        auth_generation(conn),
+    )
+    if expected_generation is not None and expected[1] != expected_generation:
+        raise CredentialsChangedError("credentials changed during password update")
+    if require_unset and expected[0] is not None:
+        raise CredentialsChangedError("credentials changed during password update")
+    loop = asyncio.get_running_loop()
+    password_hash = await loop.run_in_executor(_BCRYPT_EXECUTOR, hash_password, plaintext)
+    return _store_password(conn, password_hash, expected)
+
+
+async def verify_login_async(
+    conn: sqlite3.Connection, *, password: str, identifier: str, settings: Settings
+) -> int:
+    state = _get_lockout(conn, identifier)
+    now = datetime.now(UTC)
+    if state and state.locked_until and state.locked_until > now:
+        raise LockedOutError(state.locked_until)
+    rows = conn.execute(
+        "SELECT key, value FROM settings WHERE key IN (?, ?)",
+        (settings_store.APP_PASSWORD_KEY, AUTH_GENERATION_KEY),
+    ).fetchall()
+    snapshot = {row["key"]: row["value"] for row in rows}
+    stored = snapshot.get(settings_store.APP_PASSWORD_KEY)
+    try:
+        generation = int(snapshot.get(AUTH_GENERATION_KEY, "0"))
+    except ValueError:
+        generation = 0
+    loop = asyncio.get_running_loop()
+    matched = await loop.run_in_executor(
+        _BCRYPT_EXECUTOR, _verify_password, password, stored or _DUMMY_HASH
+    )
+    if not stored or not matched:
+        _register_failed_attempt(conn, identifier, settings)
+        raise InvalidCredentialsError("invalid password")
+    if (
+        settings_store.get(conn, settings_store.APP_PASSWORD_KEY) != stored
+        or auth_generation(conn) != generation
+    ):
+        raise InvalidCredentialsError("credentials changed during login")
+    _clear_lockout(conn, identifier)
+    return generation
 
 
 def verify_login(

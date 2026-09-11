@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     )
     LLM_MODEL: str = ""
     FEED_TITLE: str = "Audicle"
-    FEED_DESCRIPTION: str = ""
+    FEED_DESCRIPTION: str = "Articles read aloud by Audicle."
     FEED_AUTHOR: str = ""
     FEED_EMAIL: str = ""
     FEED_ARTWORK_URL: str = ""
@@ -185,9 +185,8 @@ class Settings(BaseSettings):
     # main-article heuristic; excludeTags drops elements by tag/selector.
     FIRECRAWL_ONLY_MAIN_CONTENT: bool = True
     FIRECRAWL_REMOVE_BASE64_IMAGES: bool = True
-    # Comma-separated like CORS_ORIGINS (pydantic-settings JSON-parses list env
-    # vars, which makes a plain comma list crash startup); split via the
-    # firecrawl_exclude_tags property.
+    # Kept as a string because pydantic-settings JSON-parses list env vars;
+    # split via the firecrawl_exclude_tags property.
     FIRECRAWL_EXCLUDE_TAGS: str = "nav,footer,header,aside"
 
     # Queue / HTTP / worker.
@@ -225,7 +224,6 @@ class Settings(BaseSettings):
     RSS_CACHE_MAX_AGE_SECONDS: int = 300
 
     # CORS.
-    CORS_ORIGINS: str = ""
 
     # Auth is set up at runtime via the UI (MinusPod-style): the admin password
     # bcrypt hash lives in the settings DB table, not env. No password set =
@@ -536,10 +534,6 @@ class Settings(BaseSettings):
         WHISPER_VERIFY_ENABLED toggle so callers ask one question."""
 
         return self.WHISPER_VERIFY_ENABLED and self.WHISPER_BACKEND != "off"
-
-    @property
-    def cors_origin_list(self) -> list[str]:
-        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
     @property
     def firecrawl_exclude_tags(self) -> list[str]:

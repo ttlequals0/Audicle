@@ -17,6 +17,7 @@ from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request
 
+from app.api.access_log import safe_path
 from app.config import Settings, get_settings
 from app.core import database
 from app.services import auth, csrf, feed_auth, runtime_settings, voices
@@ -82,7 +83,7 @@ def require_admin(
 
     if not auth.is_password_set(conn):
         return
-    if not request.session.get(SESSION_KEY_USER):
+    if not auth.session_is_current(conn, request.session.get(SESSION_KEY_USER)):
         raise HTTPException(status_code=401, detail="login required")
     # Safe methods don't need the CSRF header (it's a write-side defense).
     if request.method in {"GET", "HEAD", "OPTIONS"}:
@@ -131,7 +132,7 @@ def require_feed_key(
     enabled, expected = feed_auth.effective_auth(conn, settings)
     if not enabled:
         return
-    if request.session.get(SESSION_KEY_USER):
+    if auth.session_is_current(conn, request.session.get(SESSION_KEY_USER)):
         return
     _, cover_key = feed_auth.split_cover_token(request.path_params.get("episode_id"))
     supplied = request.query_params.get("key") or cover_key
@@ -139,7 +140,7 @@ def require_feed_key(
         logger.warning(
             "feed key rejected: %s %s [%s]",
             request.method,
-            request.url.path,
+            safe_path(request.url.path),
             client_ip(request, settings),
         )
         raise HTTPException(status_code=401, detail="feed key required")

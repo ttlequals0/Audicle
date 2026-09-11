@@ -15,7 +15,7 @@ import sqlite3
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 
 from app.api.deps import get_conn, require_feed_key
@@ -39,102 +39,119 @@ def _validate_episode_id(episode_id: str) -> None:
         raise HTTPException(status_code=404, detail="not found")
 
 
-def _safe_path(root: Path, name: str) -> Path:
-    """Resolve and confirm the result still lives under ``root``."""
-
-    candidate = (root / name).resolve()
-    root_resolved = root.resolve()
+def _stored_media_path(settings: Settings, value: object) -> Path:
+    if not isinstance(value, str) or not value:
+        raise HTTPException(status_code=404, detail="not found")
+    path = Path(value).resolve()
     try:
-        candidate.relative_to(root_resolved)
+        path.relative_to(media_dir(settings).resolve())
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="not found") from exc
-    return candidate
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="not found")
+    return path
 
 
-@router.api_route("/{episode_id}.mp3", methods=["GET", "HEAD"])
+@router.get("/{episode_id}.mp3", operation_id="get_media_mp3")
+@router.head("/{episode_id}.mp3", operation_id="head_media_mp3")
 async def get_mp3(
     episode_id: str,
     settings: Annotated[Settings, Depends(get_settings)],
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+    v: Annotated[str | None, Query()] = None,
 ) -> FileResponse:
     _validate_episode_id(episode_id)
-    path = _safe_path(media_dir(settings), f"{episode_id}.mp3")
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="not found")
+    audio_path = episodes.generation_value(conn, episode_id, v, "audio_path")
+    path = _stored_media_path(settings, audio_path)
     return FileResponse(
         path,
         media_type="audio/mpeg",
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers={"Cache-Control": feed_auth.cache_control(conn, settings, 86400)},
     )
 
 
-@router.api_route("/{episode_id}.jpg", methods=["GET", "HEAD"])
+@router.get("/{episode_id}.jpg", operation_id="get_media_jpg")
+@router.head("/{episode_id}.jpg", operation_id="head_media_jpg")
 async def get_jpg(
     episode_id: str,
     settings: Annotated[Settings, Depends(get_settings)],
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+    v: Annotated[str | None, Query()] = None,
 ) -> FileResponse:
     # A keyed cover URL is /media/<episode_id>-<key>.jpg; require_feed_key has
     # already validated the key, so take the id half for the file lookup.
     episode_id, _ = feed_auth.split_cover_token(episode_id)
+    episode_id, generation_token = feed_auth.split_cover_generation(episode_id)
     _validate_episode_id(episode_id)
-    path = _safe_path(media_dir(settings), f"{episode_id}.jpg")
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="not found")
+    artwork_path = episodes.generation_value(
+        conn, episode_id, generation_token or v, "artwork_path"
+    )
+    path = _stored_media_path(settings, artwork_path)
     return FileResponse(
         path,
         media_type="image/jpeg",
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers={"Cache-Control": feed_auth.cache_control(conn, settings, 86400)},
     )
 
 
-@router.api_route("/{episode_id}.vtt", methods=["GET", "HEAD"])
+@router.get("/{episode_id}.vtt", operation_id="get_media_vtt")
+@router.head("/{episode_id}.vtt", operation_id="head_media_vtt")
 async def get_vtt(
     episode_id: str,
     conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    v: Annotated[str | None, Query()] = None,
 ) -> Response:
     _validate_episode_id(episode_id)
-    episode = episodes.get_by_id(conn, episode_id)
-    if episode is None or not episode.transcript_vtt:
+    transcript_vtt = episodes.generation_value(conn, episode_id, v, "transcript_vtt")
+    if not isinstance(transcript_vtt, str) or not transcript_vtt:
         raise HTTPException(status_code=404, detail="not found")
     return Response(
-        content=episode.transcript_vtt,
+        content=transcript_vtt,
         media_type="text/vtt; charset=utf-8",
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers={"Cache-Control": feed_auth.cache_control(conn, settings, 86400)},
     )
 
 
-@router.api_route("/{episode_id}.chapters.json", methods=["GET", "HEAD"])
+@router.get("/{episode_id}.chapters.json", operation_id="get_media_chapters")
+@router.head("/{episode_id}.chapters.json", operation_id="head_media_chapters")
 async def get_chapters(
     episode_id: str,
     conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    v: Annotated[str | None, Query()] = None,
 ) -> Response:
     """The Podcasting 2.0 chapters document, served from the ``chapters_json``
     column. 404 for episodes without chapters (short, disabled, or pre-0.51.0)."""
 
     _validate_episode_id(episode_id)
-    episode = episodes.get_by_id(conn, episode_id)
-    if episode is None or not episode.chapters_json:
+    chapters_json = episodes.generation_value(conn, episode_id, v, "chapters_json")
+    if not isinstance(chapters_json, str) or not chapters_json:
         raise HTTPException(status_code=404, detail="not found")
     return Response(
-        content=episode.chapters_json,
+        content=chapters_json,
         media_type="application/json+chapters",
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers={"Cache-Control": feed_auth.cache_control(conn, settings, 86400)},
     )
 
 
-@router.api_route("/{episode_id}.txt", methods=["GET", "HEAD"])
+@router.get("/{episode_id}.txt", operation_id="get_media_text")
+@router.head("/{episode_id}.txt", operation_id="head_media_text")
 async def get_cleaned_text(
     episode_id: str,
     conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    v: Annotated[str | None, Query()] = None,
 ) -> Response:
     """The cleaned article text (the exact input to TTS), served from the
     ``cleaned_text`` column. 404 for episodes processed before 0.6.0 (NULL)."""
 
     _validate_episode_id(episode_id)
-    cleaned_text = episodes.get_cleaned_text(conn, episode_id)
-    if not cleaned_text:
+    cleaned_text = episodes.generation_value(conn, episode_id, v, "cleaned_text")
+    if not isinstance(cleaned_text, str) or not cleaned_text:
         raise HTTPException(status_code=404, detail="not found")
     return Response(
         content=cleaned_text,
         media_type="text/plain; charset=utf-8",
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers={"Cache-Control": feed_auth.cache_control(conn, settings, 86400)},
     )

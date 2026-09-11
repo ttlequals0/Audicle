@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from slowapi import Limiter
 
-from app.api.deps import SESSION_KEY_USER, client_ip, get_conn
+from app.api.deps import SESSION_KEY_USER, client_ip, get_conn, require_admin
 from app.config import Settings, get_settings
 from app.services import auth, csrf
 
@@ -39,13 +39,13 @@ _LOGIN_LIMITER = Limiter(key_func=_client_id)
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-def _verify_or_raise(conn, *, password, request, settings, invalid_detail) -> None:
+async def _verify_or_raise(conn, *, password, request, settings, invalid_detail) -> int:
     """Run the password + lockout check, mapping failures to HTTP responses
     (423 Locked / 401 with ``invalid_detail``). Shared by login and the
     change-password flow."""
 
     try:
-        auth.verify_login(
+        return await auth.verify_login_async(
             conn, password=password, identifier=_client_id(request), settings=settings
         )
     except auth.LockedOutError as exc:
@@ -90,7 +90,9 @@ async def get_status(
 ) -> StatusResponse:
     password_set = auth.is_password_set(conn)
     # Convenience mode (no password) reports authenticated=true.
-    authenticated = (not password_set) or bool(request.session.get(SESSION_KEY_USER))
+    authenticated = (not password_set) or auth.session_is_current(
+        conn, request.session.get(SESSION_KEY_USER)
+    )
     csrf_token = request.cookies.get(csrf.CSRF_COOKIE_NAME) if authenticated else None
     return StatusResponse(
         password_set=password_set, authenticated=authenticated, csrf_token=csrf_token
@@ -108,7 +110,9 @@ async def post_login(
 ) -> AuthActionResponse:
     if not auth.is_password_set(conn):
         raise HTTPException(status_code=400, detail="no password is set; auth is open")
-    _verify_or_raise(
+    if not auth.password_fits_bcrypt(payload.password):
+        raise HTTPException(status_code=400, detail="password must be at most 72 UTF-8 bytes")
+    generation = await _verify_or_raise(
         conn,
         password=payload.password,
         request=request,
@@ -116,7 +120,7 @@ async def post_login(
         invalid_detail="invalid password",
     )
 
-    request.session[SESSION_KEY_USER] = "admin"
+    request.session[SESSION_KEY_USER] = {"user": "admin", "generation": generation}
     token = _set_csrf_cookie(response, settings)
     return AuthActionResponse(authenticated=True, password_set=True, csrf_token=token)
 
@@ -137,12 +141,15 @@ async def put_password(
     conn: Annotated[sqlite3.Connection, Depends(get_conn)],
 ) -> AuthActionResponse:
     already_set = auth.is_password_set(conn)
+    verified_generation: int | None = None
     # Changing an existing password requires the current one; first-time set
     # in convenience mode does not.
     if already_set:
         if not payload.current_password:
             raise HTTPException(status_code=400, detail="current_password is required")
-        _verify_or_raise(
+        if not auth.password_fits_bcrypt(payload.current_password):
+            raise HTTPException(status_code=400, detail="password must be at most 72 UTF-8 bytes")
+        verified_generation = await _verify_or_raise(
             conn,
             password=payload.current_password,
             request=request,
@@ -152,7 +159,10 @@ async def put_password(
 
     new_password = payload.new_password
     if new_password == "":
-        auth.clear_password(conn)
+        try:
+            auth.clear_password(conn, verified_generation, require_unset=not already_set)
+        except auth.CredentialsChangedError as exc:
+            raise HTTPException(status_code=409, detail="credentials changed; try again") from exc
         request.session.clear()
         response.delete_cookie(csrf.CSRF_COOKIE_NAME)
         return AuthActionResponse(authenticated=True, password_set=False)
@@ -162,12 +172,34 @@ async def put_password(
             status_code=400,
             detail=f"password must be at least {auth.MIN_PASSWORD_LENGTH} characters",
         )
-    auth.set_password(conn, new_password)
+    if not auth.password_fits_bcrypt(new_password):
+        raise HTTPException(status_code=400, detail="password must be at most 72 UTF-8 bytes")
+    try:
+        generation = await auth.set_password_async(
+            conn,
+            new_password,
+            verified_generation,
+            require_unset=not already_set,
+        )
+    except auth.CredentialsChangedError as exc:
+        raise HTTPException(status_code=409, detail="credentials changed; try again") from exc
 
     # Setting a password logs this session in.
-    request.session[SESSION_KEY_USER] = "admin"
+    request.session[SESSION_KEY_USER] = {"user": "admin", "generation": generation}
     token = _set_csrf_cookie(response, settings)
     return AuthActionResponse(authenticated=True, password_set=True, csrf_token=token)
+
+
+@router.post("/revoke-sessions", dependencies=[Depends(require_admin)])
+async def revoke_sessions(
+    request: Request,
+    response: Response,
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+) -> dict[str, bool]:
+    auth.revoke_all_sessions(conn)
+    request.session.clear()
+    response.delete_cookie(csrf.CSRF_COOKIE_NAME)
+    return {"revoked": True}
 
 
 def _set_csrf_cookie(response: Response, settings: Settings) -> str:
