@@ -4,6 +4,8 @@
 .githooks
 .venv
 **/.venv
+venv
+**/venv
 __pycache__
 *.pyc
 *.pyo
@@ -12,6 +14,16 @@ __pycache__
 .ruff_cache
 .mypy_cache
 node_modules
+dist
+**/dist
+build
+**/build
+coverage*
+**/coverage*
+*.log
+**/*.log
+.DS_Store
+**/.DS_Store
 data/
 ref_audio/
 *.png
@@ -29,3 +41,4 @@ ui-mockup.html
 logo-spec.md
 README.md
 CLAUDE.md
+AGENTS.md

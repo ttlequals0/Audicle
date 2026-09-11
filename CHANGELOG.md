@@ -6,6 +6,8 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.57.0] - 2026-09-10
+
 ### Added
 
 - LLM settings can test draft provider credentials and URLs before saving. Model lists are sorted alphabetically.
@@ -42,6 +44,7 @@ work lives under `[Unreleased]`.
 - Migration backups use SQLite's online backup API and verify the snapshot before a migration begins.
 - Lexicon imports use bounded transactions and less memory. The measured import took 6.085808542091399 seconds and 141148160 bytes peak RSS. Its database grew from 191303680 bytes to 214462464 bytes.
 - Release tooling pins and scans four stack images, including the renderer egress proxy. Each image has its own reviewed Trivy exceptions.
+- Docker build contexts exclude local environments, build output, coverage reports, logs, and operating-system metadata.
 - API validation errors are documented as HTTP 400 envelopes, authentication schemes are described in OpenAPI, and GET and HEAD operations have unique IDs.
 
 ## [0.56.9] - 2026-09-02
