@@ -12,6 +12,10 @@ work lives under `[Unreleased]`.
 
 - Cleanup retries a response that drops too much article text, then uses deterministic boilerplate stripping instead of publishing a partial episode. OpenAI-compatible null-content responses now retry and log safe response metadata.
 
+### Security
+
+- The TTS image records time-bounded exceptions for two unpatched Debian libexpat CVEs and rechecks them by 2026-10-10.
+
 ## [0.57.0] - 2026-09-10
 
 ### Added
