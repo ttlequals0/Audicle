@@ -89,6 +89,9 @@ class Settings(BaseSettings):
 
     # LLM tunables.
     LLM_TEMPERATURE: float = 0.7
+    # Disable reasoning for transformation work by default. Thinking models can
+    # consume their completion budget before emitting the narration text.
+    LLM_REASONING_EFFORT: Literal["none", "low", "medium", "high"] = "none"
     # Per-call output cap. The cleanup stage processes the article in windows of
     # LLM_CLEANUP_WINDOW_CHARS, so this only has to cover one window's cleaned
     # output (a ~12K-char window cleans to <12K chars ~= <4K tokens); 16000

@@ -6,6 +6,12 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.57.2] - 2026-09-12
+
+### Fixed
+
+- Cleanup turns off provider reasoning by default and uses deterministic boilerplate stripping when a completion ends before it emits text.
+
 ## [0.57.1] - 2026-09-11
 
 ### Fixed

@@ -111,7 +111,41 @@ async def test_openai_compatible_sends_chat_completions_payload(
     assert body["messages"][1]["content"] == "article body"
     assert body["temperature"] == 0.3
     assert body["max_tokens"] == 42
+    assert body["reasoning_effort"] == "none"
     assert req.headers.get("authorization") == "Bearer test-key"
+
+
+async def test_openrouter_sends_provider_native_reasoning_control(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    monkeypatch.setenv("LLM_REASONING_EFFORT", "low")
+    get_settings.cache_clear()
+    transport, captured = _capture_transport(response=_openai_ok())
+    _patch_async_client(monkeypatch, transport)
+
+    await llm.generate("s", "u", get_settings())
+
+    assert json.loads(captured["request"].content)["reasoning"] == {"effort": "low"}
+
+
+async def test_reasoning_rejection_retries_without_reasoning_control(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(400, json={"error": {"message": "reasoning_effort unsupported"}})
+        return _openai_ok()
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+
+    assert await llm.generate("s", "u", get_settings()) == "cleaned"
+    assert "reasoning_effort" in json.loads(requests[0].content)
+    assert "reasoning_effort" not in json.loads(requests[1].content)
 
 
 async def test_openai_compatible_5xx_raises_provider_error(
@@ -384,6 +418,19 @@ async def test_openai_compatible_null_content_raises_retryable_error_with_safe_m
     assert record.content_type == "NoneType"
     assert record.finish_reason == "tool_calls"
     assert record.tool_calls_present is True
+
+
+async def test_openai_compatible_length_limited_null_content_is_not_retryable(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    response = httpx.Response(
+        200,
+        json={"choices": [{"finish_reason": "length", "message": {"content": None}}]},
+    )
+    _patch_async_client(monkeypatch, httpx.MockTransport(lambda _r: response))
+
+    with pytest.raises(llm.LLMTruncatedResponseError):
+        await llm.generate("s", "u", get_settings())
 
 
 async def test_pipeline_retries_null_content_response(

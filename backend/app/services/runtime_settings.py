@@ -155,6 +155,7 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "OPENROUTER_API_KEY",
         "OLLAMA_BASE_URL",
         "LLM_TEMPERATURE",
+        "LLM_REASONING_EFFORT",
         "LLM_MAX_TOKENS",
         "LLM_CLEANUP_WINDOW_CHARS",
         "LLM_TIMEOUT_SECONDS",

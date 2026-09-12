@@ -38,6 +38,7 @@ const GROUPS: Record<string, string[]> = {
     "OPENROUTER_API_KEY",
     "OLLAMA_BASE_URL",
     "LLM_TEMPERATURE",
+    "LLM_REASONING_EFFORT",
     "LLM_MAX_TOKENS",
     "LLM_TIMEOUT_SECONDS",
     "LLM_RETRY_COUNT",
@@ -650,6 +651,7 @@ export default function SettingsRoute() {
   for (const [group, keys] of Object.entries(GROUPS)) {
     visibleKeysByGroup[group] = keys.filter((k) => {
       if (!settingsQ.data?.allowlist.includes(k)) return false;
+      if (k === "LLM_REASONING_EFFORT" && provider === "anthropic") return false;
       // Remote endpoint/credential fields are noise unless that backend is on.
       if (TTS_REMOTE_KEYS.has(k) && draft["TTS_BACKEND"] !== "openai-api") return false;
       if (WHISPER_REMOTE_KEYS.has(k) && draft["WHISPER_BACKEND"] !== "openai-api") return false;
@@ -821,6 +823,8 @@ export default function SettingsRoute() {
                         ? WHISPER_BACKEND_OPTIONS
                         : key === "PRONUNCIATION_SCOPE"
                           ? PRONUNCIATION_SCOPE_OPTIONS
+                          : key === "LLM_REASONING_EFFORT"
+                            ? ["none", "low", "medium", "high"]
                           : key === "OCR_LANGUAGE"
                             ? (ocrLangsQ.data?.languages ?? ["en"])
                             : null;

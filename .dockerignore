@@ -32,8 +32,7 @@ ref_audio/
 *.flac
 *.mp3
 *.wav
-.env
-.env.*
+.env*
 !.env.example
 CHANGELOG.md
 build-plan.md

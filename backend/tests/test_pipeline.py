@@ -1378,6 +1378,24 @@ async def test_cleanup_fallback_strips_markdown_links(
     assert "](" not in cleaned
 
 
+async def test_cleanup_uses_deterministic_fallback_for_textless_length_limit(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    article = "The council approved the transit budget after a lengthy public hearing. " * 8
+    calls = 0
+
+    async def _truncated(_system, _user, _settings, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise llm.LLMTruncatedResponseError("completion exhausted")
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _truncated)
+
+    assert await pipeline._stage_cleanup("job", article, get_settings()) == article.strip()
+    assert calls == 1
+
+
 async def test_cleanup_retries_short_output_then_uses_deterministic_fallback(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

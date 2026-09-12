@@ -1107,7 +1107,24 @@ async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
             "body, output exactly NO_ARTICLE_CONTENT and nothing else."
             f"\n\n<article>\n{window}\n</article>"
         )
-        raw = await _llm_with_retry(system_prompt, user_message, settings)
+        try:
+            raw = await _llm_with_retry(system_prompt, user_message, settings)
+        except llm.LLMTruncatedResponseError as exc:
+            fallback = article_prep.strip_boilerplate(markdown)
+            if len(fallback) < settings.MIN_CLEANUP_CHARS:
+                raise CleanupTooShortError(
+                    f"Cleanup output is unavailable and fallback is {len(fallback)} chars, below "
+                    f"MIN_CLEANUP_CHARS={settings.MIN_CLEANUP_CHARS}"
+                ) from exc
+            logger.warning(
+                "Cleanup response exhausted before emitting text; using deterministic boilerplate strip",
+                extra={
+                    "event": "cleanup_fallback_truncated_response",
+                    "window_index": index,
+                    "fallback_chars": len(fallback),
+                },
+            )
+            return fallback
         part = cleanup_output.extract_clean_output(raw)
         if cleanup_output.needs_compliance_retry(raw, part):
             raw = await _llm_with_retry(
