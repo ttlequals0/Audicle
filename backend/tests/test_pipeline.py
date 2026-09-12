@@ -13,6 +13,7 @@ import pytest
 from app.config import get_settings
 from app.core import database
 from app.services import (
+    cleanup_output,
     episodes,
     extraction,
     jobs,
@@ -1375,6 +1376,70 @@ async def test_cleanup_fallback_strips_markdown_links(
     assert "official report" in cleaned
     assert "https://example.com" not in cleaned
     assert "](" not in cleaned
+
+
+async def test_cleanup_uses_deterministic_fallback_for_textless_length_limit(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    article = "The council approved the transit budget after a lengthy public hearing. " * 8
+    calls = 0
+
+    async def _truncated(_system, _user, _settings, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise llm.LLMTruncatedResponseError("completion exhausted")
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _truncated)
+
+    assert await pipeline._stage_cleanup("job", article, get_settings()) == article.strip()
+    assert calls == 1
+
+
+async def test_cleanup_retries_short_output_then_uses_deterministic_fallback(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cleanup response that is really a summary must not become the episode."""
+
+    database.run_migrations(env)
+    article = (
+        "The first substantive paragraph explains the policy decision in detail.\n\n"
+        "The second substantive paragraph records the evidence and objections.\n\n"
+        "The conclusion explains what happens next."
+    ) * 8
+    monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _md, _n: [article])
+    calls: list[str] = []
+
+    async def _summarize(_system, user, _settings, **_kwargs):
+        calls.append(user)
+        return "<<<AUDICLE_BEGIN>>>\nA short summary.\n<<<AUDICLE_END>>>"
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _summarize)
+    cleaned = await pipeline._stage_cleanup("job", article, get_settings())
+
+    assert len(calls) == 2
+    assert cleanup_output.FIDELITY_RETRY_INSTRUCTION in calls[1]
+    assert cleaned == article
+
+
+async def test_cleanup_keeps_fidelity_retry_that_preserves_the_article(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    article = ("The council approved the budget after debate. " * 20).strip()
+    monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _md, _n: [article])
+    outputs = iter(
+        [
+            "<<<AUDICLE_BEGIN>>>\nA short summary.\n<<<AUDICLE_END>>>",
+            f"<<<AUDICLE_BEGIN>>>\n{article}\n<<<AUDICLE_END>>>",
+        ]
+    )
+
+    async def _fake(_system, _user, _settings, **_kwargs):
+        return next(outputs)
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _fake)
+    assert await pipeline._stage_cleanup("job", article, get_settings()) == article
 
 
 async def test_cleanup_still_fails_when_extraction_also_thin(

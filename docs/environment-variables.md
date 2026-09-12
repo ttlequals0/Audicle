@@ -41,6 +41,7 @@ See the LLM providers page. Keys are stored masked.
 | `OPENROUTER_API_KEY` | `None` | yes |
 | `OLLAMA_BASE_URL` | `http://host.docker.internal:11434/v1` | yes |
 | `LLM_TEMPERATURE` | `0.7` | yes |
+| `LLM_REASONING_EFFORT` | `none` | yes |
 | `LLM_MAX_TOKENS` | `16000` | yes |
 | `LLM_CLEANUP_WINDOW_CHARS` | `12000` | yes |
 | `LLM_TIMEOUT_SECONDS` | `300` | yes |
@@ -83,6 +84,7 @@ The cascade and its budgets. See the paywalls page.
 | Variable | Default | Runtime |
 |---|---|---|
 | `MIN_CLEANUP_CHARS` | `200` | yes |
+| `CLEANUP_MIN_RETENTION_RATIO` | `0.5` | yes |
 | `MAX_PROMPT_LENGTH_BYTES` | `10240` | yes |
 | `MAX_CORRECTIONS_ENTRIES` | `500` | yes |
 | `LEXICON_AGGRESSIVE` | `True` | yes |

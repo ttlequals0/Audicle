@@ -58,6 +58,14 @@ class LLMRequestError(LLMError):
     """4xx response, malformed JSON, or any non-retryable failure."""
 
 
+class LLMResponseContentError(LLMProviderError):
+    """A successful provider response omitted text but may recover on retry."""
+
+
+class LLMTruncatedResponseError(LLMRequestError):
+    """The provider exhausted a completion without emitting response text."""
+
+
 class LLMRateLimitError(LLMProviderError):
     """429 from the provider. Subclasses the retryable error on purpose: a rate
     limit is transient, so callers retry it instead of dropping the call.
@@ -84,9 +92,10 @@ async def generate(
 
     effective_temp = temperature if temperature is not None else settings.LLM_TEMPERATURE
     effective_max = max_tokens if max_tokens is not None else settings.LLM_MAX_TOKENS
+    effective_reasoning = settings.LLM_REASONING_EFFORT
     timeout = httpx.Timeout(settings.LLM_TIMEOUT_SECONDS)
 
-    async def _run(temp: float | None) -> str:
+    async def _run(temp: float | None, reasoning: str | None) -> str:
         if settings.LLM_PROVIDER == "anthropic":
             return await _call_anthropic(
                 system_prompt,
@@ -105,22 +114,30 @@ async def generate(
                 api_key=api_key,
                 model=settings.LLM_MODEL,
                 extra_headers=extra_headers,
+                provider=settings.LLM_PROVIDER,
                 temperature=temp,
                 max_tokens=effective_max,
+                reasoning_effort=reasoning,
                 timeout=timeout,
             )
         raise LLMRequestError(f"Unknown LLM_PROVIDER={settings.LLM_PROVIDER!r}")
 
     try:
-        return await _run(effective_temp)
+        return await _run(effective_temp, effective_reasoning)
     except LLMRequestError as exc:
+        message = str(exc).lower()
+        if effective_reasoning is not None and _is_reasoning_rejection(message):
+            logger.warning(
+                "LLM rejected reasoning control; retrying with provider defaults",
+                extra={"event": "llm_reasoning_dropped", "model": settings.LLM_MODEL},
+            )
+            return await _run(effective_temp, None)
         # Some models reject the temperature parameter outright (newer Anthropic
         # models return "temperature is deprecated for this model"). Drop it and
         # retry once so a job doesn't fail over an unsupported sampling knob.
         # Retry on any temperature-mentioning 400 EXCEPT a value-range complaint
         # ("temperature must be between 0 and 1") -- that means the operator's
         # configured value is bad and should surface, not be silently dropped.
-        message = str(exc).lower()
         value_complaint = any(
             p in message
             for p in ("must be", "between", "greater than", "less than", "out of range")
@@ -130,8 +147,12 @@ async def generate(
                 "LLM rejected temperature; retrying without it",
                 extra={"event": "llm_temperature_dropped", "model": settings.LLM_MODEL},
             )
-            return await _run(None)
+            return await _run(None, effective_reasoning)
         raise
+
+
+def _is_reasoning_rejection(message: str) -> bool:
+    return any(term in message for term in ("reasoning", "thinking", "reasoning_effort"))
 
 
 def openai_compatible_connection(
@@ -165,8 +186,10 @@ async def _call_openai_compatible(
     api_key: str | None,
     model: str,
     extra_headers: dict[str, str] | None = None,
+    provider: str,
     temperature: float | None,
     max_tokens: int,
+    reasoning_effort: str | None,
     timeout: httpx.Timeout,
 ) -> str:
     base = base.rstrip("/")
@@ -188,20 +211,44 @@ async def _call_openai_compatible(
     }
     if temperature is not None:
         payload["temperature"] = temperature
+    if reasoning_effort is not None:
+        if provider == "openrouter":
+            payload["reasoning"] = {"effort": reasoning_effort}
+        else:
+            payload["reasoning_effort"] = reasoning_effort
 
     body = await _post(endpoint, headers, payload, timeout)
     try:
         content = body["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError, AttributeError) as exc:
         raise LLMRequestError(f"Unexpected openai-compatible response shape: {exc}") from exc
-    # OpenAI-compatible providers may return content=null when the model
-    # decides to emit tool_calls instead of text. Treat that as a request-level
-    # error so the typed retry classification (LLMProviderError = retryable,
-    # LLMRequestError = not) stays meaningful.
+    # OpenAI-compatible providers may return content=null when the model emits
+    # tool calls or fails to serialize a completion. Retry it as a provider
+    # failure, but keep the diagnostic to response metadata only.
     if not isinstance(content, str):
-        raise LLMRequestError(
-            f"openai-compatible response contained non-string content "
-            f"(type={type(content).__name__})"
+        choice = body["choices"][0]
+        message = choice.get("message") if isinstance(choice, dict) else None
+        tool_calls = message.get("tool_calls") if isinstance(message, dict) else None
+        finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
+        logger.warning(
+            "OpenAI-compatible response omitted text content",
+            extra={
+                "event": "llm_non_text_content",
+                "content_type": type(content).__name__,
+                "finish_reason": finish_reason if isinstance(finish_reason, str) else None,
+                "tool_calls_present": isinstance(tool_calls, list) and bool(tool_calls),
+                "model": model,
+            },
+        )
+        if finish_reason == "length" and not tool_calls:
+            raise LLMTruncatedResponseError(
+                "openai-compatible response exhausted its completion before emitting text"
+            )
+        raise LLMResponseContentError(
+            "openai-compatible response contained non-string content "
+            f"(type={type(content).__name__}, "
+            f"finish_reason={finish_reason if isinstance(finish_reason, str) else None}, "
+            f"tool_calls_present={isinstance(tool_calls, list) and bool(tool_calls)})"
         )
     return content
 

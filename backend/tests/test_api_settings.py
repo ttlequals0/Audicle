@@ -170,13 +170,19 @@ def test_llm_provider_group_is_editable(env: Path) -> None:
     with _client(env) as client:
         response = client.put(
             "/api/v1/settings",
-            json={"LLM_PROVIDER": "anthropic", "LLM_MODEL": "claude-x", "LLM_TEMPERATURE": 0.5},
+            json={
+                "LLM_PROVIDER": "anthropic",
+                "LLM_MODEL": "claude-x",
+                "LLM_TEMPERATURE": 0.5,
+                "LLM_REASONING_EFFORT": "none",
+            },
         )
     assert response.status_code == 200
     values = response.json()["values"]
     assert values["LLM_PROVIDER"] == "anthropic"
     assert values["LLM_MODEL"] == "claude-x"
     assert values["LLM_TEMPERATURE"] == 0.5
+    assert values["LLM_REASONING_EFFORT"] == "none"
 
 
 def test_api_key_is_masked_on_get_and_survives_resave(env: Path) -> None:
