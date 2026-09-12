@@ -148,6 +148,10 @@ class Settings(BaseSettings):
     # Keep in sync with services.ocr.SUPPORTED_LANGUAGES (drift test pins it).
     OCR_LANGUAGE: Literal["en"] = "en"
     MIN_CLEANUP_CHARS: int = 200
+    # Reject an LLM cleanup response that looks like a summary rather than a
+    # cleaned article. The pipeline retries it once, then uses deterministic
+    # boilerplate stripping so it never publishes a partial narration.
+    CLEANUP_MIN_RETENTION_RATIO: float = 0.5
     # When a direct scrape of a known paywall/JS-gated host (see source_fallbacks)
     # comes back below that source's bar, retry via a reader-proxy rewrite (e.g.
     # Medium -> Freedium). False disables fallbacks (direct scrapes only).
@@ -584,6 +588,7 @@ RUNTIME_SETTING_BOUNDS: dict[str, dict[str, float]] = {
     # An octave of drift is not drift, it is a different voice.
     "AUDIO_ANALYSIS_MAX_F0_SEMITONES": {"gt": 0, "le": 12.0},
     "TTS_CACHE_RETENTION_DAYS": {"ge": 1, "le": 90},
+    "CLEANUP_MIN_RETENTION_RATIO": {"gt": 0, "le": 1.0},
 }
 
 

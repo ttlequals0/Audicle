@@ -356,21 +356,59 @@ async def test_anthropic_url_path_and_version_are_correct(
     assert req.headers["anthropic-version"] == "2023-06-01"
 
 
-async def test_openai_compatible_null_content_raises_typed_request_error(
-    env: Path, monkeypatch: pytest.MonkeyPatch
+async def test_openai_compatible_null_content_raises_retryable_error_with_safe_metadata(
+    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Some providers return content=null when tool_calls would be issued;
-    we must classify this as LLMRequestError (not propagate a TypeError on
-    len()) so the pipeline reports a clean failure."""
+    """A null completion can recover on retry, and diagnostics cannot leak content."""
 
     response = httpx.Response(
         200,
-        json={"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": []}}]},
+        json={
+            "choices": [
+                {
+                    "finish_reason": "tool_calls",
+                    "message": {"role": "assistant", "content": None, "tool_calls": [{}]},
+                }
+            ]
+        },
     )
     _patch_async_client(monkeypatch, httpx.MockTransport(lambda _r: response))
 
-    with pytest.raises(llm.LLMRequestError, match="non-string content"):
+    with (
+        caplog.at_level("WARNING", logger="app.services.llm"),
+        pytest.raises(llm.LLMResponseContentError, match="tool_calls_present=True"),
+    ):
         await llm.generate("s", "u", get_settings())
+
+    record = next(record for record in caplog.records if record.event == "llm_non_text_content")
+    assert record.content_type == "NoneType"
+    assert record.finish_reason == "tool_calls"
+    assert record.tool_calls_present is True
+
+
+async def test_pipeline_retries_null_content_response(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.services import pipeline
+
+    monkeypatch.setenv("LLM_RETRY_COUNT", "2")
+    get_settings.cache_clear()
+    calls = 0
+
+    async def _response_then_text(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise llm.LLMResponseContentError("content was null")
+        return "recovered text"
+
+    monkeypatch.setattr(llm, "generate", _response_then_text)
+    monkeypatch.setattr(pipeline, "_llm_retry_wait", lambda _state: 0)
+    try:
+        assert await pipeline._llm_with_retry("system", "article", get_settings()) == "recovered text"
+    finally:
+        get_settings.cache_clear()
+    assert calls == 2
 
 
 async def test_anthropic_picks_text_block_among_thinking_and_tool_use(

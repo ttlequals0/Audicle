@@ -37,6 +37,16 @@ RETRY_INSTRUCTION = (
     "boilerplate, output exactly NO_ARTICLE_CONTENT.\n\n"
 )
 
+# Prepended when a response preserves implausibly little of a real article
+# window. This is separate from the marker-compliance retry: the model followed
+# the response format, but summarized or skipped material that must be narrated.
+FIDELITY_RETRY_INSTRUCTION = (
+    "Your previous response omitted too much of the article. Preserve every "
+    "substantive paragraph, claim, quote, and conclusion. Remove only page "
+    "chrome, navigation, ads, and duplicate boilerplate. Do not summarize. "
+    f"Output ONLY the cleaned narration between {BEGIN_MARKER} and {END_MARKER}.\n\n"
+)
+
 _MARKER_SCRUB_RE = re.compile(re.escape(BEGIN_MARKER) + "|" + re.escape(END_MARKER))
 
 # Backstops for when the model ignores the sentinel and writes a refusal in prose.

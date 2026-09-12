@@ -184,6 +184,7 @@ const GROUPS: Record<string, string[]> = {
   ],
   Cleanup: [
     "MIN_CLEANUP_CHARS",
+    "CLEANUP_MIN_RETENTION_RATIO",
     "MAX_PROMPT_LENGTH_BYTES",
     "MAX_CORRECTIONS_ENTRIES",
     "LEXICON_AGGRESSIVE",

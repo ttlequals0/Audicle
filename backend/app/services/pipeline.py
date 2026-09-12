@@ -1093,6 +1093,7 @@ async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
     # output well under the cap so article length is never the bottleneck.
     windows = chunker.pack_paragraphs(markdown, settings.LLM_CLEANUP_WINDOW_CHARS) or [markdown]
     cleaned_parts: list[str] = []
+    fidelity_failed = False
     for index, window in enumerate(windows):
         # Repeat the directive in the user turn (many models weight it higher
         # than the system prompt) and delimit the article so the model cleans it
@@ -1113,6 +1114,33 @@ async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
                 system_prompt, cleanup_output.RETRY_INSTRUCTION + user_message, settings
             )
             part = cleanup_output.extract_clean_output(raw)
+        if _cleanup_output_is_truncated(window, part, settings):
+            logger.warning(
+                "Cleanup output retained too little article text; retrying",
+                extra={
+                    "event": "cleanup_fidelity_retry",
+                    "window_index": index,
+                    "input_chars": len(window),
+                    "output_chars": len(part),
+                    "minimum_retention_ratio": settings.CLEANUP_MIN_RETENTION_RATIO,
+                },
+            )
+            raw = await _llm_with_retry(
+                system_prompt, cleanup_output.FIDELITY_RETRY_INSTRUCTION + user_message, settings
+            )
+            part = cleanup_output.extract_clean_output(raw)
+            if _cleanup_output_is_truncated(window, part, settings):
+                fidelity_failed = True
+                logger.warning(
+                    "Cleanup output remained too short after fidelity retry",
+                    extra={
+                        "event": "cleanup_fidelity_fallback",
+                        "window_index": index,
+                        "input_chars": len(window),
+                        "output_chars": len(part),
+                        "minimum_retention_ratio": settings.CLEANUP_MIN_RETENTION_RATIO,
+                    },
+                )
         # Drop boilerplate-only windows and any refusal the model still leaked, so
         # a "there is no article" line never reaches narration; the empty string
         # is filtered out of the join below.
@@ -1139,7 +1167,7 @@ async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
     # Deterministic _normalize_for_tts runs later in the normalize stage, once on
     # the full text, so cleanup just joins the surviving windows here.
     cleaned = "\n\n".join(p for p in cleaned_parts if p)
-    if len(cleaned) < settings.MIN_CLEANUP_CHARS:
+    if fidelity_failed or len(cleaned) < settings.MIN_CLEANUP_CHARS:
         # The LLM produced too little -- it balked: a refusal, a chat deflection, or the
         # NO_ARTICLE_CONTENT sentinel (which some models emit to refuse real content, so
         # it is not trusted as authoritative). Deterministically bin the obvious
@@ -1150,11 +1178,12 @@ async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
         fallback = article_prep.strip_boilerplate(markdown)
         if len(fallback) >= settings.MIN_CLEANUP_CHARS:
             logger.warning(
-                "Cleanup output too short; using deterministic boilerplate strip",
+                "Cleanup output incomplete; using deterministic boilerplate strip",
                 extra={
                     "event": "cleanup_fallback_deterministic",
                     "cleaned_chars": len(cleaned),
                     "fallback_chars": len(fallback),
+                    "fidelity_failed": fidelity_failed,
                 },
             )
             cleaned = fallback
@@ -1173,6 +1202,12 @@ async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
         },
     )
     return cleaned
+
+
+def _cleanup_output_is_truncated(window: str, output: str, settings: Settings) -> bool:
+    """Whether a non-empty cleanup response discarded too much of its window."""
+
+    return bool(output) and len(output) < len(window) * settings.CLEANUP_MIN_RETENTION_RATIO
 
 
 async def _stage_chunk(corrected: str, settings: Settings) -> list[str]:

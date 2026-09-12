@@ -58,6 +58,10 @@ class LLMRequestError(LLMError):
     """4xx response, malformed JSON, or any non-retryable failure."""
 
 
+class LLMResponseContentError(LLMProviderError):
+    """A successful provider response omitted text but may recover on retry."""
+
+
 class LLMRateLimitError(LLMProviderError):
     """429 from the provider. Subclasses the retryable error on purpose: a rate
     limit is transient, so callers retry it instead of dropping the call.
@@ -194,14 +198,29 @@ async def _call_openai_compatible(
         content = body["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError, AttributeError) as exc:
         raise LLMRequestError(f"Unexpected openai-compatible response shape: {exc}") from exc
-    # OpenAI-compatible providers may return content=null when the model
-    # decides to emit tool_calls instead of text. Treat that as a request-level
-    # error so the typed retry classification (LLMProviderError = retryable,
-    # LLMRequestError = not) stays meaningful.
+    # OpenAI-compatible providers may return content=null when the model emits
+    # tool calls or fails to serialize a completion. Retry it as a provider
+    # failure, but keep the diagnostic to response metadata only.
     if not isinstance(content, str):
-        raise LLMRequestError(
-            f"openai-compatible response contained non-string content "
-            f"(type={type(content).__name__})"
+        choice = body["choices"][0]
+        message = choice.get("message") if isinstance(choice, dict) else None
+        tool_calls = message.get("tool_calls") if isinstance(message, dict) else None
+        finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
+        logger.warning(
+            "OpenAI-compatible response omitted text content",
+            extra={
+                "event": "llm_non_text_content",
+                "content_type": type(content).__name__,
+                "finish_reason": finish_reason if isinstance(finish_reason, str) else None,
+                "tool_calls_present": isinstance(tool_calls, list) and bool(tool_calls),
+                "model": model,
+            },
+        )
+        raise LLMResponseContentError(
+            "openai-compatible response contained non-string content "
+            f"(type={type(content).__name__}, "
+            f"finish_reason={finish_reason if isinstance(finish_reason, str) else None}, "
+            f"tool_calls_present={isinstance(tool_calls, list) and bool(tool_calls)})"
         )
     return content
 

@@ -143,6 +143,7 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "WHISPER_SHORT_CHUNK_DIVERGENCE",
         "RSS_CACHE_MAX_AGE_SECONDS",
         "MIN_CLEANUP_CHARS",
+        "CLEANUP_MIN_RETENTION_RATIO",
         "MAX_PROMPT_LENGTH_BYTES",
         # LLM provider group (build-plan Settings UI). API keys are stored but
         # masked on read -- see MASKED_KEYS and api/v1/settings.py.

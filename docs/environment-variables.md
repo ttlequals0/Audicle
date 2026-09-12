@@ -83,6 +83,7 @@ The cascade and its budgets. See the paywalls page.
 | Variable | Default | Runtime |
 |---|---|---|
 | `MIN_CLEANUP_CHARS` | `200` | yes |
+| `CLEANUP_MIN_RETENTION_RATIO` | `0.5` | yes |
 | `MAX_PROMPT_LENGTH_BYTES` | `10240` | yes |
 | `MAX_CORRECTIONS_ENTRIES` | `500` | yes |
 | `LEXICON_AGGRESSIVE` | `True` | yes |
