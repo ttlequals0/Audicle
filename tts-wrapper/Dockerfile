@@ -7,7 +7,7 @@
 # PYVER single-sources the Python version for the FROM line AND the nvidia
 # wheel paths in LD_LIBRARY_PATH below -- bump it in one place.
 ARG PYVER=3.11
-FROM ghcr.io/astral-sh/uv:0.12.10 AS uv
+FROM ghcr.io/astral-sh/uv:0.12.17 AS uv
 FROM python:${PYVER}-slim AS runtime
 ARG PYVER
 COPY --from=uv /uv /uvx /bin/

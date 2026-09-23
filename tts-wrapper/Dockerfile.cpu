@@ -8,7 +8,7 @@
 # Python base (matching the wrapper's 3.11 pin) and installs the CPU-only torch
 # wheel from PyTorch's CPU index before the rest of the deps, so chatterbox-tts
 # reuses it instead of pulling the much larger CUDA build.
-FROM ghcr.io/astral-sh/uv:0.12.10 AS uv
+FROM ghcr.io/astral-sh/uv:0.12.17 AS uv
 FROM python:3.11-slim AS runtime
 COPY --from=uv /uv /uvx /bin/
 
