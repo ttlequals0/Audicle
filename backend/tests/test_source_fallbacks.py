@@ -39,7 +39,7 @@ def test_candidate_attempts_googlebot_rescrapes_same_url_with_headers() -> None:
     attempts = sf.candidate_attempts(rule, url)
     assert len(attempts) == 1
     attempt = attempts[0]
-    assert attempt.engine == "firecrawl"
+    assert attempt.engine == "refetch"
     assert attempt.url == url  # same URL, not a rewrite
     assert "googlebot" in attempt.headers["User-Agent"].lower()
     assert attempt.headers["X-Forwarded-For"] == "66.249.66.1"

@@ -6,6 +6,20 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.58.0] - 2026-09-23
+
+### Added
+
+- A short scrape now retries through the reader proxy on any host, after the live bypasses and before the archives. The article URL goes to that proxy (Jina by default), so `READER_AUTO_ENABLED` turns the step off from Settings > Extraction, `PUT /api/v1/settings`, or the env. It skips a teaser that the page's JSON-LD exposed, since the reader's markdown cannot be checked against the declared body. Explicit per-host `reader` rules are unaffected.
+
+### Changed
+
+- The Googlebot rung runs on the default direct engine as an in-process GET with the crawler headers. Before, it was skipped unless a real Firecrawl was configured, so the default catch-all did nothing.
+- Cheap rungs run first. A near-empty scrape tries the host's strategy before FlareSolverr. A Cloudflare challenge still goes to the solver first.
+- The automatic archive rung also runs for teasers and tries archive.today through FlareSolverr after Wayback. A capture must clear the host's teaser threshold.
+- FlareSolverr and Wayback results are judged by their JSON-LD `articleBody` length, like the primary scrape.
+- The app and TTS wrapper images build with uv 0.12.17 (from 0.12.10).
+
 ## [0.57.2] - 2026-09-12
 
 ### Fixed

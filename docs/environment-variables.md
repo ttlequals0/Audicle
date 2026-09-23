@@ -74,6 +74,7 @@ The cascade and its budgets. See the paywalls page.
 | `FLARESOLVERR_MAX_TIMEOUT_MS` | `60000  # solver's own per-request bro...` | yes |
 | `READER_PROXY_TEMPLATE` | `https://r.jina.ai/{url}` | yes |
 | `READER_API_KEY` | `` | yes |
+| `READER_AUTO_ENABLED` | `True` | yes |
 | `RENDER_URL` | `` | yes |
 | `RENDER_TIMEOUT_SECONDS` | `90.0` | yes |
 | `ARCHIVE_FALLBACK_ENABLED` | `True` | yes |

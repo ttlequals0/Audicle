@@ -54,9 +54,10 @@ GOOGLEBOT_XFF = "66.249.66.1"
 @dataclass(frozen=True)
 class Attempt:
     """One bypass attempt, engine-tagged so the extractor runs every strategy through
-    one loop. ``engine`` is ``"firecrawl"`` (re-scrape ``url`` with ``headers`` -- the
-    googlebot/freedium/custom recipes) or ``"flaresolverr"`` (fetch ``url`` through the
-    solver's real browser). ``cookies`` is the operator's session for that host, used
+    one loop. ``engine`` is ``"refetch"`` (fetch the same ``url`` again with crawler
+    ``headers``: googlebot, via Firecrawl or in-process), ``"firecrawl"`` (scrape a
+    rewritten ``url``: freedium/custom), ``"reader"``, ``"archive"``, or ``"flaresolverr"``
+    (fetch ``url`` through the solver's real browser). ``cookies`` is the operator's session for that host, used
     only by the flaresolverr engine (a raw ``name=value; ...`` Cookie string)."""
 
     label: str
@@ -65,9 +66,10 @@ class Attempt:
     headers: dict[str, str] = field(default_factory=dict)
     cookies: str = ""
     # True when the operator selected this strategy for the host (via a rule), False for
-    # an auto-escalation attempt the extractor synthesised. A host-rule browser/archive
-    # grab is held to the rule's teaser floor (an archived/solved teaser is still a
-    # teaser); an auto attempt accepts against the hard MIN. Set by ``candidate_attempts``.
+    # an auto-escalation attempt the extractor synthesised. A host-rule attempt is always
+    # held to the rule's teaser floor (an archived/solved teaser is still a teaser); an
+    # auto attempt is too, except on a hard block, where it accepts against the hard MIN.
+    # Set by ``candidate_attempts``.
     is_host_rule: bool = False
 
 # Proxy strategy keys offered to operators.
@@ -158,7 +160,7 @@ def candidate_attempts(rule: SourceFallback, url: str) -> list[Attempt]:
     if rule.proxy == "googlebot":
         # The built-in "Ladder" technique: re-scrape the same URL as Googlebot.
         headers = {"User-Agent": GOOGLEBOT_UA, "X-Forwarded-For": GOOGLEBOT_XFF}
-        return [Attempt(f"{rule.name}#googlebot", "firecrawl", url, headers, is_host_rule=True)]
+        return [Attempt(f"{rule.name}#googlebot", "refetch", url, headers, is_host_rule=True)]
     if rule.proxy == "freedium":
         return [
             Attempt(

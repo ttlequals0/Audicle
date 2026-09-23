@@ -81,6 +81,7 @@ const GROUPS: Record<string, string[]> = {
     "EXTRACTION_DIRECT_USER_AGENT",
     "EXTRACTION_ARC_ENABLED",
     "EXTRACTION_FALLBACKS_ENABLED",
+    "READER_AUTO_ENABLED",
     "ARCHIVE_FALLBACK_ENABLED",
     "MIN_EXTRACTION_CHARS",
     "REGISTRATION_EMAIL",
@@ -314,6 +315,8 @@ const GROUP_NOTES: Record<string, string> = {
     "firecrawl key optional when self-hosting. reader key is a jina key, " +
     "free at jina.ai/reader; the keyless endpoint is rate limited",
   Extraction:
+    "reader_auto_enabled retries a short scrape through the reader proxy, which sends " +
+    "the article url to that service (jina by default). turn it off to keep urls local. " +
     "registration_email answers free \"email to keep reading\" walls: the sidecar " +
     "types it into the signup form rather than lose the article. needs render_url. " +
     "clearing it here falls back to the env value; the address does reach the publisher",

@@ -10,12 +10,14 @@ solver call, the challenge-page detection, and the HTML->markdown conversion.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
 
 from app.config import Settings
+from app.services import jsonld
 from app.services.extraction_types import ExtractionResult, scan_markers
 from app.services.html_markdown import html_to_markdown
 
@@ -181,4 +183,4 @@ async def fetch(url: str, settings: Settings, cookies: str = "") -> ExtractionRe
             extra={"event": "flaresolverr_captcha", "host": urlsplit(url).hostname or ""},
         )
         return None
-    return result
+    return replace(result, article_chars=jsonld.article_body_chars(html))

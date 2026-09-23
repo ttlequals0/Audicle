@@ -16,7 +16,7 @@ import logging
 import httpx
 
 from app.config import Settings
-from app.services import flaresolverr
+from app.services import flaresolverr, jsonld
 from app.services.extraction_types import ExtractionResult
 from app.services.html_markdown import html_to_markdown
 
@@ -35,19 +35,15 @@ _BROWSER_UA = (
 )
 
 
-async def fetch(
-    url: str, settings: Settings, *, include_archive_today: bool = True
-) -> ExtractionResult | None:
+async def fetch(url: str, settings: Settings) -> ExtractionResult | None:
     """Return article markdown from a public archive, or None. Wayback first (no
-    cookies, no bot wall); then archive.today via FlareSolverr when allowed and a
-    solver is configured. Never raises -- a flaky archive can't crash extraction."""
+    cookies, no bot wall); then archive.today via FlareSolverr when a solver is
+    configured. Never raises -- a flaky archive can't crash extraction."""
 
     result = await _from_wayback(url, settings)
     if result is not None:
         return result
-    if include_archive_today:
-        return await _from_archive_today(url, settings)
-    return None
+    return await _from_archive_today(url, settings)
 
 
 async def _wayback_timestamps(url: str, settings: Settings) -> list[str]:
@@ -115,7 +111,11 @@ async def _from_wayback(url: str, settings: Settings) -> ExtractionResult | None
                         "markdown_chars": len(markdown),
                     },
                 )
-                return ExtractionResult(markdown=markdown, metadata=metadata)
+                return ExtractionResult(
+                    markdown=markdown,
+                    metadata=metadata,
+                    article_chars=jsonld.article_body_chars(response.text),
+                )
     return None
 
 

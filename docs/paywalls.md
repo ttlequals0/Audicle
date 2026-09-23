@@ -6,7 +6,7 @@ Pick a default strategy and a teaser threshold, then add per-site overrides. The
 
 ## The strategies
 
-- `googlebot` (the default): re-fetch the same URL as Googlebot (crawler UA + `X-Forwarded-For`). SEO-metered paywalls serve the crawler the full article, so this works most often. It runs as scrape headers, not a separate container.
+- `googlebot` (the default): re-fetch the same URL as Googlebot (crawler UA + `X-Forwarded-For`). SEO-metered paywalls serve the crawler the full article, so this works most often. With the default direct engine it is a second in-process GET carrying those headers; with Firecrawl it rides the scrape. No extra container.
 - `freedium`: rewrite the URL to a Freedium reader proxy. Best for Medium.
 - `custom`: rewrite to your own reader-proxy template (any URL containing `{url}`).
 - `reader`: fetch through the [Jina Reader](https://jina.ai/reader) proxy, which returns clean markdown and clears DataDome/PerimeterX bot walls that FlareSolverr cannot; those answer a scrape with a 401 challenge, not a real page. Set the endpoint with `READER_PROXY_TEMPLATE` (must contain `{url}`). The keyless public endpoint is rate limited; if it returns empty or truncated bodies, get a free key at jina.ai/reader and set `READER_API_KEY`. Both are live-tunable in Settings > Connections (the key is stored masked).
@@ -19,11 +19,20 @@ A Medium-to-Freedium rule ships on by default; your own rules layer on top and w
 
 ## Teaser detection
 
-Some sites pad a one-paragraph teaser with "Recommended For You" and "Latest News" rails, so the scraped text clears the threshold on chrome alone. For a host with a rule, Audicle measures the page's JSON-LD `articleBody` length instead, so the lede is caught and routed to the bypass. The "test a URL" button runs your rules against one link and reports the character count and matched strategy, which is also the quickest way to confirm a cookie jar still works.
+Some sites pad a one-paragraph teaser with "Recommended For You" and "Latest News" rails, so the scraped text clears the threshold on chrome alone. For a host with a rule, Audicle measures the page's JSON-LD `articleBody` length instead, so the lede is caught and routed to the bypass. Pages recovered by FlareSolverr or the Wayback Machine get the same check. The "test a URL" button runs your rules against one link and reports the character count and matched strategy, which is also the quickest way to confirm a cookie jar still works.
 
 ## Hard blocks
 
-Hard blocks are handled automatically, not as a per-host strategy. With `FLARESOLVERR_URL` set (env or live in Settings), Audicle re-fetches any host through your [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr), a real browser, and pulls the article from the solved HTML. It fires on a scrape that looks like a Cloudflare challenge ("Just a moment...", a Ray ID), or a near-empty scrape (a 403/IP block). A real article or a partial teaser never triggers a solve. Audicle does not bundle a solver. As a last resort it tries a Wayback capture before failing (`ARCHIVE_FALLBACK_ENABLED`, on by default).
+On top of any per-host strategy, a short scrape escalates on its own. The cheap rungs go first:
+
+1. The host's own strategy (for most hosts that is the `googlebot` default).
+2. FlareSolverr, when the scrape came back near-empty (a 403 or IP block) and `FLARESOLVERR_URL` is set. Audicle does not bundle a solver.
+3. The reader proxy (`READER_AUTO_ENABLED`, on by default).
+4. A public archive: the newest Wayback captures, then archive.today through FlareSolverr (`ARCHIVE_FALLBACK_ENABLED`, on by default). This also runs for a teaser, and the capture has to clear the host's teaser threshold.
+
+The exception is a Cloudflare challenge page ("Just a moment...", a Ray ID). That goes straight to FlareSolverr, because Cloudflare checks that a Googlebot request really comes from Google, so the header trick cannot get through.
+
+The automatic reader rung sends the article URL to the reader proxy, which is Jina's hosted service unless you changed `READER_PROXY_TEMPLATE`. Turn it off with the `reader_auto_enabled` toggle in Settings > Extraction, `PUT /api/v1/settings` with `{"READER_AUTO_ENABLED": false}`, or the env var. Hosts with an explicit `reader` rule still use it.
 
 ## Registration walls
 
@@ -43,6 +52,6 @@ The job says why: a hard block with no solver points you at `FLARESOLVERR_URL`; 
 
 ## Credit
 
-The bypass strategies are inspired by [Ladder](https://github.com/everywall/ladder). Audicle does not run Ladder or depend on it; the Googlebot fetch is reimplemented natively here as scrape headers. Credit to that project for the technique.
+The bypass strategies are inspired by [Ladder](https://github.com/everywall/ladder). Audicle does not run Ladder or depend on it; the Googlebot fetch is reimplemented natively here. Credit to that project for the technique.
 
 [< Docs index](README.md)

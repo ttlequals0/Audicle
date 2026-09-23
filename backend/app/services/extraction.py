@@ -68,10 +68,12 @@ async def extract(
     near-empty (below ``MIN_EXTRACTION_CHARS``). A per-host rule overrides the
     catch-all, winning on host match and keeping its higher teaser floor (a known
     paywall serves a teaser that clears the global floor but is useless to narrate).
-    Separately, and for any host, a below-floor scrape that looks like a Cloudflare/
-    bot-challenge page is automatically re-fetched through FlareSolverr (when
-    ``FLARESOLVERR_URL`` is set) -- gated on challenge detection so a plain teaser
-    never triggers a browser solve. ``None`` uses the built-ins only.
+    Separately, and for any host, a below-floor scrape escalates automatically: a
+    Cloudflare/bot-challenge page goes through FlareSolverr first, a near-empty scrape
+    reaches FlareSolverr after the rule's attempts, then the reader proxy
+    (``READER_AUTO_ENABLED``) and a public archive (``ARCHIVE_FALLBACK_ENABLED``) run
+    last. A plain teaser never triggers a browser solve. ``None`` uses the built-ins
+    only.
 
     Raises:
         ExtractionTransientError: every retry exhausted on a retryable failure.
@@ -171,13 +173,12 @@ async def extract(
         # solver was attempted -- together they classify the failure message.
         best_chars = _effective_chars(result, rule, floor)
 
-        # Build one ordered bypass plan. The rule's own strategy supplies its attempts
-        # (googlebot/freedium/custom/flaresolverr); on top, FlareSolverr auto-escalates
-        # for ANY host when the scrape looks like a Cloudflare challenge or is near-empty
-        # (a hard 403/IP block) -- unless the plan already routes to the solver. The auto
-        # attempt is prepended so the browser solve runs first. Every attempt (browser or
-        # Firecrawl re-scrape) runs through one dispatcher, so a plain teaser (real text)
-        # never pays for a browser solve.
+        # Build one ordered bypass plan, cheapest rungs first: the rule's own strategy
+        # (googlebot/freedium/custom/flaresolverr/reader/archive), then the automatic
+        # FlareSolverr solve on a hard block, the reader proxy, and a public archive.
+        # A Cloudflare challenge is the exception: the solver goes first, since the
+        # edge verifies Googlebot by reverse DNS and a header swap cannot pass it.
+        # Every attempt runs through one dispatcher and is judged by the same floor.
         attempts: list[Attempt] = candidate_attempts(rule, url) if rule is not None else []
         solver_configured = bool(settings.FLARESOLVERR_URL.strip())
         near_empty = (
@@ -185,18 +186,26 @@ async def extract(
             < settings.MIN_EXTRACTION_CHARS
         )
         if solver_configured and not any(a.engine == "flaresolverr" for a in attempts):
-            is_challenge = flaresolverr.looks_like_challenge(result)
-            if is_challenge or near_empty:
-                trigger = "challenge" if is_challenge else "hard-block"
-                attempts.insert(0, Attempt(f"{trigger}#flaresolverr", "flaresolverr", url))
-        # Last resort for any near-empty scrape: a Wayback capture (no cookies, no bot
-        # wall). Appended last so live strategies and the solver run first; archive.today
-        # (via the solver) stays opt-in behind an explicit per-host archive rule.
+            if flaresolverr.looks_like_challenge(result):
+                attempts.insert(0, Attempt("challenge#flaresolverr", "flaresolverr", url))
+            elif near_empty:
+                attempts.append(Attempt("hard-block#flaresolverr", "flaresolverr", url))
+        # The reader proxy sends the article URL to a third party (r.jina.ai by default),
+        # so the automatic rung has its own switch; an explicit reader rule ignores it.
+        # It returns markdown only, so it cannot be judged by the declared body: skip it
+        # when that body is what exposed the teaser, or the same chrome-padded teaser
+        # would pass the floor on raw length.
+        declared_teaser = best_chars < len(result.markdown)
         if (
-            settings.ARCHIVE_FALLBACK_ENABLED
-            and near_empty
-            and not any(a.engine == "archive" for a in attempts)
+            settings.READER_AUTO_ENABLED
+            and settings.READER_PROXY_TEMPLATE.strip()
+            and not declared_teaser
+            and not any(a.engine == "reader" for a in attempts)
         ):
+            attempts.append(Attempt("auto#reader", "reader", url))
+        # Last resort: a public archive capture (Wayback, then archive.today via the
+        # solver). Fires for a teaser as well as a hard block.
+        if settings.ARCHIVE_FALLBACK_ENABLED and not any(a.engine == "archive" for a in attempts):
             attempts.append(Attempt("auto#archive", "archive", url))
 
         if rule is None:
@@ -210,14 +219,18 @@ async def extract(
                 },
             )
 
+        # A host-rule attempt, or any attempt rescuing a teaser, is held to the rule's
+        # teaser floor (an archived or solved teaser is still a teaser); an auto attempt
+        # on a hard block accepts the full page against the hard MIN.
+        auto_floor = settings.MIN_EXTRACTION_CHARS if near_empty else floor
+        # No real Firecrawl behind the direct engine: a refetch runs in-process and a URL
+        # rewrite is skipped rather than POSTed to a placeholder URL.
+        in_process = settings.EXTRACTION_ENGINE == "direct" and not settings.firecrawl_configured
         solver_tried = False
         solver_sent_cookies = False
         fallback_start_logged = False
         for attempt in attempts:
-            # A host-rule attempt is held to the rule's teaser floor (an archived or solved
-            # teaser is still a teaser); an auto-escalation attempt accepts the full page
-            # against the hard MIN.
-            accept_floor = floor if attempt.is_host_rule else settings.MIN_EXTRACTION_CHARS
+            accept_floor = floor if attempt.is_host_rule else auto_floor
             if attempt.engine == "flaresolverr":
                 if not solver_configured:  # a flaresolverr rule but no solver URL set
                     continue
@@ -244,11 +257,7 @@ async def extract(
                         "primary_chars": len(result.markdown),
                     },
                 )
-                # A host-rule grab also tries archive.today (via the solver); the auto
-                # last-resort is Wayback-only.
-                alt = await archive.fetch(
-                    attempt.url, settings, include_archive_today=attempt.is_host_rule
-                )
+                alt = await archive.fetch(attempt.url, settings)
             elif attempt.engine == "reader":
                 logger.info(
                     "Routing below-floor scrape through the reader proxy",
@@ -271,13 +280,10 @@ async def extract(
                         },
                     )
                     continue
-            else:  # firecrawl re-scrape (googlebot/freedium/custom)
-                # These bypass attempts go through Firecrawl. On a direct-engine
-                # deploy with no real Firecrawl configured, skip them cleanly rather
-                # than POST to a placeholder URL -- FlareSolverr + archive still cover
-                # the host. When the engine IS firecrawl, the primary already proved it
-                # reachable, so never skip there.
-                if settings.EXTRACTION_ENGINE == "direct" and not settings.firecrawl_configured:
+            else:  # "refetch" (googlebot) or "firecrawl" (freedium/custom URL rewrite)
+                # When the engine IS firecrawl, the primary already proved it reachable,
+                # so in_process is False and nothing is skipped.
+                if in_process and attempt.engine != "refetch":
                     logger.debug(
                         "Skipping Firecrawl re-scrape: direct engine, no Firecrawl configured",
                         extra={"event": "extraction_firecrawl_skipped", "fallback": attempt.label},
@@ -296,13 +302,18 @@ async def extract(
                     )
                     fallback_start_logged = True
                 try:
-                    alt = await _scrape(
-                        client,
-                        attempt.url,
-                        settings,
-                        headers=attempt.headers or None,
-                        detect_teaser=True,
-                    )
+                    if in_process:
+                        alt = await direct_fetch.fetch(
+                            attempt.url, settings, detect_teaser=True, headers=attempt.headers or None
+                        )
+                    else:
+                        alt = await _scrape(
+                            client,
+                            attempt.url,
+                            settings,
+                            headers=attempt.headers or None,
+                            detect_teaser=True,
+                        )
                 except ExtractionError as exc:
                     logger.warning(
                         "Extraction fallback attempt failed",
