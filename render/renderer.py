@@ -72,7 +72,26 @@ class RenderResult:
 
 
 class Renderer(Protocol):
-    async def render(self, url: str, expand: bool, email: str | None = None) -> RenderResult: ...
+    async def render(
+        self, url: str, expand: bool, email: str | None = None, cookies: str | None = None
+    ) -> RenderResult: ...
+
+
+def parse_cookie_header(cookie_header: str, url: str) -> list[dict[str, str]]:
+    """Turn the operator's raw ``name=value; name2=value2`` jar into Playwright cookies
+    for ``url``'s site. Scoped to the parent domain (``www.`` dropped) so a session set
+    on ``www.example.com`` also reaches the site's other subdomains. The backend's
+    ``flaresolverr._parse_cookies`` is the solver's equivalent (a separate container)."""
+
+    host = (urlsplit(url).hostname or "").lower().removeprefix("www.")
+    if not host:
+        return []
+    cookies = []
+    for part in cookie_header.split(";"):
+        name, sep, value = part.strip().partition("=")
+        if name.strip() and sep:
+            cookies.append({"name": name.strip(), "value": value.strip(), "domain": f".{host}", "path": "/"})
+    return cookies
 
 
 def _normalize(text: str) -> str:
@@ -171,12 +190,15 @@ def word_estimate(text: str) -> int:
     return len(text.split())
 
 
-def is_public_url(url: str) -> bool:
+def is_public_url(url: str, proxied: bool = False) -> bool:
     """Defense in depth: refuse to drive the browser at a private/loopback host.
 
     The backend already validates the URL is public before calling, but the
-    sidecar can reach the internal Docker network, so it re-checks every resolved
-    address. Returns False on an unparseable host or a DNS failure (fail closed)."""
+    sidecar can reach the internal Docker network, so it re-checks every address it
+    can resolve. Returns False on an unparseable host. A DNS failure fails closed unless
+    ``proxied``: behind the egress proxy the sidecar's internal network cannot resolve
+    public names at all, so this check then only catches literal IPs and internal names,
+    and the proxy's firewall is what rejects a public name that resolves private."""
 
     parts = urlsplit(url)
     if parts.scheme.lower() not in {"http", "https"}:
@@ -185,15 +207,17 @@ def is_public_url(url: str) -> bool:
     if not host:
         return False
     try:
-        infos = socket.getaddrinfo(host, None)
-    except OSError:
-        return False
+        addresses = [ipaddress.ip_address(host)]  # a literal IP needs no DNS
+    except ValueError:
+        try:
+            addresses = [ipaddress.ip_address(info[4][0]) for info in socket.getaddrinfo(host, None)]
+        except OSError:
+            return proxied
     # ``not is_global`` is the canonical "public address" test: it rejects private,
     # loopback, link-local, multicast, reserved, unspecified AND shared/CGNAT space
     # (100.64.0.0/10), which a hand-rolled predicate list misses. Reject if ANY
     # resolved address is non-global.
-    for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
+    for ip in addresses:
         classified = getattr(ip, "ipv4_mapped", None) or ip
         if not classified.is_global or classified.is_multicast:
             return False

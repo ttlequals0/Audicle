@@ -93,3 +93,25 @@ async def test_fetch_returns_none_on_unreachable(
         result = await render.fetch("https://www.inc.com/x", _settings(monkeypatch))
     assert result is None
     assert any(getattr(r, "event", "") == "render_unreachable" for r in caplog.records)
+
+
+async def test_fetch_sends_the_cookie_jar_only_when_set(env, monkeypatch: pytest.MonkeyPatch) -> None:
+    import json
+
+    payloads: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        return httpx.Response(200, json={"status": "ok", "html": _ARTICLE_HTML})
+
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda *a, **k: original(*a, **{**k, "transport": httpx.MockTransport(handler)}),
+    )
+    settings = _settings(monkeypatch)
+    await render.fetch("https://www.wsj.com/a", settings, cookies="sid=abc")
+    await render.fetch("https://www.wsj.com/a", settings)
+    assert payloads[0]["cookies"] == "sid=abc"
+    assert "cookies" not in payloads[1]

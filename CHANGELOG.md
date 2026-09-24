@@ -6,6 +6,20 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.58.3] - 2026-09-24
+
+### Fixed
+
+- The render sidecar works again. Since 0.57.0 it sat on an internal network with no outside DNS, so it refused every URL as non-public, and both render firewalls dropped Docker's DNS replies. Render now lets the egress proxy resolve names and enforce public-only destinations, and the firewalls pass DNS replies. The renderer integration test now runs on an internal network and requires a public page to render.
+
+### Added
+
+- Render rules take a cookie jar, like FlareSolverr rules. The render browser clears DataDome walls FlareSolverr cannot, so this is how a subscriber reads wsj.com. A render rule with cookies is held to its teaser floor, so an expired session fails with an expired-cookies message instead of narrating the teaser.
+
+### Changed
+
+- Render is now an attempt in the cascade. A render rule's attempt runs first. Any other host gets render as the last attempt on a hard block, a challenge, or a registration wall, held to the host's teaser floor. Hosts set to `none` skip it, as do deployments with fallbacks disabled, except to answer a registration wall. Each job renders at most once.
+
 ## [0.58.2] - 2026-09-24
 
 ### Fixed

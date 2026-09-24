@@ -54,6 +54,9 @@ class RenderRequest(BaseModel):
     # backend has already decided the page is gated; the renderer still checks the
     # page itself before typing it anywhere.
     email: str | None = None
+    # The operator's subscriber session for this host (raw Cookie header), loaded into
+    # the browser before navigation. Never logged.
+    cookies: str | None = None
 
 
 def _default_renderer() -> Renderer:
@@ -76,7 +79,7 @@ def create_app(renderer: Renderer | None = None) -> FastAPI:
     @app.post("/render")
     async def render(body: RenderRequest) -> dict[str, object]:
         result: RenderResult = await app.state.renderer.render(
-            body.url, body.expand, email=body.email
+            body.url, body.expand, email=body.email, cookies=body.cookies
         )
         return {
             "status": result.status,

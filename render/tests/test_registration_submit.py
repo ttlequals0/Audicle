@@ -124,7 +124,7 @@ async def test_the_address_is_submitted_once_across_retries() -> None:
     seen: list[str | None] = []
 
     class _Renderer(CamoufoxRenderer):
-        async def _render_once(self, url, expand, attempt, email=None):
+        async def _render_once(self, url, expand, attempt, email=None, cookies=None):
             seen.append(email)
             return RenderResult(status="captcha"), email is not None
 

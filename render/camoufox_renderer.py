@@ -24,11 +24,15 @@ from renderer import (
     is_captcha_wall,
     is_public_url,
     looks_registration_gated,
+    parse_cookie_header,
     registration_form_index,
     word_estimate,
 )
 
 logger = logging.getLogger("render.camoufox")
+
+# Set by the stack when the sidecar sits behind the egress proxy.
+_PROXY_URL = os.environ.get("RENDER_PROXY_URL")
 
 # Per-page budgets. The navigation budget is generous because the page also has
 # to clear a DataDome JS challenge; the grow wait gives revealed content time to
@@ -137,8 +141,10 @@ class CamoufoxRenderer:
     (fresh fingerprint, no carried session) -- which is also what lets a retry clear a
     probabilistic DataDome wall."""
 
-    async def render(self, url: str, expand: bool, email: str | None = None) -> RenderResult:
-        if not is_public_url(url):
+    async def render(
+        self, url: str, expand: bool, email: str | None = None, cookies: str | None = None
+    ) -> RenderResult:
+        if not is_public_url(url, proxied=bool(_PROXY_URL)):
             logger.warning(
                 "refused non-public render target", extra={"event": "render_blocked_host"}
             )
@@ -148,20 +154,21 @@ class CamoufoxRenderer:
         # the same outcome as a render that stayed blocked.
         try:
             return await asyncio.wait_for(
-                self._render_with_retries(url, expand, email), timeout=_RENDER_BUDGET_SECONDS
+                self._render_with_retries(url, expand, email, cookies),
+                timeout=_RENDER_BUDGET_SECONDS,
             )
         except asyncio.TimeoutError:
             logger.warning("render exceeded its time budget", extra={"event": "render_timeout"})
             return RenderResult(status="captcha")
 
     async def _render_with_retries(
-        self, url: str, expand: bool, email: str | None = None
+        self, url: str, expand: bool, email: str | None = None, cookies: str | None = None
     ) -> RenderResult:
         # Retry anything short of a usable article: a fresh fingerprint re-rolls DataDome's
         # probabilistic challenge, whether it surfaced as a CAPTCHA shell or a stalled load.
         result = RenderResult(status="error")
         for attempt in range(1, _RENDER_ATTEMPTS + 1):
-            result, submitted = await self._render_once(url, expand, attempt, email)
+            result, submitted = await self._render_once(url, expand, attempt, email, cookies)
             if submitted:
                 # One submission per URL, however many fingerprints the retry loop
                 # burns: the publisher gets the address once, not once an attempt.
@@ -171,16 +178,22 @@ class CamoufoxRenderer:
         return result
 
     async def _render_once(
-        self, url: str, expand: bool, attempt: int, email: str | None = None
+        self,
+        url: str,
+        expand: bool,
+        attempt: int,
+        email: str | None = None,
+        cookies: str | None = None,
     ) -> tuple[RenderResult, bool]:
         """The render, plus whether the address was submitted on this attempt."""
 
         submitted = False
         try:
-            proxy_url = os.environ.get("RENDER_PROXY_URL")
-            proxy = {"server": proxy_url} if proxy_url else None
+            proxy = {"server": _PROXY_URL} if _PROXY_URL else None
             async with AsyncCamoufox(headless=False, proxy=proxy) as browser:
                 page = await browser.new_page()
+                if cookies:
+                    await page.context.add_cookies(parse_cookie_header(cookies, url))
                 await page.goto(url, wait_until="networkidle", timeout=_NAV_TIMEOUT_MS)
                 clicks = await _run_expand(page) if expand else 0
                 body_text = await page.inner_text("body")

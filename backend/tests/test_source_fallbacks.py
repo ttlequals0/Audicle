@@ -134,12 +134,13 @@ def test_build_registry_operator_overrides_builtin_and_uses_default_proxy() -> N
     assert sf.match("https://example.com/x", reg) is None
 
 
-def test_render_is_selectable_and_emits_no_loop_attempt() -> None:
-    # render is post-cascade (enrichment/rescue in extraction.py), so it contributes NO
-    # loop Attempt -- candidate_attempts returns [].
+def test_render_rule_emits_a_render_attempt_with_its_cookies() -> None:
     assert "render" in sf.PROXY_KEYS
-    rule = sf.SourceFallback("operator:inc.com", ("inc.com",), "render", "", 0)
-    assert sf.candidate_attempts(rule, "https://www.inc.com/a") == []
+    rule = sf.SourceFallback("operator:wsj.com", ("wsj.com",), "render", "", 0, cookies="sid=1")
+    attempts = sf.candidate_attempts(rule, "https://www.wsj.com/a")
+    assert [(a.engine, a.url, a.cookies, a.is_host_rule) for a in attempts] == [
+        ("render", "https://www.wsj.com/a", "sid=1", True)
+    ]
 
 
 def test_builtin_render_rule_ships_for_inc_com() -> None:

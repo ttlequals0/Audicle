@@ -292,6 +292,9 @@ const CATEGORIES: { name: string; entries: string[] }[] = [
 }
 
 
+// Site-override strategies that drive a real browser, so a subscriber cookie jar applies.
+const acceptsCookies = (proxy: string) => proxy === "flaresolverr" || proxy === "render";
+
 // One terse help line per group, rendered above the group's fields.
 const GROUP_NOTES: Record<string, string> = {
   Feed: "applies on the next podcast-app refresh",
@@ -1550,9 +1553,9 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
               host: r.host.trim(),
               proxy: r.proxy,
               custom_template: r.customTemplate.trim(),
-              // Cookies only apply to the flaresolverr strategy; switching away clears the
+              // Cookies only apply to the browser strategies; switching away clears the
               // jar so the session secret isn't silently retained on a rule that won't use it.
-              cookies: r.proxy === "flaresolverr" ? r.cookies.trim() : "",
+              cookies: acceptsCookies(r.proxy) ? r.cookies.trim() : "",
             })),
         }),
       }),
@@ -1607,8 +1610,8 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
         default applies to any host that scrapes near-empty.
       </p>
       <p className="text-mute text-xs">
-        Cookie jar (flaresolverr only): paste a logged-in Cookie header to fetch as a
-        subscriber. Stored masked.
+        Cookie jar (flaresolverr and render): paste a logged-in Cookie header to fetch
+        as a subscriber. Stored masked. Render clears DataDome walls FlareSolverr cannot.
       </p>
 
       <div className="flex flex-wrap items-end gap-4">
@@ -1682,7 +1685,7 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
                   onChange={(e) => patch({ customTemplate: e.target.value })}
                 />
               )}
-              {row.proxy === "flaresolverr" && (
+              {acceptsCookies(row.proxy) && (
                 <input
                   className="field basis-full min-w-[12rem] font-mono"
                   type="password"

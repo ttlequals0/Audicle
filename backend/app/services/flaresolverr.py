@@ -78,7 +78,8 @@ def looks_like_captcha(result: ExtractionResult) -> bool:
 
 def _parse_cookies(cookie_string: str, url: str) -> list[dict[str, str]]:
     """Parse a raw ``name=value; name2=value2`` Cookie string into FlareSolverr's
-    ``[{name, value, domain}]`` shape, with the request URL's host as the domain."""
+    ``[{name, value, domain}]`` shape, with the request URL's host as the domain. The
+    render sidecar's ``parse_cookie_header`` is the browser equivalent."""
 
     host = (urlsplit(url).hostname or "").lower()
     out: list[dict[str, str]] = []

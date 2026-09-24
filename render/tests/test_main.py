@@ -13,9 +13,13 @@ class FakeRenderer:
     def __init__(self, result: RenderResult) -> None:
         self.result = result
         self.calls: list[tuple[str, bool]] = []
+        self.cookies: list[str | None] = []
 
-    async def render(self, url: str, expand: bool, email: str | None = None) -> RenderResult:
+    async def render(
+        self, url: str, expand: bool, email: str | None = None, cookies: str | None = None
+    ) -> RenderResult:
         self.calls.append((url, expand))
+        self.cookies.append(cookies)
         return self.result
 
 
@@ -71,7 +75,9 @@ class FakeEmailRenderer:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    async def render(self, url: str, expand: bool, email: str | None = None) -> RenderResult:
+    async def render(
+        self, url: str, expand: bool, email: str | None = None, cookies: str | None = None
+    ) -> RenderResult:
         self.calls.append({"url": url, "expand": expand, "email": email})
         return RenderResult(status="ok", html="<html>unlocked</html>", word_estimate=900)
 
@@ -91,3 +97,10 @@ def test_render_without_an_email_passes_none() -> None:
     client = TestClient(create_app(renderer=renderer))
     client.post("/render", json={"url": "https://w42st.com/post/x"})
     assert renderer.calls[0]["email"] is None
+
+
+def test_render_forwards_the_cookie_jar() -> None:
+    client, renderer = _client(RenderResult(status="ok"))
+    client.post("/render", json={"url": "https://www.wsj.com/x", "cookies": "sid=abc; t=1"})
+    client.post("/render", json={"url": "https://www.wsj.com/x"})
+    assert renderer.cookies == ["sid=abc; t=1", None]

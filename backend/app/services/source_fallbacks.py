@@ -58,7 +58,7 @@ class Attempt:
     ``headers``: googlebot, via Firecrawl or in-process), ``"firecrawl"`` (scrape a
     rewritten ``url``: freedium/custom), ``"reader"``, ``"archive"``, or ``"flaresolverr"``
     (fetch ``url`` through the solver's real browser). ``cookies`` is the operator's session for that host, used
-    only by the flaresolverr engine (a raw ``name=value; ...`` Cookie string)."""
+    only by the browser engines (a raw ``name=value; ...`` Cookie string)."""
 
     label: str
     engine: str
@@ -102,8 +102,8 @@ class SourceFallback:
     # and built-in rules above it win on host match; see ``build_registry``.
     catch_all: bool = False
     # Operator's session cookies for this host (raw ``name=value; ...``), sent to the
-    # target only via the flaresolverr engine so a paid subscriber can fetch gated
-    # content. A secret -- masked in the API, never logged.
+    # target only via the browser engines (flaresolverr, render) so a paid subscriber
+    # can fetch gated content. A secret -- masked in the API, never logged.
     cookies: str = ""
 
 
@@ -192,10 +192,11 @@ def candidate_attempts(rule: SourceFallback, url: str) -> list[Attempt]:
     if rule.proxy == "archive":
         # Pull the article from a public archive (Wayback, then archive.today). No cookies.
         return [Attempt("host-rule#archive", "archive", url, is_host_rule=True)]
-    # "render" emits no loop attempt on purpose: the render sidecar runs post-cascade
-    # (extraction._maybe_render_full / the too-short rescue), not as a first-above-floor
-    # loop engine. FlareSolverr still auto-escalates to provide a baseline partial.
-    return []  # "none"/reject, "custom" without a template, or "render"
+    if rule.proxy == "render":
+        # The render sidecar's browser clicks expanders and clears DataDome, carrying the
+        # rule's cookie jar (a subscriber session) when set.
+        return [Attempt(f"{rule.name}#render", "render", url, cookies=rule.cookies, is_host_rule=True)]
+    return []  # "none"/reject, or "custom" without a template
 
 
 def build_registry(
