@@ -20,6 +20,11 @@ work lives under `[Unreleased]`.
 - FlareSolverr and Wayback results are judged by their JSON-LD `articleBody` length, like the primary scrape.
 - The app and TTS wrapper images build with uv 0.12.17 (from 0.12.10).
 
+### Security
+
+- anyio moves to 4.14.2 in the app and render lockfiles for CVE-2026-63374.
+- The TTS and render images record time-bounded exceptions for new unpatched Debian libexpat and libxml2 CVEs. Neither image passes untrusted XML to the system libraries. Recheck by 2026-10-10.
+
 ## [0.57.2] - 2026-09-12
 
 ### Fixed
