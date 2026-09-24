@@ -82,9 +82,21 @@ docker run -d --name "$renderer" --network "$control" --ip 172.31.0.2 \
     --cap-add SETUID --cap-add SETGID --cap-add SETPCAP \
     --security-opt no-new-privileges:true -e RENDER_PROXY_URL=http://172.31.0.3:3128 \
     -e RENDER_PROXY_IP=172.31.0.3 -p 127.0.0.1::8000 audicle-render:integration >/dev/null
-sleep 8
 
 port="$(docker port "$renderer" 8000/tcp | awk -F: '{print $NF}')"
+ready=0
+for _ in $(seq 1 60); do
+    for container in "$proxy" "$renderer"; do
+        test "$(docker inspect -f '{{.State.Running}}' "$container")" = true \
+            || { echo "$container exited during startup" >&2; exit 1; }
+    done
+    if curl -fsS --max-time 2 "http://127.0.0.1:$port/health/live" >/dev/null 2>&1; then
+        ready=1
+        break
+    fi
+    sleep 1
+done
+test "$ready" -eq 1 || { echo "renderer not ready after 60s" >&2; exit 1; }
 for url in http://11.77.0.10/redirect http://11.77.0.10/subresources http://rebound.test/ https://example.com; do
     curl -fsS --max-time 30 -X POST "http://127.0.0.1:$port/render" \
         -H 'content-type: application/json' --data "{\"url\":\"$url\",\"expand\":false}" >/dev/null

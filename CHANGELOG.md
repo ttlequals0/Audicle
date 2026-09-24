@@ -10,7 +10,11 @@ work lives under `[Unreleased]`.
 
 ### Fixed
 
-- The render egress proxy starts again. tinyproxy re-opened `/dev/stderr` after dropping to its unprivileged user and exited with "Permission denied", so the render sidecar never came up. It now logs to the inherited stderr.
+- The render egress proxy no longer logs "Could not open file /dev/stderr: Permission denied" at startup. tinyproxy reopened that path after dropping privileges; the error was harmless, but it read like a crash. It now writes to the container output directly.
+
+### Changed
+
+- CI runs the renderer egress integration test, and the test waits for readiness instead of sleeping. A proxy or renderer that exits during startup now fails the build.
 
 ## [0.58.0] - 2026-09-23
 

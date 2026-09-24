@@ -83,3 +83,11 @@ jobs:
           push: false
           cache-from: type=gha,scope=render-egress
           cache-to: type=gha,mode=max,scope=render-egress
+
+  # Runs the renderer behind the egress proxy, so a container that exits on start
+  # (0.58.1: tinyproxy could not reopen /dev/stderr) fails CI, not the deploy.
+  render-egress-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sh render/tests/egress_integration.sh
