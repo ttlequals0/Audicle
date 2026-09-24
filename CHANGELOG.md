@@ -6,6 +6,12 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.58.1] - 2026-09-23
+
+### Fixed
+
+- The render egress proxy starts again. tinyproxy re-opened `/dev/stderr` after dropping to its unprivileged user and exited with "Permission denied", so the render sidecar never came up. It now logs to the inherited stderr.
+
 ## [0.58.0] - 2026-09-23
 
 ### Added
