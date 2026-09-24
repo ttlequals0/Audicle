@@ -6,6 +6,12 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.58.7] - 2026-09-24
+
+### Fixed
+
+- The reader proxy always fetches the live page. Jina otherwise answers from a shared cache that can be stale or wrong. Its cached example.com was someone else's test document. Reader calls now send `X-No-Cache: true`, so each one is a real fetch.
+
 ## [0.58.6] - 2026-09-24
 
 ### Fixed

@@ -44,7 +44,8 @@ async def fetch(article_url: str, settings: Settings) -> ExtractionResult:
     policy; 4xx/SSRF blocks are permanent. The caller validates length."""
 
     reader_url = _build_reader_url(settings.READER_PROXY_TEMPLATE, article_url)
-    headers = {"User-Agent": _READER_UA, "Accept": _ACCEPT}
+    # Bypass Jina's shared cache, which can serve a stale or wrong snapshot.
+    headers = {"User-Agent": _READER_UA, "Accept": _ACCEPT, "X-No-Cache": "true"}
     if settings.READER_API_KEY:
         headers["Authorization"] = f"Bearer {settings.READER_API_KEY}"
     body = await pinned_fetch.get_text_retrying(

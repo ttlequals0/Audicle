@@ -53,7 +53,7 @@ wheels = [
 
 [[package]]
 name = "audicle"
-version = "0.58.6"
+version = "0.58.7"
 source = { virtual = "." }
 dependencies = [
     { name = "bcrypt" },

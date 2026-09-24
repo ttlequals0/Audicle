@@ -64,6 +64,7 @@ async def test_fetch_wraps_article_in_proxy_template(
     # The article URL is wrapped with the default Jina template; no auth header by default.
     assert captured["url"] == "https://r.jina.ai/https://www.wsj.com/a"
     assert "Authorization" not in captured["headers"]
+    assert captured["headers"]["X-No-Cache"] == "true"
     assert result.metadata["title"] == "Jane Street Seizes the AI Spotlight"
     assert "unlikely AI powerhouse" in result.markdown
 
