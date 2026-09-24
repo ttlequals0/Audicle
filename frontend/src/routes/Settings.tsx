@@ -1602,7 +1602,7 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
       setTestResult(
         r.ok
           ? `ok: ${r.chars.toLocaleString()} chars via ${r.strategy ?? "direct scrape"}` +
-              (r.title ? ` -- ${r.title}` : "")
+              (r.title ? ` (${r.title})` : "")
           : `no full article: ${r.detail || "came back below the threshold"}`
       ),
     onError: (e) =>

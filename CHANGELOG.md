@@ -6,6 +6,12 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.58.8] - 2026-09-24
+
+### Changed
+
+- Error messages and the site-override test result no longer use a double hyphen as a dash. The expired-cookie and needs-a-login paywall errors, the transcript-stage mismatch error, and the "ok" line from the site-override test read as plain sentences now.
+
 ## [0.58.7] - 2026-09-24
 
 ### Fixed

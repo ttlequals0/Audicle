@@ -435,11 +435,11 @@ def _too_short_message(
         if cookies_present:
             return (
                 "Still paywalled: the browser bypass used your saved cookies but got only a "
-                "teaser. They're probably expired -- re-paste them in Settings."
+                "teaser. They're probably expired, so re-paste them in Settings."
             )
         return (
-            "Still paywalled: the browser bypass got only a teaser. This site needs a login "
-            "-- add its subscriber cookies in Settings."
+            "Still paywalled: the browser bypass got only a teaser. This site needs a login, "
+            "so add its subscriber cookies in Settings."
         )
     if best_chars < settings.MIN_EXTRACTION_CHARS:
         return (

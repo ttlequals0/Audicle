@@ -722,7 +722,7 @@ async def test_pipeline_transcript_stage_rejects_length_mismatch(
     assert after.status == "failed"
     assert after.stage == "transcript"
     assert "transcript stage:" in (after.error or "")
-    assert "pipeline state corrupted" in (after.error or "")
+    assert "pipeline state is corrupted" in (after.error or "")
 
 
 async def test_pipeline_finalize_upserts_episode_row(
