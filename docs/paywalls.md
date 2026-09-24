@@ -19,7 +19,7 @@ A Medium-to-Freedium rule ships on by default; your own rules layer on top and w
 
 ## Teaser detection
 
-Some sites pad a one-paragraph teaser with "Recommended For You" and "Latest News" rails, so the scraped text clears the threshold on chrome alone. For a host with a rule, Audicle measures the page's JSON-LD `articleBody` length instead, so the lede is caught and routed to the bypass. Pages recovered by FlareSolverr or the Wayback Machine get the same check. The "test a URL" button runs your rules against one link and reports the character count and matched strategy, which is also the quickest way to confirm a cookie jar still works.
+Some sites pad a one-paragraph teaser with "Recommended For You" and "Latest News" rails, so the scraped text clears the threshold on chrome alone. For a host with a rule, Audicle measures the page's JSON-LD `articleBody` length instead, so the lede is caught and routed to the bypass. Pages recovered by FlareSolverr or the Wayback Machine get the same check. Every page is also measured by its sentence-like text. A result that is only menus, share links, or a bot-wall notice counts as empty, and the next method runs. The "test a URL" button runs your rules against one link and reports the character count and matched strategy, which is also the quickest way to confirm a cookie jar still works.
 
 ## Hard blocks
 

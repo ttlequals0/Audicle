@@ -1616,3 +1616,94 @@ async def test_no_registration_email_never_sends_one(
     with pytest.raises(extraction.ExtractionTooShortError):
         await extraction.extract("https://w42st.com/post/amazon", get_settings())
     assert calls == []  # no render rule and no address: the sidecar is never called
+
+
+# --- garbage gate: a candidate with no article prose never wins --------------------
+
+
+async def test_extract_garbage_candidate_rejected_and_next_method_tried(
+    env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    no_flaresolverr,
+    no_archive,
+    reader_stub,
+    archive_capture_junk: str,
+) -> None:
+    # The googlebot re-scrape clears the floor on length but is archive toolbar chrome;
+    # it is judged by its prose, rejected, and the cascade moves on to the reader.
+    from app.services.source_fallbacks import SourceFallback
+
+    reader_stub.markdown = "The article body, finally, in full sentences for once. " * 20
+    transport = _stub_transport(_ok_response("Access Denied"), _ok_response(archive_capture_junk))
+    _patch_async_client(monkeypatch, transport)
+    registry = (SourceFallback("op", ("gated.test",), "googlebot", "", 500),)
+    with caplog.at_level(logging.INFO, logger="app.services.extraction"):
+        result = await extraction.extract("https://gated.test/post", get_settings(), registry)
+    assert result.markdown.startswith("The article body")
+    short = next(r for r in caplog.records if getattr(r, "event", "") == "extraction_fallback_short")
+    assert short.fallback == "op#googlebot"
+    assert short.markdown_chars == len(archive_capture_junk)
+    assert short.judged_chars < 500
+
+
+async def test_extract_garbage_primary_escalates_like_a_hard_block(
+    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, archive_capture_junk: str
+) -> None:
+    # A primary made of page chrome counts as near-empty, so the solver runs.
+    transport = _stub_transport(
+        _ok_response(archive_capture_junk), _flaresolverr_ok(_gated_article_html())
+    )
+    _patch_async_client(monkeypatch, transport)
+    with caplog.at_level(logging.INFO, logger="app.services.extraction"):
+        result = await extraction.extract("https://junk.test/post", get_settings())
+    assert "real article body" in result.markdown
+    route = next(
+        r for r in caplog.records if getattr(r, "event", "") == "extraction_flaresolverr_route"
+    )
+    assert route.trigger == "hard-block"
+
+
+async def test_extract_garbage_archive_capture_fails_clean(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, archive_capture_junk: str
+) -> None:
+    # The prod case: the only candidate is an archive snapshot of a bot wall.
+    async def fake_archive(_url: str, _settings) -> extraction.ExtractionResult:
+        return extraction.ExtractionResult(markdown=archive_capture_junk)
+
+    monkeypatch.setattr(extraction.archive, "fetch", fake_archive)
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response("")))
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://blocked.test/post", get_settings())
+
+
+async def test_render_enrichment_keeps_article_over_longer_garbage(
+    env: Path, monkeypatch: pytest.MonkeyPatch, archive_capture_junk: str
+) -> None:
+    settings = _render_settings(monkeypatch)
+    article = extraction.ExtractionResult(markdown="A real sentence of the article. " * 15)
+
+    async def fake_fetch(url: str, _settings, email: str | None = None) -> extraction.ExtractionResult:
+        return extraction.ExtractionResult(markdown=archive_capture_junk * 3)
+
+    monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
+    out = await extraction._maybe_render_full(article, "https://www.inc.com/a", settings, _render_rule())
+    assert out is article
+
+
+async def test_render_enrichment_keeps_article_over_longer_chrome_padded_render(
+    env: Path, monkeypatch: pytest.MonkeyPatch, archive_capture_junk: str
+) -> None:
+    # Longer and above the prose minimum, but with less prose than the article it would replace.
+    settings = _render_settings(monkeypatch)
+    sentence = "A real sentence of the article that the narrator should read aloud. "
+    article = extraction.ExtractionResult(markdown=sentence * 40)
+    padded = extraction.ExtractionResult(markdown=sentence * 10 + archive_capture_junk * 6)
+
+    async def fake_fetch(url: str, _settings, email: str | None = None) -> extraction.ExtractionResult:
+        return padded
+
+    monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
+    assert len(padded.markdown) > len(article.markdown)
+    out = await extraction._maybe_render_full(article, "https://www.inc.com/a", settings, _render_rule())
+    assert out is article

@@ -28,6 +28,7 @@ from app.config import Settings
 from app.services import (
     arc_extractor,
     archive,
+    article_prep,
     direct_fetch,
     flaresolverr,
     jsonld,
@@ -167,11 +168,22 @@ async def extract(
         # any length decision so the floor judges real text.
         gated = gate_offset(result.markdown) is not None
         result = trim_at_gate(result)
-        if _effective_chars(result, rule, floor) >= _accept_floor(gated, floor, settings):
-            return await _maybe_render_full(result, url, settings, rule)
         # Best result seen across direct + every bypass, and whether the browser
         # solver was attempted -- together they classify the failure message.
-        best_chars = _effective_chars(result, rule, floor)
+        best_chars = _judged_chars(result, rule, floor, settings)
+        if best_chars >= _accept_floor(gated, floor, settings):
+            return await _maybe_render_full(result, url, settings, rule)
+        effective_chars = _effective_chars(result, rule, floor)
+        if best_chars < effective_chars:
+            logger.info(
+                "Primary scrape has too little prose to be an article",
+                extra={
+                    "event": "extraction_primary_not_prose",
+                    "host": host,
+                    "markdown_chars": len(result.markdown),
+                    "judged_chars": best_chars,
+                },
+            )
 
         # Build one ordered bypass plan, cheapest rungs first: the rule's own strategy
         # (googlebot/freedium/custom/flaresolverr/reader/archive), then the automatic
@@ -182,9 +194,10 @@ async def extract(
         attempts: list[Attempt] = candidate_attempts(rule, url) if rule is not None else []
         solver_configured = bool(settings.FLARESOLVERR_URL.strip())
         near_empty = (
-            _effective_chars(result, rule, settings.MIN_EXTRACTION_CHARS)
-            < settings.MIN_EXTRACTION_CHARS
-        )
+            best_chars
+            if floor == settings.MIN_EXTRACTION_CHARS
+            else _judged_chars(result, rule, settings.MIN_EXTRACTION_CHARS, settings)
+        ) < settings.MIN_EXTRACTION_CHARS
         if solver_configured and not any(a.engine == "flaresolverr" for a in attempts):
             if flaresolverr.looks_like_challenge(result):
                 attempts.insert(0, Attempt("challenge#flaresolverr", "flaresolverr", url))
@@ -195,7 +208,7 @@ async def extract(
         # It returns markdown only, so it cannot be judged by the declared body: skip it
         # when that body is what exposed the teaser, or the same chrome-padded teaser
         # would pass the floor on raw length.
-        declared_teaser = best_chars < len(result.markdown)
+        declared_teaser = effective_chars < len(result.markdown)
         if (
             settings.READER_AUTO_ENABLED
             and settings.READER_PROXY_TEMPLATE.strip()
@@ -332,12 +345,14 @@ async def extract(
             if gate_offset(alt.markdown) is not None:
                 gated = True
                 alt = trim_at_gate(alt)
-            alt_chars = _effective_chars(alt, rule, accept_floor)
+            alt_chars = _judged_chars(alt, rule, accept_floor, settings)
             best_chars = max(best_chars, alt_chars)
             if alt_chars >= _accept_floor(gated, accept_floor, settings):
                 _log_fallback_used(attempt.label, result.markdown, alt.markdown)
                 return await _maybe_render_full(alt, url, settings, rule)
-            _log_fallback_short(attempt.label, alt_chars, _accept_floor(gated, accept_floor, settings))
+            _log_fallback_short(
+                attempt.label, alt_chars, _accept_floor(gated, accept_floor, settings), len(alt.markdown)
+            )
 
     # Every other strategy came up short. For a render-rule host, give the render
     # sidecar's own browser a last shot before failing -- its Camoufox can clear a
@@ -378,7 +393,9 @@ async def _render_above_floor(
         return None
     gated = gate_offset(alt.markdown) is not None
     alt = trim_at_gate(alt)
-    if len(alt.markdown) < _accept_floor(gated, settings.MIN_EXTRACTION_CHARS, settings):
+    if len(alt.markdown) < _accept_floor(
+        gated, settings.MIN_EXTRACTION_CHARS, settings
+    ) or not _has_prose(alt, settings):
         return None
     return alt
 
@@ -455,7 +472,7 @@ def _log_fallback_used(label: str, primary_markdown: str, alt_markdown: str) -> 
     )
 
 
-def _log_fallback_short(label: str, alt_chars: int, floor: int) -> None:
+def _log_fallback_short(label: str, alt_chars: int, floor: int, raw_chars: int) -> None:
     """A fallback attempt ran but came back below the floor. Logged so a bypass
     that runs yet doesn't help (e.g. a hard subscription paywall serving the same
     teaser to the Googlebot fetch) is visible in logs instead of silent."""
@@ -465,7 +482,8 @@ def _log_fallback_short(label: str, alt_chars: int, floor: int) -> None:
         extra={
             "event": "extraction_fallback_short",
             "fallback": label,
-            "markdown_chars": alt_chars,
+            "judged_chars": alt_chars,
+            "markdown_chars": raw_chars,
             "floor": floor,
         },
     )
@@ -496,6 +514,27 @@ def _effective_chars(result: ExtractionResult, rule: SourceFallback | None, floo
     if rule is not None and declared is not None and declared < floor <= scraped:
         return declared
     return scraped
+
+
+def _judged_chars(
+    result: ExtractionResult, rule: SourceFallback | None, floor: int, settings: Settings
+) -> int:
+    """``_effective_chars``, except a page with too little prose to be an article (an
+    archive toolbar, a link list, a bot wall) is judged by its prose, so it falls below
+    the floor and the cascade moves on instead of narrating it."""
+
+    chars = _effective_chars(result, rule, floor)
+    if chars < settings.MIN_EXTRACTION_CHARS:
+        return chars
+    prose = article_prep.prose_chars(result.markdown, limit=settings.MIN_EXTRACTION_CHARS)
+    return prose if prose < settings.MIN_EXTRACTION_CHARS else chars
+
+
+def _has_prose(result: ExtractionResult, settings: Settings) -> bool:
+    """Whether ``result`` holds at least ``MIN_EXTRACTION_CHARS`` of article prose."""
+
+    limit = settings.MIN_EXTRACTION_CHARS
+    return article_prep.prose_chars(result.markdown, limit=limit) >= limit
 
 
 # Markers that mean a solved page is only the visible front of an article whose body
@@ -571,8 +610,9 @@ async def _maybe_render_full(
 ) -> ExtractionResult:
     """Post-cascade enrichment. When the render sidecar is configured and the host has a
     render Site-override rule (or the result still looks truncated), drive the sidecar to
-    click the expander and keep its body only if it is strictly longer. A ``None`` or
-    shorter render leaves ``result`` untouched, so a broken click never loses the body."""
+    click the expander and keep its body only if it is strictly longer and holds at least as
+    much article prose. A ``None``, shorter, or chrome-padded render leaves ``result``
+    untouched, so a broken click never loses the body."""
 
     if not settings.RENDER_URL.strip():
         return result
@@ -581,7 +621,11 @@ async def _maybe_render_full(
     alt = await render.fetch(url, settings)
     if alt is not None:
         alt = trim_at_gate(alt)  # the sidecar sees the same wall; don't re-import it
-    if alt is None or len(alt.markdown) <= len(result.markdown):
+    if (
+        alt is None
+        or len(alt.markdown) <= len(result.markdown)
+        or article_prep.prose_chars(alt.markdown) < article_prep.prose_chars(result.markdown)
+    ):
         return result
     logger.info(
         "Render enriched a truncated article",

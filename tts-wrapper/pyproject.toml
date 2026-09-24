@@ -1,6 +1,6 @@
 [project]
 name = "audicle-tts-wrapper"
-version = "0.58.1"
+version = "0.58.2"
 description = "FastAPI TTS wrapper for Audicle (Chatterbox)."
 requires-python = ">=3.11,<3.14"
 # The wrapper image uses Python 3.11. Keep the tested upper bound separate from

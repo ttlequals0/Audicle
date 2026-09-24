@@ -6,6 +6,12 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.58.2] - 2026-09-24
+
+### Fixed
+
+- Extraction no longer accepts a page with no article in it. Every candidate, from the first fetch to the last fallback, is judged by how much sentence-like text it holds. A page of toolbars, share links, or a bot-wall notice falls below the floor, and the next method runs. In 0.58.0 an archive.today snapshot of a blocked page passed on length and was narrated.
+
 ## [0.58.1] - 2026-09-23
 
 ### Fixed
