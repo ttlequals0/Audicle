@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import httpx
@@ -122,3 +123,43 @@ async def test_get_text_server_disconnect_raises_transient_error(
             max_bytes=1024,
             timeout_seconds=1.0,
         )
+
+
+async def test_fetch_logs_auth_and_the_proxy_warning(
+    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A CAPTCHA'd page comes back 200 with an empty body; the log must say so, and
+    # whether the key was sent, so a short reader attempt is diagnosable.
+    body = (
+        "Title: wsj.com\n\nURL Source: https://www.wsj.com/a\n\n"
+        "Warning: This page maybe requiring CAPTCHA, please make sure you are authorized.\n\n"
+        "Markdown Content:\n"
+    )
+
+    async def _fake_get_text(url, settings, *, headers, max_bytes, timeout_seconds):
+        return body
+
+    monkeypatch.setattr(pinned_fetch, "get_text", _fake_get_text)
+    monkeypatch.setenv("READER_API_KEY", "jina_test_key")
+    get_settings.cache_clear()
+    with caplog.at_level(logging.INFO, logger="app.services.reader"):
+        result = await reader.fetch("https://www.wsj.com/a", get_settings())
+    record = next(r for r in caplog.records if getattr(r, "event", "") == "reader_response")
+    assert result.markdown == ""
+    assert record.authenticated is True
+    assert record.markdown_chars == 0
+    assert record.warning.startswith("This page maybe requiring CAPTCHA")
+
+
+async def test_fetch_ignores_warning_lines_in_a_headerless_body(
+    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A non-Jina proxy returns the article itself; its "Warning:" lines are content.
+    async def _fake_get_text(url, settings, *, headers, max_bytes, timeout_seconds):
+        return "Warning: storms expected tonight across the region.\n\nThe article continues."
+
+    monkeypatch.setattr(pinned_fetch, "get_text", _fake_get_text)
+    with caplog.at_level(logging.INFO, logger="app.services.reader"):
+        await reader.fetch("https://news.test/a", get_settings())
+    record = next(r for r in caplog.records if getattr(r, "event", "") == "reader_response")
+    assert record.warning == ""

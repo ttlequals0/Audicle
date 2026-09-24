@@ -12,6 +12,10 @@ work lives under `[Unreleased]`.
 
 - In Settings > Site overrides, a rule's cookie jar and proxy template now sit under that rule, labeled with its host. They used to be full-width rows that looked like another rule. Secret fields, including the cookie jar and API keys, now tell password managers to skip them, so they no longer offer to save or generate a password there.
 
+### Added
+
+- Each reader-proxy call logs whether the API key was sent, the response size, the extracted characters, and the proxy's own warning (such as a CAPTCHA notice). A short reader attempt can now be told apart as unauthenticated, blocked, or empty.
+
 ### Security
 
 - The render image records time-bounded exceptions for two unpatched Debian X11 CVEs, CVE-2026-88806 and CVE-2026-88807. Both need a malicious X server, and the only one in the image is its own local Xvfb. Recheck by 2026-10-10.
