@@ -544,17 +544,29 @@ async def test_extract_googlebot_rescrapes_same_url_with_headers(
 
 
 async def test_extract_none_strategy_fails_clean_without_extra_calls(
-    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, no_archive
+    env: Path, monkeypatch: pytest.MonkeyPatch, reader_stub
 ) -> None:
+    # "none" skips every bypass, automatic ones included: with the solver, archive,
+    # reader, and render all configured, only the direct scrape runs.
     from app.services import source_fallbacks as sf
 
+    monkeypatch.setenv("RENDER_URL", "http://render.test:8000")
+    get_settings.cache_clear()
+
+    async def boom(*_args, **_kwargs):
+        raise AssertionError("no bypass may run for a host set to none")
+
+    monkeypatch.setattr(extraction.render, "fetch", boom)
+    monkeypatch.setattr(extraction.archive, "fetch", boom)
+    monkeypatch.setattr(extraction.flaresolverr, "fetch", boom)
     transport = _stub_transport(_ok_response("x" * 100))  # only the direct scrape
     _patch_async_client(monkeypatch, transport)
     registry = sf.build_registry(
         [{"host": "wsj.com", "proxy": "none"}], default_proxy="googlebot", min_chars=3000
     )
-    with pytest.raises(extraction.ExtractionTooShortError):
+    with pytest.raises(extraction.ExtractionTooShortError, match="strategy none"):
         await extraction.extract("https://www.wsj.com/a", get_settings(), registry)
+    assert reader_stub.calls == []
 
 
 # --- global default proxy: applies to any host, near-empty trigger --------------
@@ -1823,3 +1835,18 @@ async def test_registration_render_runs_with_fallbacks_disabled(
     result = await extraction.extract("https://w42st.com/post/amazon", settings)
     assert result is _RENDERED_ARTICLE
     assert calls[0]["email"] == "reader@example.test"
+
+
+async def test_render_enrichment_skipped_for_opted_out_host(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A truncated-looking but accepted page on a host set to none is not rendered.
+    settings = _render_settings(monkeypatch)
+
+    async def boom(*_args, **_kwargs):
+        raise AssertionError("render must not run for a host set to none")
+
+    monkeypatch.setattr(extraction.render, "fetch", boom)
+    partial = extraction.ExtractionResult(markdown="Body text. EXPAND TO CONTINUE READING", metadata={})
+    rule = extraction.SourceFallback("op", ("other.com",), "none", "", 0)
+    assert await extraction._maybe_render_full(partial, "https://other.com/a", settings, rule) is partial

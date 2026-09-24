@@ -6,6 +6,12 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.58.6] - 2026-09-24
+
+### Fixed
+
+- A site set to `none` in Site overrides skips every bypass, the automatic ones included. It used to run FlareSolverr, the reader proxy, and both archives anyway, which took about 40 seconds and sent the URL to Jina. The job now fails at once and says the site is set to skip bypasses.
+
 ## [0.58.5] - 2026-09-24
 
 ### Fixed

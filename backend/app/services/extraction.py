@@ -186,6 +186,14 @@ async def extract(
                 },
             )
 
+        # A host set to "none" opted out of every bypass, the automatic ones included:
+        # no solver, no third-party reader, no archive, no render.
+        if rule is not None and rule.proxy == "none":
+            raise ExtractionTooShortError(
+                f"Only {best_chars} characters came back, and this site is set to skip "
+                "bypasses (strategy none in Site overrides)."
+            )
+
         # Build one ordered bypass plan, cheapest rungs first: the rule's own strategy
         # (googlebot/freedium/custom/flaresolverr/reader/archive), then the automatic
         # FlareSolverr solve on a hard block, the reader proxy, and a public archive.
@@ -231,7 +239,6 @@ async def extract(
         answers_registration = gated and bool(settings.REGISTRATION_EMAIL.strip())
         if (
             settings.RENDER_URL.strip()
-            and not (rule is not None and rule.proxy == "none")
             and not any(a.engine == "render" for a in attempts)
             and ((settings.EXTRACTION_FALLBACKS_ENABLED and blocked) or answers_registration)
         ):
@@ -600,7 +607,7 @@ async def _maybe_render_full(
     much article prose. A ``None``, shorter, or chrome-padded render leaves ``result``
     untouched, so a broken click never loses the body."""
 
-    if not settings.RENDER_URL.strip():
+    if not settings.RENDER_URL.strip() or (rule is not None and rule.proxy == "none"):
         return result
     if not (_is_render_rule(rule) or looks_truncated(result)):
         return result
