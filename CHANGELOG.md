@@ -6,6 +6,12 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.58.5] - 2026-09-24
+
+### Fixed
+
+- In Settings > Site overrides, a rule's cookie jar and proxy template now sit under that rule, labeled with its host. They used to be full-width rows that looked like another rule. The cookie jar is a masked text field, so password managers no longer offer to save or generate a password in it.
+
 ## [0.58.4] - 2026-09-24
 
 ### Fixed

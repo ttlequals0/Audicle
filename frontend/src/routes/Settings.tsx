@@ -292,8 +292,24 @@ const CATEGORIES: { name: string; entries: string[] }[] = [
 }
 
 
+// A setting that belongs to the rule row above it: indented, tied to it by an accent line.
+const RULE_DETAIL = "block ml-3 pl-3.5 border-l-2 border-accent/35";
+const RULE_DETAIL_LABEL = "block mb-1.5 text-mute text-[0.8125rem]";
+
 // Site-override strategies that drive a real browser, so a subscriber cookie jar applies.
 const acceptsCookies = (proxy: string) => proxy === "flaresolverr" || proxy === "render";
+
+// A masked text field keeps password managers away from the cookie jar. Where the
+// browser can't mask text (no -webkit-text-security), fall back to a password field.
+const SECRET_INPUT_TYPE =
+  typeof CSS !== "undefined" && CSS.supports("-webkit-text-security", "disc") ? "text" : "password";
+// Attributes 1Password, LastPass, and Bitwarden read to skip a field.
+const PASSWORD_MANAGER_IGNORE = {
+  "data-1p-ignore": true,
+  "data-lpignore": "true",
+  "data-bwignore": true,
+  "data-form-type": "other",
+};
 
 // One terse help line per group, rendered above the group's fields.
 const GROUP_NOTES: Record<string, string> = {
@@ -911,9 +927,10 @@ export default function SettingsRoute() {
                   ) : (
                     <input
                       id={key}
-                      className="field"
-                      type={MASKED_KEYS.has(key) ? "password" : "text"}
+                      className={MASKED_KEYS.has(key) ? "field field-secret" : "field"}
+                      type={MASKED_KEYS.has(key) ? SECRET_INPUT_TYPE : "text"}
                       autoComplete={MASKED_KEYS.has(key) ? "off" : undefined}
+                      {...(MASKED_KEYS.has(key) ? PASSWORD_MANAGER_IGNORE : {})}
                       value={draft[key] ?? ""}
                       onChange={(e) =>
                         setDraft((p) => ({ ...p, [key]: e.target.value }))
@@ -1647,53 +1664,68 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
         </div>
       </div>
 
-      <div className="space-y-2">
+      <div className="space-y-3">
         {rows.map((row) => {
           const patch = (p: Partial<FallbackRow>) =>
             setRows((rs) => rs.map((r) => (r.id === row.id ? { ...r, ...p } : r)));
+          const host = row.host.trim() || "this site";
           return (
-            <div key={row.id} className="flex flex-wrap items-center gap-2">
-              <input
-                className="field flex-1 min-w-[10rem]"
-                placeholder="domain"
-                value={row.host}
-                onChange={(e) => patch({ host: e.target.value })}
-              />
-              <select
-                className="field w-48"
-                value={row.proxy}
-                onChange={(e) => patch({ proxy: e.target.value })}
-              >
-                <option value="">use default ({proxyLabel(defaultProxy)})</option>
-                {proxies.map((p) => (
-                  <option key={p.key} value={p.key}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-              <button
-                className="text-mute hover:text-danger flex items-center justify-center w-8"
-                onClick={() => setRows((rs) => rs.filter((r) => r.id !== row.id))}
-              >
-                &times;
-              </button>
-              {row.proxy === "custom" && (
+            <div key={row.id} className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <input
-                  className="field basis-full min-w-[12rem]"
-                  placeholder="https://reader.example/{url}"
-                  value={row.customTemplate}
-                  onChange={(e) => patch({ customTemplate: e.target.value })}
+                  className="field flex-1 min-w-[10rem]"
+                  placeholder="domain"
+                  value={row.host}
+                  onChange={(e) => patch({ host: e.target.value })}
                 />
+                <select
+                  className="field w-48"
+                  value={row.proxy}
+                  onChange={(e) => patch({ proxy: e.target.value })}
+                >
+                  <option value="">use default ({proxyLabel(defaultProxy)})</option>
+                  {proxies.map((p) => (
+                    <option key={p.key} value={p.key}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="text-mute hover:text-danger flex items-center justify-center w-8"
+                  onClick={() => setRows((rs) => rs.filter((r) => r.id !== row.id))}
+                >
+                  &times;
+                </button>
+              </div>
+              {/* Per-rule settings hang off their rule so they never read as a separate rule. */}
+              {row.proxy === "custom" && (
+                <label className={RULE_DETAIL}>
+                  <span className={RULE_DETAIL_LABEL}>Proxy template for {host}</span>
+                  <input
+                    className="field font-mono text-sm"
+                    placeholder="https://reader.example/{url}"
+                    value={row.customTemplate}
+                    onChange={(e) => patch({ customTemplate: e.target.value })}
+                  />
+                </label>
               )}
               {acceptsCookies(row.proxy) && (
-                <input
-                  className="field basis-full min-w-[12rem] font-mono"
-                  type="password"
-                  autoComplete="off"
-                  placeholder="cookie jar (optional): name=value; name2=value2"
-                  value={row.cookies}
-                  onChange={(e) => patch({ cookies: e.target.value })}
-                />
+                <label className={RULE_DETAIL}>
+                  <span className={RULE_DETAIL_LABEL}>
+                    Cookie jar for {host} (optional, for a subscriber login)
+                  </span>
+                  <input
+                    className="field field-secret font-mono text-sm"
+                    type={SECRET_INPUT_TYPE}
+                    name={`cookie-jar-${row.id}`}
+                    autoComplete="off"
+                    spellCheck={false}
+                    {...PASSWORD_MANAGER_IGNORE}
+                    placeholder="name=value; name2=value2"
+                    value={row.cookies}
+                    onChange={(e) => patch({ cookies: e.target.value })}
+                  />
+                </label>
               )}
             </div>
           );
