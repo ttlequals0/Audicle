@@ -11,6 +11,7 @@ work lives under `[Unreleased]`.
 ### Fixed
 
 - The render sidecar works again. Since 0.57.0 it sat on an internal network with no outside DNS, so it refused every URL as non-public, and both render firewalls dropped Docker's DNS replies. Render now lets the egress proxy resolve names and enforce public-only destinations, and the firewalls pass DNS replies. The renderer integration test now runs on an internal network and requires a public page to render.
+- The render image build fails if the Camoufox browser did not install. `camoufox fetch` exits 0 even when extraction fails, so a full disk used to produce a renderer that could not start.
 
 ### Added
 
