@@ -71,7 +71,9 @@ docker run -d --name "$public" --network "$public_net" --ip 11.77.0.10 \
     -v "$fixture/public:/srv:ro" python:3.13-slim python /srv/server.py >/dev/null
 docker run -d --name "$private" --network "$private_net" --ip 10.77.0.10 \
     -v "$fixture/private:/srv:ro" python:3.13-slim python /srv/server.py >/dev/null
-docker run -d --name "$proxy" --network "$control" --ip 172.31.0.3 \
+# An explicit upstream makes Docker forward outside lookups from the proxy's namespace
+# (as on a Linux host), so the proxy's firewall has to let them through.
+docker run -d --name "$proxy" --network "$control" --ip 172.31.0.3 --dns 1.1.1.1 \
     --add-host rebound.test:10.77.0.10 --cap-drop ALL --cap-add NET_ADMIN \
     --cap-add SETUID --cap-add SETGID --cap-add SETPCAP \
     --security-opt no-new-privileges:true -e RENDER_CLIENT_IP=172.31.0.2 \
@@ -124,5 +126,10 @@ test "$(docker exec "$proxy" sh -c 'wc -c </tmp/udp-received')" -eq 0
 docker exec "$proxy" setpriv --reuid="$(docker exec "$proxy" id -u proxy)" \
     --regid="$(docker exec "$proxy" id -g proxy)" --clear-groups \
     nc -6 -z -w 2 2606:4700:4700::1111 443 && exit 1 || true
+
+# The root-only DNS rule (Docker's resolver) must not open DNS to the proxy user.
+docker exec "$proxy" setpriv --reuid="$(docker exec "$proxy" id -u proxy)" \
+    --regid="$(docker exec "$proxy" id -g proxy)" --clear-groups \
+    nc -z -w 2 1.1.1.1 53 && exit 1 || true
 
 echo "renderer egress boundary passed"

@@ -6,6 +6,12 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.58.4] - 2026-09-24
+
+### Fixed
+
+- The render egress proxy resolves names on a Linux host. Docker there forwards outside DNS lookups from the container's own network namespace, as root, and the proxy's firewall rejected them. So every render failed with an unknown-host error. The firewall now lets root's DNS queries through and is otherwise unchanged. The renderer integration test sets an explicit upstream resolver so it exercises this path on any host.
+
 ## [0.58.3] - 2026-09-24
 
 ### Fixed
