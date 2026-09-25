@@ -25,6 +25,9 @@ from app.services.html_markdown import html_to_markdown
 
 logger = logging.getLogger("app.services.render")
 
+# Headroom for the HTTP round-trip and HTML transfer after the sidecar gives up.
+_BUDGET_MARGIN_SECONDS = 10.0
+
 
 async def fetch(
     url: str, settings: Settings, email: str | None = None, cookies: str = ""
@@ -44,7 +47,11 @@ async def fetch(
     # The read budget must exceed the sidecar's own browser work (nav + clicks);
     # connect stays short so an unreachable sidecar fails fast.
     timeout = httpx.Timeout(settings.RENDER_TIMEOUT_SECONDS, connect=10.0)
+    # The sidecar caps its retries to this, so it stops before the read timeout does.
+    budget = settings.RENDER_TIMEOUT_SECONDS - _BUDGET_MARGIN_SECONDS
     payload: dict[str, Any] = {"url": url, "expand": True}
+    if budget > 0:
+        payload["budget_seconds"] = budget
     if email:
         payload["email"] = email
     if cookies:

@@ -115,3 +115,29 @@ async def test_fetch_sends_the_cookie_jar_only_when_set(env, monkeypatch: pytest
     await render.fetch("https://www.wsj.com/a", settings)
     assert payloads[0]["cookies"] == "sid=abc"
     assert "cookies" not in payloads[1]
+
+
+async def test_fetch_tells_the_sidecar_to_stop_before_the_read_timeout(
+    env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    payloads: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        return httpx.Response(200, json={"status": "ok", "html": _ARTICLE_HTML})
+
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda *a, **k: original(*a, **{**k, "transport": httpx.MockTransport(handler)}),
+    )
+    settings = _settings(monkeypatch)
+    settings.RENDER_TIMEOUT_SECONDS = 150.0
+    await render.fetch("https://www.wsj.com/a", settings)
+    settings.RENDER_TIMEOUT_SECONDS = 5.0
+    await render.fetch("https://www.wsj.com/a", settings)
+    assert payloads[0]["budget_seconds"] == 140.0
+    assert "budget_seconds" not in payloads[1]

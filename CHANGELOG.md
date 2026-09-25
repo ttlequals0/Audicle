@@ -6,6 +6,17 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.58.9] - 2026-09-24
+
+### Fixed
+
+- The render sidecar no longer waits for the network to go idle. WSJ-class pages keep analytics connections open after clearing DataDome, so a `networkidle` load timed out at 45 seconds and used up two of the three attempts. Render now loads to `DOMContentLoaded`, then polls the page text until it stops growing, for at most 8 seconds. The same poll runs after each expander click, and after a registration submit once the page has changed (a slow POST no longer reads as settled). A navigation mid-poll restarts the count on the new page, and a page that still looks walled gets one bounded chance to redirect. In local runs the new sidecar never returned less than the old one. An inc.com article with an expander came back at 1,240 words where the old one stopped at 601. A WSJ page the old sidecar reported as a CAPTCHA returned the teaser on the last four runs.
+- The backend waits up to 150 seconds for a render (`RENDER_TIMEOUT_SECONDS`, was 90). Each request tells the sidecar to stop 10 seconds before that, and the sidecar's own cap rises to 120 seconds (was 80). Changing either value can no longer leave the backend hanging up on a render that is still running.
+
+### Added
+
+- Render budgets can be tuned without a rebuild: `RENDER_NAV_TIMEOUT_MS`, `RENDER_CLICK_TIMEOUT_MS`, `RENDER_GROW_WAIT_MS`, `RENDER_ATTEMPTS`, `RENDER_SETTLE_POLL_MS`, `RENDER_SETTLE_MAX_MS`, and `RENDER_BUDGET_SECONDS` on the render container.
+
 ## [0.58.8] - 2026-09-24
 
 ### Changed

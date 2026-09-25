@@ -186,7 +186,9 @@ class Settings(BaseSettings):
     # when the cascade fails. Empty RENDER_URL disables it. Builtin render hosts live in
     # RENDER_BUILTIN_HOSTS (below).
     RENDER_URL: str = ""
-    RENDER_TIMEOUT_SECONDS: float = 90.0
+    # Read budget for a sidecar call. Each request tells the sidecar to finish 10 s
+    # sooner, so its retry loop never outlives this wait.
+    RENDER_TIMEOUT_SECONDS: float = 150.0
     # Archive fallback: when a scrape is below its floor (a hard block or a teaser) and
     # no other bypass recovered the article, try a Wayback Machine capture, then
     # archive.today through FlareSolverr (when configured), before failing.

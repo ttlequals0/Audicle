@@ -16,7 +16,7 @@ from importlib import metadata
 from pathlib import Path
 
 from fastapi import FastAPI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from log_config import setup_logging
 from renderer import Renderer, RenderResult
@@ -57,6 +57,9 @@ class RenderRequest(BaseModel):
     # The operator's subscriber session for this host (raw Cookie header), loaded into
     # the browser before navigation. Never logged.
     cookies: str | None = None
+    # The caller's own wait, minus its margin. Caps the retry loop so the sidecar never
+    # works past the point where the backend has stopped listening.
+    budget_seconds: float | None = Field(default=None, gt=0)
 
 
 def _default_renderer() -> Renderer:
@@ -79,7 +82,11 @@ def create_app(renderer: Renderer | None = None) -> FastAPI:
     @app.post("/render")
     async def render(body: RenderRequest) -> dict[str, object]:
         result: RenderResult = await app.state.renderer.render(
-            body.url, body.expand, email=body.email, cookies=body.cookies
+            body.url,
+            body.expand,
+            email=body.email,
+            cookies=body.cookies,
+            budget_seconds=body.budget_seconds,
         )
         return {
             "status": result.status,

@@ -73,7 +73,12 @@ class RenderResult:
 
 class Renderer(Protocol):
     async def render(
-        self, url: str, expand: bool, email: str | None = None, cookies: str | None = None
+        self,
+        url: str,
+        expand: bool,
+        email: str | None = None,
+        cookies: str | None = None,
+        budget_seconds: float | None = None,
     ) -> RenderResult: ...
 
 
