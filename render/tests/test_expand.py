@@ -159,3 +159,28 @@ def test_bare_newsletter_box_is_not_a_fallback() -> None:
         {"fields": ["email"], "text": "Get our newsletter"},
     ]
     assert registration_form_index(forms) is None
+
+
+def test_is_public_url_unresolvable_host_depends_on_proxy(monkeypatch) -> None:
+    # Behind the egress proxy the internal network cannot resolve public names, so the
+    # proxy (which rejects private destinations) decides. Without it, fail closed.
+    import socket
+
+    def no_dns(*_args, **_kwargs):
+        raise socket.gaierror("Temporary failure in name resolution")
+
+    monkeypatch.setattr(socket, "getaddrinfo", no_dns)
+    assert is_public_url("https://www.example.com/a", proxied=True)
+    assert not is_public_url("https://www.example.com/a")
+    assert not is_public_url("http://127.0.0.1/x", proxied=True)
+
+
+def test_parse_cookie_header_scopes_to_the_parent_domain() -> None:
+    from renderer import parse_cookie_header
+
+    cookies = parse_cookie_header(" sid=abc ; token=x=y; bare; =nameless", "https://www.wsj.com/a")
+    assert cookies == [
+        {"name": "sid", "value": "abc", "domain": ".wsj.com", "path": "/"},
+        {"name": "token", "value": "x=y", "domain": ".wsj.com", "path": "/"},
+    ]
+    assert parse_cookie_header("sid=abc", "not a url") == []

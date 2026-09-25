@@ -1977,7 +1977,7 @@ async def _stage_transcript(
         # which is harder to triage from an ops dashboard.
         raise ValueError(
             f"transcript stage: {len(chunks)} chunks but {len(chunk_durations)} "
-            f"audio durations -- pipeline state corrupted"
+            f"audio durations; pipeline state is corrupted"
         )
     transcript_chunks = [
         transcript.TranscriptChunk(text=text, duration_secs=duration)

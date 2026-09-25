@@ -6,6 +6,105 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.58.9] - 2026-09-24
+
+### Fixed
+
+- The render sidecar no longer waits for the network to go idle. WSJ-class pages keep analytics connections open after clearing DataDome, so a `networkidle` load timed out at 45 seconds and used up two of the three attempts. Render now loads to `DOMContentLoaded`, then polls the page text until it stops growing, for at most 8 seconds. The same poll runs after each expander click, and after a registration submit once the page has changed (a slow POST no longer reads as settled). A navigation mid-poll restarts the count on the new page, and a page that still looks walled gets one bounded chance to redirect. In local runs the new sidecar never returned less than the old one. An inc.com article with an expander came back at 1,240 words where the old one stopped at 601. A WSJ page the old sidecar reported as a CAPTCHA returned the teaser on the last four runs.
+- The backend waits up to 150 seconds for a render (`RENDER_TIMEOUT_SECONDS`, was 90). Each request tells the sidecar to stop 10 seconds before that, and the sidecar's own cap rises to 120 seconds (was 80). Changing either value can no longer leave the backend hanging up on a render that is still running.
+
+### Added
+
+- Render budgets can be tuned without a rebuild: `RENDER_NAV_TIMEOUT_MS`, `RENDER_CLICK_TIMEOUT_MS`, `RENDER_GROW_WAIT_MS`, `RENDER_ATTEMPTS`, `RENDER_SETTLE_POLL_MS`, `RENDER_SETTLE_MAX_MS`, and `RENDER_BUDGET_SECONDS` on the render container.
+
+## [0.58.8] - 2026-09-24
+
+### Changed
+
+- Error messages and the site-override test result no longer use a double hyphen as a dash. The expired-cookie and needs-a-login paywall errors, the transcript-stage mismatch error, and the "ok" line from the site-override test read as plain sentences now.
+
+## [0.58.7] - 2026-09-24
+
+### Fixed
+
+- The reader proxy always fetches the live page. Jina otherwise answers from a shared cache that can be stale or wrong. Its cached example.com was someone else's test document. Reader calls now send `X-No-Cache: true`, so each one is a real fetch.
+
+## [0.58.6] - 2026-09-24
+
+### Fixed
+
+- A site set to `none` in Site overrides skips every bypass, the automatic ones included. It used to run FlareSolverr, the reader proxy, and both archives anyway, which took about 40 seconds and sent the URL to Jina. The job now fails at once and says the site is set to skip bypasses.
+
+## [0.58.5] - 2026-09-24
+
+### Fixed
+
+- In Settings > Site overrides, a rule's cookie jar and proxy template now sit under that rule, labeled with its host. They used to be full-width rows that looked like another rule. Secret fields, including the cookie jar and API keys, now tell password managers to skip them, so they no longer offer to save or generate a password there.
+
+### Added
+
+- Each reader-proxy call logs whether the API key was sent, the response size, the extracted characters, and the proxy's own warning (such as a CAPTCHA notice). A short reader attempt can now be told apart as unauthenticated, blocked, or empty.
+
+### Security
+
+- The render image records time-bounded exceptions for two unpatched Debian X11 CVEs, CVE-2026-88806 and CVE-2026-88807. Both need a malicious X server, and the only one in the image is its own local Xvfb. Recheck by 2026-10-10.
+
+## [0.58.4] - 2026-09-24
+
+### Fixed
+
+- The render egress proxy resolves names on a Linux host. Docker there forwards outside DNS lookups from the container's own network namespace, as root, and the proxy's firewall rejected them. So every render failed with an unknown-host error. The firewall now lets root's DNS queries through and is otherwise unchanged. The renderer integration test sets an explicit upstream resolver so it exercises this path on any host.
+
+## [0.58.3] - 2026-09-24
+
+### Fixed
+
+- The render sidecar works again. Since 0.57.0 it sat on an internal network with no outside DNS, so it refused every URL as non-public, and both render firewalls dropped Docker's DNS replies. Render now lets the egress proxy resolve names and enforce public-only destinations, and the firewalls pass DNS replies. The renderer integration test now runs on an internal network and requires a public page to render.
+- The render image build fails if the Camoufox browser did not install. `camoufox fetch` exits 0 even when extraction fails, so a full disk used to produce a renderer that could not start.
+
+### Added
+
+- Render rules take a cookie jar, like FlareSolverr rules. The render browser clears DataDome walls FlareSolverr cannot, so this is how a subscriber reads wsj.com. A render rule with cookies is held to its teaser floor, so an expired session fails with an expired-cookies message instead of narrating the teaser.
+
+### Changed
+
+- Render is now an attempt in the cascade. A render rule's attempt runs first. Any other host gets render as the last attempt on a hard block, a challenge, or a registration wall, held to the host's teaser floor. Hosts set to `none` skip it, as do deployments with fallbacks disabled, except to answer a registration wall. Each job renders at most once.
+
+## [0.58.2] - 2026-09-24
+
+### Fixed
+
+- Extraction no longer accepts a page with no article in it. Every candidate, from the first fetch to the last fallback, is judged by how much sentence-like text it holds. A page of toolbars, share links, or a bot-wall notice falls below the floor, and the next method runs. In 0.58.0 an archive.today snapshot of a blocked page passed on length and was narrated.
+
+## [0.58.1] - 2026-09-23
+
+### Fixed
+
+- The render egress proxy no longer logs "Could not open file /dev/stderr: Permission denied" at startup. tinyproxy reopened that path after dropping privileges; the error was harmless, but it read like a crash. It now writes to the container output directly.
+
+### Changed
+
+- CI runs the renderer egress integration test, and the test waits for readiness instead of sleeping. A proxy or renderer that exits during startup now fails the build.
+
+## [0.58.0] - 2026-09-23
+
+### Added
+
+- A short scrape now retries through the reader proxy on any host, after the live bypasses and before the archives. The article URL goes to that proxy (Jina by default), so `READER_AUTO_ENABLED` turns the step off from Settings > Extraction, `PUT /api/v1/settings`, or the env. It skips a teaser that the page's JSON-LD exposed, since the reader's markdown cannot be checked against the declared body. Explicit per-host `reader` rules are unaffected.
+
+### Changed
+
+- The Googlebot rung runs on the default direct engine as an in-process GET with the crawler headers. Before, it was skipped unless a real Firecrawl was configured, so the default catch-all did nothing.
+- Cheap rungs run first. A near-empty scrape tries the host's strategy before FlareSolverr. A Cloudflare challenge still goes to the solver first.
+- The automatic archive rung also runs for teasers and tries archive.today through FlareSolverr after Wayback. A capture must clear the host's teaser threshold.
+- FlareSolverr and Wayback results are judged by their JSON-LD `articleBody` length, like the primary scrape.
+- The app and TTS wrapper images build with uv 0.12.17 (from 0.12.10).
+
+### Security
+
+- anyio moves to 4.14.2 in the app and render lockfiles for CVE-2026-63374.
+- The TTS and render images record time-bounded exceptions for new unpatched Debian libexpat and libxml2 CVEs. Neither image passes untrusted XML to the system libraries. Recheck by 2026-10-10.
+
 ## [0.57.2] - 2026-09-12
 
 ### Fixed

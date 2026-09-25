@@ -3,9 +3,9 @@
 The pipeline from a submitted URL (or uploaded document) to a finished episode.
 
 ```
-        paywall bypass: a matched host's teaser triggers a re-scrape via
-        Googlebot / Freedium / a custom proxy (or a clean fail);
-        a detected Cloudflare challenge auto-routes through FlareSolverr
+        paywall bypass: a short scrape escalates through the host's strategy
+        (Googlebot by default), FlareSolverr, the reader proxy, then an archive
+        (or a clean fail); a Cloudflare challenge goes to FlareSolverr first
         |
         v
 URL --> extract (direct / Firecrawl) --> cleanup (LLM)
@@ -36,7 +36,7 @@ URL --> extract (direct / Firecrawl) --> cleanup (LLM)
 
 ## Extraction
 
-The default `direct` engine fetches the page in-process and parses it with trafilatura. Set `EXTRACTION_ENGINE=firecrawl` to use a self-hosted Firecrawl instead. Either way, extraction is a cascade, not a single fetch: JS-rendered and bot-gated pages fall back through FlareSolverr, the render sidecar, and the web archive, and per-host rules can route a site through a specific bypass. The whole cascade is covered in [Paywalled articles](paywalls.md).
+The default `direct` engine fetches the page in-process and parses it with trafilatura. Set `EXTRACTION_ENGINE=firecrawl` to use a self-hosted Firecrawl instead. Either way, extraction is a cascade, not a single fetch: JS-rendered and bot-gated pages fall back through Googlebot, FlareSolverr, the reader proxy, the render sidecar, and the web archive, and per-host rules can route a site through a specific bypass. The whole cascade is covered in [Paywalled articles](paywalls.md).
 
 Uploads skip extraction: a PDF, DOCX, Markdown, text, or HTML file is read directly, and a scan or image goes through on-device OCR (RapidOCR on CPU, models shipped in the image). A text PDF never pays the OCR cost, and a scan too blurry to read fails the job with a clear error instead of narrating noise. The `OCR_*` knobs (page cap, DPI, confidence floor, language) are in Settings under Uploads.
 

@@ -22,6 +22,27 @@ def _firecrawl_engine(monkeypatch: pytest.MonkeyPatch) -> None:
     get_settings.cache_clear()
 
 
+class _ReaderStub:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.markdown = ""
+
+    async def fetch(self, url: str, _settings) -> extraction.ExtractionResult:
+        self.calls.append(url)
+        return extraction.ExtractionResult(markdown=self.markdown)
+
+
+@pytest.fixture(autouse=True)
+def reader_stub(monkeypatch: pytest.MonkeyPatch) -> _ReaderStub:
+    """The automatic reader rung stays on (its default) but never leaves the process:
+    it records the URL and returns ``markdown`` (empty unless a test sets it), so
+    stubbed call sequences stay exact."""
+
+    stub = _ReaderStub()
+    monkeypatch.setattr(extraction.reader, "fetch", stub.fetch)
+    return stub
+
+
 @pytest.fixture
 def fast_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
     """Force FIRECRAWL_BACKOFF_BASE_SECONDS=0 so tenacity's exponential wait
@@ -50,9 +71,9 @@ def no_flaresolverr(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def no_archive(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Disable the automatic Wayback last-resort so a hard-block test can assert its
-    exact call sequence without the archive lookup adding an HTTP call (a near-empty
-    scrape auto-appends an archive attempt when ARCHIVE_FALLBACK_ENABLED)."""
+    """Disable the automatic archive rung so a test can assert its exact call sequence
+    without the archive lookup adding HTTP calls (any below-floor scrape appends an
+    archive attempt when ARCHIVE_FALLBACK_ENABLED)."""
 
     monkeypatch.setenv("ARCHIVE_FALLBACK_ENABLED", "false")
     from app.config import get_settings
@@ -146,7 +167,7 @@ def _flaresolverr_ok(html: str) -> httpx.Response:
     )
 
 
-def _gated_article_html() -> str:
+def _gated_article_html(*, article_body: str | None = None) -> str:
     # 40 paragraphs so the solved markdown is well above a 3000-char teaser floor: a
     # host-rule solver result is held to that floor, so the stub must represent the real
     # full article, not a teaser-length body.
@@ -160,6 +181,12 @@ def _gated_article_html() -> str:
         '<meta property="og:image" content="https://gated.test/cover.jpg">'
         '<meta name="author" content="Jane Doe">'
     )
+    if article_body:
+        head += (
+            '<script type="application/ld+json">'
+            + json.dumps({"@type": "NewsArticle", "articleBody": article_body})
+            + "</script>"
+        )
     return f"<html><head>{head}</head><body><article><h1>Gated Article</h1>{body}</article></body></html>"
 
 
@@ -194,7 +221,7 @@ async def test_extract_challenge_page_escalates_to_flaresolverr(
 
 
 async def test_extract_plain_teaser_does_not_escalate_to_flaresolverr(
-    env: Path, monkeypatch: pytest.MonkeyPatch
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_archive
 ) -> None:
     from app.services.source_fallbacks import SourceFallback
 
@@ -245,8 +272,8 @@ async def test_extract_logs_which_strategy_ran_and_when_it_falls_short(
 
     # Direct scrape AND the googlebot re-scrape both come back short (the hard-
     # paywall case): the bypass ran but didn't help, which must be visible -- the
-    # selected strategy and the below-floor result are both logged. (no_flaresolverr so
-    # the near-empty scrape exercises googlebot, not the auto solver.)
+    # selected strategy and the below-floor result are both logged. (no_flaresolverr
+    # keeps the stubbed call sequence to the two scrapes.)
     transport = _stub_transport(_ok_response("short teaser"), _ok_response("still short"))
     _patch_async_client(monkeypatch, transport)
     registry = (SourceFallback("operator:gated.test", ("gated.test",), "googlebot", "", 3000),)
@@ -517,17 +544,29 @@ async def test_extract_googlebot_rescrapes_same_url_with_headers(
 
 
 async def test_extract_none_strategy_fails_clean_without_extra_calls(
-    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, no_archive
+    env: Path, monkeypatch: pytest.MonkeyPatch, reader_stub
 ) -> None:
+    # "none" skips every bypass, automatic ones included: with the solver, archive,
+    # reader, and render all configured, only the direct scrape runs.
     from app.services import source_fallbacks as sf
 
+    monkeypatch.setenv("RENDER_URL", "http://render.test:8000")
+    get_settings.cache_clear()
+
+    async def boom(*_args, **_kwargs):
+        raise AssertionError("no bypass may run for a host set to none")
+
+    monkeypatch.setattr(extraction.render, "fetch", boom)
+    monkeypatch.setattr(extraction.archive, "fetch", boom)
+    monkeypatch.setattr(extraction.flaresolverr, "fetch", boom)
     transport = _stub_transport(_ok_response("x" * 100))  # only the direct scrape
     _patch_async_client(monkeypatch, transport)
     registry = sf.build_registry(
         [{"host": "wsj.com", "proxy": "none"}], default_proxy="googlebot", min_chars=3000
     )
-    with pytest.raises(extraction.ExtractionTooShortError):
+    with pytest.raises(extraction.ExtractionTooShortError, match="strategy none"):
         await extraction.extract("https://www.wsj.com/a", get_settings(), registry)
+    assert reader_stub.calls == []
 
 
 # --- global default proxy: applies to any host, near-empty trigger --------------
@@ -738,16 +777,36 @@ async def test_too_short_message_hard_block_solver_failed(
         await extraction.extract("https://hardblock.test/a", get_settings())
 
 
-async def test_extract_near_empty_routes_to_solver_before_googlebot_rule(
+async def test_extract_hard_block_tries_googlebot_rule_before_solver(
     env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    # Precedence: a near-empty scrape on a host that has a googlebot rule still routes
-    # to the solver FIRST (hard-block beats the host's googlebot choice, since the IP
-    # block makes a headers-only re-fetch futile). The solver gets the article.
+    # Cheap rungs first: a near-empty scrape (no challenge markers) on a googlebot host
+    # re-fetches as Googlebot before paying for a browser solve. The googlebot re-scrape
+    # recovers the article, so the solver is never called (the stub would assert).
     from app.services.source_fallbacks import SourceFallback
 
     transport = _stub_transport(
         _ok_response("Access Denied"),  # direct: near-empty
+        _ok_response("body " * 1000),  # googlebot re-scrape: the full article
+    )
+    _patch_async_client(monkeypatch, transport)
+    registry = (SourceFallback("operator:gated.test", ("gated.test",), "googlebot", "", 3000),)
+    with caplog.at_level(logging.INFO, logger="app.services.extraction"):
+        result = await extraction.extract("https://gated.test/post", get_settings(), registry)
+    assert result.markdown.startswith("body ")
+    used = next(r for r in caplog.records if getattr(r, "event", "") == "extraction_fallback_used")
+    assert used.fallback == "operator:gated.test#googlebot"
+
+
+async def test_extract_challenge_routes_to_solver_before_googlebot_rule(
+    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A Cloudflare challenge still goes to the solver FIRST: the edge verifies Googlebot
+    # by reverse DNS, so the header swap cannot pass it.
+    from app.services.source_fallbacks import SourceFallback
+
+    transport = _stub_transport(
+        _challenge_response(),
         _flaresolverr_ok(_gated_article_html()),  # solver fires before googlebot
     )
     _patch_async_client(monkeypatch, transport)
@@ -758,11 +817,11 @@ async def test_extract_near_empty_routes_to_solver_before_googlebot_rule(
     route = next(
         r for r in caplog.records if getattr(r, "event", "") == "extraction_flaresolverr_route"
     )
-    assert route.trigger == "hard-block"
+    assert route.trigger == "challenge"
 
 
 async def test_too_short_message_teaser(
-    env: Path, monkeypatch: pytest.MonkeyPatch
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_archive
 ) -> None:
     # A real teaser (>= MIN_EXTRACTION_CHARS, below the rule floor) is classified as a
     # paywall teaser, not a hard block -- the solver never fires (not near-empty).
@@ -1007,6 +1066,115 @@ async def test_extract_direct_skips_firecrawl_rescrape_when_unconfigured(
         await extraction.extract("https://medium.com/@a/post", get_settings())
 
 
+async def test_extract_direct_googlebot_runs_in_process_when_firecrawl_unconfigured(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, no_archive
+) -> None:
+    """With no real Firecrawl, the googlebot rung re-fetches the same URL in-process
+    with the crawler headers instead of being skipped."""
+
+    _use_direct_engine(monkeypatch, firecrawl_url="http://firecrawl:3002")
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method != "GET":
+            raise AssertionError("the googlebot rung must not POST to Firecrawl")
+        requests.append(request)
+        if "googlebot" in request.headers["user-agent"].lower():
+            return httpx.Response(200, text=_gated_article_html())
+        return httpx.Response(200, text="<html><body><article><p>teaser</p></article></body></html>")
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+    result = await extraction.extract(
+        "https://blog.test/post", get_settings(), _global_default_registry()
+    )
+    assert "real article body" in result.markdown
+    assert len(requests) == 2
+    assert requests[1].headers["x-forwarded-for"] == "66.249.66.1"
+
+
+# --- automatic reader rung --------------------------------------------------------
+
+
+async def test_extract_auto_reader_rung_recovers_hard_block(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, no_archive, reader_stub
+) -> None:
+    # On by default: no setting touched, the reader rung recovers a hard block.
+    reader_stub.markdown = "body " * 1000
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response("Access Denied")))
+    result = await extraction.extract("https://hardblock.test/a", get_settings())
+    assert result.markdown.startswith("body ")
+    assert reader_stub.calls == ["https://hardblock.test/a"]
+
+
+async def test_extract_auto_reader_rung_disabled_never_calls_reader(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, no_archive, reader_stub
+) -> None:
+    # The opt-out: with READER_AUTO_ENABLED off the article URL never reaches the proxy.
+    monkeypatch.setenv("READER_AUTO_ENABLED", "false")
+    get_settings.cache_clear()
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response("Access Denied")))
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://hardblock.test/a", get_settings())
+    assert reader_stub.calls == []
+
+
+async def test_extract_auto_reader_rung_skipped_for_jsonld_teaser(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, no_archive, reader_stub
+) -> None:
+    # The page's JSON-LD exposed a chrome-padded teaser. The reader returns markdown
+    # only and would re-fetch the same padded page, passing the floor on raw length,
+    # so the automatic rung must not run.
+    from app.services.source_fallbacks import SourceFallback
+
+    reader_stub.markdown = "body " * 1000
+    transport = _stub_transport(
+        _ok_response_with_jsonld("word " * 700, "x" * 176),  # primary: padded teaser
+        _ok_response_with_jsonld("word " * 700, "x" * 176),  # googlebot: same teaser
+    )
+    _patch_async_client(monkeypatch, transport)
+    registry = (SourceFallback("op", ("gated.test",), "googlebot", "", 3000),)
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://gated.test/post", get_settings(), registry)
+    assert reader_stub.calls == []
+
+
+# --- automatic archive on a teaser -------------------------------------------------
+
+
+@pytest.mark.parametrize(("archived_words", "accepted"), [(400, False), (1000, True)])
+async def test_extract_auto_archive_fires_on_teaser_held_to_rule_floor(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, archived_words: int, accepted: bool
+) -> None:
+    # A teaser (>= MIN, below the 3000 rule floor) now reaches the archive rung, and the
+    # capture must clear the rule floor: an archived teaser is still a teaser.
+    from app.services.source_fallbacks import SourceFallback
+
+    async def fake_archive(_url: str, _settings) -> extraction.ExtractionResult:
+        return extraction.ExtractionResult(markdown="body " * archived_words)
+
+    monkeypatch.setattr(extraction.archive, "fetch", fake_archive)
+    transport = _stub_transport(_ok_response("word " * 200), _ok_response("word " * 200))
+    _patch_async_client(monkeypatch, transport)
+    registry = (SourceFallback("operator:teaser.test", ("teaser.test",), "googlebot", "", 3000),)
+    if accepted:
+        result = await extraction.extract("https://teaser.test/a", get_settings(), registry)
+        assert result.markdown.startswith("body ")
+    else:
+        with pytest.raises(extraction.ExtractionTooShortError):
+            await extraction.extract("https://teaser.test/a", get_settings(), registry)
+
+
+async def test_flaresolverr_result_carries_jsonld_article_chars(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A solved page is judged by its declared body like the primary scrape, so rails
+    # cannot pad a solved stub past the floor.
+    html = _gated_article_html(article_body="x" * 176)
+    _patch_async_client(monkeypatch, _stub_transport(_flaresolverr_ok(html)))
+    result = await flaresolverr.fetch("https://gated.test/post", get_settings())
+    assert result is not None and result.article_chars == 176
+
+
 # --- Render enrichment (post-cascade full-article render) -----------------------
 
 
@@ -1052,7 +1220,7 @@ async def test_render_enrichment_replaces_with_longer_body(
     full = extraction.ExtractionResult(markdown="full " * 200, metadata={"title": "T"})
 
     async def fake_fetch(
-        url: str, _settings, email: str | None = None
+        url: str, _settings, email: str | None = None, cookies: str = ""
     ) -> extraction.ExtractionResult:
         return full
 
@@ -1070,7 +1238,7 @@ async def test_render_enrichment_keeps_partial_when_render_is_shorter(
     partial = extraction.ExtractionResult(markdown="long " * 200, metadata={})
 
     async def fake_fetch(
-        url: str, _settings, email: str | None = None
+        url: str, _settings, email: str | None = None, cookies: str = ""
     ) -> extraction.ExtractionResult:
         return extraction.ExtractionResult(markdown="short", metadata={})
 
@@ -1087,7 +1255,7 @@ async def test_render_enrichment_keeps_partial_on_none(
     settings = _render_settings(monkeypatch)
     partial = extraction.ExtractionResult(markdown="x " * 100, metadata={})
 
-    async def fake_fetch(url: str, _settings, email: str | None = None) -> None:
+    async def fake_fetch(url: str, _settings, email: str | None = None, cookies: str = "") -> None:
         return None
 
     monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
@@ -1103,7 +1271,7 @@ async def test_render_enrichment_noop_when_url_empty(
     settings = _render_settings(monkeypatch, url="")
     partial = extraction.ExtractionResult(markdown="x " * 100, metadata={})
 
-    async def boom(url: str, _settings, email: str | None = None):
+    async def boom(url: str, _settings, email: str | None = None, cookies: str = ""):
         raise AssertionError("render.fetch must not run when RENDER_URL is empty")
 
     monkeypatch.setattr(extraction.render, "fetch", boom)
@@ -1119,7 +1287,7 @@ async def test_render_enrichment_noop_for_non_render_untruncated_host(
     settings = _render_settings(monkeypatch)
     partial = extraction.ExtractionResult(markdown="A complete article body.", metadata={})
 
-    async def boom(url: str, _settings, email: str | None = None):
+    async def boom(url: str, _settings, email: str | None = None, cookies: str = ""):
         raise AssertionError("render.fetch must not run without a render rule or truncation")
 
     monkeypatch.setattr(extraction.render, "fetch", boom)
@@ -1136,7 +1304,7 @@ async def test_render_enrichment_triggers_on_truncation_without_rule(
     calls: list[str] = []
 
     async def fake_fetch(
-        url: str, _settings, email: str | None = None
+        url: str, _settings, email: str | None = None, cookies: str = ""
     ) -> extraction.ExtractionResult:
         calls.append(url)
         return full
@@ -1147,92 +1315,116 @@ async def test_render_enrichment_triggers_on_truncation_without_rule(
     assert out is full
 
 
-async def test_render_rescue_returns_when_cascade_failed(
-    env: Path, monkeypatch: pytest.MonkeyPatch
+def _render_fake(result: extraction.ExtractionResult | None, calls: list | None = None):
+    async def fake_fetch(url: str, _settings, email: str | None = None, cookies: str = ""):
+        if calls is not None:
+            calls.append({"url": url, "email": email, "cookies": cookies})
+        return result
+
+    return fake_fetch
+
+
+_RENDERED_ARTICLE = extraction.ExtractionResult(
+    markdown="A sentence of the rendered article, read in full. " * 30, metadata={"title": "R"}
+)
+
+
+async def test_render_rule_renders_first(
+    env: Path, monkeypatch: pytest.MonkeyPatch, reader_stub
+) -> None:
+    # A render rule's own attempt leads the plan: nothing but the primary runs first.
+    settings = _render_settings(monkeypatch)
+    calls: list = []
+    monkeypatch.setattr(extraction.render, "fetch", _render_fake(_RENDERED_ARTICLE, calls))
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response("Access Denied")))
+    result = await extraction.extract("https://www.inc.com/a", settings, (_render_rule(),))
+    assert result is _RENDERED_ARTICLE
+    assert len(calls) == 1 and reader_stub.calls == []
+
+
+async def test_render_rescue_runs_last_for_any_hard_blocked_host(
+    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, no_flaresolverr, no_archive
 ) -> None:
     settings = _render_settings(monkeypatch)
-    full = extraction.ExtractionResult(markdown="full " * 200, metadata={})
-
-    async def fake_fetch(
-        url: str, _settings, email: str | None = None
-    ) -> extraction.ExtractionResult:
-        return full
-
-    monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
-    out = await extraction._render_rescue("https://www.inc.com/a", settings, _render_rule())
-    assert out is full
+    monkeypatch.setattr(extraction.render, "fetch", _render_fake(_RENDERED_ARTICLE))
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response("Access Denied")))
+    with caplog.at_level(logging.INFO, logger="app.services.extraction"):
+        result = await extraction.extract("https://other.test/a", settings)
+    assert result is _RENDERED_ARTICLE
+    used = next(r for r in caplog.records if getattr(r, "event", "") == "extraction_fallback_used")
+    assert used.fallback == "auto#render"
 
 
-async def test_render_rescue_none_for_non_render_rule(
-    env: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("reason", ["opted_out", "fallbacks_disabled", "teaser"])
+async def test_render_rescue_not_added(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, no_archive, reason: str
 ) -> None:
+    # No render for a host set to none, with fallbacks disabled, or for a plain teaser
+    # (no block signal): the sidecar is never called.
     settings = _render_settings(monkeypatch)
+    registry: tuple = ()
+    primary = _ok_response("Access Denied")
+    if reason == "opted_out":
+        registry = (extraction.SourceFallback("op", ("other.test",), "none", "", 3000),)
+    elif reason == "fallbacks_disabled":
+        monkeypatch.setenv("EXTRACTION_FALLBACKS_ENABLED", "false")
+        get_settings.cache_clear()
+        settings = get_settings()
+    else:
+        primary = _ok_response("A real teaser sentence that stops before the paywall. " * 12)
+        registry = (extraction.SourceFallback("op", ("other.test",), "googlebot", "", 3000),)
+    calls: list = []
+    monkeypatch.setattr(extraction.render, "fetch", _render_fake(_RENDERED_ARTICLE, calls))
+    transport = [primary] + ([_ok_response("Access Denied")] if reason == "teaser" else [])
+    _patch_async_client(monkeypatch, _stub_transport(*transport))
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://other.test/a", settings, registry)
+    assert calls == []
 
-    async def boom(url: str, _settings, email: str | None = None):
-        raise AssertionError("render.fetch must not run without a render rule")
 
-    monkeypatch.setattr(extraction.render, "fetch", boom)
-    assert await extraction._render_rescue("https://other.com/a", settings, None) is None
-
-
-async def test_render_rescue_none_when_below_floor(
-    env: Path, monkeypatch: pytest.MonkeyPatch
+async def test_render_rescue_held_to_the_hosts_floor(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, no_archive
 ) -> None:
+    # A 3000-char rule host that is hard-blocked: a rendered ~1000-char teaser (say,
+    # expired cookies) must not pass at the global 500 floor.
     settings = _render_settings(monkeypatch)
+    teaser = extraction.ExtractionResult(markdown="Two paragraphs of the story before the wall. " * 22)
+    monkeypatch.setattr(extraction.render, "fetch", _render_fake(teaser))
+    transport = _stub_transport(_ok_response("Access Denied"), _ok_response("Access Denied"))
+    _patch_async_client(monkeypatch, transport)
+    rule = extraction.SourceFallback("op", ("other.test",), "googlebot", "", 3000)
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://other.test/a", settings, (rule,))
 
-    async def fake_fetch(
-        url: str, _settings, email: str | None = None
-    ) -> extraction.ExtractionResult:
-        return extraction.ExtractionResult(markdown="too short", metadata={})
 
-    monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
-    assert await extraction._render_rescue("https://www.inc.com/a", settings, _render_rule()) is None
-
-
-async def test_render_rescue_rejects_gated_body_below_doubled_floor(
-    env: Path, monkeypatch: pytest.MonkeyPatch
+async def test_render_below_floor_or_gated_teaser_is_rejected(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, no_archive
 ) -> None:
-    # A gated page owes twice the floor, so a 700-char teaser that stops at the
-    # signup prompt cannot pass as a rescue.
+    # A gated page owes twice the floor, so a 700-char teaser that stops at the signup
+    # prompt cannot pass as a render.
     settings = _render_settings(monkeypatch)
     teaser = extraction.ExtractionResult(
         markdown="word " * 140 + "Continue reading this story for FREE!", metadata={}
     )
-
-    async def fake_fetch(
-        url: str, _settings, email: str | None = None
-    ) -> extraction.ExtractionResult:
-        return teaser
-
-    monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
-    assert await extraction._render_rescue("https://www.inc.com/a", settings, _render_rule()) is None
+    monkeypatch.setattr(extraction.render, "fetch", _render_fake(teaser))
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response("Access Denied")))
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://www.inc.com/a", settings, (_render_rule(),))
 
 
 async def test_extract_render_rescue_end_to_end(
     env: Path, monkeypatch: pytest.MonkeyPatch, no_archive, caplog: pytest.LogCaptureFixture
 ) -> None:
-    # inc.com is a builtin render rule; with the cascade unable to clear the floor
-    # (firecrawl below-floor + FlareSolverr below-floor), extract() must walk the full
-    # cascade and reach the render RESCUE rather than short-circuiting on the empty
-    # primary or raising ExtractionTooShortError. The render_rescue log proves the path.
+    # inc.com is a builtin render rule: its render attempt runs first and wins, so the
+    # auto solver never runs (the stub would assert on a third call).
     settings = _render_settings(monkeypatch)
-    transport = _stub_transport(
-        _ok_response("Access Denied"),
-        _flaresolverr_ok("<html><body><p>still blocked</p></body></html>"),
-    )
-    _patch_async_client(monkeypatch, transport)
-    full = extraction.ExtractionResult(markdown="full " * 200, metadata={"title": "Inc"})
-
-    async def fake_fetch(
-        url: str, _settings, email: str | None = None
-    ) -> extraction.ExtractionResult:
-        return full
-
-    monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response("Access Denied")))
+    monkeypatch.setattr(extraction.render, "fetch", _render_fake(_RENDERED_ARTICLE))
     with caplog.at_level(logging.INFO, logger="app.services.extraction"):
         result = await extraction.extract("https://www.inc.com/a", settings)
-    assert result is full
-    assert any(getattr(r, "event", "") == "render_rescue" for r in caplog.records)
+    assert result is _RENDERED_ARTICLE
+    used = next(r for r in caplog.records if getattr(r, "event", "") == "extraction_fallback_used")
+    assert used.fallback.endswith("#render")
 
 
 async def test_extract_render_host_raises_when_everything_fails(
@@ -1248,7 +1440,7 @@ async def test_extract_render_host_raises_when_everything_fails(
     )
     _patch_async_client(monkeypatch, transport)
 
-    async def fail_fetch(url: str, _settings, email: str | None = None) -> None:
+    async def fail_fetch(url: str, _settings, email: str | None = None, cookies: str = "") -> None:
         return None
 
     monkeypatch.setattr(extraction.render, "fetch", fail_fetch)
@@ -1378,7 +1570,7 @@ async def test_registration_email_unlocks_a_gated_article(
 
     seen: dict = {}
 
-    async def _fake_render(url, settings, email=None):
+    async def _fake_render(url, settings, email=None, cookies=""):
         seen["email"] = email
         return extraction.ExtractionResult(
             markdown="The full article continues at length. " * 80, metadata={"title": "ok"}
@@ -1402,7 +1594,7 @@ async def test_registration_needs_a_render_sidecar(
     monkeypatch.setenv("REGISTRATION_EMAIL", "reader@example.test")
     get_settings.cache_clear()
 
-    async def _boom(url, settings, email=None):
+    async def _boom(url, settings, email=None, cookies=""):
         raise AssertionError("render.fetch must not run without RENDER_URL")
 
     monkeypatch.setattr(render, "fetch", _boom)
@@ -1422,7 +1614,7 @@ async def test_registration_that_does_not_open_still_fails_the_job(
     monkeypatch.setenv("REGISTRATION_EMAIL", "reader@example.test")
     get_settings.cache_clear()
 
-    async def _still_gated(url, settings, email=None):
+    async def _still_gated(url, settings, email=None, cookies=""):
         return extraction.ExtractionResult(
             markdown="Two paragraphs only. " * 10 + "Continue reading this story for FREE!",
             metadata={"title": "ok"},
@@ -1435,7 +1627,10 @@ async def test_registration_that_does_not_open_still_fails_the_job(
         extraction.ExtractionTooShortError, match="sign-up wall"
     ):
         await extraction.extract("https://w42st.com/post/amazon", get_settings())
-    assert any(r.__dict__.get("event") == "registration_failed" for r in caplog.records)
+    events = [r.__dict__.get("event") for r in caplog.records]
+    assert "registration_attempt" in events
+    short = [r for r in caplog.records if r.__dict__.get("event") == "extraction_fallback_short"]
+    assert short[-1].fallback == "auto#render"
 
 
 async def test_no_registration_email_never_sends_one(
@@ -1450,7 +1645,7 @@ async def test_no_registration_email_never_sends_one(
 
     calls: list[str | None] = []
 
-    async def _fake_render(url, settings, email=None):
+    async def _fake_render(url, settings, email=None, cookies=""):
         calls.append(email)
         return None
 
@@ -1459,4 +1654,199 @@ async def test_no_registration_email_never_sends_one(
 
     with pytest.raises(extraction.ExtractionTooShortError):
         await extraction.extract("https://w42st.com/post/amazon", get_settings())
-    assert calls == []  # no render rule and no address: the sidecar is never called
+    assert calls == [None]  # the rescue render runs, but no address is ever sent
+
+
+# --- garbage gate: a candidate with no article prose never wins --------------------
+
+
+async def test_extract_garbage_candidate_rejected_and_next_method_tried(
+    env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    no_flaresolverr,
+    no_archive,
+    reader_stub,
+    archive_capture_junk: str,
+) -> None:
+    # The googlebot re-scrape clears the floor on length but is archive toolbar chrome;
+    # it is judged by its prose, rejected, and the cascade moves on to the reader.
+    from app.services.source_fallbacks import SourceFallback
+
+    reader_stub.markdown = "The article body, finally, in full sentences for once. " * 20
+    transport = _stub_transport(_ok_response("Access Denied"), _ok_response(archive_capture_junk))
+    _patch_async_client(monkeypatch, transport)
+    registry = (SourceFallback("op", ("gated.test",), "googlebot", "", 500),)
+    with caplog.at_level(logging.INFO, logger="app.services.extraction"):
+        result = await extraction.extract("https://gated.test/post", get_settings(), registry)
+    assert result.markdown.startswith("The article body")
+    short = next(r for r in caplog.records if getattr(r, "event", "") == "extraction_fallback_short")
+    assert short.fallback == "op#googlebot"
+    assert short.markdown_chars == len(archive_capture_junk)
+    assert short.judged_chars < 500
+
+
+async def test_extract_garbage_primary_escalates_like_a_hard_block(
+    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, archive_capture_junk: str
+) -> None:
+    # A primary made of page chrome counts as near-empty, so the solver runs.
+    transport = _stub_transport(
+        _ok_response(archive_capture_junk), _flaresolverr_ok(_gated_article_html())
+    )
+    _patch_async_client(monkeypatch, transport)
+    with caplog.at_level(logging.INFO, logger="app.services.extraction"):
+        result = await extraction.extract("https://junk.test/post", get_settings())
+    assert "real article body" in result.markdown
+    route = next(
+        r for r in caplog.records if getattr(r, "event", "") == "extraction_flaresolverr_route"
+    )
+    assert route.trigger == "hard-block"
+
+
+async def test_extract_garbage_archive_capture_fails_clean(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, archive_capture_junk: str
+) -> None:
+    # The prod case: the only candidate is an archive snapshot of a bot wall.
+    async def fake_archive(_url: str, _settings) -> extraction.ExtractionResult:
+        return extraction.ExtractionResult(markdown=archive_capture_junk)
+
+    monkeypatch.setattr(extraction.archive, "fetch", fake_archive)
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response("")))
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://blocked.test/post", get_settings())
+
+
+async def test_render_enrichment_keeps_article_over_longer_garbage(
+    env: Path, monkeypatch: pytest.MonkeyPatch, archive_capture_junk: str
+) -> None:
+    settings = _render_settings(monkeypatch)
+    article = extraction.ExtractionResult(markdown="A real sentence of the article. " * 15)
+
+    async def fake_fetch(url: str, _settings, email: str | None = None, cookies: str = "") -> extraction.ExtractionResult:
+        return extraction.ExtractionResult(markdown=archive_capture_junk * 3)
+
+    monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
+    out = await extraction._maybe_render_full(article, "https://www.inc.com/a", settings, _render_rule())
+    assert out is article
+
+
+async def test_render_enrichment_keeps_article_over_longer_chrome_padded_render(
+    env: Path, monkeypatch: pytest.MonkeyPatch, archive_capture_junk: str
+) -> None:
+    # Longer and above the prose minimum, but with less prose than the article it would replace.
+    settings = _render_settings(monkeypatch)
+    sentence = "A real sentence of the article that the narrator should read aloud. "
+    article = extraction.ExtractionResult(markdown=sentence * 40)
+    padded = extraction.ExtractionResult(markdown=sentence * 10 + archive_capture_junk * 6)
+
+    async def fake_fetch(url: str, _settings, email: str | None = None, cookies: str = "") -> extraction.ExtractionResult:
+        return padded
+
+    monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
+    assert len(padded.markdown) > len(article.markdown)
+    out = await extraction._maybe_render_full(article, "https://www.inc.com/a", settings, _render_rule())
+    assert out is article
+
+
+# --- subscriber session on a render rule --------------------------------------------
+
+
+async def test_render_rule_with_cookies_renders_first_with_the_session(
+    env: Path, monkeypatch: pytest.MonkeyPatch, reader_stub
+) -> None:
+    # The session only works in the render browser: it runs before any other rung
+    # (the stubbed transport allows only the primary fetch) and carries the jar.
+    settings = _render_settings(monkeypatch)
+    seen: list[str] = []
+
+    async def fake_fetch(url: str, _settings, email: str | None = None, cookies: str = ""):
+        seen.append(cookies)
+        return extraction.ExtractionResult(markdown="The subscriber article, sentence by sentence. " * 80)
+
+    monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
+    _patch_async_client(monkeypatch, _stub_transport(httpx.Response(401, text="blocked")))
+    rule = extraction.SourceFallback("op", ("wsj.com",), "render", "", 3000, cookies="sid=abc")
+    result = await extraction.extract("https://www.wsj.com/a", settings, (rule,))
+    assert result.markdown.startswith("The subscriber article")
+    assert seen == ["sid=abc"]
+    assert reader_stub.calls == []
+
+
+async def test_render_rule_with_cookies_renders_once_when_it_fails(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, no_archive
+) -> None:
+    settings = _render_settings(monkeypatch)
+    calls: list[str] = []
+
+    async def fake_fetch(url: str, _settings, email: str | None = None, cookies: str = ""):
+        calls.append(cookies)
+        return None
+
+    monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
+    _patch_async_client(monkeypatch, _stub_transport(httpx.Response(401, text="blocked")))
+    rule = extraction.SourceFallback("op", ("wsj.com",), "render", "", 3000, cookies="sid=abc")
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://www.wsj.com/a", settings, (rule,))
+    assert calls == ["sid=abc"]
+
+
+async def test_render_answers_a_wall_revealed_by_a_fallback(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_archive
+) -> None:
+    # The primary is blocked (not gated); FlareSolverr then shows the signup wall. The
+    # render must still carry the address, decided on the page as it stands.
+    monkeypatch.setenv("REGISTRATION_EMAIL", "reader@example.test")
+    settings = _render_settings(monkeypatch)
+    calls: list = []
+    monkeypatch.setattr(extraction.render, "fetch", _render_fake(_RENDERED_ARTICLE, calls))
+    transport = _stub_transport(
+        httpx.Response(403, text="Forbidden"),
+        _flaresolverr_ok(f"<html><body><article><p>{_GATED_BODY}</p></article></body></html>"),
+    )
+    _patch_async_client(monkeypatch, transport)
+    result = await extraction.extract("https://w42st.com/post/amazon", settings)
+    assert result is _RENDERED_ARTICLE
+    assert calls[0]["email"] == "reader@example.test"
+
+
+async def test_render_rule_with_cookies_is_held_to_its_floor(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, no_archive
+) -> None:
+    # An expired session renders the logged-out teaser: over 500 chars, under the rule's
+    # 3000. It must fail, with the expired-cookies message.
+    settings = _render_settings(monkeypatch)
+    teaser = extraction.ExtractionResult(markdown="Two paragraphs of the story before the wall. " * 25)
+    monkeypatch.setattr(extraction.render, "fetch", _render_fake(teaser))
+    _patch_async_client(monkeypatch, _stub_transport(httpx.Response(401, text="blocked")))
+    rule = extraction.SourceFallback("op", ("wsj.com",), "render", "", 3000, cookies="sid=old")
+    with pytest.raises(extraction.ExtractionTooShortError, match="probably expired"):
+        await extraction.extract("https://www.wsj.com/a", settings, (rule,))
+
+
+async def test_registration_render_runs_with_fallbacks_disabled(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, no_archive
+) -> None:
+    monkeypatch.setenv("EXTRACTION_FALLBACKS_ENABLED", "false")
+    monkeypatch.setenv("REGISTRATION_EMAIL", "reader@example.test")
+    settings = _render_settings(monkeypatch)
+    calls: list = []
+    monkeypatch.setattr(extraction.render, "fetch", _render_fake(_RENDERED_ARTICLE, calls))
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response(_GATED_BODY)))
+    result = await extraction.extract("https://w42st.com/post/amazon", settings)
+    assert result is _RENDERED_ARTICLE
+    assert calls[0]["email"] == "reader@example.test"
+
+
+async def test_render_enrichment_skipped_for_opted_out_host(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A truncated-looking but accepted page on a host set to none is not rendered.
+    settings = _render_settings(monkeypatch)
+
+    async def boom(*_args, **_kwargs):
+        raise AssertionError("render must not run for a host set to none")
+
+    monkeypatch.setattr(extraction.render, "fetch", boom)
+    partial = extraction.ExtractionResult(markdown="Body text. EXPAND TO CONTINUE READING", metadata={})
+    rule = extraction.SourceFallback("op", ("other.com",), "none", "", 0)
+    assert await extraction._maybe_render_full(partial, "https://other.com/a", settings, rule) is partial

@@ -20,8 +20,7 @@ class ExtractionResult:
     JSON-LD ``articleBody``) when known. It ignores the related-article and nav chrome
     that can pad a scraped paywall teaser past the floor, so the floor decision can use
     it instead of ``len(markdown)``. ``None`` when the page declares no article body
-    (and for the FlareSolverr/archive engines, whose trafilatura bodies are already
-    chrome-free)."""
+    (and for the reader engine, which returns markdown only)."""
 
     markdown: str
     metadata: dict[str, Any] = field(default_factory=dict)

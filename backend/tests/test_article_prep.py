@@ -143,3 +143,44 @@ def test_strip_boilerplate_leaves_plain_prose_untouched() -> None:
         "\n\nA second paragraph written by the council with no cruft at all."
     )
     assert article_prep.strip_boilerplate(prose) == prose
+
+
+def test_prose_chars_scores_archive_toolbar_near_zero(archive_capture_junk: str) -> None:
+    # Clears the 500-char floor on length, but the only sentence is the bot-wall line.
+    assert len(archive_capture_junk) > 500
+    assert article_prep.prose_chars(archive_capture_junk) == len(
+        "Please enable JS and disable any ad blocker"
+    )
+
+
+def test_prose_chars_counts_article_paragraphs_in_full() -> None:
+    paragraph = (
+        "The build-out of data centers has become one of the largest capital projects "
+        "in the country, and economists are split on what happens when it slows."
+    )
+    markdown = f"# Headline\n\n{paragraph}\n\n[Share](https://x.test/s)\n\n{paragraph}"
+    assert article_prep.prose_chars(markdown) == 2 * len(paragraph)
+
+
+def test_prose_chars_counts_link_labels_not_urls() -> None:
+    line = "Read the [full report from the central bank](https://bank.test/r) before the vote next week."
+    assert article_prep.prose_chars(line) == len(
+        "Read the full report from the central bank before the vote next week."
+    )
+
+
+def test_prose_chars_counts_unspaced_scripts() -> None:
+    # CJK prose has no spaces, so the whole sentence is one token.
+    sentence = "人工知能への投資は米国史上最大の経済的な賭けになりつつあると専門家は指摘している。" * 2
+    assert article_prep.prose_chars(sentence) == len(sentence)
+
+
+def test_prose_chars_stops_at_limit() -> None:
+    paragraph = "One sentence of the article that is long enough to count as prose here. "
+    markdown = "\n\n".join([paragraph] * 50)
+    assert article_prep.prose_chars(markdown, limit=100) < 2 * len(paragraph)
+
+
+def test_prose_chars_counts_list_items_with_numbers() -> None:
+    item = "Mix 2 cups of flour with the sugar and 3 eggs until smooth."
+    assert article_prep.prose_chars(f"- {item}\n1. {item}") == 2 * len(item)

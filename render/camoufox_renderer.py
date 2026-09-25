@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from urllib.parse import urlsplit
 
 from camoufox.async_api import AsyncCamoufox
@@ -24,30 +25,97 @@ from renderer import (
     is_captcha_wall,
     is_public_url,
     looks_registration_gated,
+    parse_cookie_header,
     registration_form_index,
     word_estimate,
 )
 
 logger = logging.getLogger("render.camoufox")
 
-# Per-page budgets. The navigation budget is generous because the page also has
-# to clear a DataDome JS challenge; the grow wait gives revealed content time to
-# render before we re-measure the body.
-_NAV_TIMEOUT_MS = 45_000
-_CLICK_TIMEOUT_MS = 5_000
-_GROW_WAIT_MS = 1_500
+# Set by the stack when the sidecar sits behind the egress proxy.
+_PROXY_URL = os.environ.get("RENDER_PROXY_URL")
+
+# Per-page budgets, each overridable from the environment so the loop can be retuned
+# without a rebuild. The navigation budget is generous because the page also has to
+# clear a DataDome JS challenge; the grow wait gives clicked expanders time to render
+# before the body is re-measured.
+_NAV_TIMEOUT_MS = int(os.environ.get("RENDER_NAV_TIMEOUT_MS", "45000"))
+_CLICK_TIMEOUT_MS = int(os.environ.get("RENDER_CLICK_TIMEOUT_MS", "5000"))
+_GROW_WAIT_MS = int(os.environ.get("RENDER_GROW_WAIT_MS", "1500"))
 # DataDome's wall is probabilistic and fingerprint-tied: the same page renders the full
 # article on one attempt and a CAPTCHA shell (or a stalled nav) on the next. Each attempt
 # opens a FRESH Camoufox context (new fingerprint), so retrying re-rolls the challenge.
-_RENDER_ATTEMPTS = 3
-# Hard wall-clock cap on the whole retry loop. The backend's render read timeout is 90s,
-# so the sidecar must finish under it (with margin for the HTTP round-trip) or the backend
-# discards the render mid-flight. A single attempt can run up to the nav budget, so this
-# cap -- not the attempt count -- is what guarantees we stay inside the backend's budget.
-_RENDER_BUDGET_SECONDS = 80.0
+_RENDER_ATTEMPTS = int(os.environ.get("RENDER_ATTEMPTS", "3"))
+# Body-settle polling: accept the page once its visible text stops growing. Analytics
+# long-polls keep ``networkidle`` from settling on WSJ-class pages, so a networkidle nav
+# timed out at 45s and burned two attempts before a third could re-roll the wall.
+_SETTLE_POLL_MS = int(os.environ.get("RENDER_SETTLE_POLL_MS", "300"))
+_SETTLE_QUIET_POLLS = 2
+_SETTLE_MAX_MS = int(os.environ.get("RENDER_SETTLE_MAX_MS", "8000"))
+# Hard wall-clock cap on the whole retry loop. A request's ``budget_seconds`` (the
+# backend's read timeout minus a margin) lowers it further, so the two never drift apart.
+_RENDER_BUDGET_SECONDS = float(os.environ.get("RENDER_BUDGET_SECONDS", "120.0"))
 # Only treat these as expand controls. Body prose is never a candidate, so a
 # stray "read more" in an article cannot be clicked.
 _CONTROL_SELECTOR = "button, a, [role=button]"
+
+
+async def _body_len(page) -> int:
+    """Visible body text length, measured in the page so only an int crosses the wire."""
+
+    return await page.evaluate("() => document.body ? document.body.innerText.length : 0")
+
+
+async def _wait_for_document(page) -> None:
+    """Wait out a navigation in flight so the next read sees the new page. Never raises."""
+
+    try:
+        await page.wait_for_load_state("domcontentloaded", timeout=_NAV_TIMEOUT_MS)
+    except Exception:  # still loading at the cap; the next read decides
+        pass
+
+
+async def _wait_body_settled(page) -> None:
+    """Poll the visible body length until it stops growing, for at most ``_SETTLE_MAX_MS``.
+    Catches late-loading paragraphs without waiting for the network to go quiet. A
+    navigation mid-poll (a challenge reload, a link) restarts the count on the new page."""
+
+    deadline = time.monotonic() + _SETTLE_MAX_MS / 1000
+    last = -1
+    quiet = 0
+    while time.monotonic() < deadline:
+        try:
+            current = await _body_len(page)
+        except Exception:  # the page is navigating, or gone
+            if page.is_closed():
+                return
+            await _wait_for_document(page)
+            await page.wait_for_timeout(_SETTLE_POLL_MS)
+            last, quiet = -1, 0
+            continue
+        if current and current == last:
+            quiet += 1
+            if quiet >= _SETTLE_QUIET_POLLS:
+                return
+        else:
+            quiet = 0
+        last = current
+        await page.wait_for_timeout(_SETTLE_POLL_MS)
+
+
+async def _wait_body_changed(page, before: int) -> None:
+    """Poll until the body length moves off ``before`` or the page navigates, for at most
+    ``_SETTLE_MAX_MS``. A slow form POST leaves the old page steady for seconds."""
+
+    deadline = time.monotonic() + _SETTLE_MAX_MS / 1000
+    while time.monotonic() < deadline:
+        try:
+            if await _body_len(page) != before:
+                return
+        except Exception:  # the page is navigating
+            await _wait_for_document(page)
+            return
+        await page.wait_for_timeout(_SETTLE_POLL_MS)
 
 
 async def _run_expand(page) -> int:
@@ -79,14 +147,20 @@ async def _run_expand(page) -> int:
             try:
                 if not await control.is_visible():
                     continue
-                before = len(await page.inner_text("body"))
+                before = await _body_len(page)
                 await control.click(timeout=_CLICK_TIMEOUT_MS)
             except Exception:  # not clickable / navigated away; try the next target
                 continue
+            # A beat for the reveal to start; polling at once could lock onto the old page.
             await page.wait_for_timeout(_GROW_WAIT_MS)
+            await _wait_body_settled(page)
             clicks += 1
-            if len(await page.inner_text("body")) > before:
-                grew = True
+            try:
+                grew = await _body_len(page) > before
+            except Exception:  # still navigating past the settle cap; stop expanding
+                await _wait_for_document(page)
+                break
+            if grew:
                 break  # re-scan from the top: the click may have revealed new controls
         if not grew:
             break
@@ -118,11 +192,10 @@ async def _submit_registration(page, email: str) -> bool:
             "submitting a registration gate",
             extra={"event": "render_registration_submit", "host": urlsplit(page.url).hostname},
         )
+        before = await _body_len(page)
         await email_input.press("Enter")
-        await page.wait_for_load_state("networkidle", timeout=_NAV_TIMEOUT_MS)
-        # An AJAX unlock swaps the body in after the network goes idle, so settle
-        # before the caller re-reads the page.
-        await page.wait_for_timeout(_GROW_WAIT_MS)
+        await _wait_body_changed(page, before)
+        await _wait_body_settled(page)
         return True
     except Exception:
         logger.warning(
@@ -137,8 +210,15 @@ class CamoufoxRenderer:
     (fresh fingerprint, no carried session) -- which is also what lets a retry clear a
     probabilistic DataDome wall."""
 
-    async def render(self, url: str, expand: bool, email: str | None = None) -> RenderResult:
-        if not is_public_url(url):
+    async def render(
+        self,
+        url: str,
+        expand: bool,
+        email: str | None = None,
+        cookies: str | None = None,
+        budget_seconds: float | None = None,
+    ) -> RenderResult:
+        if not is_public_url(url, proxied=bool(_PROXY_URL)):
             logger.warning(
                 "refused non-public render target", extra={"event": "render_blocked_host"}
             )
@@ -148,20 +228,21 @@ class CamoufoxRenderer:
         # the same outcome as a render that stayed blocked.
         try:
             return await asyncio.wait_for(
-                self._render_with_retries(url, expand, email), timeout=_RENDER_BUDGET_SECONDS
+                self._render_with_retries(url, expand, email, cookies),
+                timeout=min(_RENDER_BUDGET_SECONDS, budget_seconds or _RENDER_BUDGET_SECONDS),
             )
         except asyncio.TimeoutError:
             logger.warning("render exceeded its time budget", extra={"event": "render_timeout"})
             return RenderResult(status="captcha")
 
     async def _render_with_retries(
-        self, url: str, expand: bool, email: str | None = None
+        self, url: str, expand: bool, email: str | None = None, cookies: str | None = None
     ) -> RenderResult:
         # Retry anything short of a usable article: a fresh fingerprint re-rolls DataDome's
         # probabilistic challenge, whether it surfaced as a CAPTCHA shell or a stalled load.
         result = RenderResult(status="error")
         for attempt in range(1, _RENDER_ATTEMPTS + 1):
-            result, submitted = await self._render_once(url, expand, attempt, email)
+            result, submitted = await self._render_once(url, expand, attempt, email, cookies)
             if submitted:
                 # One submission per URL, however many fingerprints the retry loop
                 # burns: the publisher gets the address once, not once an attempt.
@@ -171,18 +252,31 @@ class CamoufoxRenderer:
         return result
 
     async def _render_once(
-        self, url: str, expand: bool, attempt: int, email: str | None = None
+        self,
+        url: str,
+        expand: bool,
+        attempt: int,
+        email: str | None = None,
+        cookies: str | None = None,
     ) -> tuple[RenderResult, bool]:
         """The render, plus whether the address was submitted on this attempt."""
 
         submitted = False
         try:
-            proxy_url = os.environ.get("RENDER_PROXY_URL")
-            proxy = {"server": proxy_url} if proxy_url else None
+            proxy = {"server": _PROXY_URL} if _PROXY_URL else None
             async with AsyncCamoufox(headless=False, proxy=proxy) as browser:
                 page = await browser.new_page()
-                await page.goto(url, wait_until="networkidle", timeout=_NAV_TIMEOUT_MS)
+                if cookies:
+                    await page.context.add_cookies(parse_cookie_header(cookies, url))
+                await page.goto(url, wait_until="domcontentloaded", timeout=_NAV_TIMEOUT_MS)
+                await _wait_body_settled(page)
+                # A JS challenge can hold still, then redirect to the article: give a page
+                # that still looks walled one bounded chance to move on before judging it.
+                if is_captcha_wall(await page.inner_text("body"), await page.content()):
+                    await _wait_body_changed(page, await _body_len(page))
+                    await _wait_body_settled(page)
                 clicks = await _run_expand(page) if expand else 0
+                await _wait_for_document(page)
                 body_text = await page.inner_text("body")
                 html = await page.content()
                 # Only now, with the page in front of us and the gate visible, is the

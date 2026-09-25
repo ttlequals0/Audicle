@@ -80,3 +80,22 @@ CVE-2026-74860
 CVE-2026-86140
 CVE-2026-76956
 CVE-2026-76957
+# Added 0.58.0 under the same reasoning, no fixed Debian package yet:
+# libexpat1 CVE-2026-66046 and CVE-2026-93990, and libxml2 CVE-2026-86138,
+# CVE-2026-86139, CVE-2026-86142, CVE-2026-86143, CVE-2026-86144.
+CVE-2026-66046
+CVE-2026-93990
+CVE-2026-86138
+CVE-2026-86139
+CVE-2026-86142
+CVE-2026-86143
+CVE-2026-86144
+
+# Owner: Audicle maintainers. Recheck: 2026-10-10. Added 0.58.5.
+# libx11 (CVE-2026-88806) and libxrender1 (CVE-2026-88807), HIGH, "affected":
+# heap overflows in the X client when it parses replies from a malicious X server.
+# The only X server here is the container's own Xvfb, started by the entrypoint
+# under the browser's unprivileged uid with TCP disabled. Pages cannot act as an X
+# server. No fixed trixie package yet. Remove when Debian ships patches.
+CVE-2026-88806
+CVE-2026-88807

@@ -28,6 +28,7 @@ from app.config import Settings
 from app.services import (
     arc_extractor,
     archive,
+    article_prep,
     direct_fetch,
     flaresolverr,
     jsonld,
@@ -68,10 +69,12 @@ async def extract(
     near-empty (below ``MIN_EXTRACTION_CHARS``). A per-host rule overrides the
     catch-all, winning on host match and keeping its higher teaser floor (a known
     paywall serves a teaser that clears the global floor but is useless to narrate).
-    Separately, and for any host, a below-floor scrape that looks like a Cloudflare/
-    bot-challenge page is automatically re-fetched through FlareSolverr (when
-    ``FLARESOLVERR_URL`` is set) -- gated on challenge detection so a plain teaser
-    never triggers a browser solve. ``None`` uses the built-ins only.
+    Separately, and for any host, a below-floor scrape escalates automatically: a
+    Cloudflare/bot-challenge page goes through FlareSolverr first, a near-empty scrape
+    reaches FlareSolverr after the rule's attempts, then the reader proxy
+    (``READER_AUTO_ENABLED``) and a public archive (``ARCHIVE_FALLBACK_ENABLED``) run
+    last. A plain teaser never triggers a browser solve. ``None`` uses the built-ins
+    only.
 
     Raises:
         ExtractionTransientError: every retry exhausted on a retryable failure.
@@ -103,12 +106,13 @@ async def extract(
     # teaser paywall (real text but below the floor) drops below it and routes to the
     # solver instead of being silently returned. The solver's full-page result is then
     # accepted against the hard MIN_EXTRACTION_CHARS in the loop.
-    # A render rule is a post-cascade strategy (it emits no loop attempt), so it uses the
-    # global floor, NOT its own min_chars -- otherwise a blocked/empty primary would
-    # "clear" a render rule's min_chars and skip the cascade and the render rescue.
+    # A render rule for click-to-expand pages uses the global floor: article length
+    # varies, and the sidecar returns the expanded page. A render rule carrying a
+    # subscriber session is a paywall rule, held to its teaser floor like any other, so
+    # an expired session's teaser fails instead of being narrated.
     floor = (
         settings.MIN_EXTRACTION_CHARS
-        if rule is None or rule.proxy == "render"
+        if rule is None or (_is_render_rule(rule) and not rule.cookies)
         else rule.min_chars
     )
     host = (urlsplit(url).hostname or "").lower()
@@ -165,39 +169,82 @@ async def extract(
         # any length decision so the floor judges real text.
         gated = gate_offset(result.markdown) is not None
         result = trim_at_gate(result)
-        if _effective_chars(result, rule, floor) >= _accept_floor(gated, floor, settings):
-            return await _maybe_render_full(result, url, settings, rule)
         # Best result seen across direct + every bypass, and whether the browser
         # solver was attempted -- together they classify the failure message.
-        best_chars = _effective_chars(result, rule, floor)
+        best_chars = _judged_chars(result, rule, floor, settings)
+        if best_chars >= _accept_floor(gated, floor, settings):
+            return await _maybe_render_full(result, url, settings, rule)
+        effective_chars = _effective_chars(result, rule, floor)
+        if best_chars < effective_chars:
+            logger.info(
+                "Primary scrape has too little prose to be an article",
+                extra={
+                    "event": "extraction_primary_not_prose",
+                    "host": host,
+                    "markdown_chars": len(result.markdown),
+                    "judged_chars": best_chars,
+                },
+            )
 
-        # Build one ordered bypass plan. The rule's own strategy supplies its attempts
-        # (googlebot/freedium/custom/flaresolverr); on top, FlareSolverr auto-escalates
-        # for ANY host when the scrape looks like a Cloudflare challenge or is near-empty
-        # (a hard 403/IP block) -- unless the plan already routes to the solver. The auto
-        # attempt is prepended so the browser solve runs first. Every attempt (browser or
-        # Firecrawl re-scrape) runs through one dispatcher, so a plain teaser (real text)
-        # never pays for a browser solve.
+        # A host set to "none" opted out of every bypass, the automatic ones included:
+        # no solver, no third-party reader, no archive, no render.
+        if rule is not None and rule.proxy == "none":
+            raise ExtractionTooShortError(
+                f"Only {best_chars} characters came back, and this site is set to skip "
+                "bypasses (strategy none in Site overrides)."
+            )
+
+        # Build one ordered bypass plan, cheapest rungs first: the rule's own strategy
+        # (googlebot/freedium/custom/flaresolverr/reader/archive), then the automatic
+        # FlareSolverr solve on a hard block, the reader proxy, and a public archive.
+        # A Cloudflare challenge is the exception: the solver goes first, since the
+        # edge verifies Googlebot by reverse DNS and a header swap cannot pass it.
+        # Every attempt runs through one dispatcher and is judged by the same floor.
         attempts: list[Attempt] = candidate_attempts(rule, url) if rule is not None else []
         solver_configured = bool(settings.FLARESOLVERR_URL.strip())
         near_empty = (
-            _effective_chars(result, rule, settings.MIN_EXTRACTION_CHARS)
-            < settings.MIN_EXTRACTION_CHARS
-        )
+            best_chars
+            if floor == settings.MIN_EXTRACTION_CHARS
+            else _judged_chars(result, rule, settings.MIN_EXTRACTION_CHARS, settings)
+        ) < settings.MIN_EXTRACTION_CHARS
         if solver_configured and not any(a.engine == "flaresolverr" for a in attempts):
-            is_challenge = flaresolverr.looks_like_challenge(result)
-            if is_challenge or near_empty:
-                trigger = "challenge" if is_challenge else "hard-block"
-                attempts.insert(0, Attempt(f"{trigger}#flaresolverr", "flaresolverr", url))
-        # Last resort for any near-empty scrape: a Wayback capture (no cookies, no bot
-        # wall). Appended last so live strategies and the solver run first; archive.today
-        # (via the solver) stays opt-in behind an explicit per-host archive rule.
+            if flaresolverr.looks_like_challenge(result):
+                attempts.insert(0, Attempt("challenge#flaresolverr", "flaresolverr", url))
+            elif near_empty:
+                attempts.append(Attempt("hard-block#flaresolverr", "flaresolverr", url))
+        # The reader proxy sends the article URL to a third party (r.jina.ai by default),
+        # so the automatic rung has its own switch; an explicit reader rule ignores it.
+        # It returns markdown only, so it cannot be judged by the declared body: skip it
+        # when that body is what exposed the teaser, or the same chrome-padded teaser
+        # would pass the floor on raw length.
+        declared_teaser = effective_chars < len(result.markdown)
         if (
-            settings.ARCHIVE_FALLBACK_ENABLED
-            and near_empty
-            and not any(a.engine == "archive" for a in attempts)
+            settings.READER_AUTO_ENABLED
+            and settings.READER_PROXY_TEMPLATE.strip()
+            and not declared_teaser
+            and not any(a.engine == "reader" for a in attempts)
         ):
+            attempts.append(Attempt("auto#reader", "reader", url))
+        # Last resort: a public archive capture (Wayback, then archive.today via the
+        # solver). Fires for a teaser as well as a hard block.
+        if settings.ARCHIVE_FALLBACK_ENABLED and not any(a.engine == "archive" for a in attempts):
             attempts.append(Attempt("auto#archive", "archive", url))
+        # The render sidecar last, on a real block: its browser clears walls nothing above
+        # can (DataDome), and on a registration wall it answers the signup form. It is held
+        # to the host's floor like a rule attempt, since a rendered teaser is still a
+        # teaser. A render rule already put its own attempt at the front.
+        # Registration is its own opt-in (REGISTRATION_EMAIL), so it does not depend on
+        # the fallbacks switch.
+        blocked = near_empty or flaresolverr.looks_like_challenge(result)
+        answers_registration = gated and bool(settings.REGISTRATION_EMAIL.strip())
+        if (
+            settings.RENDER_URL.strip()
+            and not any(a.engine == "render" for a in attempts)
+            and ((settings.EXTRACTION_FALLBACKS_ENABLED and blocked) or answers_registration)
+        ):
+            attempts.append(
+                Attempt("auto#render", "render", url, cookies=_rule_cookies(rule), is_host_rule=True)
+            )
 
         if rule is None:
             logger.info(
@@ -210,14 +257,19 @@ async def extract(
                 },
             )
 
+        # A host-rule attempt, or any attempt rescuing a teaser, is held to the rule's
+        # teaser floor (an archived or solved teaser is still a teaser); an auto attempt
+        # on a hard block accepts the full page against the hard MIN.
+        auto_floor = settings.MIN_EXTRACTION_CHARS if near_empty else floor
+        # No real Firecrawl behind the direct engine: a refetch runs in-process and a URL
+        # rewrite is skipped rather than POSTed to a placeholder URL.
+        in_process = settings.EXTRACTION_ENGINE == "direct" and not settings.firecrawl_configured
         solver_tried = False
         solver_sent_cookies = False
         fallback_start_logged = False
+        rendered = False
         for attempt in attempts:
-            # A host-rule attempt is held to the rule's teaser floor (an archived or solved
-            # teaser is still a teaser); an auto-escalation attempt accepts the full page
-            # against the hard MIN.
-            accept_floor = floor if attempt.is_host_rule else settings.MIN_EXTRACTION_CHARS
+            accept_floor = floor if attempt.is_host_rule else auto_floor
             if attempt.engine == "flaresolverr":
                 if not solver_configured:  # a flaresolverr rule but no solver URL set
                     continue
@@ -244,10 +296,27 @@ async def extract(
                         "primary_chars": len(result.markdown),
                     },
                 )
-                # A host-rule grab also tries archive.today (via the solver); the auto
-                # last-resort is Wayback-only.
-                alt = await archive.fetch(
-                    attempt.url, settings, include_archive_today=attempt.is_host_rule
+                alt = await archive.fetch(attempt.url, settings)
+            elif attempt.engine == "render":
+                if not settings.RENDER_URL.strip():  # a render rule but no sidecar set
+                    continue
+                rendered = True
+                solver_tried = True  # a real browser, for the failure message
+                solver_sent_cookies = solver_sent_cookies or bool(attempt.cookies)
+                # A fallback may have revealed the wall, so decide on the current page.
+                registration_email = settings.REGISTRATION_EMAIL.strip() if gated else ""
+                if registration_email:
+                    logger.info(
+                        "Answering a registration wall with the configured address",
+                        extra={"event": "registration_attempt", "host": host},
+                    )
+                # The operator's session (if any) rides along; the address is sent only
+                # to a page that showed a registration wall.
+                alt = await render.fetch(
+                    attempt.url,
+                    settings,
+                    email=registration_email or None,
+                    cookies=attempt.cookies,
                 )
             elif attempt.engine == "reader":
                 logger.info(
@@ -271,13 +340,10 @@ async def extract(
                         },
                     )
                     continue
-            else:  # firecrawl re-scrape (googlebot/freedium/custom)
-                # These bypass attempts go through Firecrawl. On a direct-engine
-                # deploy with no real Firecrawl configured, skip them cleanly rather
-                # than POST to a placeholder URL -- FlareSolverr + archive still cover
-                # the host. When the engine IS firecrawl, the primary already proved it
-                # reachable, so never skip there.
-                if settings.EXTRACTION_ENGINE == "direct" and not settings.firecrawl_configured:
+            else:  # "refetch" (googlebot) or "firecrawl" (freedium/custom URL rewrite)
+                # When the engine IS firecrawl, the primary already proved it reachable,
+                # so in_process is False and nothing is skipped.
+                if in_process and attempt.engine != "refetch":
                     logger.debug(
                         "Skipping Firecrawl re-scrape: direct engine, no Firecrawl configured",
                         extra={"event": "extraction_firecrawl_skipped", "fallback": attempt.label},
@@ -296,13 +362,18 @@ async def extract(
                     )
                     fallback_start_logged = True
                 try:
-                    alt = await _scrape(
-                        client,
-                        attempt.url,
-                        settings,
-                        headers=attempt.headers or None,
-                        detect_teaser=True,
-                    )
+                    if in_process:
+                        alt = await direct_fetch.fetch(
+                            attempt.url, settings, detect_teaser=True, headers=attempt.headers or None
+                        )
+                    else:
+                        alt = await _scrape(
+                            client,
+                            attempt.url,
+                            settings,
+                            headers=attempt.headers or None,
+                            detect_teaser=True,
+                        )
                 except ExtractionError as exc:
                     logger.warning(
                         "Extraction fallback attempt failed",
@@ -321,25 +392,16 @@ async def extract(
             if gate_offset(alt.markdown) is not None:
                 gated = True
                 alt = trim_at_gate(alt)
-            alt_chars = _effective_chars(alt, rule, accept_floor)
+            alt_chars = _judged_chars(alt, rule, accept_floor, settings)
             best_chars = max(best_chars, alt_chars)
             if alt_chars >= _accept_floor(gated, accept_floor, settings):
                 _log_fallback_used(attempt.label, result.markdown, alt.markdown)
+                if rendered:  # the sidecar already had its turn; don't render again
+                    return alt
                 return await _maybe_render_full(alt, url, settings, rule)
-            _log_fallback_short(attempt.label, alt_chars, _accept_floor(gated, accept_floor, settings))
-
-    # Every other strategy came up short. For a render-rule host, give the render
-    # sidecar's own browser a last shot before failing -- its Camoufox can clear a
-    # DataDome block that left FlareSolverr below floor.
-    rescued = await _render_rescue(url, settings, rule)
-    if rescued is not None:
-        return rescued
-
-    # Last resort on a wall that only wants an email: let the sidecar answer it.
-    if gated and settings.REGISTRATION_EMAIL.strip():
-        unlocked = await _try_registration(url, settings)
-        if unlocked is not None:
-            return unlocked
+            _log_fallback_short(
+                attempt.label, alt_chars, _accept_floor(gated, accept_floor, settings), len(alt.markdown)
+            )
 
     # Only claim "your cookies look expired" when a solver attempt actually carried
     # cookies -- an auto-escalation solver runs without them, so the rule merely having
@@ -353,46 +415,6 @@ async def extract(
     raise ExtractionTooShortError(
         _too_short_message(best_chars, solver_tried, settings, solver_sent_cookies)
     )
-
-
-async def _render_above_floor(
-    url: str, settings: Settings, email: str | None = None
-) -> ExtractionResult | None:
-    """Drive the render sidecar and return its body only when it clears the floor.
-
-    Gatedness is read before the trim, because trimming removes the marker it keys on."""
-
-    alt = await render.fetch(url, settings, email=email)
-    if alt is None:
-        return None
-    gated = gate_offset(alt.markdown) is not None
-    alt = trim_at_gate(alt)
-    if len(alt.markdown) < _accept_floor(gated, settings.MIN_EXTRACTION_CHARS, settings):
-        return None
-    return alt
-
-
-async def _try_registration(url: str, settings: Settings) -> ExtractionResult | None:
-    """Have the render sidecar complete a free registration wall, or None.
-
-    Reached only when the page is gated, the cascade already failed, and an address
-    is configured. The unlocked body still has to clear the floor to be used."""
-
-    if not settings.RENDER_URL.strip():
-        return None
-    logger.info(
-        "Answering a registration wall with the configured address",
-        extra={"event": "registration_attempt", "host": urlsplit(url).hostname or ""},
-    )
-    alt = await _render_above_floor(url, settings, email=settings.REGISTRATION_EMAIL.strip())
-    if alt is None:
-        logger.info("Registration wall did not open", extra={"event": "registration_failed"})
-        return None
-    logger.info(
-        "Registration wall opened",
-        extra={"event": "registration_unlocked", "chars": len(alt.markdown)},
-    )
-    return alt
 
 
 def _too_short_message(
@@ -413,11 +435,11 @@ def _too_short_message(
         if cookies_present:
             return (
                 "Still paywalled: the browser bypass used your saved cookies but got only a "
-                "teaser. They're probably expired -- re-paste them in Settings."
+                "teaser. They're probably expired, so re-paste them in Settings."
             )
         return (
-            "Still paywalled: the browser bypass got only a teaser. This site needs a login "
-            "-- add its subscriber cookies in Settings."
+            "Still paywalled: the browser bypass got only a teaser. This site needs a login, "
+            "so add its subscriber cookies in Settings."
         )
     if best_chars < settings.MIN_EXTRACTION_CHARS:
         return (
@@ -444,7 +466,7 @@ def _log_fallback_used(label: str, primary_markdown: str, alt_markdown: str) -> 
     )
 
 
-def _log_fallback_short(label: str, alt_chars: int, floor: int) -> None:
+def _log_fallback_short(label: str, alt_chars: int, floor: int, raw_chars: int) -> None:
     """A fallback attempt ran but came back below the floor. Logged so a bypass
     that runs yet doesn't help (e.g. a hard subscription paywall serving the same
     teaser to the Googlebot fetch) is visible in logs instead of silent."""
@@ -454,7 +476,8 @@ def _log_fallback_short(label: str, alt_chars: int, floor: int) -> None:
         extra={
             "event": "extraction_fallback_short",
             "fallback": label,
-            "markdown_chars": alt_chars,
+            "judged_chars": alt_chars,
+            "markdown_chars": raw_chars,
             "floor": floor,
         },
     )
@@ -485,6 +508,26 @@ def _effective_chars(result: ExtractionResult, rule: SourceFallback | None, floo
     if rule is not None and declared is not None and declared < floor <= scraped:
         return declared
     return scraped
+
+
+def _rule_cookies(rule: SourceFallback | None) -> str:
+    """The operator's cookie jar for the matched host, or ""."""
+
+    return rule.cookies if rule is not None else ""
+
+
+def _judged_chars(
+    result: ExtractionResult, rule: SourceFallback | None, floor: int, settings: Settings
+) -> int:
+    """``_effective_chars``, except a page with too little prose to be an article (an
+    archive toolbar, a link list, a bot wall) is judged by its prose, so it falls below
+    the floor and the cascade moves on instead of narrating it."""
+
+    chars = _effective_chars(result, rule, floor)
+    if chars < settings.MIN_EXTRACTION_CHARS:
+        return chars
+    prose = article_prep.prose_chars(result.markdown, limit=settings.MIN_EXTRACTION_CHARS)
+    return prose if prose < settings.MIN_EXTRACTION_CHARS else chars
 
 
 # Markers that mean a solved page is only the visible front of an article whose body
@@ -560,17 +603,22 @@ async def _maybe_render_full(
 ) -> ExtractionResult:
     """Post-cascade enrichment. When the render sidecar is configured and the host has a
     render Site-override rule (or the result still looks truncated), drive the sidecar to
-    click the expander and keep its body only if it is strictly longer. A ``None`` or
-    shorter render leaves ``result`` untouched, so a broken click never loses the body."""
+    click the expander and keep its body only if it is strictly longer and holds at least as
+    much article prose. A ``None``, shorter, or chrome-padded render leaves ``result``
+    untouched, so a broken click never loses the body."""
 
-    if not settings.RENDER_URL.strip():
+    if not settings.RENDER_URL.strip() or (rule is not None and rule.proxy == "none"):
         return result
     if not (_is_render_rule(rule) or looks_truncated(result)):
         return result
-    alt = await render.fetch(url, settings)
+    alt = await render.fetch(url, settings, cookies=_rule_cookies(rule))
     if alt is not None:
         alt = trim_at_gate(alt)  # the sidecar sees the same wall; don't re-import it
-    if alt is None or len(alt.markdown) <= len(result.markdown):
+    if (
+        alt is None
+        or len(alt.markdown) <= len(result.markdown)
+        or article_prep.prose_chars(alt.markdown) < article_prep.prose_chars(result.markdown)
+    ):
         return result
     logger.info(
         "Render enriched a truncated article",
@@ -579,31 +627,6 @@ async def _maybe_render_full(
             "host": urlsplit(url).hostname or "",
             "before_chars": len(result.markdown),
             "after_chars": len(alt.markdown),
-        },
-    )
-    return alt
-
-
-async def _render_rescue(
-    url: str, settings: Settings, rule: SourceFallback | None
-) -> ExtractionResult | None:
-    """Last resort for a render-rule host whose cascade produced nothing above floor
-    (e.g. FlareSolverr was DataDome-blocked). Drive the render sidecar's own browser; if
-    it clears the floor, return it instead of failing the job. ``None`` lets the
-    too-short error stand. Keyed on the render rule only -- a failed cascade has no
-    markdown to auto-detect against."""
-
-    if not settings.RENDER_URL.strip() or not _is_render_rule(rule):
-        return None
-    alt = await _render_above_floor(url, settings)
-    if alt is None:
-        return None
-    logger.info(
-        "Render rescued a blocked extraction",
-        extra={
-            "event": "render_rescue",
-            "host": urlsplit(url).hostname or "",
-            "chars": len(alt.markdown),
         },
     )
     return alt

@@ -168,6 +168,11 @@ class Settings(BaseSettings):
     # simplest fix if the reader strategy starts returning empty/truncated bodies. Settable
     # live from the Settings UI (Connections) or PUT /api/v1/settings. Empty sends no auth.
     READER_API_KEY: str = ""
+    # Automatic reader rung: a below-floor scrape on any host is retried through the
+    # reader proxy after the live bypasses. It sends the article URL to that proxy (a
+    # third party by default), so it can be switched off here without touching
+    # explicit per-host reader rules.
+    READER_AUTO_ENABLED: bool = True
     # FlareSolverr endpoint for the "flaresolverr" bypass strategy (a Cloudflare/
     # JS-challenge solver). Include the /v1 path (the client appends it if missing).
     # Empty disables the strategy (a matched host using it fails cleanly). Operators
@@ -181,10 +186,12 @@ class Settings(BaseSettings):
     # when the cascade fails. Empty RENDER_URL disables it. Builtin render hosts live in
     # RENDER_BUILTIN_HOSTS (below).
     RENDER_URL: str = ""
-    RENDER_TIMEOUT_SECONDS: float = 90.0
-    # Archive fallback: when a scrape is near-empty (a hard block) and no other bypass
-    # recovered the article, try a Wayback Machine capture before failing. No cookies,
-    # no bot wall; archive.today (via FlareSolverr) is opt-in per host, not automatic.
+    # Read budget for a sidecar call. Each request tells the sidecar to finish 10 s
+    # sooner, so its retry loop never outlives this wait.
+    RENDER_TIMEOUT_SECONDS: float = 150.0
+    # Archive fallback: when a scrape is below its floor (a hard block or a teaser) and
+    # no other bypass recovered the article, try a Wayback Machine capture, then
+    # archive.today through FlareSolverr (when configured), before failing.
     ARCHIVE_FALLBACK_ENABLED: bool = True
     WAYBACK_TIMEOUT_SECONDS: int = 30
     # Firecrawl scrape filtering so chrome (nav, cookie banners, footers) is

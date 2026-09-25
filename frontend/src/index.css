@@ -79,6 +79,15 @@
     border-color: #1ce783;
   }
 
+  /* Masks a secret typed into a plain text field, so password managers leave it
+     alone. Browsers without this property get type=password instead (Settings.tsx). */
+  .field-secret {
+    -webkit-text-security: disc;
+  }
+  .field-secret:placeholder-shown {
+    -webkit-text-security: none;
+  }
+
   /* Filter box. The leading slash is how you search in less and vim, and it is
      the same vernacular as the // eyebrows used elsewhere in this UI. */
   .search-wrap {

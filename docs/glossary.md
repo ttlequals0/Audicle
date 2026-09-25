@@ -28,7 +28,7 @@ Every term the app uses, in plain words, with a link to the part of the docs tha
 
 **Convenience mode** - The state before an admin password is set: every admin endpoint is open. Fine on a private network, warned about loudly otherwise. [Installation](installation.md#required-configuration)
 
-**Cookie jar** - Your logged-in session cookies for a subscribed site, stored against its FlareSolverr rule so articles fetch as you. [Paywalls > Subscriber paywalls](paywalls.md#subscriber-paywalls-cookie-jar)
+**Cookie jar** - Your logged-in session cookies for a subscribed site, stored against its FlareSolverr or render rule so articles fetch as you. [Paywalls > Subscriber paywalls](paywalls.md#subscriber-paywalls-cookie-jar)
 
 **Correction** - A row in the pronunciation table: a match term and the spoken form the narrator should say instead. [Configuration > Pronunciation corrections](configuration.md#pronunciation-corrections)
 
