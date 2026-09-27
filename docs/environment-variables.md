@@ -60,7 +60,7 @@ The cascade and its budgets. See the paywalls page.
 | `EXTRACTION_DIRECT_USER_AGENT` | `` | yes |
 | `EXTRACTION_ARC_ENABLED` | `True` | yes |
 | `EXTRACTION_FALLBACKS_ENABLED` | `True` | yes |
-| `MIN_EXTRACTION_CHARS` | `500` | yes |
+| `MIN_EXTRACTION_CHARS` | `150` | yes |
 | `REGISTRATION_EMAIL` | `` | yes |
 | `FIRECRAWL_URL` | `http://firecrawl:3002` | yes |
 | `FIRECRAWL_API_KEY` | `` | yes |

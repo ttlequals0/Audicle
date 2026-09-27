@@ -6,6 +6,15 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.58.10] - 2026-09-26
+
+### Changed
+
+- Fresh installs work without any Settings tuning. `MIN_EXTRACTION_CHARS` now defaults to 150 characters (was 500), the value tuned deployments already run. A gated page still owes twice the floor, so a short stub fails while a real teaser passes.
+- Built-in render defaults cover more paywalled publishers: The Atlantic, The New Yorker, NYT (The Athletic lands on it), WSJ, Washington Post, Bloomberg, FT, Business of Fashion, The Verge, TechCrunch, Crain's Chicago Business, Crain's New York Business, and Boston Globe. A pasted URL from one of these hosts goes straight to the render sidecar. An operator rule still wins over a built-in on a host collision, and a host set to `none` still skips every bypass.
+- A rendered article is judged against the accept floor again after the pull, so a short render cannot replace a decent scrape on length alone.
+- Docs follow one layout: Contents links at the top of the README, topics in a table, screenshots under `docs/screenshots/`.
+
 ## [0.58.9] - 2026-09-24
 
 ### Fixed

@@ -7,7 +7,7 @@ Three pages: Home for submitting, Feed for what you have, Settings for how it be
 Paste a URL, or switch to the File tab and drop documents.
 
 <p align="center">
-  <img src="screenshot-home-desktop.png" alt="Home, desktop" width="600">
+  <img src="screenshots/home-desktop.png" alt="Home, desktop" width="600">
   <img src="screenshot-home-mobile.png" alt="Home, mobile" width="190">
 </p>
 

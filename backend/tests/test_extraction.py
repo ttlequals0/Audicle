@@ -1315,6 +1315,26 @@ async def test_render_enrichment_triggers_on_truncation_without_rule(
     assert out is full
 
 
+async def test_render_enrichment_rejudges_the_pull_before_replacing(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A gated render is held to the doubled floor again after the pull, not just to
+    # being longer than what the cascade already had. Here the render wins on length
+    # (~280 visible chars vs ~140) but its body sits under the gated floor of 300,
+    # so the original body stands.
+    settings = _render_settings(monkeypatch)
+    partial = extraction.ExtractionResult(markdown="Intro. " * 20, metadata={})
+    teaser = extraction.ExtractionResult(
+        markdown="word " * 56 + "Continue reading this story for FREE!", metadata={}
+    )
+
+    monkeypatch.setattr(extraction.render, "fetch", _render_fake(teaser))
+    out = await extraction._maybe_render_full(
+        partial, "https://www.inc.com/a", settings, _render_rule()
+    )
+    assert out is partial
+
+
 def _render_fake(result: extraction.ExtractionResult | None, calls: list | None = None):
     async def fake_fetch(url: str, _settings, email: str | None = None, cookies: str = ""):
         if calls is not None:
@@ -1400,11 +1420,11 @@ async def test_render_rescue_held_to_the_hosts_floor(
 async def test_render_below_floor_or_gated_teaser_is_rejected(
     env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, no_archive
 ) -> None:
-    # A gated page owes twice the floor, so a 700-char teaser that stops at the signup
-    # prompt cannot pass as a render.
+    # A gated page owes twice the floor (2 x MIN_EXTRACTION_CHARS = 300), so a
+    # ~250-char teaser that stops at the signup prompt cannot pass as a render.
     settings = _render_settings(monkeypatch)
     teaser = extraction.ExtractionResult(
-        markdown="word " * 140 + "Continue reading this story for FREE!", metadata={}
+        markdown="word " * 50 + "Continue reading this story for FREE!", metadata={}
     )
     monkeypatch.setattr(extraction.render, "fetch", _render_fake(teaser))
     _patch_async_client(monkeypatch, _stub_transport(_ok_response("Access Denied")))
@@ -1451,15 +1471,13 @@ async def test_extract_render_host_raises_when_everything_fails(
 # --- registration walls (0.52.5) -------------------------------------------
 #
 # w42st.com serves two paragraphs then "Continue Reading This Story for FREE!"
-# followed by a signup form and the author's bio. The body cleared the 500-char
+# followed by a signup form and the author's bio. The stub cleared the plain
 # floor on chrome alone and shipped as a 40-second episode.
 
 _GATED_BODY = (
-    "Amazon-branded delivery workers are a daily sight in Hell's Kitchen, pushing "
-    "large blue carts along 9th Avenue and riding Prime-branded electric cargo bikes.\n\n"
-    "But despite the uniforms, carts, bikes, vans and packages bearing Amazon's name, "
-    "those workers are generally employed by independent delivery contractors rather "
-    "than Amazon itself.\n\n"
+    "Amazon-branded delivery workers push blue carts along 9th Avenue.\n\n"
+    "Despite the uniforms, those workers work for independent delivery "
+    "contractors.\n\n"
     "Continue Reading This Story for FREE!\n\n"
     "Sign me up for the newsletter\n\nTerms and Privacy\n\n"
     "Success! Your account was created and you're signed in. Please visit My Account "

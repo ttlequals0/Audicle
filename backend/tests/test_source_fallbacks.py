@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.config import Settings
 from app.services import source_fallbacks as sf
 
 
@@ -143,10 +144,21 @@ def test_render_rule_emits_a_render_attempt_with_its_cookies() -> None:
     ]
 
 
-def test_builtin_render_rule_ships_for_inc_com() -> None:
-    rule = sf.match("https://www.inc.com/article")
-    assert rule is not None
-    assert rule.proxy == "render"
+def test_shipped_defaults_match_tuned_live() -> None:
+    # Defaults a fresh deploy gets without any Settings-API tuning.
+    assert Settings().MIN_EXTRACTION_CHARS == 150
+    for host in (
+        "inc.com",
+        "wsj.com",
+        "www.wsj.com",
+        "nytimes.com",
+        "www.theatlantic.com",
+        "bostonglobe.com",
+    ):
+        rule = sf.match(f"https://{host}/a")
+        assert rule is not None
+        assert rule.proxy == "render"
+        assert rule.min_chars == 0
 
 
 def test_operator_rule_overrides_builtin_render() -> None:

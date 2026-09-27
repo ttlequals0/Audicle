@@ -19,7 +19,23 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # the shipped defaults -- add a host here as more sites are found to need render.
 # Operators can also add their own render hosts in the Site-overrides UI, which
 # override these on a host collision.
-RENDER_BUILTIN_HOSTS: tuple[str, ...] = ("inc.com",)
+RENDER_BUILTIN_HOSTS: tuple[str, ...] = (
+    "inc.com",
+    "theatlantic.com",
+    "newyorker.com",
+    "nytimes.com",
+    "theathletic.com",
+    "wsj.com",
+    "washingtonpost.com",
+    "bloomberg.com",
+    "ft.com",
+    "businessoffashion.com",
+    "theverge.com",
+    "techcrunch.com",
+    "chicagobusiness.com",
+    "crainsnewyork.com",
+    "bostonglobe.com",
+)
 
 
 class Settings(BaseSettings):
@@ -135,7 +151,7 @@ class Settings(BaseSettings):
     EXTRACTION_ARC_ENABLED: bool = True
     FIRECRAWL_BACKOFF_BASE_SECONDS: int = 1
     FIRECRAWL_TIMEOUT_SECONDS: int = 30
-    MIN_EXTRACTION_CHARS: int = 500
+    MIN_EXTRACTION_CHARS: int = 150
     # Address the render sidecar types into free registration walls, after the
     # cascade came up short. Needs RENDER_URL; empty means nothing is submitted.
     REGISTRATION_EMAIL: str = ""

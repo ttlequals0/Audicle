@@ -42,6 +42,7 @@ from app.services import (
 # the FlareSolverr engine also imports without a circular dependency.
 from app.services.extraction_types import (
     BLOCKED_STATUS_CODES,
+    GATED_FLOOR_MULTIPLIER,
     ExtractionBlockedError,
     ExtractionError,
     ExtractionPermanentError,
@@ -102,19 +103,7 @@ async def extract(
     # bar (teasers clear the global floor) and supplies the bypass attempts.
     # Disabling the feature reverts to plain behavior.
     rule = match(url, registry) if settings.EXTRACTION_FALLBACKS_ENABLED else None
-    # A flaresolverr rule keeps the rule's teaser floor like every strategy, so a
-    # teaser paywall (real text but below the floor) drops below it and routes to the
-    # solver instead of being silently returned. The solver's full-page result is then
-    # accepted against the hard MIN_EXTRACTION_CHARS in the loop.
-    # A render rule for click-to-expand pages uses the global floor: article length
-    # varies, and the sidecar returns the expanded page. A render rule carrying a
-    # subscriber session is a paywall rule, held to its teaser floor like any other, so
-    # an expired session's teaser fails instead of being narrated.
-    floor = (
-        settings.MIN_EXTRACTION_CHARS
-        if rule is None or (_is_render_rule(rule) and not rule.cookies)
-        else rule.min_chars
-    )
+    floor = _floor_for(rule, settings)
     host = (urlsplit(url).hostname or "").lower()
 
     timeout = httpx.Timeout(settings.FIRECRAWL_TIMEOUT_SECONDS)
@@ -483,9 +472,21 @@ def _log_fallback_short(label: str, alt_chars: int, floor: int, raw_chars: int) 
     )
 
 
-# A gated page must clear more than the plain floor: the few paragraphs a publisher
-# shows above the wall routinely pass 500 chars while being useless to narrate.
-_GATED_FLOOR_MULTIPLIER = 2
+def _floor_for(rule: SourceFallback | None, settings: Settings) -> int:
+    """Base accept floor for a matched host.
+
+    A flaresolverr rule keeps the rule's teaser floor like every strategy, so a
+    teaser paywall (real text but below the floor) drops below it and routes to the
+    solver instead of being silently returned. The solver's full-page result is then
+    accepted against the hard MIN_EXTRACTION_CHARS in the loop.
+    A render rule for click-to-expand pages uses the global floor: article length
+    varies, and the sidecar returns the expanded page. A render rule carrying a
+    subscriber session is a paywall rule, held to its teaser floor like any other, so
+    an expired session's teaser fails instead of being narrated."""
+
+    if rule is None or (_is_render_rule(rule) and not rule.cookies):
+        return settings.MIN_EXTRACTION_CHARS
+    return rule.min_chars
 
 
 def _accept_floor(gated: bool, floor: int, settings: Settings) -> int:
@@ -493,7 +494,7 @@ def _accept_floor(gated: bool, floor: int, settings: Settings) -> int:
 
     if not gated:
         return floor
-    return max(floor, settings.MIN_EXTRACTION_CHARS * _GATED_FLOOR_MULTIPLIER)
+    return max(floor, settings.MIN_EXTRACTION_CHARS * GATED_FLOOR_MULTIPLIER)
 
 
 def _effective_chars(result: ExtractionResult, rule: SourceFallback | None, floor: int) -> int:
@@ -603,20 +604,27 @@ async def _maybe_render_full(
 ) -> ExtractionResult:
     """Post-cascade enrichment. When the render sidecar is configured and the host has a
     render Site-override rule (or the result still looks truncated), drive the sidecar to
-    click the expander and keep its body only if it is strictly longer and holds at least as
-    much article prose. A ``None``, shorter, or chrome-padded render leaves ``result``
-    untouched, so a broken click never loses the body."""
+    click the expander and keep its body only if it clears the accept floor again, is
+    strictly longer, and holds at least as much article prose. A ``None``, below-floor,
+    shorter, or chrome-padded render leaves ``result`` untouched, so a broken click never
+    loses the body."""
 
     if not settings.RENDER_URL.strip() or (rule is not None and rule.proxy == "none"):
         return result
     if not (_is_render_rule(rule) or looks_truncated(result)):
         return result
     alt = await render.fetch(url, settings, cookies=_rule_cookies(rule))
-    if alt is not None:
-        alt = trim_at_gate(alt)  # the sidecar sees the same wall; don't re-import it
+    if alt is None:
+        return result
+    # Re-judge the pulled body against the accept floor before it replaces the cascade
+    # result, so a short render cannot pass on length alone.
+    gated = gate_offset(alt.markdown) is not None
+    alt = trim_at_gate(alt)  # the sidecar sees the same wall; don't re-import it
+    floor = _floor_for(rule, settings)
+    if _judged_chars(alt, rule, floor, settings) < _accept_floor(gated, floor, settings):
+        return result
     if (
-        alt is None
-        or len(alt.markdown) <= len(result.markdown)
+        len(alt.markdown) <= len(result.markdown)
         or article_prep.prose_chars(alt.markdown) < article_prep.prose_chars(result.markdown)
     ):
         return result

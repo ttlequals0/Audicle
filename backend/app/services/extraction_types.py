@@ -30,6 +30,12 @@ class ExtractionResult:
     raw_html: str | None = None
 
 
+# A gated page must clear twice the plain floor. The few paragraphs a publisher shows
+# above the wall pass a low floor but are useless to narrate. Both floor sites scale by
+# this: the cascade in extraction.py and the CAPTCHA guard in flaresolverr.py.
+GATED_FLOOR_MULTIPLIER = 2
+
+
 def scan_markers(result: ExtractionResult, markers: tuple[str, ...]) -> bool:
     """True when any marker appears in the result's markdown + title, matched
     case-insensitively. Shared by the challenge / CAPTCHA / truncation detectors so

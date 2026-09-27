@@ -36,7 +36,7 @@ Every term the app uses, in plain words, with a link to the part of the docs tha
 
 **Extraction** - Turning a URL into article text. A cascade of engines and fallbacks, not a single fetch. [How it works > Extraction](how-it-works.md#extraction)
 
-**Extraction floor** - `MIN_EXTRACTION_CHARS`: a scrape below it counts as blocked and triggers the bypass cascade. [Paywalls](paywalls.md)
+**Extraction floor** - `MIN_EXTRACTION_CHARS` (default 150 characters): a scrape below it counts as blocked and triggers the bypass cascade. [Paywalls](paywalls.md)
 
 ## F
 
