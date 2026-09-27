@@ -6,6 +6,12 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.58.14] - 2026-09-27
+
+### Changed
+
+- A Site-override rule that only stores a cookie jar for a built-in render host keeps the render strategy by default. Saving cookies for wsj.com no longer drops the host to the global default proxy, so the jar reaches the render attempt without extra setup. An explicit proxy choice on the row still wins.
+
 ## [0.58.13] - 2026-09-27
 
 ### Changed
@@ -23,7 +29,6 @@ work lives under `[Unreleased]`.
 ### Changed
 
 - Rolled the Dependabot bumps into the shipped images. The app image now builds on astral-sh/uv 0.12.19 (was 0.12.17), and the tts-wrapper lock resolves setuptools 83.0.0 (was 80.10.2; ceiling widened from <81 to <84). The wrapper suite passes on the newer setuptools.
-- A Site-override rule that only stores a cookie jar for a built-in render host keeps the render strategy by default. Saving cookies for ft.com or wsj.com no longer drops the host to the global default proxy, so the jar reaches the render attempt without extra setup. An explicit proxy choice on the row still wins.
 
 ## [0.58.10] - 2026-09-26
 

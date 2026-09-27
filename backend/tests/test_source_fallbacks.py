@@ -139,12 +139,12 @@ def test_cookie_only_operator_rule_keeps_builtin_render_strategy() -> None:
     # An operator storing a cookie jar for a built-in render host must not have to
     # re-pick the strategy: an empty proxy inherits the builtin's render rung so the
     # jar rides along by default.
-    rules = [{"host": "ft.com", "cookies": "sid=1"}]
+    rules = [{"host": "wsj.com", "cookies": "sid=1"}]
     reg = sf.build_registry(rules, default_proxy="googlebot", min_chars=3000, global_floor=150)
-    rule = sf.match("https://www.ft.com/content/x", reg)
+    rule = sf.match("https://www.wsj.com/a", reg)
     assert rule is not None
     assert rule.proxy == "render" and rule.cookies == "sid=1"
-    attempts = sf.candidate_attempts(rule, "https://www.ft.com/content/x")
+    attempts = sf.candidate_attempts(rule, "https://www.wsj.com/a")
     assert [(a.engine, a.cookies) for a in attempts] == [("render", "sid=1")]
 
 
