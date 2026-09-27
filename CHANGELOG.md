@@ -6,6 +6,12 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.58.11] - 2026-09-26
+
+### Changed
+
+- Rolled the Dependabot bumps into the shipped images. The app image now builds on astral-sh/uv 0.12.19 (was 0.12.17), and the tts-wrapper lock resolves setuptools 83.0.0 (was 80.10.2; ceiling widened from <81 to <84). The wrapper suite passes on the newer setuptools.
+
 ## [0.58.10] - 2026-09-26
 
 ### Changed
