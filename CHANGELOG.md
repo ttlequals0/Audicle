@@ -6,6 +6,12 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.58.13] - 2026-09-27
+
+### Changed
+
+- ft.com ships with the `reader` bypass by default. Its cheaper rungs stop at FT's subscription pitch (~1.1k chars of promo); the reader proxy returns the article body (~25k). Other built-in hosts still go straight to the render sidecar.
+
 ## [0.58.12] - 2026-09-27
 
 ### Fixed

@@ -15,7 +15,7 @@ Pick a default strategy and a teaser threshold, then add per-site overrides. The
 - `archive`: pull a saved copy from a public archive. Tries the [Wayback Machine](https://web.archive.org) first (a clean API, no bot wall, no cookies), then archive.today through FlareSolverr. Good for a metered or soft wall, or an old article archived while it was still free. Not a way past a hard subscriber wall: if no free copy was ever archived, there is nothing to fetch.
 - `none`: do not try anything. A matched host that comes back short just fails, which is what you want for a hard paywall you would rather skip than narrate.
 
-A Medium-to-Freedium rule ships on by default; your own rules layer on top and win on host collision. The whole feature is gated by `EXTRACTION_FALLBACKS_ENABLED` (set it false for direct scrapes only, no default-proxy retry).
+A Medium-to-Freedium rule ships on by default, plus `reader` for ft.com (its offer block truncates every cheaper rung) and `render` for the hosts in `RENDER_BUILTIN_HOSTS`; your own rules layer on top and win on host collision. The whole feature is gated by `EXTRACTION_FALLBACKS_ENABLED` (set it false for direct scrapes only, no default-proxy retry).
 
 ## Teaser detection
 

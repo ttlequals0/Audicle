@@ -33,8 +33,9 @@ detected as a Cloudflare/bot-challenge page (see ``flaresolverr.looks_like_chall
 -- that detection-gated path is independent of whether a host selects the
 ``flaresolverr`` strategy above.
 
-``BUILTIN`` ships a Medium -> Freedium rule plus a render rule for each host in
-``config.RENDER_BUILTIN_HOSTS`` (the single place to curate shipped render defaults).
+``BUILTIN`` ships a Medium -> Freedium rule, a render rule for each host in
+``config.RENDER_BUILTIN_HOSTS``, and a reader rule for each host in
+``config.READER_BUILTIN_HOSTS`` (the single place to curate shipped defaults).
 Operators layer their own host rules on top (``build_registry``); an operator rule wins
 over a built-in rule for the same host.
 """
@@ -44,7 +45,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
-from app.config import RENDER_BUILTIN_HOSTS
+from app.config import READER_BUILTIN_HOSTS, RENDER_BUILTIN_HOSTS
 
 # The built-in "Ladder" technique: re-scrape the original URL with these headers.
 GOOGLEBOT_UA = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
@@ -122,7 +123,23 @@ _RENDER_BUILTINS: tuple[SourceFallback, ...] = tuple(
     for host in RENDER_BUILTIN_HOSTS
 )
 
-# Built-in seed: Freedium reliably serves the full Medium body; plus the render hosts.
+# Reader rules for the maintainer-curated hosts in config.READER_BUILTIN_HOSTS. A
+# reader rule holds the host to its teaser floor: FT's promo-only block measured ~1.1k
+# chars, a real column is longer, so anything at or above the floor is accepted from the
+# direct scrape and shorter pages retry through the reader proxy.
+_READER_BUILTINS: tuple[SourceFallback, ...] = tuple(
+    SourceFallback(
+        name=f"reader:{host}",
+        host_suffixes=(host,),
+        proxy="reader",
+        custom_template="",
+        min_chars=1500,
+    )
+    for host in READER_BUILTIN_HOSTS
+)
+
+
+# Built-in seed: Freedium reliably serves the full Medium body; plus the reader and render hosts.
 BUILTIN: tuple[SourceFallback, ...] = (
     SourceFallback(
         name="medium",
@@ -133,6 +150,7 @@ BUILTIN: tuple[SourceFallback, ...] = (
         # global 500-char floor, so use a higher bar to detect it.
         min_chars=3000,
     ),
+    *_READER_BUILTINS,
     *_RENDER_BUILTINS,
 )
 
