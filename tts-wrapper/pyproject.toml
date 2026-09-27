@@ -1,6 +1,6 @@
 [project]
 name = "audicle-tts-wrapper"
-version = "0.58.11"
+version = "0.58.13"
 description = "FastAPI TTS wrapper for Audicle (Chatterbox)."
 requires-python = ">=3.11,<3.14"
 # The wrapper image uses Python 3.11. Keep the tested upper bound separate from
@@ -28,8 +28,9 @@ chatterbox = [
     "chatterbox-tts>=0.1.7",
     "torch",
     "torchaudio",
-    # resemble-perth imports pkg_resources, removed in setuptools 81.
-    "setuptools>=78.1.1,<84",
+    # resemble-perth imports pkg_resources; setuptools 82+ drops the shim and
+    # the perth watermarker degrades to None, crashing engine load at startup.
+    "setuptools>=78.1.1,<82",
 ]
 # whisper: optional faster-whisper (CTranslate2) ASR for the post-TTS verification
 # pass. CTranslate2 is independent of the engine's torch stack. Installed into

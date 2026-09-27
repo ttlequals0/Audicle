@@ -6,6 +6,18 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.58.13] - 2026-09-27
+
+### Changed
+
+- ft.com ships with the `reader` bypass by default. Its cheaper rungs stop at FT's subscription pitch (~1.1k chars of promo); the reader proxy returns the article body (~25k). Other built-in hosts still go straight to the render sidecar.
+
+## [0.58.12] - 2026-09-27
+
+### Fixed
+
+- The tts-wrapper starts again. setuptools 82 dropped the bundled `pkg_resources` shim, and resemble-perth (the Chatterbox watermarker) imports it at module load, so the engine crashed on every boot and episodes failed with "TTS unreachable". The wrapper lock now caps setuptools below 82 (resolves 81.0.0; was 83.0.0 in 0.58.11).
+
 ## [0.58.11] - 2026-09-26
 
 ### Changed

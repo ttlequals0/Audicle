@@ -161,6 +161,14 @@ def test_shipped_defaults_match_tuned_live() -> None:
         assert rule.min_chars == 0
 
 
+def test_builtin_reader_rule_ships_for_ft_com() -> None:
+    rule = sf.match("https://www.ft.com/content/abc")
+    assert rule is not None
+    assert rule.proxy == "reader"
+    # FT's promo-only block measures ~1.1k chars, so the teaser floor must sit above it.
+    assert rule.min_chars == 1500
+
+
 def test_operator_rule_overrides_builtin_render() -> None:
     reg = sf.build_registry([{"host": "inc.com", "proxy": "flaresolverr"}], "googlebot", 3000, 500)
     rule = sf.match("https://www.inc.com/a", reg)

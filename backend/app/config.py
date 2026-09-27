@@ -28,7 +28,6 @@ RENDER_BUILTIN_HOSTS: tuple[str, ...] = (
     "wsj.com",
     "washingtonpost.com",
     "bloomberg.com",
-    "ft.com",
     "businessoffashion.com",
     "theverge.com",
     "techcrunch.com",
@@ -36,6 +35,10 @@ RENDER_BUILTIN_HOSTS: tuple[str, ...] = (
     "crainsnewyork.com",
     "bostonglobe.com",
 )
+
+# Hosts that ship with the "reader" Site-override strategy (the Jina reader proxy).
+# ft.com: the browser rungs stop at FT's offer block; the reader returns the body.
+READER_BUILTIN_HOSTS: tuple[str, ...] = ("ft.com",)
 
 
 class Settings(BaseSettings):
