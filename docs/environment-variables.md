@@ -60,7 +60,7 @@ The cascade and its budgets. See the paywalls page.
 | `EXTRACTION_DIRECT_USER_AGENT` | `` | yes |
 | `EXTRACTION_ARC_ENABLED` | `True` | yes |
 | `EXTRACTION_FALLBACKS_ENABLED` | `True` | yes |
-| `MIN_EXTRACTION_CHARS` | `500` | yes |
+| `MIN_EXTRACTION_CHARS` | `150` | yes |
 | `REGISTRATION_EMAIL` | `` | yes |
 | `FIRECRAWL_URL` | `http://firecrawl:3002` | yes |
 | `FIRECRAWL_API_KEY` | `` | yes |
@@ -74,8 +74,9 @@ The cascade and its budgets. See the paywalls page.
 | `FLARESOLVERR_MAX_TIMEOUT_MS` | `60000  # solver's own per-request bro...` | yes |
 | `READER_PROXY_TEMPLATE` | `https://r.jina.ai/{url}` | yes |
 | `READER_API_KEY` | `` | yes |
+| `READER_AUTO_ENABLED` | `True` | yes |
 | `RENDER_URL` | `` | yes |
-| `RENDER_TIMEOUT_SECONDS` | `90.0` | yes |
+| `RENDER_TIMEOUT_SECONDS` | `150.0` | yes |
 | `ARCHIVE_FALLBACK_ENABLED` | `True` | yes |
 | `WAYBACK_TIMEOUT_SECONDS` | `30` | yes |
 

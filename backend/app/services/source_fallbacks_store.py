@@ -41,8 +41,8 @@ def _normalize_rule(raw: dict[str, Any]) -> dict[str, str]:
         # "" -> use the global default (resolved by build_registry).
         "proxy": str(raw.get("proxy") or "").strip(),
         "custom_template": str(raw.get("custom_template", "")).strip(),
-        # Operator session cookies for the host, forwarded only via the flaresolverr
-        # engine. A secret -- masked by the API; the store keeps it verbatim.
+        # Operator session cookies for the host, forwarded only to the browser engines
+        # (flaresolverr, render). A secret -- masked by the API; the store keeps it verbatim.
         "cookies": str(raw.get("cookies", "")).strip(),
     }
 

@@ -1,22 +1,11 @@
-"""Tests for the only code that types the operator's address into a page.
-
-``camoufox`` is not installed in the test environment (the sidecar imports it
-lazily so the pure helpers stay testable), so a stub module stands in for it.
-"""
+"""Tests for the only code that types the operator's address into a page."""
 
 from __future__ import annotations
 
-import sys
 import types
 
-_camoufox = types.ModuleType("camoufox")
-_async_api = types.ModuleType("camoufox.async_api")
-_async_api.AsyncCamoufox = object
-sys.modules.setdefault("camoufox", _camoufox)
-sys.modules.setdefault("camoufox.async_api", _async_api)
-
-from camoufox_renderer import CamoufoxRenderer, _submit_registration  # noqa: E402
-from renderer import RenderResult  # noqa: E402
+from camoufox_renderer import CamoufoxRenderer, _submit_registration
+from renderer import RenderResult
 
 
 class _Input:
@@ -78,8 +67,14 @@ class _Page:
     async def inner_text(self, _selector: str) -> str:
         return self.body
 
+    async def evaluate(self, _js: str) -> int:
+        return len(self.body)
+
     async def wait_for_load_state(self, _state: str, timeout: int | None = None) -> None:
         return None
+
+    def is_closed(self) -> bool:
+        return False
 
     async def wait_for_timeout(self, _ms: int) -> None:
         self.settled = True
@@ -124,7 +119,7 @@ async def test_the_address_is_submitted_once_across_retries() -> None:
     seen: list[str | None] = []
 
     class _Renderer(CamoufoxRenderer):
-        async def _render_once(self, url, expand, attempt, email=None):
+        async def _render_once(self, url, expand, attempt, email=None, cookies=None):
             seen.append(email)
             return RenderResult(status="captcha"), email is not None
 

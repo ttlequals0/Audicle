@@ -125,3 +125,25 @@ def env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         yield data_dir
     finally:
         get_settings.cache_clear()
+
+
+_ARCHIVE_TODAY_CAPTURE = (
+    "example.com.\n\nexample.com\narchived 24 Sep 2026 01:26:47 UTC\narchive.today\n"
+    "webpage capture\nSaved from\nno other snapshots from this url\n24 Sep 2026 01:26:47 UTC\n"
+    "All snapshots\nfrom host\nwww.example.com\nWebpage\nScreenshot\nshare\ndownload .zip\n"
+    "report bug or abuse\nBuy me a coffee\nReddit\nTwitter\nshort link\nlong link\nmarkdown\n"
+    "html code\n example.com archived 24 Sep 2026 01:26:47 UTC\nwiki code\n"
+    "{{cite web | title = example.com | url = https://www.example.com/economy/"
+    "a-long-article-slug-c60716dd | date = 2026-09-24 | archiveurl = "
+    "http://archive.today/Pe55U | archivedate = 2026-09-24 }}\n"
+    "Please enable JS and disable any ad blocker\n"
+    + "".join(f"{p}%\n" for p in range(0, 101, 10))
+)
+
+
+@pytest.fixture
+def archive_capture_junk() -> str:
+    """Extraction output that clears the length floor with no article in it: an
+    archive.today snapshot whose capture was a bot wall (seen in prod on 0.58.0)."""
+
+    return _ARCHIVE_TODAY_CAPTURE

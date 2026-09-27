@@ -35,7 +35,11 @@ RUN useradd --create-home --uid 1000 render \
     && chmod +x entrypoint.sh \
     && chown -R render:render /app
 ENV HOME=/home/render
-RUN setpriv --reuid=1000 --regid=1000 --init-groups python -m camoufox fetch
+# `camoufox fetch` exits 0 even when extraction fails (e.g. a full disk), so verify the
+# browser binary landed; otherwise the build "succeeds" with a renderer that can't start.
+RUN setpriv --reuid=1000 --regid=1000 --init-groups python -m camoufox fetch \
+    && find /home/render/.cache/camoufox/browsers -name camoufox-bin -type f -perm -u+x | grep -q . \
+    || { echo "ERROR: Camoufox browser missing after fetch" >&2; exit 1; }
 
 EXPOSE 8000
 

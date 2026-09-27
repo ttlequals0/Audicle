@@ -15,16 +15,22 @@ the initial request and every redirect hop, and size-capped, via ``pinned_fetch`
 
 from __future__ import annotations
 
+import logging
+
 from app.config import Settings
 from app.services import pinned_fetch
 from app.services.extraction_types import ExtractionPermanentError, ExtractionResult
 from app.services.html_markdown import MAX_HTML_CHARS
+
+logger = logging.getLogger("app.services.reader")
 
 # Jina Reader prefixes the article with a small metadata header ("Title: ...", "URL
 # Source: ...", then "Markdown Content:" before the body). Split the body off this marker
 # and lift the title; if the marker is absent (a different reader proxy), use the raw text.
 _CONTENT_MARKER = "Markdown Content:"
 _TITLE_LABEL = "Title:"
+# Jina's own notice about the fetch, e.g. "This page maybe requiring CAPTCHA".
+_WARNING_LABEL = "Warning:"
 _READER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
@@ -38,7 +44,8 @@ async def fetch(article_url: str, settings: Settings) -> ExtractionResult:
     policy; 4xx/SSRF blocks are permanent. The caller validates length."""
 
     reader_url = _build_reader_url(settings.READER_PROXY_TEMPLATE, article_url)
-    headers = {"User-Agent": _READER_UA, "Accept": _ACCEPT}
+    # Bypass Jina's shared cache, which can serve a stale or wrong snapshot.
+    headers = {"User-Agent": _READER_UA, "Accept": _ACCEPT, "X-No-Cache": "true"}
     if settings.READER_API_KEY:
         headers["Authorization"] = f"Bearer {settings.READER_API_KEY}"
     body = await pinned_fetch.get_text_retrying(
@@ -48,7 +55,23 @@ async def fetch(article_url: str, settings: Settings) -> ExtractionResult:
         max_bytes=MAX_HTML_CHARS,
         timeout_seconds=settings.FIRECRAWL_TIMEOUT_SECONDS,
     )
-    return _parse(body)
+    result = _parse(body)
+    head, marker, _ = body.partition(_CONTENT_MARKER)
+    # Only a Jina-style header carries a warning; without the marker "head" is the article.
+    warning = _header_value(head, _WARNING_LABEL) if marker else ""
+    # Distinguishes "not authenticated", "the proxy hit a wall" and "empty page" when a
+    # reader attempt comes back short.
+    logger.info(
+        "Reader proxy responded",
+        extra={
+            "event": "reader_response",
+            "authenticated": bool(settings.READER_API_KEY),
+            "body_chars": len(body),
+            "markdown_chars": len(result.markdown),
+            "warning": warning[:200],
+        },
+    )
+    return result
 
 
 def _build_reader_url(template: str, article_url: str) -> str:
@@ -71,11 +94,14 @@ def _parse(body: str) -> ExtractionResult:
 
     head, marker, tail = body.partition(_CONTENT_MARKER)
     markdown = tail if marker else body
-    metadata: dict[str, str] = {}
+    title = _header_value(head, _TITLE_LABEL)
+    return ExtractionResult(markdown=markdown.strip(), metadata={"title": title} if title else {})
+
+
+def _header_value(head: str, label: str) -> str:
+    """The value of the first ``label`` line in the proxy's metadata header, or ""."""
+
     for line in head[:2000].splitlines():
-        if line.startswith(_TITLE_LABEL):
-            title = line[len(_TITLE_LABEL) :].strip()
-            if title:
-                metadata["title"] = title
-            break
-    return ExtractionResult(markdown=markdown.strip(), metadata=metadata)
+        if line.startswith(label):
+            return line[len(label) :].strip()
+    return ""

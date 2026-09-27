@@ -2,3 +2,10 @@
 # No fixed Debian package is available. Recheck the next release or by 2026-10-10.
 CVE-2026-76956
 CVE-2026-76957
+
+# CVE-2026-66046 (quadratic-complexity DoS) and CVE-2026-93990 (malformed UTF-16
+# input) affect the same Debian trixie libexpat1 2.8.3-1~deb13u1, added 0.58.0.
+# The wrapper parses no untrusted XML: it takes text and returns audio.
+# No fixed Debian package is available. Recheck the next release or by 2026-10-10.
+CVE-2026-66046
+CVE-2026-93990

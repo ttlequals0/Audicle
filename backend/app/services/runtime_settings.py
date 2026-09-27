@@ -83,12 +83,13 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         # self-hosted reader without an env edit. The key is masked on read (MASKED_KEYS).
         "READER_PROXY_TEMPLATE",
         "READER_API_KEY",
+        "READER_AUTO_ENABLED",
         # Render sidecar endpoint (empty disables); tunable live so an operator can point
         # at their own sidecar without an env edit. Which hosts use render is a per-host
         # Site-override rule now, not a setting. (RENDER_TIMEOUT_SECONDS was env-only
         # until 0.55.0; it now sits with the other per-request budgets below.)
         "RENDER_URL",
-        # Try a Wayback capture as a last resort on a hard block; tunable live.
+        # Try a Wayback/archive.today capture as a last resort; tunable live.
         "ARCHIVE_FALLBACK_ENABLED",
         "TTS_CHUNK_TARGET_WORDS",
         "TTS_CHUNK_MAX_WORDS",

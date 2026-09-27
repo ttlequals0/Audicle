@@ -124,6 +124,43 @@ def strip_inline_markdown(text: str) -> str:
     return _LINK_RE.sub(r"\1", text)
 
 
+# --- prose measure for the extraction garbage gate -----------------------------------
+# A page of toolbars, link lists, and progress counters can clear a length floor with
+# no article in it. Only sentence-like lines count: enough tokens, most of them words.
+_PROSE_MIN_TOKENS = 8
+_NON_WORD_CHARS = frozenset("|={}")
+_LIST_MARKER_RE = re.compile(r"^(?:[-*+]|\d{1,3}[.)])\s+")
+
+
+def _is_word(token: str) -> bool:
+    if "://" in token or _NON_WORD_CHARS.intersection(token):
+        return False
+    return sum(c.isalnum() for c in token) * 2 >= len(token)
+
+
+def prose_chars(markdown: str, limit: int | None = None) -> int:
+    """Characters in sentence-like lines of ``markdown``. Article paragraphs count in
+    full; archive toolbars, share-link lists, and bot-wall furniture score near zero.
+    Stops counting once ``limit`` is reached."""
+
+    total = 0
+    for line in strip_inline_markdown(markdown).splitlines():
+        line = _LIST_MARKER_RE.sub("", line.strip())
+        tokens = line.split()
+        if len(tokens) >= _PROSE_MIN_TOKENS:
+            is_prose = sum(map(_is_word, tokens)) * 10 >= len(tokens) * 7
+        else:
+            # Scripts written without spaces (CJK) put a whole sentence in one token.
+            is_prose = len(line) >= 40 and all(map(_is_word, tokens)) and (
+                sum(c.isalpha() for c in line) * 10 >= len(line) * 8
+            )
+        if is_prose:
+            total += len(line)
+            if limit is not None and total >= limit:
+                break
+    return total
+
+
 # --- deterministic boilerplate strip for the cleanup raw-extraction fallback --------
 # Applied only when the LLM won't clean an article, to bin the obvious non-article cruft
 # the extraction carries (ad markers, nav, dateline, tip/contact lines, subscribe).

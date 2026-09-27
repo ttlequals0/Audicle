@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.config import Settings
 from app.services import source_fallbacks as sf
 
 
@@ -39,7 +40,7 @@ def test_candidate_attempts_googlebot_rescrapes_same_url_with_headers() -> None:
     attempts = sf.candidate_attempts(rule, url)
     assert len(attempts) == 1
     attempt = attempts[0]
-    assert attempt.engine == "firecrawl"
+    assert attempt.engine == "refetch"
     assert attempt.url == url  # same URL, not a rewrite
     assert "googlebot" in attempt.headers["User-Agent"].lower()
     assert attempt.headers["X-Forwarded-For"] == "66.249.66.1"
@@ -134,18 +135,30 @@ def test_build_registry_operator_overrides_builtin_and_uses_default_proxy() -> N
     assert sf.match("https://example.com/x", reg) is None
 
 
-def test_render_is_selectable_and_emits_no_loop_attempt() -> None:
-    # render is post-cascade (enrichment/rescue in extraction.py), so it contributes NO
-    # loop Attempt -- candidate_attempts returns [].
+def test_render_rule_emits_a_render_attempt_with_its_cookies() -> None:
     assert "render" in sf.PROXY_KEYS
-    rule = sf.SourceFallback("operator:inc.com", ("inc.com",), "render", "", 0)
-    assert sf.candidate_attempts(rule, "https://www.inc.com/a") == []
+    rule = sf.SourceFallback("operator:wsj.com", ("wsj.com",), "render", "", 0, cookies="sid=1")
+    attempts = sf.candidate_attempts(rule, "https://www.wsj.com/a")
+    assert [(a.engine, a.url, a.cookies, a.is_host_rule) for a in attempts] == [
+        ("render", "https://www.wsj.com/a", "sid=1", True)
+    ]
 
 
-def test_builtin_render_rule_ships_for_inc_com() -> None:
-    rule = sf.match("https://www.inc.com/article")
-    assert rule is not None
-    assert rule.proxy == "render"
+def test_shipped_defaults_match_tuned_live() -> None:
+    # Defaults a fresh deploy gets without any Settings-API tuning.
+    assert Settings().MIN_EXTRACTION_CHARS == 150
+    for host in (
+        "inc.com",
+        "wsj.com",
+        "www.wsj.com",
+        "nytimes.com",
+        "www.theatlantic.com",
+        "bostonglobe.com",
+    ):
+        rule = sf.match(f"https://{host}/a")
+        assert rule is not None
+        assert rule.proxy == "render"
+        assert rule.min_chars == 0
 
 
 def test_operator_rule_overrides_builtin_render() -> None:

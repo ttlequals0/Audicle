@@ -14,6 +14,9 @@ if not 1 <= port <= 65535:
 PY
 
 iptables -P OUTPUT DROP
+# First: replies on allowed connections. Docker's DNS answers from inside this netns,
+# so its UDP reply must pass before the loopback UDP reject below.
+iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 iptables -A OUTPUT -p tcp -d "$PROXY_IP" --dport "$PROXY_PORT" -m owner --uid-owner 1000 -j ACCEPT
 iptables -A OUTPUT -o lo -p udp -m owner --uid-owner 1000 \
   -m conntrack --ctdir ORIGINAL --ctorigdst 127.0.0.11 --ctorigdstport 53 -j ACCEPT
@@ -21,7 +24,6 @@ iptables -A OUTPUT -o lo -p tcp -m owner --uid-owner 1000 \
   -m conntrack --ctdir ORIGINAL --ctorigdst 127.0.0.11 --ctorigdstport 53 -j ACCEPT
 iptables -A OUTPUT -o lo -p tcp --dport 8000 -m owner --uid-owner 1001 -j ACCEPT
 iptables -A OUTPUT -o lo -p udp -j REJECT
-iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 iptables -A OUTPUT -j REJECT
 ip6tables -P OUTPUT DROP
 ip6tables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT

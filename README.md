@@ -10,6 +10,19 @@ Paste a URL or upload a document (PDF including scanned, DOCX, Markdown, text, H
 
 *Your reading list, as a podcast you own.*
 
+## Contents
+
+- [Why](#why)
+- [Screenshots](#screenshots)
+- [Sample](#sample)
+- [Quickstart](#quickstart)
+- [Documentation](#documentation)
+- [What's in the repo](#whats-in-the-repo)
+- [Development](#development)
+- [Licensing notes](#licensing-notes)
+- [LLM disclosure](#llm-disclosure)
+- [Credits](#credits)
+
 ## Why
 
 I read too much, I like my hands free on the go, and the existing article-to-audio tools either lock the audio in their app, charge per minute, or use voices that sound like an airport PA. I wanted something that:
@@ -26,22 +39,22 @@ That's what this is. No GPU? It runs on CPU too, just slower.
 Home: paste a URL or drop files (up to 20 at once), and they join the feed.
 
 <p align="center">
-  <img src="docs/screenshot-home-desktop.png" alt="Home, desktop" width="600">
-  <img src="docs/screenshot-home-mobile.png" alt="Home, mobile" width="190">
+  <img src="docs/screenshots/home-desktop.png" alt="Home, desktop" width="600">
+  <img src="docs/screenshots/home-mobile.png" alt="Home, mobile" width="190">
 </p>
 
 Feed: search and page through your episodes, with inline players, transcripts, and per-episode actions.
 
 <p align="center">
-  <img src="docs/screenshot-feed-desktop.png" alt="Feed, desktop" width="600">
-  <img src="docs/screenshot-feed-mobile.png" alt="Feed, mobile" width="190">
+  <img src="docs/screenshots/feed-desktop.png" alt="Feed, desktop" width="600">
+  <img src="docs/screenshots/feed-mobile.png" alt="Feed, mobile" width="190">
 </p>
 
 Settings: everything grouped by subject, searchable as you type.
 
 <p align="center">
-  <img src="docs/screenshot-settings-desktop.png" alt="Settings, desktop" width="600">
-  <img src="docs/screenshot-settings-mobile.png" alt="Settings, mobile" width="190">
+  <img src="docs/screenshots/settings-desktop.png" alt="Settings, desktop" width="600">
+  <img src="docs/screenshots/settings-mobile.png" alt="Settings, mobile" width="190">
 </p>
 
 ## Sample
@@ -50,7 +63,7 @@ A short clip of cloned-voice narration.
 
 https://github.com/user-attachments/assets/b7dbbcd5-902d-4fed-a2df-32c972f4589f
 
-[Download the MP4](docs/sample.mp4)
+[Download the MP4](docs/screenshots/sample.mp4)
 
 ## Quickstart
 
@@ -68,15 +81,22 @@ Full setup, including CPU-only deployment and file permissions, is in [Installat
 
 ## Documentation
 
-The [docs index](docs/README.md) links everything. The short version:
+The full index is [docs/README.md](docs/README.md). The short version:
 
-- [How it works](docs/how-it-works.md) - the pipeline, the extraction cascade, and the quality gates that regenerate bad audio
-- [Installation](docs/installation.md) and the [web interface](docs/web-interface.md)
-- [Configuration](docs/configuration.md) and [every environment variable](docs/environment-variables.md)
-- [Voices and TTS](docs/voices-and-tts.md) - voice cloning, and running Chatterbox or Whisper on another host
-- [Paywalled articles](docs/paywalls.md) - what happens when a site serves a teaser instead of the article
-- [Feeds and Podcasting 2.0](docs/feeds-and-podcasting.md), the [API and webhooks](docs/api-and-webhooks.md), and a [glossary](docs/glossary.md)
-- [Releasing](docs/releasing.md) and the [deployment runbook](docs/DEPLOYMENT.md)
+| Topic | Covers |
+|---|---|
+| [How it works](docs/how-it-works.md) | Pipeline from URL to episode, extraction cascade, quality gates |
+| [Installation](docs/installation.md) | Requirements, quick start, CPU-only deployment |
+| [Web interface](docs/web-interface.md) | Home, Feed, and Settings pages |
+| [Configuration](docs/configuration.md) | Every settings category, what saves where |
+| [Environment variables](docs/environment-variables.md) | Every variable, runtime-editable ones flagged |
+| [Voices and TTS](docs/voices-and-tts.md) | Voice cloning, running Chatterbox or Whisper on other hosts |
+| [Paywalled articles](docs/paywalls.md) | What happens when a site serves a teaser instead of the article |
+| [Feeds and Podcasting 2.0](docs/feeds-and-podcasting.md) | RSS feed, authenticated feeds, chapters, artwork, retention |
+| [API and webhooks](docs/api-and-webhooks.md) | REST surface and episode webhooks |
+| [Glossary](docs/glossary.md) | Every term the app uses |
+| [Releasing](docs/releasing.md) | Versioning, build, CVE gate, ship |
+| [Deployment runbook](docs/DEPLOYMENT.md) | Health checks, logs, rollback, disk |
 
 ## What's in the repo
 
@@ -122,7 +142,7 @@ The application code is MIT. A few things downstream of it have their own terms:
 
 The Audicle name and logo are reserved; see `branding/README.md`.
 
-## LLM Disclosure
+## LLM disclosure
 
 This project was developed with AI agents as a pair programmer. It was NOT vibe coded. I'm a systems engineer with 15+ years of professional experience; every architecture and design decision here is mine, not the AI's, and every line the LLMs wrote, I reviewed and tested myself.
 

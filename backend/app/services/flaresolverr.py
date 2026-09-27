@@ -10,13 +10,15 @@ solver call, the challenge-page detection, and the HTML->markdown conversion.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
 
 from app.config import Settings
-from app.services.extraction_types import ExtractionResult, scan_markers
+from app.services import jsonld
+from app.services.extraction_types import GATED_FLOOR_MULTIPLIER, ExtractionResult, scan_markers
 from app.services.html_markdown import html_to_markdown
 
 logger = logging.getLogger("app.services.flaresolverr")
@@ -76,7 +78,8 @@ def looks_like_captcha(result: ExtractionResult) -> bool:
 
 def _parse_cookies(cookie_string: str, url: str) -> list[dict[str, str]]:
     """Parse a raw ``name=value; name2=value2`` Cookie string into FlareSolverr's
-    ``[{name, value, domain}]`` shape, with the request URL's host as the domain."""
+    ``[{name, value, domain}]`` shape, with the request URL's host as the domain. The
+    render sidecar's ``parse_cookie_header`` is the browser equivalent."""
 
     host = (urlsplit(url).hostname or "").lower()
     out: list[dict[str, str]] = []
@@ -171,7 +174,9 @@ async def fetch(url: str, settings: Settings, cookies: str = "") -> ExtractionRe
         return None
 
     result = ExtractionResult(markdown=markdown, metadata=metadata)
-    if len(markdown) < settings.MIN_EXTRACTION_CHARS and looks_like_captcha(result):
+    # Judge gate text against the gated floor, shared with extraction._accept_floor:
+    # gate copy runs a couple hundred chars, under MIN x GATED_FLOOR_MULTIPLIER.
+    if len(markdown) < settings.MIN_EXTRACTION_CHARS * GATED_FLOOR_MULTIPLIER and looks_like_captcha(result):
         # FlareSolverr cleared the JS challenge but the host escalated to an interactive
         # CAPTCHA (e.g. inc.com's DataDome slider) it cannot solve. The extracted text is
         # below floor and reads as the gate, not the article -- log the real cause so a
@@ -181,4 +186,4 @@ async def fetch(url: str, settings: Settings, cookies: str = "") -> ExtractionRe
             extra={"event": "flaresolverr_captcha", "host": urlsplit(url).hostname or ""},
         )
         return None
-    return result
+    return replace(result, article_chars=jsonld.article_body_chars(html))

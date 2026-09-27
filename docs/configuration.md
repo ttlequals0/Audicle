@@ -20,7 +20,7 @@ Search at the top filters the page as you type. The save bar appears only when t
 
 ## Content
 
-- **Extraction**: the engine (`direct` or `firecrawl`), fetch timeouts and user agent, the extraction floor (`MIN_EXTRACTION_CHARS`), archive fallback, the registration-wall email, and the Firecrawl content flags.
+- **Extraction**: the engine (`direct` or `firecrawl`), fetch timeouts and user agent, the extraction floor (`MIN_EXTRACTION_CHARS`), the automatic reader and archive fallbacks, the registration-wall email, and the Firecrawl content flags.
 - **site overrides**: per-host paywall rules; see [Paywalled articles](paywalls.md).
 - **Cleanup** and **cleanup prompt**: the floor below which a cleaned article fails, the prompt-size cap, and the editable cleanup prompt itself.
 - **Uploads**: the per-file size cap and the `OCR_*` knobs for scanned documents.

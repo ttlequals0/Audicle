@@ -20,8 +20,7 @@ class ExtractionResult:
     JSON-LD ``articleBody``) when known. It ignores the related-article and nav chrome
     that can pad a scraped paywall teaser past the floor, so the floor decision can use
     it instead of ``len(markdown)``. ``None`` when the page declares no article body
-    (and for the FlareSolverr/archive engines, whose trafilatura bodies are already
-    chrome-free)."""
+    (and for the reader engine, which returns markdown only)."""
 
     markdown: str
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -29,6 +28,12 @@ class ExtractionResult:
     # Raw page HTML, kept only when requested (the teaser/Arc paths) so the Arc XP
     # static body extractor can read content_elements; None otherwise.
     raw_html: str | None = None
+
+
+# A gated page must clear twice the plain floor. The few paragraphs a publisher shows
+# above the wall pass a low floor but are useless to narrate. Both floor sites scale by
+# this: the cascade in extraction.py and the CAPTCHA guard in flaresolverr.py.
+GATED_FLOOR_MULTIPLIER = 2
 
 
 def scan_markers(result: ExtractionResult, markers: tuple[str, ...]) -> bool:

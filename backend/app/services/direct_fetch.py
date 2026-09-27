@@ -29,23 +29,32 @@ _BROWSER_UA = (
 _ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
 
 
-async def fetch(url: str, settings: Settings, *, detect_teaser: bool = False) -> ExtractionResult:
+async def fetch(
+    url: str,
+    settings: Settings,
+    *,
+    detect_teaser: bool = False,
+    headers: dict[str, str] | None = None,
+) -> ExtractionResult:
     """Fetch ``url`` in-process and return an ``ExtractionResult``. Length is validated
     by the caller. ``detect_teaser`` keeps the raw HTML and records the JSON-LD
     ``articleBody`` length so the Arc extractor and the teaser-floor check can run,
-    matching the Firecrawl engine. Transient failures (timeout, 5xx, DNS blip) are
-    retried with the same policy as the Firecrawl client; 4xx/SSRF blocks are permanent.
+    matching the Firecrawl engine. ``headers`` override the defaults (the googlebot
+    rung). Transient failures (timeout, 5xx, DNS blip) are retried with the same policy
+    as the Firecrawl client; 4xx/SSRF blocks are permanent.
     """
 
-    headers = {
+    request_headers = {
         "User-Agent": settings.EXTRACTION_DIRECT_USER_AGENT or _BROWSER_UA,
         "Accept": _ACCEPT,
         "Accept-Language": "en-US,en;q=0.9",
     }
+    if headers:
+        request_headers.update(headers)
     html = await pinned_fetch.get_text_retrying(
         url,
         settings,
-        headers=headers,
+        headers=request_headers,
         max_bytes=MAX_HTML_CHARS,
         timeout_seconds=settings.EXTRACTION_DIRECT_TIMEOUT_SECONDS,
     )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import httpx
@@ -23,13 +24,20 @@ def _cdx(*timestamps: str) -> httpx.Response:
     return httpx.Response(200, json=[["timestamp"], *[[t] for t in timestamps]])
 
 
-def _article_html() -> str:
+def _article_html(*, article_body: str | None = None) -> str:
     body = "".join(
         f"<p>Paragraph {i} of the real article body, with enough words for trafilatura "
         f"to keep it as genuine content rather than navigation chrome.</p>"
         for i in range(40)
     )
-    return f"<html><head><title>Archived</title></head><body><article>{body}</article></body></html>"
+    head = "<title>Archived</title>"
+    if article_body:
+        head += (
+            '<script type="application/ld+json">'
+            + json.dumps({"@type": "NewsArticle", "articleBody": article_body})
+            + "</script>"
+        )
+    return f"<html><head>{head}</head><body><article>{body}</article></body></html>"
 
 
 def _solver_ok(html: str) -> httpx.Response:
@@ -83,13 +91,16 @@ async def test_archive_today_via_flaresolverr_when_wayback_empty(
     assert "real article body" in result.markdown
 
 
-async def test_auto_path_skips_archive_today(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # include_archive_today=False (the auto last-resort) tries only Wayback, never the
-    # solver -- so a no-capture lookup returns None without hitting FlareSolverr.
+async def test_wayback_capture_carries_jsonld_article_chars(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    html = _article_html(article_body="short")
+
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.host == "web.archive.org":
-            return _cdx()
-        raise AssertionError("auto archive path must not call the solver")
+        if "/cdx/" in request.url.path:
+            return _cdx("20260608120000")
+        return httpx.Response(200, text=html)
 
     _patch_async_client(monkeypatch, httpx.MockTransport(handler))
-    assert await archive.fetch("https://gated.test/post", get_settings(), include_archive_today=False) is None
+    result = await archive.fetch("https://gated.test/post", get_settings())
+    assert result is not None and result.article_chars == len("short")
