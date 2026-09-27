@@ -6,6 +6,12 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.58.14] - 2026-09-27
+
+### Changed
+
+- A Site-override rule that only stores a cookie jar for a built-in render host keeps the render strategy by default. Saving cookies for wsj.com no longer drops the host to the global default proxy, so the jar reaches the render attempt without extra setup. An explicit proxy choice on the row still wins.
+
 ## [0.58.13] - 2026-09-27
 
 ### Changed
