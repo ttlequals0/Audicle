@@ -29,7 +29,7 @@ chatterbox = [
     "torch",
     "torchaudio",
     # resemble-perth imports pkg_resources, removed in setuptools 81.
-    "setuptools>=78.1.1,<81",
+    "setuptools>=78.1.1,<84",
 ]
 # whisper: optional faster-whisper (CTranslate2) ASR for the post-TTS verification
 # pass. CTranslate2 is independent of the engine's torch stack. Installed into
