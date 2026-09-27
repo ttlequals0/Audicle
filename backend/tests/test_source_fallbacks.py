@@ -124,15 +124,28 @@ def test_build_registry_per_host_none_opts_out_of_global_catch_all() -> None:
 
 def test_build_registry_operator_overrides_builtin_and_uses_default_proxy() -> None:
     rules = [
-        {"host": "washingtonpost.com"},  # no proxy -> default
+        {"host": "example.org"},  # no builtin, no proxy -> default
         {"host": "medium.com", "proxy": "googlebot"},  # override builtin
     ]
     reg = sf.build_registry(rules, default_proxy="googlebot", min_chars=4000)
     medium = sf.match("https://medium.com/p/x", reg)
     assert medium is not None and medium.proxy == "googlebot"  # operator wins over builtin
-    wapo = sf.match("https://www.washingtonpost.com/a", reg)
-    assert wapo is not None and wapo.proxy == "googlebot" and wapo.min_chars == 4000
-    assert sf.match("https://example.com/x", reg) is None
+    org = sf.match("https://example.org/a", reg)
+    assert org is not None and org.proxy == "googlebot" and org.min_chars == 4000
+    assert sf.match("https://example.net/x", reg) is None
+
+
+def test_cookie_only_operator_rule_keeps_builtin_render_strategy() -> None:
+    # An operator storing a cookie jar for a built-in render host must not have to
+    # re-pick the strategy: an empty proxy inherits the builtin's render rung so the
+    # jar rides along by default.
+    rules = [{"host": "ft.com", "cookies": "sid=1"}]
+    reg = sf.build_registry(rules, default_proxy="googlebot", min_chars=3000, global_floor=150)
+    rule = sf.match("https://www.ft.com/content/x", reg)
+    assert rule is not None
+    assert rule.proxy == "render" and rule.cookies == "sid=1"
+    attempts = sf.candidate_attempts(rule, "https://www.ft.com/content/x")
+    assert [(a.engine, a.cookies) for a in attempts] == [("render", "sid=1")]
 
 
 def test_render_rule_emits_a_render_attempt_with_its_cookies() -> None:

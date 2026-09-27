@@ -226,7 +226,9 @@ def build_registry(
     """Resolve operator rows to ``SourceFallback`` and merge over ``BUILTIN``.
 
     Operator rules come first so they win on host collision (``match`` returns the first
-    match). Each row needs a ``host``; ``proxy`` falls back to ``default_proxy``.
+    match). Each row needs a ``host``; ``proxy`` falls back to the builtin strategy for
+    that host (so a cookie-only row on a built-in render host keeps rendering), then to
+    ``default_proxy``.
 
     When ``global_floor`` > 0 and ``default_proxy`` is a real strategy (not ``""`` or
     ``"none"``), a lowest-priority catch-all is appended so the default proxy applies
@@ -235,11 +237,16 @@ def build_registry(
     and keep their higher teaser floors; a host opts out with a ``proxy="none"`` rule.
     """
 
+    def _resolve_proxy(host: str) -> str:
+        # Builtin strategy first for a known host, so a cookie-only row keeps its rung.
+        builtin = match(f"https://{host}", BUILTIN)
+        return builtin.proxy if builtin is not None else default_proxy
+
     operator = tuple(
         SourceFallback(
             name=f"operator:{row['host'].lower()}",
             host_suffixes=(row["host"].lower(),),
-            proxy=row.get("proxy") or default_proxy,
+            proxy=row.get("proxy") or _resolve_proxy(row["host"].lower()),
             custom_template=row.get("custom_template", ""),
             min_chars=min_chars,
             cookies=row.get("cookies", ""),
