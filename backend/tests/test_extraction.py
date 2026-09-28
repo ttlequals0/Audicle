@@ -27,7 +27,7 @@ class _ReaderStub:
         self.calls: list[str] = []
         self.markdown = ""
 
-    async def fetch(self, url: str, _settings) -> extraction.ExtractionResult:
+    async def fetch(self, url: str, _settings, *, cookies: str = "") -> extraction.ExtractionResult:
         self.calls.append(url)
         return extraction.ExtractionResult(markdown=self.markdown)
 

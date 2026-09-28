@@ -58,8 +58,8 @@ class Attempt:
     one loop. ``engine`` is ``"refetch"`` (fetch the same ``url`` again with crawler
     ``headers``: googlebot, via Firecrawl or in-process), ``"firecrawl"`` (scrape a
     rewritten ``url``: freedium/custom), ``"reader"``, ``"archive"``, or ``"flaresolverr"``
-    (fetch ``url`` through the solver's real browser). ``cookies`` is the operator's session for that host, used
-    only by the browser engines (a raw ``name=value; ...`` Cookie string)."""
+    (fetch ``url`` through the solver's real browser). ``cookies`` is the operator's session for that host, carried
+    by the browser engines and the reader proxy (a raw ``name=value; ...`` Cookie string)."""
 
     label: str
     engine: str
@@ -102,9 +102,9 @@ class SourceFallback:
     # The global-default catch-all: matches any host (lowest priority). Operator
     # and built-in rules above it win on host match; see ``build_registry``.
     catch_all: bool = False
-    # Operator's session cookies for this host (raw ``name=value; ...``), sent to the
-    # target only via the browser engines (flaresolverr, render) so a paid subscriber
-    # can fetch gated content. A secret -- masked in the API, never logged.
+    # Operator's session cookies for this host (raw ``name=value; ...``), sent via the
+    # browser engines and the reader proxy so a paid subscriber can fetch gated content.
+    # A secret -- masked in the API, never logged.
     cookies: str = ""
 
 
@@ -201,7 +201,7 @@ def candidate_attempts(rule: SourceFallback, url: str) -> list[Attempt]:
     if rule.proxy == "reader":
         # The reader engine wraps ``url`` with the configured proxy template itself, so the
         # attempt carries the original article URL (like flaresolverr/archive).
-        return [Attempt(f"{rule.name}#reader", "reader", url, is_host_rule=True)]
+        return [Attempt(f"{rule.name}#reader", "reader", url, cookies=rule.cookies, is_host_rule=True)]
     if rule.proxy == "flaresolverr":
         # The solver fetches the original URL in a real browser, carrying the rule's cookies.
         return [

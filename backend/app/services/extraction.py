@@ -318,7 +318,7 @@ async def extract(
                     },
                 )
                 try:
-                    alt = await reader.fetch(attempt.url, settings)
+                    alt = await reader.fetch(attempt.url, settings, cookies=attempt.cookies)
                 except ExtractionError as exc:
                     logger.warning(
                         "Reader proxy attempt failed",

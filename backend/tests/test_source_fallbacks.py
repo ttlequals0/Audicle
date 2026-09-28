@@ -86,6 +86,13 @@ def test_candidate_attempts_reader_passes_article_url_to_reader_engine() -> None
     ]
 
 
+def test_candidate_attempts_reader_carries_rule_cookies() -> None:
+    # A metered host's session rides the reader attempt so the proxy can serve the body.
+    rule = sf.SourceFallback("ft", ("ft.com",), "reader", "", 1500, cookies="FTSESSION=abc")
+    attempt = sf.candidate_attempts(rule, "https://www.ft.com/a")[0]
+    assert attempt.cookies == "FTSESSION=abc"
+
+
 def test_build_registry_global_default_catch_all_applies_to_any_host() -> None:
     # With a global_floor and a real default_proxy, build_registry appends a
     # lowest-priority catch-all so the default proxy matches any host, at the hard

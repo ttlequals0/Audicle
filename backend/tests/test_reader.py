@@ -79,8 +79,23 @@ async def test_fetch_wraps_article_in_proxy_template(
     assert captured["url"] == "https://r.jina.ai/https://www.wsj.com/a"
     assert "Authorization" not in captured["headers"]
     assert captured["headers"]["X-No-Cache"] == "true"
+    # Hydration wait so the proxy sees the body, not just the barrier shell.
+    assert captured["headers"]["X-Timeout"] == "15"
     assert result.metadata["title"] == "Jane Street Seizes the AI Spotlight"
     assert "unlikely AI powerhouse" in result.markdown
+
+
+async def test_fetch_forwards_rule_cookies(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def _fake_get_text(url, settings, *, headers, max_bytes, timeout_seconds):
+        captured["headers"] = headers
+        return _JINA_BODY
+
+    monkeypatch.setattr(pinned_fetch, "get_text", _fake_get_text)
+    await reader.fetch("https://www.ft.com/a", get_settings(), cookies="FTSESSION=abc")
+
+    assert captured["headers"]["Cookie"] == "FTSESSION=abc"
 
 
 def test_build_reader_url_wraps_article() -> None:

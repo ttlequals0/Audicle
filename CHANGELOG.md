@@ -6,6 +6,13 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.58.17] - 2026-09-28
+
+### Added
+
+- The reader-proxy rung now asks the proxy to wait for client-side hydration (`X-Timeout`), so pages that render their body after load return the article text instead of only the shell. The per-host session cookie configured in Site overrides rides along to the proxy, so a subscriber's fetch serves the full body through the same rung.
+- Scraped markdown is flattened through link labels before nav-line filtering, so bracketed skip links drop cleanly instead of surviving as chrome text.
+
 ## [0.58.16] - 2026-09-28
 
 ### Fixed

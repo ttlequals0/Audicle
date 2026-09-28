@@ -40,14 +40,26 @@ _READER_UA = (
 _ACCEPT = "text/plain, text/markdown, */*"
 
 
-async def fetch(article_url: str, settings: Settings) -> ExtractionResult:
+async def fetch(
+    article_url: str, settings: Settings, *, cookies: str = ""
+) -> ExtractionResult:
     """Fetch ``article_url`` through the configured reader proxy and return its markdown as
     an ``ExtractionResult``. Transient failures are retried with the shared extraction
-    policy; 4xx/SSRF blocks are permanent. The caller validates length."""
+    policy; 4xx/SSRF blocks are permanent. The caller validates length. ``cookies`` is the
+    rule's subscriber session, forwarded so a metered host serves the full body."""
 
     reader_url = _build_reader_url(settings.READER_PROXY_TEMPLATE, article_url)
     # Bypass Jina's shared cache, which can serve a stale or wrong snapshot.
-    headers = {"User-Agent": _READER_UA, "Accept": _ACCEPT, "X-No-Cache": "true"}
+    # X-Timeout lets the proxy's browser finish client-side hydration, so the body
+    # is present instead of just the barrier shell (docs: Jina Reader API).
+    headers = {
+        "User-Agent": _READER_UA,
+        "Accept": _ACCEPT,
+        "X-No-Cache": "true",
+        "X-Timeout": "15",
+    }
+    if cookies:
+        headers["Cookie"] = cookies
     if settings.READER_API_KEY:
         headers["Authorization"] = f"Bearer {settings.READER_API_KEY}"
     body = await pinned_fetch.get_text_retrying(

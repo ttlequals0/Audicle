@@ -138,11 +138,15 @@ def strip_chrome(markdown: str) -> str:
     if not markdown:
         return markdown
     lines = _drop_appendix_sections(markdown.split("\n"))
-    lines = [
-        line
-        for line in lines
-        if not (_TOC_ITEM_RE.match(line) or _SKIP_TO_RE.match(line))
-    ]
+    kept: list[str] = []
+    for line in lines:
+        # Match nav filters on link-flattened text so bracketed skip links
+        # ("[Skip to navigation](...)") are recognized; the kept line is unchanged.
+        plain = _LINK_RE.sub(r"\1", line)
+        if _TOC_ITEM_RE.match(plain) or _SKIP_TO_RE.match(plain):
+            continue
+        kept.append(line)
+    lines = kept
     lines = _drop_nav_cue_blocks(lines)
     lines = _drop_short_bullet_rails(lines)
     text = "\n".join(lines)
