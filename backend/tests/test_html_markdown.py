@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from app.services import html_markdown
 
@@ -83,6 +85,37 @@ def test_keeps_trafilatura_when_it_got_the_article(monkeypatch: pytest.MonkeyPat
     _mock_trafilatura(monkeypatch, good)
     md, _meta = html_markdown.html_to_markdown(_page(30))
     assert md == good
+
+
+def _meta(desc: str) -> SimpleNamespace:
+    return SimpleNamespace(title=None, author=None, image=None, description=desc)
+
+
+def _mock_extract(monkeypatch: pytest.MonkeyPatch, md: str, desc: str | None) -> None:
+    monkeypatch.setattr(html_markdown.trafilatura, "extract", lambda *a, **k: md)
+    monkeypatch.setattr(
+        html_markdown.trafilatura,
+        "extract_metadata",
+        lambda *a, **k: _meta(desc) if desc else None,
+    )
+
+
+def test_declared_description_leads_when_body_lacks_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_extract(monkeypatch, "Second paragraph of the story.", "Job hopping is the new plan.")
+    md, meta = html_markdown.html_to_markdown("<html><body><p>x</p></body></html>")
+    assert md.startswith("Job hopping is the new plan.")
+    assert "Second paragraph of the story." in md
+    assert meta["description"] == "Job hopping is the new plan."
+
+
+def test_declared_description_not_duplicated_when_body_has_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_extract(
+        monkeypatch, "Job hopping is the new plan.\n\nRest of column.", "Job hopping is the new plan."
+    )
+    md, _meta = html_markdown.html_to_markdown("<html><body><p>x</p></body></html>")
+    assert md.count("Job hopping is the new plan.") == 1
 
 
 def test_keeps_long_trafilatura_over_small_decoy_article(monkeypatch: pytest.MonkeyPatch) -> None:

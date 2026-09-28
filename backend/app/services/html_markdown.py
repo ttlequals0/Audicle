@@ -138,4 +138,12 @@ def html_to_markdown(html: str) -> tuple[str, dict[str, Any]]:
             metadata["author"] = meta.author
         if getattr(meta, "image", None):
             metadata["ogImage"] = meta.image  # the key artwork._extract_og_image reads first
+        if getattr(meta, "description", None):
+            metadata["description"] = meta.description
+    # Some pages ship the lead in <meta name="description"> and render the body
+    # client-side, so the scraped markdown can start at mid-article. Lead with the
+    # declared description when it is not already part of the body.
+    desc = metadata.get("description")
+    if desc and desc.strip() and desc.strip() not in markdown:
+        markdown = f"{desc.strip()}\n\n{markdown}"
     return markdown.strip(), metadata
