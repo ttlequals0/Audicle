@@ -81,6 +81,55 @@ def test_strip_chrome_empty_input() -> None:
     assert article_prep.strip_chrome("") == ""
 
 
+_FT_CHROME = """\
+Accessibility helpSkip to navigationSkip to main contentSkip to footer
+
+Sections
+
+ * World Home
+ * Global Economy
+ * Emerging Markets
+
+Most Read
+
+ * Burnham to revive Help to Buy scheme in bid to aid first-time buyers
+
+Young workers trade the ladder for the lily pad because firms hire for skills, not seniority.
+
+## Useful links
+
+Help CentreContact UsAbout UsAccessibilityCareers
+"""
+
+
+def test_strip_chrome_drops_nav_cue_blocks_and_skip_lines() -> None:
+    out = article_prep.strip_chrome(_FT_CHROME)
+    assert "hire for skills, not seniority." in out
+    # Cue-attached rails and their bullets are gone.
+    assert "Sections" not in out
+    assert "Most Read" not in out
+    assert "World Home" not in out
+    assert "Help to Buy" not in out
+    # Heading-form appendix is removed wholesale.
+    assert "Useful links" not in out
+    assert "Help CentreContact Us" not in out
+    # The glued accessibility skip line is gone.
+    assert "Skip to navigation" not in out
+
+
+def test_strip_chrome_keeps_uncued_bullet_lists() -> None:
+    text = "Ingredients:\n\n* two eggs\n* one cup flour"
+    assert article_prep.strip_chrome(text) == text
+
+
+def test_strip_boilerplate_applies_chrome_rules() -> None:
+    # Proves the composition survives the later line rules; the chrome test covers
+    # the individual removals.
+    out = article_prep.strip_boilerplate(_FT_CHROME)
+    assert "hire for skills, not seniority." in out
+    assert "World Home" not in out
+
+
 def test_strip_inline_markdown_keeps_link_label_drops_url() -> None:
     text = "Read the [full report](https://example.com/r.pdf) now."
     assert article_prep.strip_inline_markdown(text) == "Read the full report now."
