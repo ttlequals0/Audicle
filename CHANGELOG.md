@@ -6,6 +6,13 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.58.15] - 2026-09-28
+
+### Changed
+
+- ft.com now ships with the `render` bypass by default (moved from `reader`). FT hydrates the article body client-side; the headful sidecar's body-settle wait captures it, while the plain fetches and the reader proxy stopped at the barrier shell and its subscription copy.
+- The deterministic cleanup fallback got stronger chrome trimming: nav-rail cue lines ("Sections", "Most Read", "Top sections", "Useful links", "FT recommends", "Subscribe for full access", "What's included") drop their attached bullet blocks, glued "Skip to navigation"-style accessibility lines are removed, and `strip_boilerplate` now reuses the whole `strip_chrome` pass. Cue-anchored rules only, so ordinary bulleted prose survives.
+
 ## [0.58.14] - 2026-09-27
 
 ### Changed

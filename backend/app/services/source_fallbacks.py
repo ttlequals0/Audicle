@@ -124,9 +124,9 @@ _RENDER_BUILTINS: tuple[SourceFallback, ...] = tuple(
 )
 
 # Reader rules for the maintainer-curated hosts in config.READER_BUILTIN_HOSTS. A
-# reader rule holds the host to its teaser floor: FT's promo-only block measured ~1.1k
-# chars, a real column is longer, so anything at or above the floor is accepted from the
-# direct scrape and shorter pages retry through the reader proxy.
+# reader rule holds the host to its teaser floor: anything at or above the floor is
+# accepted from the direct scrape and shorter pages retry through the reader proxy,
+# which returns clean markdown through its own rendering pass.
 _READER_BUILTINS: tuple[SourceFallback, ...] = tuple(
     SourceFallback(
         name=f"reader:{host}",

@@ -20,6 +20,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Operators can also add their own render hosts in the Site-overrides UI, which
 # override these on a host collision.
 RENDER_BUILTIN_HOSTS: tuple[str, ...] = (
+    # ft.com hydrates its article body client-side; the sidecar's body-settle wait
+    # captures it, while the plain fetches and the reader proxy stop at the barrier shell.
+    "ft.com",
     "inc.com",
     "theatlantic.com",
     "newyorker.com",
@@ -37,8 +40,7 @@ RENDER_BUILTIN_HOSTS: tuple[str, ...] = (
 )
 
 # Hosts that ship with the "reader" Site-override strategy (the Jina reader proxy).
-# ft.com: the browser rungs stop at FT's offer block; the reader returns the body.
-READER_BUILTIN_HOSTS: tuple[str, ...] = ("ft.com",)
+READER_BUILTIN_HOSTS: tuple[str, ...] = ()
 
 
 class Settings(BaseSettings):

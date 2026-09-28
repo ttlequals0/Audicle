@@ -35,6 +35,13 @@ _DROP_SECTIONS: frozenset[str] = frozenset(
         "bibliography",
         "sources",
         "works cited",
+        # News-site nav rails (seen in reader-proxy markdown for ft.com).
+        "sections",
+        "most read",
+        "top sections",
+        "useful links",
+        "ft recommends",
+        "subscribe for full access",
     }
 )
 
@@ -51,7 +58,21 @@ _CITE_LINK_RE = re.compile(r"\[\\?\[\d{1,3}\\?\]\]\([^)]*\)")
 _CITE_BARE_RE = re.compile(r"\[\d{1,3}\](?!\()")
 # A table-of-contents entry: a list item whose only content is an anchor link.
 _TOC_ITEM_RE = re.compile(r"^\s*(?:[-*+]|\d+\.)\s*\[[^\]]+\]\(#[^)]*\)\s*$")
-_JUMP_NAV_RE = re.compile(r"^\s*Jump to (?:content|navigation|search)\s*$", re.IGNORECASE)
+# Skip-/jump-to nav lines, whole-line only, including the glued accessibility form
+# ("Accessibility helpSkip to navigationSkip to footer"); no word-boundary requirement
+# between segments. Lines with text either side are handled by _SKIP_NAV_RE below.
+_SKIP_TO_RE = re.compile(
+    r"(?i)^\s*(?:Accessibility help)?(?:(?:jump|skip) to "
+    r"(?:main )?(?:content|navigation|footer|search)\s*)+$"
+)
+# A bare nav-rail heading; the bullet list attached to it is dropped as one block
+# (see ``_drop_nav_cue_blocks``). Cue-anchored so ordinary bulleted prose, which has
+# no cue line above it, is never touched. Heading-form cues are covered by the same
+# names in _DROP_SECTIONS.
+_NAV_CUE_RE = re.compile(
+    r"(?i)^\s*(?:Sections|Most Read|Top sections|Useful links|FT recommends|"
+    r"What's included|Subscribe for full access)\s*:?\s*$"
+)
 # Collapse 3+ newlines to a single paragraph break -- shared by strip_chrome and
 # strip_boilerplate.
 _BLANK_RUN_RE = re.compile(r"\n{3,}")
@@ -90,9 +111,29 @@ def _drop_appendix_sections(lines: list[str]) -> list[str]:
     return [line for x, line in enumerate(lines) if not remove[x]]
 
 
+def _drop_nav_cue_blocks(lines: list[str]) -> list[str]:
+    """Remove each nav cue line and the bullet list attached below it, up to the first
+    non-list line. Only cue-attached lists are touched, so ordinary bulleted prose
+    survives."""
+
+    out: list[str] = []
+    skip = False
+    for line in lines:
+        if _NAV_CUE_RE.match(line):
+            skip = True
+            continue
+        if skip:
+            stripped = line.strip()
+            if not stripped or _LIST_MARKER_RE.match(stripped):
+                continue
+            skip = False
+        out.append(line)
+    return out
+
+
 def strip_chrome(markdown: str) -> str:
-    """Strip TOC, appendix link-lists, ``[edit]`` markers, and citation
-    superscripts from Firecrawl markdown. Returns cleaned markdown."""
+    """Strip TOC, appendix link-lists, nav-rail cue blocks, skip-to lines, ``[edit]``
+    markers, and citation superscripts from scraped markdown. Returns cleaned markdown."""
 
     if not markdown:
         return markdown
@@ -100,8 +141,9 @@ def strip_chrome(markdown: str) -> str:
     lines = [
         line
         for line in lines
-        if not _TOC_ITEM_RE.match(line) and not _JUMP_NAV_RE.match(line)
+        if not (_TOC_ITEM_RE.match(line) or _SKIP_TO_RE.match(line))
     ]
+    lines = _drop_nav_cue_blocks(lines)
     text = "\n".join(lines)
     text = _CITE_LINK_RE.sub("", text)
     text = _EDIT_LINK_RE.sub("", text)
@@ -198,6 +240,7 @@ def strip_boilerplate(text: str) -> str:
     links/images. Intended for the paragraph-structured extraction on the fallback path,
     not general prose."""
 
+    text = strip_chrome(text)
     text = _HTML_TAG_RE.sub("", text)
     text = _AD_MARKER_RE.sub("", text)
     text = _SKIP_NAV_RE.sub("", text)
