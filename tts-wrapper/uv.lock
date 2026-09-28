@@ -59,7 +59,7 @@ wheels = [
 
 [[package]]
 name = "audicle-tts-wrapper"
-version = "0.58.15"
+version = "0.58.16"
 source = { virtual = "." }
 dependencies = [
     { name = "fastapi" },
