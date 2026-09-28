@@ -144,6 +144,7 @@ def strip_chrome(markdown: str) -> str:
         if not (_TOC_ITEM_RE.match(line) or _SKIP_TO_RE.match(line))
     ]
     lines = _drop_nav_cue_blocks(lines)
+    lines = _drop_short_bullet_rails(lines)
     text = "\n".join(lines)
     text = _CITE_LINK_RE.sub("", text)
     text = _EDIT_LINK_RE.sub("", text)
@@ -172,6 +173,45 @@ def strip_inline_markdown(text: str) -> str:
 _PROSE_MIN_TOKENS = 8
 _NON_WORD_CHARS = frozenset("|={}")
 _LIST_MARKER_RE = re.compile(r"^(?:[-*+]|\d{1,3}[.)])\s+")
+# Nav rails are long runs of link-label bullets ("MenuSearch"-style intros + <=4-word
+# items). Ordinary lists (recipes, steps) have fewer items or sentence-like ones.
+_RAIL_MIN_ITEMS = 5
+_RAIL_MAX_WORDS = 4
+
+
+def _drop_short_bullet_rails(lines: list[str]) -> list[str]:
+    """Remove bullet runs of >= ``_RAIL_MIN_ITEMS`` items whose every item is at most
+    ``_RAIL_MAX_WORDS`` words, plus the short intro line (if any) directly above."""
+
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        if not _LIST_MARKER_RE.match(lines[i].strip()):
+            out.append(lines[i])
+            i += 1
+            continue
+        j = i
+        items: list[int] = []
+        while j < len(lines):
+            s = lines[j].strip()
+            if _LIST_MARKER_RE.match(s):
+                items.append(j)
+            elif s:
+                break
+            j += 1
+        if len(items) >= _RAIL_MIN_ITEMS and all(
+            len(_LIST_MARKER_RE.sub("", lines[k].strip()).split()) <= _RAIL_MAX_WORDS
+            for k in items
+        ):
+            while out and not out[-1].strip():
+                out.pop()
+            if out and len(out[-1].split()) <= 2 and out[-1].strip():
+                out.pop()
+            i = j
+            continue
+        out.extend(lines[i:j])
+        i = j
+    return out
 
 
 def _is_word(token: str) -> bool:

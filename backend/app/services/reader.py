@@ -16,11 +16,12 @@ the initial request and every redirect hop, and size-capped, via ``pinned_fetch`
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from app.config import Settings
 from app.services import pinned_fetch
 from app.services.extraction_types import ExtractionPermanentError, ExtractionResult
-from app.services.html_markdown import MAX_HTML_CHARS
+from app.services.html_markdown import MAX_HTML_CHARS, ensure_lead
 
 logger = logging.getLogger("app.services.reader")
 
@@ -29,6 +30,7 @@ logger = logging.getLogger("app.services.reader")
 # and lift the title; if the marker is absent (a different reader proxy), use the raw text.
 _CONTENT_MARKER = "Markdown Content:"
 _TITLE_LABEL = "Title:"
+_DESCRIPTION_LABEL = "Description:"
 # Jina's own notice about the fetch, e.g. "This page maybe requiring CAPTCHA".
 _WARNING_LABEL = "Warning:"
 _READER_UA = (
@@ -94,8 +96,15 @@ def _parse(body: str) -> ExtractionResult:
 
     head, marker, tail = body.partition(_CONTENT_MARKER)
     markdown = tail if marker else body
+    metadata: dict[str, Any] = {}
     title = _header_value(head, _TITLE_LABEL)
-    return ExtractionResult(markdown=markdown.strip(), metadata={"title": title} if title else {})
+    if title:
+        metadata["title"] = title
+    desc = _header_value(head, _DESCRIPTION_LABEL) if marker else ""
+    if desc:
+        metadata["description"] = desc
+    markdown = ensure_lead(markdown.strip(), desc or None)
+    return ExtractionResult(markdown=markdown, metadata=metadata)
 
 
 def _header_value(head: str, label: str) -> str:

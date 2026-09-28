@@ -110,6 +110,8 @@ def test_strip_chrome_drops_nav_cue_blocks_and_skip_lines() -> None:
     assert "Most Read" not in out
     assert "World Home" not in out
     assert "Help to Buy" not in out
+    # Link-label rails (short items + short intro) are dropped as blocks.
+    assert "MenuSearch" not in out
     # Heading-form appendix is removed wholesale.
     assert "Useful links" not in out
     assert "Help CentreContact Us" not in out

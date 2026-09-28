@@ -40,6 +40,20 @@ def test_parse_splits_header_from_body() -> None:
     assert "Markdown Content:" not in result.markdown
 
 
+def test_parse_leads_with_header_description_when_body_lacks_it() -> None:
+    body = (
+        "Title: Young Workers Trade the Ladder\n"
+        "Description: Job hopping is the new plan.\n"
+        "Markdown Content:\n"
+        "# Young Workers Trade the Ladder\n\n"
+        "Companies hire for skills, not tenure.\n"
+    )
+    result = reader._parse(body)
+    assert result.metadata["description"] == "Job hopping is the new plan."
+    assert result.markdown.startswith("Job hopping is the new plan.")
+    assert result.markdown.count("Job hopping is the new plan.") == 1
+
+
 def test_parse_without_marker_keeps_raw_body() -> None:
     """A reader proxy that emits no Jina header just yields its text as the markdown."""
 
