@@ -112,6 +112,10 @@ def test_strip_chrome_drops_nav_cue_blocks_and_skip_lines() -> None:
     assert "Help to Buy" not in out
     # Link-label rails (short items + short intro) are dropped as blocks.
     assert "MenuSearch" not in out
+    # Subscription/marketing copy is stripped; the dek sentence leads.
+    assert "Try unlimited access" not in out
+    assert "$49 a year" not in out
+    assert out.startswith("Young workers trade")
     # Heading-form appendix is removed wholesale.
     assert "Useful links" not in out
     assert "Help CentreContact Us" not in out

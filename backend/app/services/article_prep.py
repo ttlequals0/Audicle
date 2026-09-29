@@ -42,6 +42,9 @@ _DROP_SECTIONS: frozenset[str] = frozenset(
         "useful links",
         "ft recommends",
         "subscribe for full access",
+        "try unlimited access",
+        "explore more offers",
+        "explore our full range of subscriptions",
     }
 )
 
@@ -72,6 +75,22 @@ _SKIP_TO_RE = re.compile(
 _NAV_CUE_RE = re.compile(
     r"(?i)^\s*(?:Sections|Most Read|Top sections|Useful links|FT recommends|"
     r"What's included|Subscribe for full access)\s*:?\s*$"
+)
+# Whole-line subscription/marketing copy that survives heading removal on barrier
+# pages: price snippets, plan names, consent prompts, disclaimer footers. Anchored on
+# both ends so prose that merely mentions a price keeps its paragraph.
+_OFFER_RE = re.compile(
+    r"(?i)^\s*(?:Only \$[\d.,]+(?: for [\w.]+)?|Then \$[\d.,]+ per \w+"
+    r"|Save(?: over)? \d+%|\$[\d.,]+ a year|\$[\d.,]+ per month"
+    r"|was \$[\d.,]+ now \$[\d.,][^\n]{0,60}|Save now on essential[^\n]{0,80}"
+    r"|Complete (?:digital access[^\n]{0,60}|coverage)"
+    r"|Discover all the plans[^\n]{0,40}|Digital access for or?ganis[aç]tions?[^\n]{0,60}"
+    r"|Check whether you already have free access[^\n]{0,60}"
+    r"|Terms & Conditions apply|Subscribe to unlock[^\n]{0,20}"
+    r"|Keep reading for \$[\d.,]+|SelectWhat'?s included"
+    r"|FT Edit|Standard Digital|Premium Digital|FT Professional|Find out why"
+    r"|Edition:[^\n]{0,30}|Markets data delayed[^\n]{0,60}"
+    r"|The Financial Times and its journalism[^\n]{0,80})\s*$"
 )
 # Collapse 3+ newlines to a single paragraph break -- shared by strip_chrome and
 # strip_boilerplate.
@@ -132,8 +151,9 @@ def _drop_nav_cue_blocks(lines: list[str]) -> list[str]:
 
 
 def strip_chrome(markdown: str) -> str:
-    """Strip TOC, appendix link-lists, nav-rail cue blocks, skip-to lines, ``[edit]``
-    markers, and citation superscripts from scraped markdown. Returns cleaned markdown."""
+    """Strip TOC, appendix link-lists, nav-rail cue blocks, skip-to lines, subscription
+    marketing copy, ``[edit]`` markers, and citation superscripts from scraped markdown.
+    Returns cleaned markdown."""
 
     if not markdown:
         return markdown
@@ -143,7 +163,7 @@ def strip_chrome(markdown: str) -> str:
         # Match nav filters on link-flattened text so bracketed skip links
         # ("[Skip to navigation](...)") are recognized; the kept line is unchanged.
         plain = _LINK_RE.sub(r"\1", line)
-        if _TOC_ITEM_RE.match(plain) or _SKIP_TO_RE.match(plain):
+        if _TOC_ITEM_RE.match(plain) or _SKIP_TO_RE.match(plain) or _OFFER_RE.match(plain):
             continue
         kept.append(line)
     lines = kept

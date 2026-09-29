@@ -6,6 +6,12 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.58.18] - 2026-09-28
+
+### Changed
+
+- The deterministic cleanup fallback strips subscription/marketing copy (pricing lines, plan blocks, consent prompts, footer disclaimers) in addition to nav rails, so barrier-style pages narrate the article lead and body sentences instead of page furniture. Filters stay cue-anchored and whole-line; ordinary prose is untouched.
+
 ## [0.58.17] - 2026-09-28
 
 ### Added
