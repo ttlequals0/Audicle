@@ -6,6 +6,18 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.58.20] - 2026-09-29
+
+### Fixed
+
+- The cleanup fallback floor now judges prose density instead of raw length, so dek-led articles whose stripped text lands just under MIN_CLEANUP_CHARS ship instead of failing the job. The subscription-copy matcher now also catches heading-form and longer price/plan fragments.
+
+## [0.58.19] - 2026-09-28
+
+### Fixed
+
+- The cleanup fallback no longer refuses legitimately short articles: the MIN_CLEANUP_CHARS floor scales to the fallback's own size, so a dek-led barrier page ships its real sentences instead of failing the job. Cruft-only pages still score near zero and fail as before.
+
 ## [0.58.18] - 2026-09-28
 
 ### Changed

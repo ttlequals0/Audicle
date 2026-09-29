@@ -80,14 +80,15 @@ _NAV_CUE_RE = re.compile(
 # pages: price snippets, plan names, consent prompts, disclaimer footers. Anchored on
 # both ends so prose that merely mentions a price keeps its paragraph.
 _OFFER_RE = re.compile(
-    r"(?i)^\s*(?:Only \$[\d.,]+(?: for [\w.]+)?|Then \$[\d.,]+ per \w+"
-    r"|Save(?: over)? \d+%|\$[\d.,]+ a year|\$[\d.,]+ per month"
-    r"|was \$[\d.,]+ now \$[\d.,][^\n]{0,60}|Save now on essential[^\n]{0,80}"
+    r"(?i)^\s*(?:#{1,6}\s*)?(?:Only \w{0,3}\$[\d.,]+(?: for [\w.]+)?|Then \w?\$[\d.,]+ per \w+"
+    r"|Save(?: over)? \d+%[^\n]{0,80}|\$[\d.,]+ a year|\$[\d.,]+ per month"
+    r"|was \w{0,3}\$[\d.,]+ now \w{0,3}\$[\d.,][^\n]{0,180}"
+    r"|Save now on essential[^\n]{0,90}"
     r"|Complete (?:digital access[^\n]{0,60}|coverage)"
     r"|Discover all the plans[^\n]{0,40}|Digital access for or?ganis[aç]tions?[^\n]{0,60}"
     r"|Check whether you already have free access[^\n]{0,60}"
     r"|Terms & Conditions apply|Subscribe to unlock[^\n]{0,20}"
-    r"|Keep reading for \$[\d.,]+|SelectWhat'?s included"
+    r"|Keep reading for \w?\$[\d.,]+[^\n]{0,40}|SelectWhat'?s included"
     r"|FT Edit|Standard Digital|Premium Digital|FT Professional|Find out why"
     r"|Edition:[^\n]{0,30}|Markets data delayed[^\n]{0,60}"
     r"|The Financial Times and its journalism[^\n]{0,80})\s*$"
