@@ -1230,14 +1230,11 @@ def _cleanup_output_is_truncated(window: str, output: str, settings: Settings) -
 def _fallback_clears_floor(fallback: str, settings: Settings) -> bool:
     """Whether the deterministic boilerplate strip left enough sentence-like text.
 
-    Judged by prose density, not raw size: a legitimately short article (dek + body
-    sentences) is mostly sentence-like and ships, while toolbar/challenge pages score
-    near zero because their lines are link lists and fragments."""
+    Density-based with a small absolute guard, so a legitimately short article (dek +
+    body sentences) ships while pure link dumps still fail."""
 
     prose = article_prep.prose_chars(fallback)
-    return bool(fallback) and prose >= max(
-        settings.MIN_CLEANUP_CHARS * 0.5, len(fallback) * 0.5
-    )
+    return bool(fallback) and prose >= max(40, len(fallback) * 0.4)
 
 
 async def _stage_chunk(corrected: str, settings: Settings) -> list[str]:

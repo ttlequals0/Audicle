@@ -6,6 +6,12 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.58.21] - 2026-09-29
+
+### Fixed
+
+- The cleanup fallback floor dropped a too-large absolute component: a short real article (density-passing dek + body) under MIN_CLEANUP_CHARS no longer fails the job; pure link dumps still do.
+
 ## [0.58.20] - 2026-09-29
 
 ### Fixed
