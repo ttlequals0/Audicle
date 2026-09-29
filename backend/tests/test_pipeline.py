@@ -1396,6 +1396,26 @@ async def test_cleanup_uses_deterministic_fallback_for_textless_length_limit(
     assert calls == 1
 
 
+async def test_cleanup_fallback_accepts_short_real_article(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A dek-led barrier page is legitimately short: the fallback must ship it even
+    # under MIN_CLEANUP_CHARS, because its lines are sentence-like prose.
+    database.run_migrations(env)
+    article = (
+        "Job hopping has been rebranded as a strategy to rapidly acquire new skills "
+        "in a tough market. Young workers trade the ladder for the lily pad."
+    )
+    assert len(article) < get_settings().MIN_CLEANUP_CHARS
+    monkeypatch.setattr(pipeline.chunker, "pack_paragraphs", lambda _md, _n: [article])
+
+    async def _truncated(_system, _user, _settings, **_kwargs):
+        raise llm.LLMTruncatedResponseError("completion exhausted")
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", _truncated)
+    assert await pipeline._stage_cleanup("job", article, get_settings()) == article
+
+
 async def test_cleanup_retries_short_output_then_uses_deterministic_fallback(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

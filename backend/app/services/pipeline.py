@@ -1111,7 +1111,7 @@ async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
             raw = await _llm_with_retry(system_prompt, user_message, settings)
         except llm.LLMTruncatedResponseError as exc:
             fallback = article_prep.strip_boilerplate(markdown)
-            if len(fallback) < settings.MIN_CLEANUP_CHARS:
+            if not _fallback_clears_floor(fallback, settings):
                 raise CleanupTooShortError(
                     f"Cleanup output is unavailable and fallback is {len(fallback)} chars, below "
                     f"MIN_CLEANUP_CHARS={settings.MIN_CLEANUP_CHARS}"
@@ -1193,7 +1193,7 @@ async def _stage_cleanup(job_id: str, markdown: str, settings: Settings) -> str:
         # (>= floor -> ship); a genuinely cruft-only page strips to near-nothing
         # (< floor -> fail).
         fallback = article_prep.strip_boilerplate(markdown)
-        if len(fallback) >= settings.MIN_CLEANUP_CHARS:
+        if _fallback_clears_floor(fallback, settings):
             logger.warning(
                 "Cleanup output incomplete; using deterministic boilerplate strip",
                 extra={
@@ -1225,6 +1225,16 @@ def _cleanup_output_is_truncated(window: str, output: str, settings: Settings) -
     """Whether a non-empty cleanup response discarded too much of its window."""
 
     return bool(output) and len(output) < len(window) * settings.CLEANUP_MIN_RETENTION_RATIO
+
+
+def _fallback_clears_floor(fallback: str, settings: Settings) -> bool:
+    """Whether the deterministic boilerplate strip left enough sentence-like text.
+
+    The floor scales to the fallback's own size, so a legitimately short article (a
+    dek-led barrier page) ships, while cruft-only pages still score near zero."""
+
+    required = min(settings.MIN_CLEANUP_CHARS, len(fallback))
+    return bool(fallback) and article_prep.prose_chars(fallback) >= required
 
 
 async def _stage_chunk(corrected: str, settings: Settings) -> list[str]:
