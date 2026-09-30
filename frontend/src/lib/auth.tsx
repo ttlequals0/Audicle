@@ -5,12 +5,14 @@ import { api, AuthStatus } from "./api";
 interface AuthContextValue {
   status: AuthStatus | null;
   loading: boolean;
+  failed: boolean;
   refresh: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue>({
   status: null,
   loading: true,
+  failed: false,
   refresh: () => {},
 });
 
@@ -25,6 +27,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       value={{
         status: q.data ?? null,
         loading: q.isLoading,
+        failed: q.isError && !q.data,
         refresh: () => q.refetch(),
       }}
     >

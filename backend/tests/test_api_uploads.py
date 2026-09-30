@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from app.api.v1 import uploads
 from app.config import get_settings
 from app.core import database
 from app.core.paths import media_dir
@@ -72,8 +74,9 @@ def test_upload_md_creates_job_and_stores_original(env: Path) -> None:
         conn.close()
 
 
-def test_upload_source_survives_sweep_during_staging(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.api.v1 import uploads
+def test_upload_source_survives_sweep_during_staging(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from app.services import retention
 
     original_write = uploads.write_bytes_atomic
@@ -84,7 +87,9 @@ def test_upload_source_survives_sweep_during_staging(env: Path, monkeypatch: pyt
 
     monkeypatch.setattr(uploads, "write_bytes_atomic", _write_after_sweep)
     with _client(env) as client:
-        response = client.post("/api/v1/upload", files={"file": ("notes.md", b"# note", "text/markdown")})
+        response = client.post(
+            "/api/v1/upload", files={"file": ("notes.md", b"# note", "text/markdown")}
+        )
     assert response.status_code == 201
     episode_id = response.json()["episode_id"]
     assert (media_dir(get_settings()) / f"{episode_id}.source.md").is_file()
@@ -167,14 +172,44 @@ def test_upload_episode_list_exposes_source_fields(env: Path) -> None:
 # --- POST /upload/{id}/reprocess ---------------------------------------------
 
 
-def test_reprocess_upload_reenqueues_from_stored_file(env: Path) -> None:
+def test_reprocess_upload_reenqueues_from_stored_file(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+
     episode_id = _seed_upload_episode(env, filename="report.pdf")
+    original_lock = database.upload_staging_lock
+    original_create = jobs.create_job
+    lock_held = False
+
+    @contextmanager
+    def _tracked_lock(data_dir: Path, locked_episode_id: str, *, blocking: bool = True):
+        nonlocal lock_held
+        with original_lock(data_dir, locked_episode_id, blocking=blocking):
+            lock_held = True
+            try:
+                yield True
+            finally:
+                lock_held = False
+
+    def _locked_create(*args, **kwargs):
+        assert lock_held
+        return original_create(*args, **kwargs)
+
+    monkeypatch.setattr(database, "upload_staging_lock", _tracked_lock)
+    monkeypatch.setattr(uploads.jobs, "create_job", _locked_create)
     with _client(env) as client:
         r = client.post(f"/api/v1/upload/{episode_id}/reprocess")
     assert r.status_code == 201
     body = r.json()
     assert body["episode_id"] == episode_id
     assert body["replaced_previous"] is True
+
+
+def test_reprocess_upload_rejects_unsafe_episode_id_without_lockfile(env: Path) -> None:
+    with _client(env) as client:
+        response = client.post("/api/v1/upload/unsafe.id/reprocess")
+    assert response.status_code == 404
+    assert not (env / ".upload-unsafe.id.lock").exists()
 
 
 def test_reprocess_upload_rejects_with_400_when_no_voice_loaded(

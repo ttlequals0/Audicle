@@ -54,8 +54,8 @@ async def get_rss(
     # The feed lives at exactly one slug -- the current FEED_TITLE's. Any other
     # slug (the old /rss/rss.xml, or a pre-rename name) is a different feed and
     # 404s, per the "rename = new feed" contract.
-    settings_store.get_or_init_podcast_guid(conn, settings.BASE_URL)
     settings, identity = _feed_snapshot(conn, settings)
+    settings_store.get_or_init_podcast_guid(conn, settings.BASE_URL)
     require_feed_key(request, conn, settings)
     if slug != slug_module.feed_slug(settings.FEED_TITLE):
         raise HTTPException(status_code=404, detail="not found")

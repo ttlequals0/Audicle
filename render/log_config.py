@@ -23,10 +23,29 @@ from typing import Any
 # extra={...} and is surfaced as its own field.
 _STANDARD_RECORD_ATTRS = frozenset(
     {
-        "name", "msg", "args", "levelname", "levelno", "pathname", "filename",
-        "module", "exc_info", "exc_text", "stack_info", "lineno", "funcName",
-        "created", "msecs", "relativeCreated", "thread", "threadName",
-        "processName", "process", "message", "asctime", "taskName",
+        "name",
+        "msg",
+        "args",
+        "levelname",
+        "levelno",
+        "pathname",
+        "filename",
+        "module",
+        "exc_info",
+        "exc_text",
+        "stack_info",
+        "lineno",
+        "funcName",
+        "created",
+        "msecs",
+        "relativeCreated",
+        "thread",
+        "threadName",
+        "processName",
+        "process",
+        "message",
+        "asctime",
+        "taskName",
     }
 )
 # uvicorn installs its own handlers; folding them into the root logger keeps the
@@ -104,3 +123,11 @@ def setup_logging(level: str | None = None, fmt: str | None = None) -> None:
         uvicorn_logger = logging.getLogger(name)
         uvicorn_logger.handlers.clear()
         uvicorn_logger.propagate = True
+
+
+def apply_logging(level: str, fmt: str) -> None:
+    root = logging.getLogger()
+    root.setLevel(level)
+    formatter = JSONFormatter() if fmt == "json" else TextFormatter()
+    for handler in root.handlers:
+        handler.setFormatter(formatter)

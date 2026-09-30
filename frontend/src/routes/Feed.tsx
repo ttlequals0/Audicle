@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { keepPreviousData, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, apiList, Episode, SettingsPayload } from "../lib/api";
-import { fileExt, formatBytes } from "../lib/format";
+import { fileExt, formatBytes, formatDateTime, formatEpisodeDuration } from "../lib/format";
 import ActionMenu from "../components/ActionMenu";
 import AudioPlayer from "../components/AudioPlayer";
 
@@ -11,6 +11,7 @@ const PER_PAGE = 25;
 
 export default function Feed() {
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   // qInput is what the box shows; q is the debounced value the server sees.
@@ -99,9 +100,14 @@ export default function Feed() {
   });
 
   const copy = async () => {
-    await navigator.clipboard.writeText(feedUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(feedUrl);
+      setCopyError(false);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopyError(true);
+    }
   };
 
   const episodes = episodesQ.data?.items ?? [];
@@ -135,9 +141,10 @@ export default function Feed() {
       >
         {copied ? "✓ Copied" : "⧉ Copy feed URL"}
       </button>
+      {copyError && <p className="text-danger text-sm mb-2" role="alert">Could not copy the feed URL. Copy it from Settings.</p>}
       {/* URL is redundant with the copy button on mobile (and gets cut off), so
           hide it there; show it on wider screens where there's room. */}
-      <p className="mono-xs text-mute truncate mb-5 hidden sm:block" title={feedUrl}>
+      <p className="mono-xs text-mute truncate mb-5 hidden sm:block" title={feedUrl} role={settingsQ.isError ? "alert" : undefined}>
         {feedUrl || (settingsQ.isError ? "feed URL unavailable" : "loading...")}
       </p>
 
@@ -166,9 +173,17 @@ export default function Feed() {
         )}
       </div>
 
-      {actionMsg && <p className="mono-xs text-accent mb-3">{actionMsg}</p>}
-      {episodesQ.isLoading && <p className="text-mute text-sm">loading...</p>}
-      {episodes.length === 0 && !episodesQ.isLoading && (
+      {actionMsg && <p className="mono-xs text-accent mb-3" role="status" aria-live="polite">{actionMsg}</p>}
+      {episodesQ.isLoading && <p className="text-mute text-sm" role="status" aria-live="polite">Loading episodes...</p>}
+      {episodesQ.isError && (
+        <div className="text-danger text-sm mb-3" role="alert">
+          <p>Episodes could not be loaded.</p>
+          <button className="btn-ghost mt-2" onClick={() => episodesQ.refetch()}>
+            Retry
+          </button>
+        </div>
+      )}
+      {episodes.length === 0 && !episodesQ.isLoading && !episodesQ.isError && (
         <p className="text-mute text-sm">
           {q ? `nothing matches "${q}".` : "no episodes yet."}
         </p>
@@ -176,7 +191,11 @@ export default function Feed() {
 
       <div className="space-y-3">
         {episodes.map((ep) => (
-          <article key={ep.id} className="card p-4">
+          <article
+            key={ep.id}
+            className="card p-4"
+            aria-label={`Episode ${ep.title ?? ep.source_filename ?? sourceDomain(ep.original_url)}`}
+          >
             <div className="flex gap-3">
               <EpisodeArtwork ep={ep} />
               <div className="flex-1 min-w-0">
@@ -212,7 +231,9 @@ export default function Feed() {
                   )}
                 </div>
                 <div className="mono-xs text-mute mt-0.5">
-                  {ep.pub_date} &middot; {formatDuration(ep.duration_secs)}
+                  <time dateTime={ep.pub_date}>{formatDateTime(ep.pub_date)}</time>
+                  {" · "}
+                  {formatEpisodeDuration(ep.duration_secs)}
                   {ep.audio_size_bytes ? ` · ${formatBytes(ep.audio_size_bytes)}` : ""}
                   {ep.voice_label ? (
                     <>
@@ -224,11 +245,16 @@ export default function Feed() {
               </div>
             </div>
             <div className="mt-3 pt-3 border-t border-line">
-              <AudioPlayer src={`/media/${ep.id}.mp3`} />
+              <AudioPlayer
+                src={`/media/${ep.id}.mp3`}
+                context={ep.title ?? ep.source_filename ?? sourceDomain(ep.original_url)}
+                persistenceKey={`${ep.id}:${ep.updated_at}`}
+              />
             </div>
             <div className="flex flex-wrap gap-2 mt-3">
               <ActionMenu
                 label="View"
+                context={ep.title ?? ep.source_filename ?? sourceDomain(ep.original_url)}
                 actions={[
                   {
                     label: "Transcript",
@@ -256,6 +282,7 @@ export default function Feed() {
                 ]}
               />
               <ActionMenu
+                context={ep.title ?? ep.source_filename ?? sourceDomain(ep.original_url)}
                 pending={reprocessM.isPending || chaptersM.isPending}
                 actions={[
                   {
@@ -278,6 +305,7 @@ export default function Feed() {
               <button
                 className="btn-ghost btn-danger ml-auto"
                 disabled={deleteM.isPending}
+                aria-label={`Delete ${ep.title ?? ep.source_filename ?? ep.original_url}`}
                 onClick={() => {
                   if (confirm(`Delete episode ${ep.id}?`)) deleteM.mutate(ep.id);
                 }}
@@ -335,14 +363,4 @@ function sourceDomain(url: string): string {
   } catch {
     return url;
   }
-}
-
-function formatDuration(secs: number | null): string {
-  if (!secs) return "-";
-  const h = Math.floor(secs / 3600);
-  const m = Math.floor((secs % 3600) / 60);
-  const s = secs % 60;
-  if (h > 0)
-    return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-  return `${m}:${s.toString().padStart(2, "0")}`;
 }

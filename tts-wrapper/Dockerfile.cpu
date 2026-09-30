@@ -52,6 +52,11 @@ RUN pip install --no-cache-dir torch==2.13.0 torchaudio==2.11.0 \
     && apt-get purge -y build-essential git \
     && apt-get autoremove -y --purge
 
+RUN useradd --create-home --uid 1000 audicle \
+    && mkdir -p /data /tmp/.cache/torch/kernels /tmp/numba_cache /tmp/mpl \
+    && chown -R audicle:audicle /data /tmp/.cache /tmp/numba_cache /tmp/mpl
+USER audicle
+
 EXPOSE 8000
 
 # Single-source version: the build passes the repo-root VERSION value here

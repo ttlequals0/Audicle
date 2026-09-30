@@ -330,11 +330,20 @@ def delete_job(conn: sqlite3.Connection, job_id: str) -> bool:
     deleted. A queued or processing job is never deleted (cancel it first);
     the episode a done job produced is untouched."""
 
-    cur = conn.execute(
-        "DELETE FROM jobs WHERE id = ? AND status IN (?, ?, ?)",
-        (job_id, *_TERMINAL_STATUSES),
-    )
-    return cur.rowcount > 0
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        if row is None or row["status"] not in _TERMINAL_STATUSES:
+            conn.execute("ROLLBACK")
+            return False
+        conn.execute("UPDATE episodes SET job_id = NULL WHERE job_id = ?", (job_id,))
+        cur = conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+        conn.execute("COMMIT")
+        return cur.rowcount > 0
+    except Exception:
+        with suppress(sqlite3.OperationalError):
+            conn.execute("ROLLBACK")
+        raise
 
 
 def clear_jobs(conn: sqlite3.Connection, scope: str) -> int:
@@ -344,8 +353,20 @@ def clear_jobs(conn: sqlite3.Connection, scope: str) -> int:
 
     statuses = ("failed", "cancelled") if scope == "failed" else _TERMINAL_STATUSES
     marks = ", ".join("?" for _ in statuses)
-    cur = conn.execute(f"DELETE FROM jobs WHERE status IN ({marks})", statuses)
-    return cur.rowcount
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            "UPDATE episodes SET job_id = NULL WHERE job_id IN "
+            f"(SELECT id FROM jobs WHERE status IN ({marks}))",
+            statuses,
+        )
+        cur = conn.execute(f"DELETE FROM jobs WHERE status IN ({marks})", statuses)
+        conn.execute("COMMIT")
+        return cur.rowcount
+    except Exception:
+        with suppress(sqlite3.OperationalError):
+            conn.execute("ROLLBACK")
+        raise
 
 
 def job_as_dict(job: Job) -> dict[str, Any]:

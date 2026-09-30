@@ -42,6 +42,14 @@ def apply_level(level: str) -> None:
         handler.setLevel(resolved)
 
 
+def apply_format(fmt: str) -> None:
+    if fmt not in {"json", "text"}:
+        raise ValueError(f"invalid log format: {fmt}")
+    formatter = JSONFormatter() if fmt == "json" else TextFormatter()
+    for handler in logging.getLogger().handlers:
+        handler.setFormatter(formatter)
+
+
 # Anything stuffed into the LogRecord by stdlib logging itself or by our
 # ContextFilter that we don't want surfaced as a "user context" field. Anything
 # else passed via extra={...} flows through to the output untouched.

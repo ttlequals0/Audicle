@@ -1,7 +1,8 @@
 """Wrapper-side configuration.
 
-Structural container settings only (device, paths, whisper capability), loaded
-from environment variables. Generation tuning (temperature, repetition_penalty,
+Structural container settings (device, paths), plus initial Whisper settings,
+loaded from environment variables and overridable through the private runtime
+config endpoint. Generation tuning (temperature, repetition_penalty,
 top_p, top_k, seed, max_chars) is NOT configured here: the backend sends those
 knobs on every ``/generate`` request (``engine.GenerationParams``), sourced
 from its operator-tunable runtime settings.
@@ -51,6 +52,9 @@ class Config:
     data_dir: str  # writes WAVs under {data_dir}/media
 
     sample_rate: int  # provisional rate; replaced with the model's own sr at load
+    request_timeout_seconds: float
+    log_level: str
+    log_format: str
 
     # Post-TTS ASR verification (off by default). When enabled, /generate
     # transcribes the produced audio with faster-whisper when the request asks
@@ -81,6 +85,22 @@ class Config:
     memory_hard_limit_mb: int
     idle_unload_seconds: int
 
+    def __post_init__(self) -> None:
+        if self.request_timeout_seconds <= 0:
+            raise ValueError("TTS_REQUEST_TIMEOUT_SECONDS must be positive")
+        if self.memory_soft_limit_mb < 0 or self.memory_hard_limit_mb < 0:
+            raise ValueError("TTS memory limits must be nonnegative")
+        if (
+            self.memory_soft_limit_mb
+            and self.memory_hard_limit_mb
+            and self.memory_soft_limit_mb > self.memory_hard_limit_mb
+        ):
+            raise ValueError("TTS_MEMORY_SOFT_LIMIT_MB must not exceed TTS_MEMORY_HARD_LIMIT_MB")
+        if self.log_level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+            raise ValueError("LOG_LEVEL is invalid")
+        if self.log_format not in {"json", "text"}:
+            raise ValueError("LOG_FORMAT must be json or text")
+
     @classmethod
     def from_env(cls) -> "Config":
         # ASR device defaults to the TTS device; compute_type then follows it
@@ -92,6 +112,9 @@ class Config:
             reference_path=os.environ.get("TTS_REFERENCE_PATH", "/app/reference/voice.wav"),
             data_dir=os.environ.get("DATA_DIR", "/data"),
             sample_rate=_int_env("TTS_SAMPLE_RATE", 24000),
+            request_timeout_seconds=float(os.environ.get("TTS_REQUEST_TIMEOUT_SECONDS", "120")),
+            log_level=_str_env("LOG_LEVEL", "INFO").upper(),
+            log_format=_str_env("LOG_FORMAT", "json").lower(),
             whisper_enabled=_bool_env("WHISPER_ENABLED", False),
             whisper_model=_str_env("WHISPER_MODEL", "base"),
             whisper_device=whisper_device,

@@ -20,6 +20,8 @@ from urllib.parse import urlsplit
 import httpx
 
 from app.config import Settings
+from app.core import database
+from app.services import sidecar_settings
 from app.services.extraction_types import ExtractionResult
 from app.services.html_markdown import html_to_markdown
 
@@ -48,10 +50,18 @@ async def fetch(
     # connect stays short so an unreachable sidecar fails fast.
     timeout = httpx.Timeout(settings.RENDER_TIMEOUT_SECONDS, connect=10.0)
     # The sidecar caps its retries to this, so it stops before the read timeout does.
-    budget = settings.RENDER_TIMEOUT_SECONDS - _BUDGET_MARGIN_SECONDS
-    payload: dict[str, Any] = {"url": url, "expand": True}
-    if budget > 0:
-        payload["budget_seconds"] = budget
+    budget = settings.RENDER_TIMEOUT_SECONDS - min(
+        _BUDGET_MARGIN_SECONDS, settings.RENDER_TIMEOUT_SECONDS * 0.2
+    )
+    payload: dict[str, Any] = {"url": url, "expand": True, "budget_seconds": budget}
+    with database.connection(settings.DATA_DIR) as conn:
+        payload.update(
+            {
+                key: value
+                for key, value in sidecar_settings.get_saved(conn, "render").items()
+                if key.startswith("RENDER_")
+            }
+        )
     if email:
         payload["email"] = email
     if cookies:
@@ -59,7 +69,8 @@ async def fetch(
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(endpoint, json=payload)
-    except httpx.HTTPError as exc:
+            response.raise_for_status()
+    except (httpx.HTTPError, httpx.InvalidURL) as exc:
         logger.warning(
             "Render sidecar request failed",
             extra={"event": "render_unreachable", "error": str(exc)},

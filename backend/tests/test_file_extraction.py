@@ -7,8 +7,9 @@ from pathlib import Path
 import docx
 import pytest
 from app.config import get_settings
-from app.services import file_extraction, jobs
+from app.services import file_extraction, jobs, ocr
 from app.services.extraction_types import ExtractionPermanentError, ExtractionTooShortError
+from PIL import Image, ImageDraw
 
 _LONG = "Lorem ipsum dolor sit amet consectetur adipiscing elit. " * 20  # ~1100 chars
 
@@ -48,6 +49,32 @@ def _make_docx(*, title: str | None, author: str | None, body: str) -> bytes:
         document.core_properties.author = author
     for para in body.split("\n\n"):
         document.add_paragraph(para)
+    buf = io.BytesIO()
+    document.save(buf)
+    return buf.getvalue()
+
+
+def _make_docx_with_table() -> bytes:
+    document = docx.Document()
+    document.add_paragraph("Before table. " + _LONG)
+    table = document.add_table(rows=1, cols=2)
+    table.cell(0, 0).text = "Table first cell. " + _LONG
+    table.cell(0, 1).text = "Table second cell. " + _LONG
+    document.add_paragraph("After table. " + _LONG)
+    buf = io.BytesIO()
+    document.save(buf)
+    return buf.getvalue()
+
+
+def _make_docx_with_merged_nested_table() -> bytes:
+    document = docx.Document()
+    document.add_paragraph("Before merged table. " + _LONG)
+    table = document.add_table(rows=1, cols=2)
+    merged = table.cell(0, 0).merge(table.cell(0, 1))
+    merged.text = "Merged content. " + _LONG
+    nested = merged.add_table(rows=1, cols=1)
+    nested.cell(0, 0).text = "Nested content. " + _LONG
+    document.add_paragraph("After merged table. " + _LONG)
     buf = io.BytesIO()
     document.save(buf)
     return buf.getvalue()
@@ -125,6 +152,78 @@ async def test_extract_docx_uses_core_property_title_and_author(env: Path) -> No
     assert "Lorem ipsum" in result.markdown
 
 
+async def test_extract_docx_includes_tables_in_document_order(env: Path) -> None:
+    result = await _run(env, "report.docx", _make_docx_with_table())
+    assert result.markdown.index("Before table") < result.markdown.index("Table first cell")
+    assert result.markdown.index("Table second cell") < result.markdown.index("After table")
+
+
+async def test_extract_docx_deduplicates_merged_cells_and_keeps_nested_tables(env: Path) -> None:
+    result = await _run(env, "report.docx", _make_docx_with_merged_nested_table())
+    assert result.markdown.count("Merged content") == 1
+    assert result.markdown.index("Merged content") < result.markdown.index("Nested content")
+    assert result.markdown.index("Nested content") < result.markdown.index("After merged table")
+
+
+def test_extract_mixed_pdf_ocr_recovers_sparse_page_in_order(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    native = "Native text from page one. " * 40
+    monkeypatch.setattr(file_extraction, "_parse_pdf", lambda _data: ([native, ""], {1}, {}))
+    seen: dict[str, list[int]] = {}
+
+    def _fake_ocr(_data, _settings, _beat, page_indices):
+        seen["indices"] = page_indices
+        return {1: "Scanned text from page two."}
+
+    monkeypatch.setattr(ocr, "ocr_pdf_pages", _fake_ocr)
+    markdown, _ = file_extraction._parse(b"pdf", ".pdf", get_settings(), lambda: None)
+    assert seen["indices"] == [1]
+    assert markdown.index("Native text") < markdown.index("Scanned text")
+
+
+def test_mixed_pdf_ocr_failure_fails_extraction_instead_of_publishing_partial(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    native = "Native page text. " * 40
+    monkeypatch.setattr(file_extraction, "_parse_pdf", lambda _data: ([native, ""], {1}, {}))
+
+    def _fail(*_args):
+        raise ocr.OcrLowConfidenceError("OCR found no readable text on PDF page 2")
+
+    monkeypatch.setattr(ocr, "ocr_pdf_pages", _fail)
+    with pytest.raises(ExtractionPermanentError, match="Could not read scanned PDF pages"):
+        file_extraction._parse(b"pdf", ".pdf", get_settings(), lambda: None)
+
+
+def test_blank_pdf_page_is_not_sent_to_ocr(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(file_extraction, "_parse_pdf", lambda _data: ([""], set(), {}))
+
+    def _fail(*_args):
+        raise AssertionError("a blank page must not trigger OCR")
+
+    monkeypatch.setattr(ocr, "ocr_pdf_pages", _fail)
+    assert file_extraction._parse(b"pdf", ".pdf", get_settings(), lambda: None)[0] == ""
+
+
+def test_pdf_image_detection_distinguishes_blank_pages_and_nested_scans() -> None:
+    blank = {"/Resources": {"/XObject": {}}}
+    scan = {"/Resources": {"/XObject": {"/image": {"/Subtype": "/Image"}}}}
+    nested_scan = {
+        "/Resources": {
+            "/XObject": {
+                "/form": {
+                    "/Subtype": "/Form",
+                    "/Resources": {"/XObject": {"/image": {"/Subtype": "/Image"}}},
+                }
+            }
+        }
+    }
+    assert not file_extraction._page_has_image(blank)
+    assert file_extraction._page_has_image(scan)
+    assert file_extraction._page_has_image(nested_scan)
+
+
 async def test_extract_html_pulls_main_article(env: Path) -> None:
     html = (
         "<html><head><title>Page Title</title></head><body>"
@@ -166,10 +265,6 @@ async def test_extract_missing_file_raises_permanent(env: Path) -> None:
 
 
 def _text_png(lines: list[str], size=(1000, 400)) -> bytes:
-    import io
-
-    from PIL import Image, ImageDraw
-
     img = Image.new("RGB", size, "white")
     draw = ImageDraw.Draw(img)
     for i, line in enumerate(lines):
@@ -191,9 +286,7 @@ async def test_extract_png_upload_runs_ocr(env: Path) -> None:
     assert result.metadata["title"] == "scan"
 
 
-async def test_extract_image_rejected_when_ocr_disabled(
-    env: Path, monkeypatch
-) -> None:
+async def test_extract_image_rejected_when_ocr_disabled(env: Path, monkeypatch) -> None:
     monkeypatch.setenv("OCR_ENABLED", "false")
     get_settings.cache_clear()
     try:
@@ -204,19 +297,21 @@ async def test_extract_image_rejected_when_ocr_disabled(
 
 
 async def test_extract_scanned_pdf_falls_back_to_ocr(env: Path, monkeypatch) -> None:
-    """A PDF whose pypdf text is under the floor goes through OCR."""
-
-    from app.services import ocr
+    """A scanned page with little native text goes through OCR."""
 
     called = {}
 
-    def _fake_ocr_pdf(data, settings, beat):
+    def _fake_ocr_pdf_pages(data, settings, beat, page_indices):
         called["n"] = True
-        return "Recovered by OCR. " * 40
+        called["pages"] = page_indices
+        beat()
+        return {0: "Recovered by OCR. " * 40}
 
-    monkeypatch.setattr(ocr, "ocr_pdf", _fake_ocr_pdf)
+    monkeypatch.setattr(file_extraction, "_parse_pdf", lambda _data: (["tiny"], {0}, {}))
+    monkeypatch.setattr(ocr, "ocr_pdf_pages", _fake_ocr_pdf_pages)
     result = await _run(env, "scan.pdf", _make_pdf("tiny"))
     assert called.get("n")
+    assert called["pages"] == [0]
     assert "Recovered by OCR" in result.markdown
 
 
@@ -224,40 +319,131 @@ async def test_ocr_beat_is_called_off_the_event_loop(env: Path, monkeypatch) -> 
     """Pins the precondition behind the watchdog's thread-safety: the parse runs
     in a worker thread, so the beat OCR fires per page has no running loop."""
 
-    from app.services import ocr
-
     seen: dict[str, bool] = {}
 
-    def _fake_ocr_pdf(data, settings, beat):
+    def _fake_ocr_pdf_pages(data, settings, beat, page_indices):
         try:
             asyncio.get_running_loop()
         except RuntimeError:
             seen["off_loop"] = True
         beat()
-        return "Recovered by OCR. " * 40
+        return {0: "Recovered by OCR. " * 40}
 
-    monkeypatch.setattr(ocr, "ocr_pdf", _fake_ocr_pdf)
+    monkeypatch.setattr(file_extraction, "_parse_pdf", lambda _data: (["tiny"], {0}, {}))
+    monkeypatch.setattr(ocr, "ocr_pdf_pages", _fake_ocr_pdf_pages)
     await _run(env, "scan.pdf", _make_pdf("tiny"))
     assert seen.get("off_loop"), "OCR ran on the loop; the per-page beat would be loop-bound"
 
 
 async def test_extract_text_pdf_does_not_invoke_ocr(env: Path, monkeypatch) -> None:
-    from app.services import ocr
-
     def _boom(*_a, **_k):
         raise AssertionError("OCR must not run for a text PDF")
 
-    monkeypatch.setattr(ocr, "ocr_pdf", _boom)
+    monkeypatch.setattr(ocr, "ocr_pdf_pages", _boom)
     result = await _run(env, "whitepaper.pdf", _make_pdf(_LONG))
     assert "Lorem ipsum" in result.markdown
 
 
 async def test_ocr_low_confidence_fails_with_clear_error(env: Path, monkeypatch) -> None:
-    from app.services import ocr
-
     def _low(_data, _settings, _beat):
         raise ocr.OcrLowConfidenceError("OCR confidence 0.21 below floor 0.50")
 
     monkeypatch.setattr(ocr, "ocr_image", _low)
     with pytest.raises(ExtractionPermanentError, match="confidence"):
         await _run(env, "noise.png", b"not really a png")
+
+
+def test_ocr_page_cap_counts_selected_pages_and_accepts_high_page_numbers(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OCR_MAX_PAGES", "2")
+    get_settings.cache_clear()
+    rendered: list[int] = []
+
+    class _Page:
+        def __init__(self, number: int) -> None:
+            self.number = number
+
+        def render(self, scale: float):
+            rendered.append(self.number)
+            return self
+
+        def to_pil(self):
+            return Image.new("RGB", (2, 2), "white")
+
+    class _Document:
+        def __init__(self, _data: bytes) -> None:
+            pass
+
+        def __len__(self) -> int:
+            return 40
+
+        def __getitem__(self, index: int):
+            return _Page(index)
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(ocr.pdfium, "PdfDocument", _Document)
+    monkeypatch.setattr(ocr, "_run_page", lambda _image: ("recognized", [0.99]))
+    pages = ocr.ocr_pdf_pages(b"pdf", get_settings(), lambda: None, [20, 39])
+    assert set(pages) == {20, 39}
+    assert rendered == [20, 39]
+
+
+def test_full_pdf_ocr_fails_instead_of_truncating_over_cap(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OCR_MAX_PAGES", "2")
+    get_settings.cache_clear()
+
+    class _Document:
+        def __init__(self, _data: bytes) -> None:
+            pass
+
+        def __len__(self) -> int:
+            return 3
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(ocr.pdfium, "PdfDocument", _Document)
+    with pytest.raises(ocr.OcrError, match="refusing partial OCR"):
+        ocr.ocr_pdf(b"pdf", get_settings(), lambda: None)
+
+
+def test_ocr_fails_when_selected_scanned_page_has_no_readable_text(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _Page:
+        def render(self, scale: float):
+            return self
+
+        def to_pil(self):
+            return Image.new("RGB", (2, 2), "white")
+
+    class _Document:
+        def __init__(self, _data: bytes) -> None:
+            pass
+
+        def __len__(self) -> int:
+            return 40
+
+        def __getitem__(self, _index: int):
+            return _Page()
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(ocr.pdfium, "PdfDocument", _Document)
+    monkeypatch.setattr(ocr, "_run_page", lambda _image: ("", []))
+    with pytest.raises(ocr.OcrLowConfidenceError, match="PDF page 40"):
+        ocr.ocr_pdf_pages(b"pdf", get_settings(), lambda: None, [39])
+
+
+def test_mixed_pdf_with_ocr_disabled_fails_instead_of_omitting_scans(env, monkeypatch):
+    monkeypatch.setenv("OCR_ENABLED", "false")
+    get_settings.cache_clear()
+    monkeypatch.setattr(file_extraction, "_parse_pdf", lambda data: ([_LONG, ""], {1}, {}))
+    with pytest.raises(ExtractionPermanentError, match="Enable OCR_ENABLED"):
+        file_extraction._parse(b"pdf", ".pdf", get_settings(), lambda: None)

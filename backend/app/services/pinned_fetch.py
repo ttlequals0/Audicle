@@ -128,7 +128,7 @@ async def get_text(
             async for chunk in response.aiter_bytes():
                 buffer.extend(chunk)
                 if len(buffer) > max_bytes:
-                    break  # stop reading once the cap is reached
+                    raise ExtractionPermanentError("The page exceeds the size cap.")
             return bytes(buffer).decode(response.encoding or "utf-8", errors="replace")
     except ssrf.BlockedHostError as exc:
         # The redirect-pin hook re-resolves each hop and raises here when a redirect points
@@ -138,6 +138,8 @@ async def get_text(
             raise ExtractionPermanentError(
                 "A redirect pointed to a non-public address and was blocked."
             ) from exc
-        raise ExtractionTransientError(f"Could not resolve a redirect target: {exc.reason}") from exc
+        raise ExtractionTransientError(
+            f"Could not resolve a redirect target: {exc.reason}"
+        ) from exc
     except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
         raise ExtractionTransientError(f"Could not reach the host: {exc}") from exc

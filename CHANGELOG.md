@@ -6,6 +6,45 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.59.0] - 2026-09-30
+
+### Security
+
+- Update the TTS lockfile to patched setuptools and pin Perth to an upstream revision that uses `importlib.resources`. Install only Perth's runtime dependencies, excluding unused training and benchmark packages. Chatterbox's watermark support remains enabled.
+- Exclude environment variants and private-key files from Git.
+- Verify registry dependency hashes in renderer and TTS builds. App builds reject stale Python and frontend lockfiles.
+- Run both TTS images as an unprivileged user with writable model and compiler caches.
+- Restrict uploaded audio decoding to local file and pipe protocols.
+- Remove unused, vulnerable pip distributions from the TTS and renderer images.
+- Remove obsolete dependency and image CVE exceptions and document two unpatched Debian findings in unused code paths. The scan gate now clarifies reviewed suppressions.
+
+### Fixed
+
+- Clearing completed job history preserves published episodes instead of failing on their database references.
+- Disabling extraction fallbacks also disables automatic reader, archive, solver, and renderer requests.
+- Reject oversized article responses instead of treating a truncated download as a complete article.
+- Preserve article prose that quotes or discusses subscription prompts. Only standalone subscription prompts truncate extracted text.
+- Read DOCX tables, including nested and merged cells, in document order. Mixed PDFs retain scanned pages through OCR and fail clearly when required OCR is disabled, unreadable, or exceeds its page limit.
+- Coordinate episode deletion, retention, reprocessing, and upload requeueing so cleanup cannot remove a newly queued upload's original file. Retention holds one upload lock at a time.
+- Fall back to default artwork for malformed source image URLs, including invalid ports.
+- Apply a one-attempt login lockout correctly when that threshold is configured.
+- Correct the backup instructions to include the mounted reference voices and preserve the restore directory layout.
+- Repair broken documentation screenshot links and include the new sidecar endpoints in the API schema.
+- Update the stale Camoufox lock and give its browser installer ownership of the cache directory.
+- Keep page headings visible below the navigation bar when changing pages at enlarged zoom.
+
+### Changed
+
+- Reduce `.env.example` to the required image version and optional deployment settings. Existing environment values remain defaults for runtime settings.
+- Document the configuration precedence, explicit empty values, and `null` resets through the settings API.
+- Extend the weekly Chatterbox monitor to check GitHub releases and source changes as well as PyPI. Compare package releases against the installed lockfile, ignore prereleases, and deduplicate issue titles exactly.
+
+### Added
+
+- Runtime controls for renderer timing and retries, TTS memory and idle unloading, Whisper verification models, and sidecar logging. Saved settings are reapplied when a sidecar becomes available.
+- Browser-local playback position and speed, 15-second skip controls, keyboard action menus, and clearer screen-reader labels and error feedback.
+- Frontend interaction tests in the pull-request checks.
+
 ## [0.58.10] - 2026-09-26
 
 ### Changed

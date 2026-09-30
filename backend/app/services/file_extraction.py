@@ -25,9 +25,18 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote
 
+import docx
+from docx.opc.exceptions import PackageNotFoundError
+from docx.oxml.table import CT_Tbl
+from docx.oxml.text.paragraph import CT_P
+from docx.table import Table
+from docx.text.paragraph import Paragraph
+from pypdf import PdfReader
+from pypdf.errors import PyPdfError
+
 from app.config import Settings
 from app.core.paths import media_dir
-from app.services import html_markdown
+from app.services import html_markdown, ocr
 from app.services.extraction_types import (
     ExtractionPermanentError,
     ExtractionResult,
@@ -140,9 +149,14 @@ async def extract_file(
 
     floor = settings.MIN_EXTRACTION_CHARS
     if len(markdown) < floor:
+        reason = (
+            "scanned pages require OCR_ENABLED; blank pages contain no readable text"
+            if ext == ".pdf"
+            else "the document has no extractable text"
+        )
         raise ExtractionTooShortError(
             f"uploaded {ext or 'file'} yielded only {len(markdown)} characters of text "
-            f"(minimum {floor}); a scanned or image-only document has no extractable text"
+            f"(minimum {floor}); {reason}"
         )
 
     logger.info(
@@ -163,29 +177,45 @@ def _parse(
     """Dispatch raw bytes to the per-format parser. Returns ``(markdown, metadata)``."""
 
     if ext == ".pdf":
-        markdown, metadata = _parse_pdf(data)
-        # OCR is a fallback, never a default: it engages only when the pypdf
-        # text falls under the same floor that would fail the job anyway, so
-        # text PDFs cost nothing extra.
-        if len(markdown.strip()) < settings.MIN_EXTRACTION_CHARS and settings.OCR_ENABLED:
-            from app.services import ocr  # lazy: only loads when a parse needs it
-
-            logger.info(
-                "PDF text under extraction floor; running OCR fallback",
-                extra={"event": "ocr_fallback_engaged", "pypdf_chars": len(markdown)},
+        pages, image_pages, metadata = _parse_pdf(data)
+        markdown = "\n\n".join(page for page in pages if page)
+        sparse_image_pages = [
+            index
+            for index in image_pages
+            if len(pages[index].strip()) < settings.MIN_EXTRACTION_CHARS
+        ]
+        if sparse_image_pages and not settings.OCR_ENABLED:
+            raise ExtractionPermanentError(
+                "Scanned PDF pages require OCR. Enable OCR_ENABLED to read the complete document."
             )
+        if settings.OCR_ENABLED:
+            if sparse_image_pages:
+                logger.info(
+                    "PDF contains sparse image pages; running OCR",
+                    extra={
+                        "event": "ocr_fallback_engaged",
+                        "pypdf_chars": len(markdown),
+                        "pages": len(sparse_image_pages),
+                    },
+                )
             try:
-                markdown = ocr.ocr_pdf(data, settings, beat)
+                recognized = (
+                    ocr.ocr_pdf_pages(data, settings, beat, sparse_image_pages)
+                    if sparse_image_pages
+                    else {}
+                )
             except ocr.OcrError as exc:
-                raise ExtractionPermanentError(str(exc)) from exc
+                raise ExtractionPermanentError(f"Could not read scanned PDF pages: {exc}") from exc
+            for index, text in recognized.items():
+                if text.strip():
+                    pages[index] = "\n\n".join(part for part in (pages[index], text) if part)
+            markdown = "\n\n".join(page for page in pages if page)
         return markdown, metadata
     if ext in IMAGE_EXTENSIONS:
         if not settings.OCR_ENABLED:
             raise ExtractionPermanentError(
                 "image uploads require OCR, which is disabled (OCR_ENABLED)"
             )
-        from app.services import ocr  # lazy: only loads when a parse needs it
-
         try:
             return ocr.ocr_image(data, settings, beat), {}
         except ocr.OcrError as exc:
@@ -198,16 +228,15 @@ def _parse(
     return _parse_text(data)
 
 
-def _parse_pdf(data: bytes) -> tuple[str, dict[str, Any]]:
-    from pypdf import PdfReader
-    from pypdf.errors import PyPdfError
-
+def _parse_pdf(data: bytes) -> tuple[list[str], set[int], dict[str, Any]]:
     try:
         reader = PdfReader(io.BytesIO(data))
-        pages = [page.extract_text() or "" for page in reader.pages]
+        source_pages = list(reader.pages)
+        pages = [page.extract_text() or "" for page in source_pages]
+        image_pages = {index for index, page in enumerate(source_pages) if _page_has_image(page)}
     except (PyPdfError, ValueError, OSError) as exc:
         raise ExtractionPermanentError(f"could not read PDF: {exc}") from exc
-    markdown = "\n\n".join(p.strip() for p in pages if p.strip())
+    pages = [page.strip() for page in pages]
     metadata: dict[str, Any] = {}
     info = reader.metadata
     if info is not None:
@@ -215,18 +244,65 @@ def _parse_pdf(data: bytes) -> tuple[str, dict[str, Any]]:
             metadata["title"] = str(info.title)
         if info.author:
             metadata["author"] = str(info.author)
-    return markdown, metadata
+    return pages, image_pages, metadata
+
+
+def _page_has_image(page: Any) -> bool:
+    """Whether a PDF page contains an image XObject, including nested forms."""
+
+    def visit(resources: Any, seen: set[int]) -> bool:
+        if resources is None:
+            return False
+        if hasattr(resources, "get_object"):
+            resources = resources.get_object()
+        xobjects = resources.get("/XObject")
+        if xobjects is None:
+            return False
+        for reference in xobjects.values():
+            item = reference.get_object() if hasattr(reference, "get_object") else reference
+            if id(item) in seen:
+                continue
+            seen.add(id(item))
+            subtype = item.get("/Subtype")
+            if subtype == "/Image":
+                return True
+            if subtype == "/Form" and visit(item.get("/Resources"), seen):
+                return True
+        return False
+
+    return visit(page.get("/Resources"), set())
 
 
 def _parse_docx(data: bytes) -> tuple[str, dict[str, Any]]:
-    import docx
-    from docx.opc.exceptions import PackageNotFoundError
-
     try:
         document = docx.Document(io.BytesIO(data))
     except (PackageNotFoundError, ValueError, KeyError, OSError) as exc:
         raise ExtractionPermanentError(f"could not read DOCX: {exc}") from exc
-    markdown = "\n\n".join(p.text.strip() for p in document.paragraphs if p.text.strip())
+
+    def blocks(container: Any) -> list[str]:
+        output: list[str] = []
+        for child in container.iterchildren():
+            if isinstance(child, CT_P):
+                text = Paragraph(child, document).text.strip()
+                if text:
+                    output.append(text)
+            elif isinstance(child, CT_Tbl):
+                table = Table(child, document)
+                seen_cells: set[Any] = set()
+                for row in table.rows:
+                    cells: list[str] = []
+                    for cell in row.cells:
+                        if cell._tc in seen_cells:
+                            continue
+                        seen_cells.add(cell._tc)
+                        cells.extend(blocks(cell._tc))
+                    line = " | ".join(cells)
+                    if line:
+                        output.append(line)
+        return output
+
+    blocks_ = blocks(document.element.body)
+    markdown = "\n\n".join(blocks_)
     metadata: dict[str, Any] = {}
     props = document.core_properties
     if props.title:

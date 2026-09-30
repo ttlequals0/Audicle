@@ -240,35 +240,34 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "WHISPER_API_STRICT",
         # Log verbosity is mutable at runtime in Python, so raising a live
         # deployment to DEBUG to watch one job should not need a redeploy.
-        # LOG_FORMAT stays env-only: the formatter is wired once at startup.
         "LOG_LEVEL",
+        # Deployment presentation and feed identity can be corrected from the UI.
+        "BASE_URL",
+        "UI_BASE_URL",
+        "DEFAULT_ARTWORK_URL",
+        # Process settings whose consumers can re-read the persisted overlay.
+        "QUEUE_POLL_INTERVAL_SECONDS",
+        "LOG_FORMAT",
+        "RETENTION_SWEEP_HOUR_UTC",
+        "MIGRATION_BACKUP_RETENTION_DAYS",
+        # Auth controls remain administrator-only (the whole settings API is
+        # behind require_admin); changing them applies to subsequent requests.
+        "LOGIN_RATE_LIMIT",
+        "LOCKOUT_MAX_FAILED_ATTEMPTS",
+        "LOCKOUT_WINDOW_SECONDS",
+        "TRUST_PROXY_HEADERS",
+        "TRUSTED_PROXY_HOPS",
+        "SESSION_COOKIE_SECURE",
+        "SESSION_COOKIE_MAX_AGE_SECONDS",
     }
 )
 
 # Settings deliberately excluded from ALLOWED_KEYS, with the reason, so a future
-# audit does not have to re-derive it. Anything guarding the login path stays out
-# on purpose: reaching the Settings UI must not confer the ability to switch off
-# the defences protecting it. TRUST_PROXY_HEADERS is the sharpest case, since
-# enabling header trust lets a client spoof its IP past the lockout.
+# audit does not have to re-derive it. Only bootstrap/container identity remains.
 #
 #   SESSION_SECRET_KEY            signing key; never readable or writable via API
-#   TRUST_PROXY_HEADERS           IP spoofing past the lockout
-#   TRUSTED_PROXY_HOPS            same
-#   LOCKOUT_MAX_FAILED_ATTEMPTS   brute-force protection
-#   LOCKOUT_WINDOW_SECONDS        same
-#   LOGIN_RATE_LIMIT              same (already live via an env-resolving callable)
-#   SESSION_COOKIE_SECURE         middleware built once at startup
-#   SESSION_COOKIE_MAX_AGE_SECONDS same
-#   BASE_URL / UI_BASE_URL        deployment identity; BASE_URL is baked into
-#                                 published enclosure URLs
-#   DEFAULT_ARTWORK_URL           branding constant
 #   DATA_DIR                      filesystem path resolved at boot
 #   WEB_WORKERS                   process shape
-#   QUEUE_POLL_INTERVAL_SECONDS   worker loop, read once at worker start
-#   RETENTION_SWEEP_HOUR_UTC      scheduler, read once at startup
-#   MIGRATION_BACKUP_RETENTION_DAYS  migration-time only
-#   LOG_FORMAT                    formatter wired at startup
-#   TTS_DEVICE                    describes the wrapper's hardware, not app policy
 
 # Secret-bearing keys: their stored value is never returned by GET (masked to a
 # sentinel) so the Settings UI can show "set" without leaking the credential.
@@ -374,15 +373,20 @@ def overlay(settings: Settings) -> Settings:
     """Return ``settings`` with the ``runtime_settings`` row values applied
     on top of the env defaults.
 
-    Reads the DB once per call. Callers that hit a hot path should cache
-    the result for the duration of the request -- ``api.deps.runtime_settings``
-    does this via ``Depends``. ``Settings`` is a frozen-ish Pydantic model;
-    we use ``model_copy(update=...)`` so the result is a new instance and
-    the cached singleton from ``get_settings()`` is not mutated.
+    Reads the DB once per call. Request middleware stores a request-scoped
+    snapshot and connection so auth and route dependencies reuse both.
+    ``validated_overlay`` creates a new Pydantic model, leaving the cached
+    ``get_settings()`` singleton unchanged.
     """
 
     with database.connection(settings.DATA_DIR) as conn:
-        stored = get_all(conn)
+        return overlay_from_conn(settings, conn)
+
+
+def overlay_from_conn(settings: Settings, conn: sqlite3.Connection) -> Settings:
+    """Resolve overrides using an existing request or worker connection."""
+
+    stored = get_all(conn)
     if not stored:
         return settings
     return validated_overlay(settings, stored)

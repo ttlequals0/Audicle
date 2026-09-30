@@ -12,6 +12,7 @@ exception. The Firecrawl client and its ``/v1/scrape`` retry logic live below in
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -74,8 +75,8 @@ async def extract(
     Cloudflare/bot-challenge page goes through FlareSolverr first, a near-empty scrape
     reaches FlareSolverr after the rule's attempts, then the reader proxy
     (``READER_AUTO_ENABLED``) and a public archive (``ARCHIVE_FALLBACK_ENABLED``) run
-    last. A plain teaser never triggers a browser solve. ``None`` uses the built-ins
-    only.
+    last. The global fallbacks switch gates all of these requests. A plain teaser never
+    triggers a browser solve. ``None`` uses the built-ins only.
 
     Raises:
         ExtractionTransientError: every retry exhausted on a retryable failure.
@@ -196,7 +197,11 @@ async def extract(
             if floor == settings.MIN_EXTRACTION_CHARS
             else _judged_chars(result, rule, settings.MIN_EXTRACTION_CHARS, settings)
         ) < settings.MIN_EXTRACTION_CHARS
-        if solver_configured and not any(a.engine == "flaresolverr" for a in attempts):
+        if (
+            settings.EXTRACTION_FALLBACKS_ENABLED
+            and solver_configured
+            and not any(a.engine == "flaresolverr" for a in attempts)
+        ):
             if flaresolverr.looks_like_challenge(result):
                 attempts.insert(0, Attempt("challenge#flaresolverr", "flaresolverr", url))
             elif near_empty:
@@ -208,7 +213,8 @@ async def extract(
         # would pass the floor on raw length.
         declared_teaser = effective_chars < len(result.markdown)
         if (
-            settings.READER_AUTO_ENABLED
+            settings.EXTRACTION_FALLBACKS_ENABLED
+            and settings.READER_AUTO_ENABLED
             and settings.READER_PROXY_TEMPLATE.strip()
             and not declared_teaser
             and not any(a.engine == "reader" for a in attempts)
@@ -216,23 +222,29 @@ async def extract(
             attempts.append(Attempt("auto#reader", "reader", url))
         # Last resort: a public archive capture (Wayback, then archive.today via the
         # solver). Fires for a teaser as well as a hard block.
-        if settings.ARCHIVE_FALLBACK_ENABLED and not any(a.engine == "archive" for a in attempts):
+        if (
+            settings.EXTRACTION_FALLBACKS_ENABLED
+            and settings.ARCHIVE_FALLBACK_ENABLED
+            and not any(a.engine == "archive" for a in attempts)
+        ):
             attempts.append(Attempt("auto#archive", "archive", url))
         # The render sidecar last, on a real block: its browser clears walls nothing above
         # can (DataDome), and on a registration wall it answers the signup form. It is held
         # to the host's floor like a rule attempt, since a rendered teaser is still a
         # teaser. A render rule already put its own attempt at the front.
-        # Registration is its own opt-in (REGISTRATION_EMAIL), so it does not depend on
-        # the fallbacks switch.
+        # The registration address is sent only when enabled and when a gate was found.
         blocked = near_empty or flaresolverr.looks_like_challenge(result)
         answers_registration = gated and bool(settings.REGISTRATION_EMAIL.strip())
         if (
             settings.RENDER_URL.strip()
             and not any(a.engine == "render" for a in attempts)
-            and ((settings.EXTRACTION_FALLBACKS_ENABLED and blocked) or answers_registration)
+            and settings.EXTRACTION_FALLBACKS_ENABLED
+            and (blocked or answers_registration)
         ):
             attempts.append(
-                Attempt("auto#render", "render", url, cookies=_rule_cookies(rule), is_host_rule=True)
+                Attempt(
+                    "auto#render", "render", url, cookies=_rule_cookies(rule), is_host_rule=True
+                )
             )
 
         if rule is None:
@@ -353,7 +365,10 @@ async def extract(
                 try:
                     if in_process:
                         alt = await direct_fetch.fetch(
-                            attempt.url, settings, detect_teaser=True, headers=attempt.headers or None
+                            attempt.url,
+                            settings,
+                            detect_teaser=True,
+                            headers=attempt.headers or None,
                         )
                     else:
                         alt = await _scrape(
@@ -389,7 +404,10 @@ async def extract(
                     return alt
                 return await _maybe_render_full(alt, url, settings, rule)
             _log_fallback_short(
-                attempt.label, alt_chars, _accept_floor(gated, accept_floor, settings), len(alt.markdown)
+                attempt.label,
+                alt_chars,
+                _accept_floor(gated, accept_floor, settings),
+                len(alt.markdown),
             )
 
     # Only claim "your cookies look expired" when a solver attempt actually carried
@@ -561,16 +579,42 @@ _GATE_MARKERS = (
     "to continue reading",
     "this post is for paid subscribers",
     "become a member to read",
-    "already have an account",
 )
+_GATE_SUFFIXES = {
+    "continue reading this story": r"(?:for free)?",
+    "sign me up for the newsletter": r"",
+    "create your free account": r"(?:to (?:continue|keep) reading)?",
+    "subscribe to continue": r"(?:reading(?: (?:this|the) (?:article|story))?)?",
+    "to continue reading": r"(?:subscribe|sign in|log in|create an account|register|become a member)",
+    "this post is for paid subscribers": r"(?:only)?",
+    "become a member to read": r"(?:(?:this|the) (?:article|story)|more)?",
+}
 
 
 def gate_offset(markdown: str) -> int | None:
-    """Index of the earliest registration-gate marker, or None when ungated."""
+    """Index of a standalone registration prompt, or None when ungated."""
 
-    lowered = markdown.lower()
-    hits = [lowered.find(marker) for marker in _GATE_MARKERS]
-    found = [i for i in hits if i >= 0]
+    starts = [0]
+    starts.extend(match.end() for match in re.finditer(r"\n\s*\n", markdown))
+    found: list[int] = []
+    for start in starts:
+        end_match = re.search(r"\n\s*\n", markdown[start:])
+        end = start + end_match.start() if end_match else len(markdown)
+        block = markdown[start:end].strip()
+        if not block or block.startswith((">", "'", '"', "\u2018", "\u201c")):
+            continue
+        visible = re.sub(r"^[\s#*_`]+|[\s*_`]+$", "", block).strip()
+        if len(visible) > 160:
+            continue
+        normalized = re.sub(r"\s+", " ", visible).lower()
+        for marker in _GATE_MARKERS:
+            if not normalized.startswith(marker):
+                continue
+            tail = normalized[len(marker) :].strip(" .!?:,")
+            if not re.fullmatch(_GATE_SUFFIXES[marker], tail):
+                continue
+            found.append(start)
+
     return min(found) if found else None
 
 
@@ -609,7 +653,11 @@ async def _maybe_render_full(
     shorter, or chrome-padded render leaves ``result`` untouched, so a broken click never
     loses the body."""
 
-    if not settings.RENDER_URL.strip() or (rule is not None and rule.proxy == "none"):
+    if (
+        not settings.EXTRACTION_FALLBACKS_ENABLED
+        or not settings.RENDER_URL.strip()
+        or (rule is not None and rule.proxy == "none")
+    ):
         return result
     if not (_is_render_rule(rule) or looks_truncated(result)):
         return result
@@ -623,10 +671,9 @@ async def _maybe_render_full(
     floor = _floor_for(rule, settings)
     if _judged_chars(alt, rule, floor, settings) < _accept_floor(gated, floor, settings):
         return result
-    if (
-        len(alt.markdown) <= len(result.markdown)
-        or article_prep.prose_chars(alt.markdown) < article_prep.prose_chars(result.markdown)
-    ):
+    if len(alt.markdown) <= len(result.markdown) or article_prep.prose_chars(
+        alt.markdown
+    ) < article_prep.prose_chars(result.markdown):
         return result
     logger.info(
         "Render enriched a truncated article",

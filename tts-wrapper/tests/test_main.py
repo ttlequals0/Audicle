@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 import main
 from engine import Engine, GenerationParams, GPUOutOfMemoryError, InferenceBusyError
@@ -172,7 +173,7 @@ def test_inference_timeout_returns_while_gpu_work_remains_exclusive(
             await asyncio.to_thread(release.wait)
             return await super().synthesize(text, params)
 
-    monkeypatch.setattr(main, "_REQUEST_INFERENCE_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setenv("TTS_REQUEST_TIMEOUT_SECONDS", "0.05")
     monkeypatch.setenv("TTS_IDLE_UNLOAD_SECONDS", "1")
     engine = SlowEngine()
     with _client(engine, tmp_path) as client:
@@ -287,6 +288,176 @@ def test_health_reports_rss_and_restart_not_recommended_under_soft_limit(
         body = client.get("/health").json()
     assert body["rss_mb"] == 10
     assert body["restart_recommended"] is False
+
+
+def test_runtime_config_updates_memory_limits_and_rejects_inconsistent_limits(
+    tmp_path: Path,
+) -> None:
+    engine = FakeEngine()
+    desired = {
+        "TTS_MEMORY_SOFT_LIMIT_MB": 9000,
+        "TTS_MEMORY_HARD_LIMIT_MB": 16000,
+        "TTS_REQUEST_TIMEOUT_SECONDS": 180,
+        "LOG_LEVEL": "DEBUG",
+        "LOG_FORMAT": "text",
+    }
+    with _client(engine, tmp_path) as client:
+        response = client.put(
+            "/runtime-config",
+            json={"values": desired},
+        )
+        assert response.status_code == 200
+        assert response.json()["effective"]["TTS_MEMORY_SOFT_LIMIT_MB"] == 9000
+        assert response.json()["effective"]["TTS_REQUEST_TIMEOUT_SECONDS"] == 180
+        assert response.json()["effective"]["LOG_LEVEL"] == "DEBUG"
+        assert response.json()["effective"]["LOG_FORMAT"] == "text"
+        invalid = client.put(
+            "/runtime-config",
+            json={"values": {**desired, "TTS_MEMORY_HARD_LIMIT_MB": 8000}},
+        )
+        assert invalid.status_code == 400
+        reset = client.put(
+            "/runtime-config",
+            json={"values": {**desired, "TTS_MEMORY_SOFT_LIMIT_MB": None}},
+        )
+        assert reset.json()["values"] == {
+            key: value for key, value in desired.items() if key != "TTS_MEMORY_SOFT_LIMIT_MB"
+        }
+        malformed = client.put("/runtime-config", json={"values": {"WHISPER_DEVICE": []}})
+        cleared = client.put("/runtime-config", json={"values": {}})
+    assert reset.status_code == 200
+    assert reset.json()["effective"]["TTS_MEMORY_SOFT_LIMIT_MB"] == Config.from_env().memory_soft_limit_mb
+    assert cleared.status_code == 200
+    assert cleared.json()["values"] == {}
+    assert cleared.json()["effective"]["LOG_LEVEL"] == Config.from_env().log_level
+    assert malformed.status_code == 400
+
+
+def test_whisper_can_be_enabled_at_runtime_and_loads_on_first_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("WHISPER_ENABLED", "false")
+    created: list[FakeVerifier] = []
+
+    class RuntimeVerifier(FakeVerifier):
+        def __init__(self, model: str, device: str, compute_type: str) -> None:
+            super().__init__(returns="runtime transcript")
+            self.model_name = model
+            self.device = device
+            self.compute_type = compute_type
+            created.append(self)
+
+    monkeypatch.setattr(main, "WhisperVerifier", RuntimeVerifier)
+    engine = FakeEngine()
+    with _client(engine, tmp_path) as client:
+        updated = client.put(
+            "/runtime-config",
+            json={"values": {"WHISPER_ENABLED": True, "WHISPER_MODEL": "tiny"}},
+        )
+        assert updated.status_code == 200
+        generated = client.post(
+            "/generate",
+            json={"text": "hello", "episode_id": "ep-runtime", "chunk_index": 0, "verify": True},
+        )
+    assert generated.status_code == 200
+    assert generated.json()["transcript"] == "runtime transcript"
+    assert created[0].load_calls == 1
+
+
+async def test_runtime_whisper_change_waits_for_cancelled_gpu_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    replacements: list[FakeVerifier] = []
+
+    class BlockingVerifier(FakeVerifier):
+        def __init__(self, model: str, device: str, compute_type: str) -> None:
+            super().__init__()
+            self.model_name = model
+            self.unload_calls = 0
+            replacements.append(self)
+
+        def load(self) -> None:
+            self.load_calls += 1
+            self.loaded = True
+
+        def unload(self) -> None:
+            self.unload_calls += 1
+            self.loaded = False
+
+    class ActiveVerifier(FakeVerifier):
+        def __init__(self) -> None:
+            super().__init__()
+            self.unload_calls = 0
+
+        def load(self) -> None:
+            self.load_calls += 1
+            if self.load_calls > 1:
+                entered.set()
+                release.wait()
+            self.loaded = True
+
+        def unload(self) -> None:
+            self.unload_calls += 1
+            self.loaded = False
+
+    monkeypatch.setattr(main, "WhisperVerifier", BlockingVerifier)
+    engine = FakeEngine()
+    current = ActiveVerifier()
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    app = create_app(engine=engine, data_dir=data_dir, verifier=current)
+    async with app.router.lifespan_context(app):
+        task = asyncio.create_task(asyncio.to_thread(current.load))
+        app.state.active_gpu_task = task
+        put_task = None
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            route = next(
+                route
+                for route in app.routes
+                if route.path == "/runtime-config" and "PUT" in route.methods
+            )
+            scope = {
+                "type": "http",
+                "asgi": {"version": "3.0", "spec_version": "2.3"},
+                "http_version": "1.1",
+                "method": "PUT",
+                "scheme": "http",
+                "path": "/runtime-config",
+                "raw_path": b"/runtime-config",
+                "query_string": b"",
+                "headers": [],
+                "client": ("test", 0),
+                "server": ("test", 80),
+                "app": app,
+            }
+            request = Request(scope)
+            put_task = asyncio.create_task(
+                route.endpoint(
+                    main.RuntimeConfigRequest(
+                        values={"WHISPER_ENABLED": True, "WHISPER_MODEL": "tiny"}
+                    ),
+                    request,
+                    app.state.lock,
+                )
+            )
+            await asyncio.sleep(0.1)
+            assert not put_task.done()
+            assert current.unload_calls == 0
+            assert replacements == []
+            release.set()
+            result = await asyncio.wait_for(put_task, timeout=2)
+            assert result["effective"]["WHISPER_MODEL"] == "tiny"
+            assert current.loaded is False
+            assert current.unload_calls == 1
+            assert len(replacements) == 1
+        finally:
+            release.set()
+            await asyncio.wait_for(task, timeout=2)
+            if put_task is not None and not put_task.done():
+                await asyncio.wait_for(put_task, timeout=2)
 
 
 def test_health_reports_restart_recommended_over_soft_limit(
@@ -409,7 +580,7 @@ def test_transcribe_timeout_returns_controlled_error(
         return "late"
 
     verifier.transcribe = _slow_transcribe
-    monkeypatch.setattr(main, "_REQUEST_INFERENCE_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setenv("TTS_REQUEST_TIMEOUT_SECONDS", "0.01")
     wav_path = tmp_path / "data" / "media" / "cached.wav"
     with _client_with_verifier(FakeEngine(), verifier, tmp_path) as client:
         wav_path.parent.mkdir(parents=True)

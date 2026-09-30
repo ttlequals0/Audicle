@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi.testclient import TestClient
 
+from camoufox_renderer import CamoufoxRenderer
+
+from log_config import TextFormatter
 from main import create_app
-from renderer import RenderResult
+from renderer import RenderOptions, RenderResult
 
 
 class FakeRenderer:
@@ -15,6 +20,7 @@ class FakeRenderer:
         self.calls: list[tuple[str, bool]] = []
         self.cookies: list[str | None] = []
         self.budgets: list[float | None] = []
+        self.options: list[RenderOptions | None] = []
 
     async def render(
         self,
@@ -23,10 +29,12 @@ class FakeRenderer:
         email: str | None = None,
         cookies: str | None = None,
         budget_seconds: float | None = None,
+        options: RenderOptions | None = None,
     ) -> RenderResult:
         self.calls.append((url, expand))
         self.cookies.append(cookies)
         self.budgets.append(budget_seconds)
+        self.options.append(options)
         return self.result
 
 
@@ -89,6 +97,7 @@ class FakeEmailRenderer:
         email: str | None = None,
         cookies: str | None = None,
         budget_seconds: float | None = None,
+        options: RenderOptions | None = None,
     ) -> RenderResult:
         self.calls.append({"url": url, "expand": expand, "email": email})
         return RenderResult(status="ok", html="<html>unlocked</html>", word_estimate=900)
@@ -129,3 +138,75 @@ def test_render_rejects_a_non_positive_budget() -> None:
     client, _ = _client(RenderResult(status="ok"))
     response = client.post("/render", json={"url": "https://example.com/a", "budget_seconds": 0})
     assert response.status_code == 422
+
+
+def test_runtime_config_reports_environment_defaults(monkeypatch) -> None:
+    monkeypatch.setenv("RENDER_ATTEMPTS", "6")
+    monkeypatch.setenv("RENDER_GROW_WAIT_MS", "0")
+    client, _ = _client(RenderResult(status="ok"))
+    defaults = client.get("/runtime-config").json()["defaults"]
+    assert defaults["RENDER_ATTEMPTS"] == 6
+    assert defaults["RENDER_GROW_WAIT_MS"] == 0
+
+
+def test_request_overrides_do_not_leak_to_next_request() -> None:
+    client, renderer = _client(RenderResult(status="ok"))
+    response = client.post(
+        "/render",
+        json={
+            "url": "https://example.com/a",
+            "RENDER_ATTEMPTS": 2,
+            "RENDER_GROW_WAIT_MS": 0,
+            "RENDER_BUDGET_SECONDS": 250,
+        },
+    )
+    assert response.status_code == 200
+    client.post("/render", json={"url": "https://example.com/b"})
+    assert renderer.options == [RenderOptions(attempts=2, grow_wait_ms=0, budget_seconds=250), None]
+    assert (
+        client.post(
+            "/render",
+            json={
+                "url": "https://example.com/a",
+                "RENDER_ATTEMPTS": 0,
+            },
+        ).status_code
+        == 422
+    )
+
+
+async def test_renderer_rejects_malformed_targets() -> None:
+    renderer = CamoufoxRenderer()
+    for url in ("https://[broken/a", "https://example.com:bad/a", "https://example.com:99999/a"):
+        result = await renderer.render(url, True)
+        assert result.status == "error"
+
+
+def test_logging_updates_and_resets_without_replacing_handlers(monkeypatch) -> None:
+    monkeypatch.setenv("LOG_LEVEL", "INFO")
+    monkeypatch.setenv("LOG_FORMAT", "json")
+    client, _ = _client(RenderResult(status="ok"))
+    root = logging.getLogger()
+    handlers = list(root.handlers)
+    old_level = root.level
+    old_formatters = [handler.formatter for handler in handlers]
+    try:
+        response = client.put(
+            "/runtime-config", json={"values": {"LOG_LEVEL": "DEBUG", "LOG_FORMAT": "text"}}
+        )
+        assert response.status_code == 200
+        assert response.json()["effective"]["LOG_LEVEL"] == "DEBUG"
+        assert root.level == logging.DEBUG
+        assert root.handlers == handlers
+        assert all(isinstance(handler.formatter, TextFormatter) for handler in handlers)
+        reset = client.put("/runtime-config", json={"values": {}})
+        assert reset.json()["effective"]["LOG_LEVEL"] == "INFO"
+        assert root.level == logging.INFO
+        assert (
+            client.put("/runtime-config", json={"values": {"LOG_LEVEL": "invalid"}}).status_code
+            == 422
+        )
+    finally:
+        root.setLevel(old_level)
+        for handler, formatter in zip(handlers, old_formatters, strict=True):
+            handler.setFormatter(formatter)

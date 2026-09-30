@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.58.10
+  version: 0.59.0
 paths:
   /health/live:
     get:
@@ -861,6 +861,61 @@ paths:
       security:
       - {}
       - AdminSession: []
+  /api/v1/settings/sidecars:
+    get:
+      tags:
+      - settings
+      summary: Get Sidecar Settings
+      operationId: get_sidecar_settings_api_v1_settings_sidecars_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Get Sidecar Settings Api V1 Settings Sidecars Get
+      security:
+      - {}
+      - AdminSession: []
+    put:
+      tags:
+      - settings
+      summary: Put Sidecar Settings
+      operationId: put_sidecar_settings_api_v1_settings_sidecars_put
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties:
+                additionalProperties:
+                  anyOf:
+                  - {}
+                  - type: 'null'
+                type: object
+              type: object
+              title: Payload
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Put Sidecar Settings Api V1 Settings Sidecars Put
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
   /api/v1/episodes:
     get:
       tags:

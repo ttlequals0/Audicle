@@ -104,7 +104,7 @@ Every term the app uses, in plain words, with a link to the part of the docs tha
 
 **TTS backend** - Where synthesis runs: the bundled wrapper, or any OpenAI-compatible speech server on another host. [Voices and TTS > Running TTS on another host](voices-and-tts.md#running-tts-on-another-host)
 
-**TTS wrapper** - The separate GPU container running Chatterbox. It conditions on your reference voice, trims edge silence, optionally transcribes for verification, and watches its own memory. [Installation > Three containers](installation.md#three-containers)
+**TTS wrapper** - The separate GPU container running Chatterbox. It conditions on your reference voice, trims edge silence, optionally transcribes for verification, and watches its own memory. [Installation > Services](installation.md#services)
 
 ## W
 

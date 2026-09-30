@@ -25,13 +25,16 @@ async def test_log_level_refresh_applies_changes_and_recovers(
         if calls["overlay"] == 1:
             raise RuntimeError("temporary database error")
         shutdown.set()
-        return settings.model_copy(update={"LOG_LEVEL": "DEBUG"})
+        return settings.model_copy(update={"LOG_LEVEL": "DEBUG", "LOG_FORMAT": "text"})
 
     monkeypatch.setattr("app.worker.runtime_settings.overlay", _overlay)
     monkeypatch.setattr("app.worker.apply_level", applied.append)
+    formats: list[str] = []
+    monkeypatch.setattr("app.worker.apply_format", formats.append)
     await _refresh_log_level(get_settings(), shutdown)
     assert calls["overlay"] == 2
     assert applied == ["DEBUG"]
+    assert formats == ["text"]
 
 
 async def test_worker_cleans_up_log_refresh_when_loop_fails(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from app.config import get_settings
@@ -75,7 +76,6 @@ def test_purge_keeps_episode_and_upload_source_while_reprocess_is_active(env: Pa
         conn.close()
 
     result = retention.purge_older_than(get_settings(), older_than_days=30)
-
     assert result.rows_deleted == 0
     assert source.read_bytes() == b"document"
     conn = database.connect(database.db_path(env))
@@ -83,6 +83,46 @@ def test_purge_keeps_episode_and_upload_source_while_reprocess_is_active(env: Pa
         assert episodes.get_by_id(conn, "old") is not None
     finally:
         conn.close()
+
+
+def test_purge_waits_for_upload_lock_before_removing_source(env: Path, monkeypatch) -> None:
+    media = _seed(env, id_="upload-race", pub_date="2020-01-01T00:00:00Z")
+    source = media / "upload-race.source.pdf"
+    source.write_bytes(b"old document")
+    snapshot_taken = threading.Event()
+    continue_sweep = threading.Event()
+    original_lock = database.upload_staging_lock
+
+    def _pause_before_lock(data_dir: Path, episode_id: str, *, blocking: bool = True):
+        snapshot_taken.set()
+        assert continue_sweep.wait(timeout=5)
+        return original_lock(data_dir, episode_id, blocking=blocking)
+
+    monkeypatch.setattr(database, "upload_staging_lock", _pause_before_lock)
+    settings = get_settings()
+    result: list[object] = []
+    sweep = threading.Thread(
+        target=lambda: result.append(retention.purge_older_than(settings, older_than_days=30))
+    )
+    sweep.start()
+    assert snapshot_taken.wait(timeout=5)
+
+    with original_lock(env, "upload-race"):
+        conn = database.connect(database.db_path(env))
+        try:
+            conn.execute(
+                "INSERT INTO jobs (id, url, episode_id, status, reprocess) "
+                "VALUES ('upload-race-job', 'upload://old/report.pdf', 'upload-race', 'staging', 1)"
+            )
+        finally:
+            conn.close()
+        source.write_bytes(b"new document")
+        continue_sweep.set()
+
+    sweep.join(timeout=5)
+    assert not sweep.is_alive()
+    assert result[0].rows_deleted == 0
+    assert source.read_bytes() == b"new document"
 
 
 def test_purge_expired_jobs_reaps_old_terminal_unreferenced(env: Path) -> None:

@@ -57,10 +57,13 @@ export default function Login() {
           type="password"
           autoComplete="current-password"
           value={password}
-          onChange={(e) => setPassword(e.target.value)}
+          onChange={(e) => {
+            setPassword(e.target.value);
+            setError(null);
+          }}
         />
       </div>
-      {error && <p className="text-danger text-xs font-mono">{error}</p>}
+      {error && <p className="text-danger text-sm font-mono" role="alert">{error}</p>}
       <button
         type="submit"
         className="btn-primary w-full"

@@ -18,19 +18,23 @@ from slowapi import Limiter
 
 from app.api.deps import SESSION_KEY_USER, client_ip, get_conn, require_admin
 from app.config import Settings, get_settings
-from app.services import auth, csrf
+from app.services import auth, csrf, runtime_settings
 
 
 def _client_id(request: Request) -> str:
     # Proxy-aware client identity, shared by the rate-limit bucket key and the
     # lockout identifier (see config.TRUST_PROXY_HEADERS), so the two can't drift.
-    return client_ip(request, get_settings())
+    settings = getattr(request.state, "effective_settings", None)
+    if settings is None:
+        settings = runtime_settings.overlay(get_settings())
+        request.state.effective_settings = settings
+    return client_ip(request, settings)
 
 
 def _login_rate_limit() -> str:
     # Resolved per request (slowapi dynamic limit) so the LOGIN_RATE_LIMIT setting
     # (env / .env) actually drives the limiter instead of a hardcoded decorator value.
-    return get_settings().LOGIN_RATE_LIMIT
+    return runtime_settings.overlay(get_settings()).LOGIN_RATE_LIMIT
 
 
 # Per-IP rate limit fronting the bcrypt + lockout machinery.
@@ -45,6 +49,10 @@ async def _verify_or_raise(conn, *, password, request, settings, invalid_detail)
     change-password flow."""
 
     try:
+        settings = getattr(request.state, "effective_settings", None) or runtime_settings.overlay(
+            settings
+        )
+        request.state.effective_settings = settings
         return await auth.verify_login_async(
             conn, password=password, identifier=_client_id(request), settings=settings
         )
@@ -108,6 +116,10 @@ async def post_login(
     settings: Annotated[Settings, Depends(get_settings)],
     conn: Annotated[sqlite3.Connection, Depends(get_conn)],
 ) -> AuthActionResponse:
+    settings = getattr(request.state, "effective_settings", None) or runtime_settings.overlay(
+        settings
+    )
+    request.state.effective_settings = settings
     if not auth.is_password_set(conn):
         raise HTTPException(status_code=400, detail="no password is set; auth is open")
     if not auth.password_fits_bcrypt(payload.password):
@@ -121,7 +133,7 @@ async def post_login(
     )
 
     request.session[SESSION_KEY_USER] = {"user": "admin", "generation": generation}
-    token = _set_csrf_cookie(response, settings)
+    token = _set_csrf_cookie(response, getattr(request.state, "effective_settings", settings))
     return AuthActionResponse(authenticated=True, password_set=True, csrf_token=token)
 
 
@@ -140,6 +152,10 @@ async def put_password(
     settings: Annotated[Settings, Depends(get_settings)],
     conn: Annotated[sqlite3.Connection, Depends(get_conn)],
 ) -> AuthActionResponse:
+    settings = getattr(request.state, "effective_settings", None) or runtime_settings.overlay(
+        settings
+    )
+    request.state.effective_settings = settings
     already_set = auth.is_password_set(conn)
     verified_generation: int | None = None
     # Changing an existing password requires the current one; first-time set
@@ -186,7 +202,7 @@ async def put_password(
 
     # Setting a password logs this session in.
     request.session[SESSION_KEY_USER] = {"user": "admin", "generation": generation}
-    token = _set_csrf_cookie(response, settings)
+    token = _set_csrf_cookie(response, getattr(request.state, "effective_settings", settings))
     return AuthActionResponse(authenticated=True, password_set=True, csrf_token=token)
 
 

@@ -16,11 +16,13 @@ import importlib.metadata as _metadata
 import io
 import logging
 import os
+import re
 import signal
 import tempfile
 import time
 import wave
 from contextlib import asynccontextmanager, suppress
+from dataclasses import asdict, replace
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -37,7 +39,7 @@ from engine import (
     GPUOutOfMemoryError,
     InferenceBusyError,
 )
-from log_setup import setup_logging
+from log_setup import apply_logging, setup_logging
 from memory import maybe_cleanup, over_hard_limit, over_soft_limit, rss_mb
 from whisper_verify import WhisperVerifier
 
@@ -84,7 +86,6 @@ _TORCH_VERSION = _pkg_version("torch")
 
 # Per-request inference budget. Without this a wedged
 # torch call holds the lock forever and the wrapper stops serving anything.
-_REQUEST_INFERENCE_TIMEOUT_SECONDS = float(os.environ.get("TTS_REQUEST_TIMEOUT_SECONDS", "120"))
 
 
 def _request_restart() -> None:
@@ -215,6 +216,25 @@ class SelectModelRequest(BaseModel):
     model: str = Field(min_length=1, max_length=64)
 
 
+_RUNTIME_CONFIG_MAP = {
+    "TTS_MEMORY_SOFT_LIMIT_MB": "memory_soft_limit_mb",
+    "TTS_MEMORY_HARD_LIMIT_MB": "memory_hard_limit_mb",
+    "TTS_IDLE_UNLOAD_SECONDS": "idle_unload_seconds",
+    "WHISPER_ENABLED": "whisper_enabled",
+    "WHISPER_MODEL": "whisper_model",
+    "WHISPER_DEVICE": "whisper_device",
+    "WHISPER_COMPUTE_TYPE": "whisper_compute_type",
+    "TTS_REQUEST_TIMEOUT_SECONDS": "request_timeout_seconds",
+    "LOG_LEVEL": "log_level",
+    "LOG_FORMAT": "log_format",
+}
+
+
+class RuntimeConfigRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    values: dict[str, Any]
+
+
 def create_app(
     *,
     engine: Engine | None = None,
@@ -234,6 +254,7 @@ def create_app(
     """
 
     cfg = Config.from_env()
+    apply_logging(cfg.log_level, cfg.log_format)
     chosen_engine = engine if engine is not None else _turbo_factory()
     # Tests inject {name: factory}; production uses ENGINE_REGISTRY.
     registry: dict[str, Any] = (
@@ -250,6 +271,7 @@ def create_app(
         chosen_verifier = WhisperVerifier(
             cfg.whisper_model, cfg.whisper_device, cfg.whisper_compute_type
         )
+    initial_runtime_overrides: dict[str, Any] = {}
 
     async def wait_for_gpu(app: FastAPI) -> None:
         task = app.state.active_gpu_task
@@ -297,9 +319,9 @@ def create_app(
         return current
 
     async def idle_unload(app: FastAPI) -> None:
-        interval = max(1.0, min(30.0, cfg.idle_unload_seconds / 2))
         while True:
-            await asyncio.sleep(interval)
+            interval = cfg.idle_unload_seconds / 2 if cfg.idle_unload_seconds else 5
+            await asyncio.sleep(max(1, min(30, interval)))
             if cfg.idle_unload_seconds == 0:
                 continue
             if app.state.intentionally_idle:
@@ -355,12 +377,11 @@ def create_app(
                 logger.info("Whisper model loaded", extra={"event": "whisper_ready"})
             except Exception:
                 logger.exception("Whisper load failed", extra={"event": "whisper_load_failed"})
-        unload_task = asyncio.create_task(idle_unload(app)) if cfg.idle_unload_seconds > 0 else None
+        unload_task = asyncio.create_task(idle_unload(app))
         yield
-        if unload_task is not None:
-            unload_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await unload_task
+        unload_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await unload_task
         logger.info("TTS wrapper shutting down")
 
     app = FastAPI(
@@ -377,12 +398,83 @@ def create_app(
     app.state.last_gpu_use = time.monotonic()
     app.state.intentionally_idle = False
     app.state.active_gpu_task = None
+    app.state.runtime_overrides = initial_runtime_overrides
 
     def get_engine(request: Request) -> Engine:
         return request.app.state.engine
 
     def get_lock(request: Request) -> asyncio.Lock:
         return request.app.state.lock
+
+    @app.get("/runtime-config")
+    async def get_runtime_config() -> dict[str, Any]:
+        defaults = Config.from_env()
+        return {
+            "defaults": _runtime_values(defaults),
+            "values": dict(app.state.runtime_overrides),
+            "effective": _runtime_values(cfg),
+        }
+
+    @app.put("/runtime-config")
+    async def put_runtime_config(
+        body: RuntimeConfigRequest,
+        request: Request,
+        lock: asyncio.Lock = Depends(get_lock),
+    ) -> dict[str, Any]:
+        nonlocal cfg, chosen_verifier
+        unknown = set(body.values) - set(_RUNTIME_CONFIG_MAP)
+        if unknown:
+            raise HTTPException(status_code=400, detail=f"unknown runtime config fields: {sorted(unknown)}")
+        for key, value in body.values.items():
+            if value is not None:
+                _validate_runtime_setting(key, value)
+        async with lock:
+            await wait_for_gpu(request.app)
+            # PUT replaces the desired overrides map. The app sends its full
+            # saved map, so removing a DB override restores the env default.
+            overrides = {key: value for key, value in body.values.items() if value is not None}
+            defaults = Config.from_env()
+            try:
+                next_cfg = replace(
+                    defaults,
+                    **{_RUNTIME_CONFIG_MAP[key]: value for key, value in overrides.items()},
+                )
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=400, detail="runtime config combination is invalid"
+                ) from exc
+            old_whisper = (
+                cfg.whisper_enabled,
+                cfg.whisper_model,
+                cfg.whisper_device,
+                cfg.whisper_compute_type,
+            )
+            new_whisper = (
+                next_cfg.whisper_enabled,
+                next_cfg.whisper_model,
+                next_cfg.whisper_device,
+                next_cfg.whisper_compute_type,
+            )
+            if old_whisper != new_whisper:
+                if chosen_verifier is not None and chosen_verifier.loaded:
+                    await gpu_thread(request.app, chosen_verifier.unload)
+                chosen_verifier = (
+                    WhisperVerifier(
+                        next_cfg.whisper_model,
+                        next_cfg.whisper_device,
+                        next_cfg.whisper_compute_type,
+                    )
+                    if next_cfg.whisper_enabled
+                    else None
+                )
+            cfg = next_cfg
+            request.app.state.runtime_overrides = overrides
+            apply_logging(cfg.log_level, cfg.log_format)
+        return {
+            "defaults": _runtime_values(defaults),
+            "values": overrides,
+            "effective": _runtime_values(cfg),
+        }
 
     @app.get("/health/live")
     async def health_live(engine: Engine = Depends(get_engine)) -> JSONResponse:
@@ -533,7 +625,7 @@ def create_app(
             try:
                 wav_bytes = await asyncio.wait_for(
                     gpu_await(request.app, lambda: engine.synthesize(body.text, params)),
-                    timeout=_REQUEST_INFERENCE_TIMEOUT_SECONDS,
+                    timeout=cfg.request_timeout_seconds,
                 )
             except TimeoutError as exc:
                 logger.warning(
@@ -542,14 +634,14 @@ def create_app(
                         "event": "tts_inference_timeout",
                         "episode_id": body.episode_id,
                         "chunk_index": body.chunk_index,
-                        "timeout_secs": _REQUEST_INFERENCE_TIMEOUT_SECONDS,
+                        "timeout_secs": cfg.request_timeout_seconds,
                     },
                 )
                 raise HTTPException(
                     status_code=504,
                     detail={
                         "error": "inference timeout",
-                        "timeout_secs": _REQUEST_INFERENCE_TIMEOUT_SECONDS,
+                        "timeout_secs": cfg.request_timeout_seconds,
                     },
                 ) from exc
             except GPUOutOfMemoryError as exc:
@@ -598,7 +690,7 @@ def create_app(
                             request.app,
                             partial(chosen_verifier.transcribe, wav_bytes, cfg.language),
                         ),
-                        timeout=_REQUEST_INFERENCE_TIMEOUT_SECONDS,
+                        timeout=cfg.request_timeout_seconds,
                     )
                 except Exception as exc:
                     logger.warning(
@@ -716,7 +808,7 @@ def create_app(
                         request.app,
                         partial(chosen_verifier.transcribe, wav_bytes, cfg.language),
                     ),
-                    timeout=_REQUEST_INFERENCE_TIMEOUT_SECONDS,
+                    timeout=cfg.request_timeout_seconds,
                 )
             except TimeoutError as exc:
                 raise HTTPException(status_code=504, detail="Whisper verification timed out") from exc
@@ -853,6 +945,50 @@ def create_app(
         return {"ok": True, "slot": body.slot}
 
     return app
+
+
+def _runtime_values(cfg: Config) -> dict[str, Any]:
+    values = asdict(cfg)
+    return {key: values[field] for key, field in _RUNTIME_CONFIG_MAP.items()}
+
+
+def _validate_runtime_setting(key: str, value: Any) -> None:
+    bounds: dict[str, tuple[int | float, int | float, bool]] = {
+        "TTS_MEMORY_SOFT_LIMIT_MB": (0, 100_000, True),
+        "TTS_MEMORY_HARD_LIMIT_MB": (0, 100_000, True),
+        "TTS_IDLE_UNLOAD_SECONDS": (0, 86_400, True),
+        "TTS_REQUEST_TIMEOUT_SECONDS": (1, 3600, False),
+    }
+    if key in bounds:
+        low, high, integer = bounds[key]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int | float)
+            or (integer and not isinstance(value, int))
+            or not low <= value <= high
+        ):
+            raise HTTPException(status_code=400, detail=f"{key} is outside its supported range")
+    elif key == "WHISPER_ENABLED":
+        if not isinstance(value, bool):
+            raise HTTPException(status_code=400, detail="WHISPER_ENABLED must be boolean")
+    elif key == "WHISPER_DEVICE":
+        if not isinstance(value, str) or value not in {"cuda", "cpu"}:
+            raise HTTPException(status_code=400, detail="WHISPER_DEVICE must be cuda or cpu")
+    elif key == "LOG_LEVEL":
+        if not isinstance(value, str) or value not in {
+            "DEBUG",
+            "INFO",
+            "WARNING",
+            "ERROR",
+            "CRITICAL",
+        }:
+            raise HTTPException(status_code=400, detail="LOG_LEVEL is invalid")
+    elif key == "LOG_FORMAT":
+        if not isinstance(value, str) or value not in {"json", "text"}:
+            raise HTTPException(status_code=400, detail="LOG_FORMAT must be json or text")
+    elif key in {"WHISPER_MODEL", "WHISPER_COMPUTE_TYPE"}:
+        if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", value):
+            raise HTTPException(status_code=400, detail=f"{key} is invalid")
 
 
 def _wav_duration_seconds(wav_bytes: bytes) -> float:

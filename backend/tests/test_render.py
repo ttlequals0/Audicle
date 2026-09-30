@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import logging
 
 import httpx
 import pytest
 from app.config import get_settings
-from app.services import render
+from app.core import database
+from app.services import render, sidecar_settings
 
 _ARTICLE_HTML = (
     "<html><head><title>Full Article</title></head><body><article><h1>Headline</h1><p>"
@@ -17,7 +19,9 @@ _ARTICLE_HTML = (
 def _settings(monkeypatch: pytest.MonkeyPatch, url: str = "http://render.test:8000"):
     monkeypatch.setenv("RENDER_URL", url)
     get_settings.cache_clear()
-    return get_settings()
+    settings = get_settings()
+    database.run_migrations(settings.DATA_DIR)
+    return settings
 
 
 def _patch_render(monkeypatch: pytest.MonkeyPatch, body: dict) -> None:
@@ -95,9 +99,9 @@ async def test_fetch_returns_none_on_unreachable(
     assert any(getattr(r, "event", "") == "render_unreachable" for r in caplog.records)
 
 
-async def test_fetch_sends_the_cookie_jar_only_when_set(env, monkeypatch: pytest.MonkeyPatch) -> None:
-    import json
-
+async def test_fetch_sends_the_cookie_jar_only_when_set(
+    env, monkeypatch: pytest.MonkeyPatch
+) -> None:
     payloads: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -120,8 +124,6 @@ async def test_fetch_sends_the_cookie_jar_only_when_set(env, monkeypatch: pytest
 async def test_fetch_tells_the_sidecar_to_stop_before_the_read_timeout(
     env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import json
-
     payloads: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -140,4 +142,30 @@ async def test_fetch_tells_the_sidecar_to_stop_before_the_read_timeout(
     settings.RENDER_TIMEOUT_SECONDS = 5.0
     await render.fetch("https://www.wsj.com/a", settings)
     assert payloads[0]["budget_seconds"] == 140.0
-    assert "budget_seconds" not in payloads[1]
+    assert payloads[1]["budget_seconds"] == 4.0
+
+
+async def test_fetch_forwards_only_saved_render_overrides(env, monkeypatch) -> None:
+    payloads = []
+
+    def handler(request):
+        payloads.append(json.loads(request.content))
+        return httpx.Response(200, json={"status": "ok", "html": _ARTICLE_HTML})
+
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda *a, **k: original(*a, **{**k, "transport": httpx.MockTransport(handler)}),
+    )
+    settings = _settings(monkeypatch)
+    with database.connection(settings.DATA_DIR) as conn:
+        sidecar_settings.save(conn, "render", {"RENDER_ATTEMPTS": 2, "RENDER_GROW_WAIT_MS": 0})
+    await render.fetch("https://example.com/a", settings)
+    assert payloads[0]["RENDER_ATTEMPTS"] == 2
+    assert payloads[0]["RENDER_GROW_WAIT_MS"] == 0
+    assert "RENDER_NAV_TIMEOUT_MS" not in payloads[0]
+    with database.connection(settings.DATA_DIR) as conn:
+        sidecar_settings.save(conn, "render", {"RENDER_ATTEMPTS": None})
+    await render.fetch("https://example.com/b", settings)
+    assert "RENDER_ATTEMPTS" not in payloads[1]

@@ -8,6 +8,5 @@ __pycache__
 *.pyc
 .pytest_cache
 tests
-uv.lock
 README.md
 .dockerignore

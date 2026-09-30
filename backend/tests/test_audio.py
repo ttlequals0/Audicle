@@ -490,6 +490,23 @@ def test_transcode_to_wav_rejects_garbage() -> None:
         audio.transcode_to_wav(b"this is not audio")
 
 
+def test_transcode_to_wav_restricts_ffmpeg_protocols(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[str] = []
+
+    def run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess:
+        captured.extend(cmd)
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="unsupported format")
+
+    monkeypatch.setattr(audio.subprocess, "run", run)
+    with pytest.raises(audio.FfmpegError):
+        audio.transcode_to_wav(b"untrusted upload")
+
+    whitelist_index = captured.index("-protocol_whitelist")
+    input_index = captured.index("-i")
+    assert captured[whitelist_index + 1] == "file,pipe"
+    assert whitelist_index < input_index
+
+
 def test_append_clip_lengthens_by_gap_plus_clip(tmp_path: Path) -> None:
     rate = 24000
     body = tmp_path / "body.wav"

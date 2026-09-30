@@ -6,35 +6,12 @@
 # -- render image only (python:3.12-slim + xvfb + mesa for Camoufox browser):
 
 # Owner: Audicle maintainers. Recheck: 2026-10-10.
-# xserver-common / xvfb (HIGH x3): Xvfb runs as uid 1000 with one screen and
+# xserver-common / xvfb: Xvfb runs as uid 1000 with one screen and
 # TCP disabled. CVE-2023-5574 requires legacy multi-screen Zaphod mode and a
-# cross-screen pointer warp during reset. CVE-2026-55999 requires a local X
-# client to submit a crafted PCF font; web fonts remain inside Gecko's decoder.
-# CVE-2026-56000 requires a local X client to issue a crafted GLX context-tag
-# sequence. Rendered pages cannot emit X11 protocol; Camoufox is the only X
-# client, and it shares Xvfb's unprivileged uid, leaving no privilege boundary.
-# A browser compromise could at most add a same-container DoS path through Xvfb.
+# cross-screen pointer warp during reset. The configured single screen does
+# not use that mode.
 # Remove when Debian ships fixes or the render image drops Xvfb.
 CVE-2023-5574
-CVE-2026-55999
-CVE-2026-56000
-
-# Owner: Audicle maintainers. Recheck: 2026-10-10.
-# libglib2.0-0t64 (CRITICAL x1, HIGH x6): Camoufox's libmozgtk links GTK,
-# GLib, GObject, and GIO. The seven bugs require specific GLib inputs: malformed
-# GVariant tuple data (58010), an invalid GDateTime (58011), G_REGEX_RAW with
-# case-changing replacement escapes (58012), a multi-byte GIOChannel terminator
-# (58013), an untrusted key file (58014), a malicious D-Bus server (58015), or
-# malformed D-Bus introspection XML (58016). Page content is not passed to these
-# APIs, and the entrypoint launches no D-Bus server. The residual is limited to
-# local GTK/browser control data. No fixed trixie package is available.
-CVE-2026-58010
-CVE-2026-58011
-CVE-2026-58012
-CVE-2026-58013
-CVE-2026-58014
-CVE-2026-58015
-CVE-2026-58016
 
 # Owner: Audicle maintainers. Recheck: 2026-10-10.
 # libcups2t64 (HIGH x1): CVE-2026-34980 is in the cupsd scheduler's handling of
@@ -99,3 +76,9 @@ CVE-2026-86144
 # server. No fixed trixie package yet. Remove when Debian ships patches.
 CVE-2026-88806
 CVE-2026-88807
+
+# libxtst6 parses replies from a malicious X server. DISPLAY is pinned to the
+# local Xvfb above; page content cannot supply an X server. No trixie fix.
+# https://security-tracker.debian.org/tracker/CVE-2026-94286
+# Owner: Audicle maintainers. Recheck: 2026-10-10.
+CVE-2026-94286

@@ -7,7 +7,7 @@ COPY frontend/package.json frontend/package-lock.json* ./
 # ``--ignore-scripts`` blocks dependency lifecycle hooks from running with
 # the npm install -- defense-in-depth against malicious postinstall scripts
 # in transitive deps.
-RUN npm install --ignore-scripts --no-audit --no-fund
+RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY frontend/ ./
 RUN npm run build
 
@@ -68,10 +68,10 @@ COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /app
 
 # Install dependencies first so source edits don't bust the layer cache.
-# --frozen requires uv.lock; if it's missing or stale the build fails loudly
+# --locked requires uv.lock; if it's missing or stale the build fails loudly
 # (reproducibility is the whole point of committing the lockfile).
 COPY pyproject.toml uv.lock ./
-RUN uv sync --no-dev --frozen
+RUN uv sync --no-dev --locked
 
 COPY backend/app ./app
 COPY VERSION ./

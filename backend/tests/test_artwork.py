@@ -613,6 +613,48 @@ async def test_process_artwork_exif_rotation_actually_rotates_pixels(
     )
 
 
+async def test_process_artwork_malformed_url_uses_fallback(
+    env: Path, tmp_path: Path, caplog
+) -> None:
+    result = await artwork.process_artwork(
+        metadata={"ogImage": "http://[invalid"},
+        episode_id="ep-invalid-url",
+        output_dir=tmp_path,
+        settings=get_settings(),
+    )
+    assert result is None
+    assert any(getattr(record, "reason", "") == "blocked_scheme" for record in caplog.records)
+
+
+async def test_process_artwork_bad_port_uses_fallback(env: Path, tmp_path: Path) -> None:
+    result = await artwork.process_artwork(
+        metadata={"ogImage": "https://example.test:bad/cover.jpg"},
+        episode_id="ep-bad-port",
+        output_dir=tmp_path,
+        settings=get_settings(),
+    )
+    assert result is None
+
+
+async def test_process_artwork_invalid_httpx_url_uses_fallback(
+    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
+    async def _invalid(*_args):
+        raise httpx.InvalidURL("invalid image URL")
+
+    monkeypatch.setattr(artwork, "_download", _invalid)
+    result = await artwork.process_artwork(
+        metadata={"ogImage": "https://example.test/cover.jpg"},
+        episode_id="ep-httpx-invalid-url",
+        output_dir=tmp_path,
+        settings=get_settings(),
+    )
+    assert result is None
+    assert any(
+        getattr(record, "error_class", "") == "InvalidURL" for record in caplog.records
+    )
+
+
 async def test_process_artwork_writes_atomically_no_partial_file(
     env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

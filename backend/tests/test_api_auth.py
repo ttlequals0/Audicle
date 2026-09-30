@@ -71,6 +71,58 @@ def test_login_rate_limit_uses_config_value(monkeypatch: pytest.MonkeyPatch, env
     assert third.status_code == 429
 
 
+def test_login_rate_limit_runtime_override_is_live(env: Path) -> None:
+    database.run_migrations(env)
+    _set_password(env, PASSWORD)
+    with database.connection(env) as conn:
+        runtime_settings.set_value(conn, "LOGIN_RATE_LIMIT", "1/minute")
+    with _client() as client:
+        first = client.post("/api/v1/auth/login", json={"password": "wrong"})
+        second = client.post("/api/v1/auth/login", json={"password": "wrong"})
+    assert first.status_code == 401
+    assert second.status_code == 429
+
+
+def test_runtime_proxy_and_lockout_settings_reach_auth_path(env: Path) -> None:
+    database.run_migrations(env)
+    _set_password(env, PASSWORD)
+    with database.connection(env) as conn:
+        runtime_settings.set_value(conn, "TRUST_PROXY_HEADERS", True)
+        runtime_settings.set_value(conn, "TRUSTED_PROXY_HOPS", 1)
+        runtime_settings.set_value(conn, "LOCKOUT_MAX_FAILED_ATTEMPTS", 1)
+        runtime_settings.set_value(conn, "LOCKOUT_WINDOW_SECONDS", 120)
+    with _client() as client:
+        response = client.post(
+            "/api/v1/auth/login",
+            json={"password": "wrong"},
+            headers={"X-Forwarded-For": "203.0.113.9"},
+        )
+    assert response.status_code == 401
+    with database.connection(env) as conn:
+        row = conn.execute(
+            "SELECT lockout_until FROM auth_lockout WHERE identifier = ?", ("203.0.113.9",)
+        ).fetchone()
+    assert row is not None and row["lockout_until"]
+
+
+def test_runtime_cookie_policy_applies_to_new_session(env: Path) -> None:
+    database.run_migrations(env)
+    with database.connection(env) as conn:
+        runtime_settings.set_value(conn, "SESSION_COOKIE_SECURE", False)
+        runtime_settings.set_value(conn, "SESSION_COOKIE_MAX_AGE_SECONDS", 60)
+    with _client() as client:
+        response = client.put(
+            "/api/v1/auth/password", json={"new_password": "fresh-password"}
+        )
+    cookies = response.headers.get_list("set-cookie")
+    session_cookie = next(value for value in cookies if value.startswith("audicle_session="))
+    csrf_cookie = next(value for value in cookies if value.startswith("audicle_csrf="))
+    assert "Max-Age=60" in session_cookie
+    assert "; secure" not in session_cookie.lower()
+    assert "Max-Age=60" in csrf_cookie
+    assert "; secure" not in csrf_cookie.lower()
+
+
 def test_login_returns_200_and_csrf_token_on_success(auth_env) -> None:
     with _client() as client:
         response = client.post("/api/v1/auth/login", json=auth_env)

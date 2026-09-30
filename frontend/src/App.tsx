@@ -1,5 +1,5 @@
-import { useCallback } from "react";
-import { Routes, Route, NavLink, Navigate } from "react-router-dom";
+import { useCallback, useEffect, useRef } from "react";
+import { Routes, Route, NavLink, Navigate, useLocation } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { api } from "./lib/api";
@@ -15,7 +15,7 @@ import Login from "./routes/Login";
 // Geometry from branding/mark-mono.svg (currentColor so it inherits text-accent).
 function Mark({ className = "" }: { className?: string }) {
   return (
-    <svg viewBox="0 0 160 160" width="28" height="28" className={className} aria-label="Audicle">
+    <svg viewBox="0 0 160 160" width="28" height="28" className={className} aria-hidden="true">
       <path
         d="M 30 130 L 80 26 L 130 130"
         stroke="currentColor"
@@ -53,7 +53,10 @@ const TABS: [string, string][] = [
 ];
 
 function Shell() {
-  const { status, loading, refresh } = useAuth();
+  const { status, loading, failed, refresh } = useAuth();
+  const location = useLocation();
+  const mainRef = useRef<HTMLElement>(null);
+  const previousPath = useRef(location.pathname);
   const healthQ = useHealthLive();
   const qc = useQueryClient();
   // App-wide pull-to-refresh: a no-arg invalidate refetches every active
@@ -64,9 +67,28 @@ function Shell() {
     onSuccess: () => refresh(),
   });
 
+  useEffect(() => {
+    if (previousPath.current !== location.pathname) {
+      previousPath.current = location.pathname;
+      mainRef.current?.focus({ preventScroll: true });
+      window.scrollTo({ top: 0, behavior: "auto" });
+    }
+  }, [location.pathname]);
+
   // Hold a neutral splash until auth status resolves so protected UI never
   // flashes before the gate decides.
   if (loading) return <div className="min-h-screen bg-ink" />;
+  if (failed) {
+    return (
+      <main className="min-h-screen px-4 py-10 text-danger">
+        <h1 className="text-xl font-bold mb-2">Authentication status unavailable</h1>
+        <p className="text-fg text-sm mb-4" role="alert">The app could not verify your session.</p>
+        <button className="btn-ghost" onClick={() => refresh()}>
+          Retry
+        </button>
+      </main>
+    );
+  }
   // Full lockdown: with a password set and no session, the password box is the
   // only thing rendered -- no header, nav, or page content.
   if (status?.password_set && !status.authenticated) {
@@ -80,6 +102,17 @@ function Shell() {
   return (
     <div className="min-h-screen flex flex-col">
       <PullToRefresh onRefresh={refreshAll} />
+      <a
+        className="skip-link"
+        href="#main-content"
+        onClick={(event) => {
+          event.preventDefault();
+          mainRef.current?.focus({ preventScroll: true });
+          window.scrollTo({ top: 0, behavior: "auto" });
+        }}
+      >
+        Skip to main content
+      </a>
       <header className="safe-top sticky top-0 z-20 bg-ink/95 backdrop-blur-md border-b border-line">
         <div className="max-w-2xl mx-auto px-4">
           <div className="flex items-center justify-between py-3.5">
@@ -107,7 +140,7 @@ function Shell() {
               </a>
             </div>
           </div>
-          <nav className="flex">
+          <nav className="flex" aria-label="Primary">
             {TABS.map(([to, label]) => (
               <NavLink
                 key={to}
@@ -125,7 +158,12 @@ function Shell() {
 
       <OpenModeBanner />
 
-      <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-6 relative z-10 safe-bottom">
+      <main
+        ref={mainRef}
+        id="main-content"
+        tabIndex={-1}
+        className="flex-1 max-w-2xl mx-auto w-full px-4 py-6 relative z-10 safe-bottom"
+      >
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/feed" element={<Feed />} />

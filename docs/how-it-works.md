@@ -38,7 +38,7 @@ URL --> extract (direct / Firecrawl) --> cleanup (LLM)
 
 The default `direct` engine fetches the page in-process and parses it with trafilatura. Set `EXTRACTION_ENGINE=firecrawl` to use a self-hosted Firecrawl instead. Either way, extraction is a cascade, not a single fetch: JS-rendered and bot-gated pages fall back through Googlebot, FlareSolverr, the reader proxy, the render sidecar, and the web archive, and per-host rules can route a site through a specific bypass. The whole cascade is covered in [Paywalled articles](paywalls.md).
 
-Uploads skip extraction: a PDF, DOCX, Markdown, text, or HTML file is read directly, and a scan or image goes through on-device OCR (RapidOCR on CPU, models shipped in the image). A text PDF never pays the OCR cost, and a scan too blurry to read fails the job with a clear error instead of narrating noise. The `OCR_*` knobs (page cap, DPI, confidence floor, language) are in Settings under Uploads.
+Uploads skip the web-fetch cascade. DOCX paragraphs and tables are read in document order. PDF pages with usable text are read directly; scanned pages use on-device OCR (RapidOCR on CPU, models shipped in the image). Markdown, text, and HTML are read directly; image uploads use OCR. The `OCR_*` knobs (page cap, DPI, confidence floor, language) are in Settings under Uploads.
 
 ## Cleanup, summary, chunking, and pronunciation
 

@@ -1,6 +1,6 @@
 [project]
 name = "audicle-render"
-version = "0.58.10"
+version = "0.59.0"
 description = "Stealth headful-render sidecar for Audicle (Camoufox)."
 requires-python = ">=3.11,<3.13"
 # Camoufox/Playwright wheels track a conservative Python range; 3.12 is the safe
@@ -24,10 +24,10 @@ dependencies = [
 # 1.60.0 (microsoft/playwright#39767) crashes camoufox's Firefox driver on a page
 # error with no location ("Cannot read properties of undefined (reading 'url')" in
 # addPageError) -- daijro/camoufox#617. 1.59.0 is the last good release.
-render = ["camoufox>=0.4", "playwright<1.60"]
+render = ["camoufox>=0.5.6", "playwright<1.60"]
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=83.0.0"]
 build-backend = "setuptools.build_meta"
 
 # Flat layout: declare the top-level modules explicitly (modern setuptools won't

@@ -13,6 +13,7 @@ stored original with no re-upload -- the reason the original is kept on disk.
 from __future__ import annotations
 
 import hashlib
+import re
 import sqlite3
 from typing import Annotated
 
@@ -27,6 +28,7 @@ from app.services import file_extraction, jobs, runtime_settings, voices
 from app.services.atomic_write import write_bytes_atomic
 
 router = APIRouter(tags=["jobs"])
+_EPISODE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 async def read_upload_capped(upload: UploadFile, cap: int) -> bytes:
@@ -125,30 +127,33 @@ async def reprocess_upload(
     conn: Annotated[sqlite3.Connection, Depends(get_conn)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> SubmitResponse:
-    episode = episodes_service.get_by_id(conn, episode_id)
-    if episode is None:
+    if not _EPISODE_ID_RE.fullmatch(episode_id):
         raise HTTPException(status_code=404, detail="episode not found")
-    if episode.source_type != "upload":
-        raise HTTPException(
-            status_code=400,
-            detail="episode was not created from an uploaded file; reprocess it via its URL",
-        )
-    stored = file_extraction.source_path(settings, episode_id, episode.source_filename or "")
-    if not stored.exists():
-        raise HTTPException(
-            status_code=409,
-            detail="the stored original is no longer on disk; re-upload the document to reprocess",
-        )
-    try:
-        result = jobs.create_job(conn, episode.original_url, reprocess=True)
-    except jobs.DuplicateSubmissionError as exc:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": "Reprocess already in flight",
-                "details": {"episode_id": exc.episode_id, "reason": exc.reason},
-            },
-        ) from exc
+    with database.upload_staging_lock(settings.DATA_DIR, episode_id):
+        episode = episodes_service.get_by_id(conn, episode_id)
+        if episode is None:
+            raise HTTPException(status_code=404, detail="episode not found")
+        if episode.source_type != "upload":
+            raise HTTPException(
+                status_code=400,
+                detail="episode was not created from an uploaded file; reprocess it via its URL",
+            )
+        stored = file_extraction.source_path(settings, episode_id, episode.source_filename or "")
+        if not stored.exists():
+            raise HTTPException(
+                status_code=409,
+                detail="the stored original is no longer on disk; re-upload the document to reprocess",
+            )
+        try:
+            result = jobs.create_job(conn, episode.original_url, reprocess=True)
+        except jobs.DuplicateSubmissionError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "Reprocess already in flight",
+                    "details": {"episode_id": exc.episode_id, "reason": exc.reason},
+                },
+            ) from exc
     return SubmitResponse(
         job_id=result.job.id,
         episode_id=result.job.episode_id,

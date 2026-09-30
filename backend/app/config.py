@@ -156,9 +156,8 @@ class Settings(BaseSettings):
     # cascade came up short. Needs RENDER_URL; empty means nothing is submitted.
     REGISTRATION_EMAIL: str = ""
 
-    # OCR fallback for scanned/image uploads (0.51.0). Engages only when a PDF's
-    # extractable text is under MIN_EXTRACTION_CHARS, or for direct image
-    # uploads. All five are runtime-tunable. OCR_LANGUAGE is validated against
+    # OCR handles scanned pages in mixed PDFs and direct image uploads.
+    # All five settings are runtime-tunable. OCR_LANGUAGE is validated against
     # the model packs the image ships (services.ocr.SUPPORTED_LANGUAGES).
     OCR_ENABLED: bool = True
     OCR_MAX_PAGES: int = Field(default=40, ge=1, le=500)
@@ -202,8 +201,7 @@ class Settings(BaseSettings):
     # when the cascade fails. Empty RENDER_URL disables it. Builtin render hosts live in
     # RENDER_BUILTIN_HOSTS (below).
     RENDER_URL: str = ""
-    # Read budget for a sidecar call. Each request tells the sidecar to finish 10 s
-    # sooner, so its retry loop never outlives this wait.
+    # Sidecar calls reserve up to 10 seconds for the response to arrive.
     RENDER_TIMEOUT_SECONDS: float = 150.0
     # Archive fallback: when a scrape is below its floor (a hard block or a teaser) and
     # no other bypass recovered the article, try a Wayback Machine capture, then
@@ -325,7 +323,6 @@ class Settings(BaseSettings):
     # Wrapper TTS model, applied at the start of each job's TTS stage via
     # /select-model. Empty keeps whatever the wrapper booted with.
     TTS_MODEL: str = ""
-    TTS_DEVICE: Literal["cuda", "cpu"] = "cuda"
     TTS_HTTP_TIMEOUT_SECONDS: float = 120
     # Attempt budget for provider errors (5xx) and timeouts. With the
     # exponential backoff in services/tts.py (1, 2, 4, 8, 16, 30) seven attempts
@@ -615,6 +612,9 @@ RUNTIME_SETTING_BOUNDS: dict[str, dict[str, float]] = {
     "AUDIO_ANALYSIS_MAX_F0_SEMITONES": {"gt": 0, "le": 12.0},
     "TTS_CACHE_RETENTION_DAYS": {"ge": 1, "le": 90},
     "CLEANUP_MIN_RETENTION_RATIO": {"gt": 0, "le": 1.0},
+    "QUEUE_POLL_INTERVAL_SECONDS": {"gt": 0, "le": 60},
+    "MIGRATION_BACKUP_RETENTION_DAYS": {"ge": 0, "le": 100_000},
+    "RETENTION_SWEEP_HOUR_UTC": {"ge": 0, "le": 23},
 }
 
 

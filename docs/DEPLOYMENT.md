@@ -8,11 +8,11 @@ Operational reference for a running Audicle. Domains below are placeholders; sub
 - `GET /health/ready` checks the database and published-media directory. Podcast delivery stays ready during ingestion-provider outages.
 - `GET /health/ingestion` checks the selected LLM, extraction, synthesis, and transcription dependencies. Optional renderer status appears under `components` without failing the check.
 
-The wrapper can take 60 to 99 seconds to load its models. `/health/ingestion` reports it unavailable until its own health endpoint succeeds. Job requests use `TTS_REACHABILITY_GRACE_SECONDS` while waiting for startup.
+Model loading time depends on the host and cached weights. `/health/ingestion` reports it unavailable until its own health endpoint succeeds. Job requests use `TTS_REACHABILITY_GRACE_SECONDS` while waiting for startup.
 
 ## Logs
 
-Structured JSON to stdout (`LOG_FORMAT=json`, the default; `text` for readable local output). `docker compose logs app` / `tts-wrapper` / `render`. `LOG_LEVEL` is runtime-tunable, so a live deployment can go to DEBUG for one job and back without a restart.
+Structured JSON to stdout (`LOG_FORMAT=json`, the default; `text` for readable local output). `docker compose logs app` / `tts-wrapper` / `render`. `LOG_LEVEL` and `LOG_FORMAT` are runtime settings for the app and worker, so logging can change without a restart.
 
 Events worth alerting on or graphing:
 
@@ -75,21 +75,22 @@ with sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True) as source, sqlite3
     source.backup(destination)
     assert destination.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 PY
-tar -czf "$AUDICLE_BACKUP_DIR/files.tgz" data/media data/reference
+tar -czf "$AUDICLE_BACKUP_DIR/files.tgz" data/media backend/app/reference
 install -m 600 .env "$AUDICLE_BACKUP_DIR/environment"
 ```
 
-Test restoration in a separate data directory. Copy the database snapshot, extract its matching files, and restore the saved environment securely. Open the restored database read-only and check its integrity before starting the target image:
+Test restoration in a separate data directory. Copy the database snapshot, extract its matching files, and restore the saved environment securely. The example preserves the repository-relative bind-mount layout. Run the restored Compose stack from a separate checkout with these directories in place. Open the restored database read-only and check its integrity before starting the target image:
 
 ```bash
 umask 077
 export AUDICLE_BACKUP_DIR=/secure/off-host-mounted/audicle-backup
 export AUDICLE_RESTORE_DIR=/secure/audicle-restore
 mkdir -p "$AUDICLE_RESTORE_DIR"
-cp "$AUDICLE_BACKUP_DIR/podcast.db" "$AUDICLE_RESTORE_DIR/podcast.db"
-tar -xzf "$AUDICLE_BACKUP_DIR/files.tgz" -C "$AUDICLE_RESTORE_DIR" --strip-components=1
+mkdir -p "$AUDICLE_RESTORE_DIR/data"
+cp "$AUDICLE_BACKUP_DIR/podcast.db" "$AUDICLE_RESTORE_DIR/data/podcast.db"
+tar -xzf "$AUDICLE_BACKUP_DIR/files.tgz" -C "$AUDICLE_RESTORE_DIR"
 install -m 600 "$AUDICLE_BACKUP_DIR/environment" "$AUDICLE_RESTORE_DIR/.env"
-python3 - "$AUDICLE_RESTORE_DIR/podcast.db" <<'PY'
+python3 - "$AUDICLE_RESTORE_DIR/data/podcast.db" <<'PY'
 import sqlite3
 import sys
 

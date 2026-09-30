@@ -202,6 +202,18 @@ export interface SettingsPayload {
   feed_url: string;
 }
 
+export interface SidecarSettingsState {
+  available: boolean;
+  values: Record<string, unknown>;
+  defaults: Record<string, unknown>;
+  pending: boolean;
+}
+
+export interface SidecarSettingsPayload {
+  render: SidecarSettingsState;
+  tts_wrapper: SidecarSettingsState;
+}
+
 export interface FeedAuthStatus {
   enabled: boolean;
   // Returned in the clear; null until a key is generated on first enable.

@@ -8,6 +8,7 @@ import httpx
 import pytest
 from app.config import get_settings
 from app.services import extraction, flaresolverr, render
+from app.services.extraction_types import ExtractionResult
 
 
 @pytest.fixture(autouse=True)
@@ -285,7 +286,9 @@ async def test_extract_logs_which_strategy_ran_and_when_it_falls_short(
     events = [getattr(r, "event", "") for r in caplog.records]
     assert "extraction_fallback_start" in events
     assert "extraction_fallback_short" in events
-    start = next(r for r in caplog.records if getattr(r, "event", "") == "extraction_fallback_start")
+    start = next(
+        r for r in caplog.records if getattr(r, "event", "") == "extraction_fallback_start"
+    )
     assert start.strategy == "googlebot"  # the log records which strategy was tried
 
 
@@ -577,7 +580,9 @@ def _global_default_registry(default_proxy: str = "googlebot"):
     # rules and no built-ins), so an unlisted host exercises the catch-all path.
     from app.services import source_fallbacks as sf
 
-    return tuple(r for r in sf.build_registry([], default_proxy, 3000, global_floor=500) if r.catch_all)
+    return tuple(
+        r for r in sf.build_registry([], default_proxy, 3000, global_floor=500) if r.catch_all
+    )
 
 
 async def test_extract_global_default_proxy_fires_on_near_empty_scrape(
@@ -642,7 +647,9 @@ async def test_extract_builtin_rule_floor_wins_over_global_catch_all(
         return next(pages)
 
     _patch_async_client(monkeypatch, httpx.MockTransport(handler))
-    registry = sf.build_registry([], "googlebot", 3000, global_floor=500)  # Medium builtin + catch-all
+    registry = sf.build_registry(
+        [], "googlebot", 3000, global_floor=500
+    )  # Medium builtin + catch-all
     result = await extraction.extract(_MEDIUM_URL, get_settings(), registry)
     assert result.markdown.startswith("body ")
     assert len(requests) == 2
@@ -773,7 +780,9 @@ async def test_too_short_message_hard_block_solver_failed(
         _flaresolverr_ok(""),  # solver returns empty HTML -> nothing extracted
     )
     _patch_async_client(monkeypatch, transport)
-    with pytest.raises(extraction.ExtractionTooShortError, match="browser bypass got only a teaser"):
+    with pytest.raises(
+        extraction.ExtractionTooShortError, match="browser bypass got only a teaser"
+    ):
         await extraction.extract("https://hardblock.test/a", get_settings())
 
 
@@ -1059,7 +1068,9 @@ async def test_extract_direct_skips_firecrawl_rescrape_when_unconfigured(
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method != "GET":
             raise AssertionError("Firecrawl re-scrape must be skipped when unconfigured")
-        return httpx.Response(200, text="<html><body><article><p>teaser</p></article></body></html>")
+        return httpx.Response(
+            200, text="<html><body><article><p>teaser</p></article></body></html>"
+        )
 
     _patch_async_client(monkeypatch, httpx.MockTransport(handler))
     with pytest.raises(extraction.ExtractionTooShortError):
@@ -1081,7 +1092,9 @@ async def test_extract_direct_googlebot_runs_in_process_when_firecrawl_unconfigu
         requests.append(request)
         if "googlebot" in request.headers["user-agent"].lower():
             return httpx.Response(200, text=_gated_article_html())
-        return httpx.Response(200, text="<html><body><article><p>teaser</p></article></body></html>")
+        return httpx.Response(
+            200, text="<html><body><article><p>teaser</p></article></body></html>"
+        )
 
     _patch_async_client(monkeypatch, httpx.MockTransport(handler))
     result = await extraction.extract(
@@ -1325,7 +1338,7 @@ async def test_render_enrichment_rejudges_the_pull_before_replacing(
     settings = _render_settings(monkeypatch)
     partial = extraction.ExtractionResult(markdown="Intro. " * 20, metadata={})
     teaser = extraction.ExtractionResult(
-        markdown="word " * 56 + "Continue reading this story for FREE!", metadata={}
+        markdown="word " * 56 + "\n\nContinue reading this story for FREE!", metadata={}
     )
 
     monkeypatch.setattr(extraction.render, "fetch", _render_fake(teaser))
@@ -1363,7 +1376,11 @@ async def test_render_rule_renders_first(
 
 
 async def test_render_rescue_runs_last_for_any_hard_blocked_host(
-    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, no_flaresolverr, no_archive
+    env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    no_flaresolverr,
+    no_archive,
 ) -> None:
     settings = _render_settings(monkeypatch)
     monkeypatch.setattr(extraction.render, "fetch", _render_fake(_RENDERED_ARTICLE))
@@ -1408,7 +1425,9 @@ async def test_render_rescue_held_to_the_hosts_floor(
     # A 3000-char rule host that is hard-blocked: a rendered ~1000-char teaser (say,
     # expired cookies) must not pass at the global 500 floor.
     settings = _render_settings(monkeypatch)
-    teaser = extraction.ExtractionResult(markdown="Two paragraphs of the story before the wall. " * 22)
+    teaser = extraction.ExtractionResult(
+        markdown="Two paragraphs of the story before the wall. " * 22
+    )
     monkeypatch.setattr(extraction.render, "fetch", _render_fake(teaser))
     transport = _stub_transport(_ok_response("Access Denied"), _ok_response("Access Denied"))
     _patch_async_client(monkeypatch, transport)
@@ -1424,7 +1443,7 @@ async def test_render_below_floor_or_gated_teaser_is_rejected(
     # ~250-char teaser that stops at the signup prompt cannot pass as a render.
     settings = _render_settings(monkeypatch)
     teaser = extraction.ExtractionResult(
-        markdown="word " * 50 + "Continue reading this story for FREE!", metadata={}
+        markdown="word " * 50 + "\n\nContinue reading this story for FREE!", metadata={}
     )
     monkeypatch.setattr(extraction.render, "fetch", _render_fake(teaser))
     _patch_async_client(monkeypatch, _stub_transport(_ok_response("Access Denied")))
@@ -1489,7 +1508,6 @@ _GATED_BODY = (
 
 
 def test_trim_at_gate_cuts_the_signup_boilerplate() -> None:
-    from app.services.extraction_types import ExtractionResult
 
     result = ExtractionResult(markdown=_GATED_BODY, metadata={"title": "Amazon workers"})
     trimmed = extraction.trim_at_gate(result)
@@ -1500,7 +1518,6 @@ def test_trim_at_gate_cuts_the_signup_boilerplate() -> None:
 
 
 def test_trim_at_gate_leaves_an_ungated_article_alone() -> None:
-    from app.services.extraction_types import ExtractionResult
 
     body = "A real article. " * 200
     result = ExtractionResult(markdown=body, metadata={"title": "fine"})
@@ -1508,14 +1525,44 @@ def test_trim_at_gate_leaves_an_ungated_article_alone() -> None:
 
 
 def test_trim_at_gate_ignores_a_bare_read_more_link() -> None:
-    """"read more" is ordinary related-link chrome; only explicit gate wording counts,
+    """ "read more" is ordinary related-link chrome; only explicit gate wording counts,
     because this decision now fails jobs."""
-
-    from app.services.extraction_types import ExtractionResult
 
     body = "A real article. " * 200 + "\n\nRead more\n\nRelated stories"
     result = ExtractionResult(markdown=body, metadata={"title": "fine"})
     assert extraction.trim_at_gate(result).markdown == body
+
+
+def test_trim_at_gate_keeps_ordinary_account_prose() -> None:
+
+    body = (
+        "Customers who already have an account can sign in from the home page.\n"
+        'The phrase "continue reading this story" appeared in the notes.\n'
+        "She remembered to continue reading the old story the next day.\n"
+        "The editor discussed subscribe to continue wording during the meeting."
+    )
+    assert extraction.trim_at_gate(ExtractionResult(markdown=body, metadata={})).markdown == body
+
+
+@pytest.mark.parametrize("marker", extraction._GATE_MARKERS)
+def test_trim_at_gate_keeps_marker_quoted_in_a_sentence(marker: str) -> None:
+
+    body = f'The article quoted "{marker}" as an example of subscriber wording.'
+    assert extraction.trim_at_gate(ExtractionResult(markdown=body, metadata={})).markdown == body
+
+
+def test_gate_offset_ignores_leading_quotes_and_markdown_blockquotes() -> None:
+    body = (
+        "> Continue reading this story for FREE!\n\n"
+        '"Create your free account" appeared in the archived article.\n\n'
+        "'Subscribe to continue' was the wording in the quotation."
+    )
+    assert extraction.gate_offset(body) is None
+
+
+def test_gate_offset_matches_multiline_standalone_prompt() -> None:
+    body = "Continue reading this\nstory for FREE!\n\nCreate your free account"
+    assert extraction.gate_offset(body) == 0
 
 
 async def test_gated_article_fails_instead_of_shipping_a_stub(
@@ -1563,7 +1610,6 @@ async def test_gated_page_returned_by_a_fallback_is_also_rejected(
     get_settings.cache_clear()
 
     async def _same_walled_page(*_args, **_kwargs):
-        from app.services.extraction_types import ExtractionResult
 
         return ExtractionResult(markdown=_GATED_BODY, metadata={"title": "Amazon workers"})
 
@@ -1634,15 +1680,16 @@ async def test_registration_that_does_not_open_still_fails_the_job(
 
     async def _still_gated(url, settings, email=None, cookies=""):
         return extraction.ExtractionResult(
-            markdown="Two paragraphs only. " * 10 + "Continue reading this story for FREE!",
+            markdown="Two paragraphs only. " * 10 + "\n\nContinue reading this story for FREE!",
             metadata={"title": "ok"},
         )
 
     monkeypatch.setattr(render, "fetch", _still_gated)
     _patch_async_client(monkeypatch, _stub_transport(_ok_response(_GATED_BODY)))
 
-    with caplog.at_level(logging.INFO), pytest.raises(
-        extraction.ExtractionTooShortError, match="sign-up wall"
+    with (
+        caplog.at_level(logging.INFO),
+        pytest.raises(extraction.ExtractionTooShortError, match="sign-up wall"),
     ):
         await extraction.extract("https://w42st.com/post/amazon", get_settings())
     events = [r.__dict__.get("event") for r in caplog.records]
@@ -1698,14 +1745,19 @@ async def test_extract_garbage_candidate_rejected_and_next_method_tried(
     with caplog.at_level(logging.INFO, logger="app.services.extraction"):
         result = await extraction.extract("https://gated.test/post", get_settings(), registry)
     assert result.markdown.startswith("The article body")
-    short = next(r for r in caplog.records if getattr(r, "event", "") == "extraction_fallback_short")
+    short = next(
+        r for r in caplog.records if getattr(r, "event", "") == "extraction_fallback_short"
+    )
     assert short.fallback == "op#googlebot"
     assert short.markdown_chars == len(archive_capture_junk)
     assert short.judged_chars < 500
 
 
 async def test_extract_garbage_primary_escalates_like_a_hard_block(
-    env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, archive_capture_junk: str
+    env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    archive_capture_junk: str,
 ) -> None:
     # A primary made of page chrome counts as near-empty, so the solver runs.
     transport = _stub_transport(
@@ -1740,11 +1792,15 @@ async def test_render_enrichment_keeps_article_over_longer_garbage(
     settings = _render_settings(monkeypatch)
     article = extraction.ExtractionResult(markdown="A real sentence of the article. " * 15)
 
-    async def fake_fetch(url: str, _settings, email: str | None = None, cookies: str = "") -> extraction.ExtractionResult:
+    async def fake_fetch(
+        url: str, _settings, email: str | None = None, cookies: str = ""
+    ) -> extraction.ExtractionResult:
         return extraction.ExtractionResult(markdown=archive_capture_junk * 3)
 
     monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
-    out = await extraction._maybe_render_full(article, "https://www.inc.com/a", settings, _render_rule())
+    out = await extraction._maybe_render_full(
+        article, "https://www.inc.com/a", settings, _render_rule()
+    )
     assert out is article
 
 
@@ -1757,12 +1813,16 @@ async def test_render_enrichment_keeps_article_over_longer_chrome_padded_render(
     article = extraction.ExtractionResult(markdown=sentence * 40)
     padded = extraction.ExtractionResult(markdown=sentence * 10 + archive_capture_junk * 6)
 
-    async def fake_fetch(url: str, _settings, email: str | None = None, cookies: str = "") -> extraction.ExtractionResult:
+    async def fake_fetch(
+        url: str, _settings, email: str | None = None, cookies: str = ""
+    ) -> extraction.ExtractionResult:
         return padded
 
     monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
     assert len(padded.markdown) > len(article.markdown)
-    out = await extraction._maybe_render_full(article, "https://www.inc.com/a", settings, _render_rule())
+    out = await extraction._maybe_render_full(
+        article, "https://www.inc.com/a", settings, _render_rule()
+    )
     assert out is article
 
 
@@ -1779,7 +1839,9 @@ async def test_render_rule_with_cookies_renders_first_with_the_session(
 
     async def fake_fetch(url: str, _settings, email: str | None = None, cookies: str = ""):
         seen.append(cookies)
-        return extraction.ExtractionResult(markdown="The subscriber article, sentence by sentence. " * 80)
+        return extraction.ExtractionResult(
+            markdown="The subscriber article, sentence by sentence. " * 80
+        )
 
     monkeypatch.setattr(extraction.render, "fetch", fake_fetch)
     _patch_async_client(monkeypatch, _stub_transport(httpx.Response(401, text="blocked")))
@@ -1819,7 +1881,11 @@ async def test_render_answers_a_wall_revealed_by_a_fallback(
     monkeypatch.setattr(extraction.render, "fetch", _render_fake(_RENDERED_ARTICLE, calls))
     transport = _stub_transport(
         httpx.Response(403, text="Forbidden"),
-        _flaresolverr_ok(f"<html><body><article><p>{_GATED_BODY}</p></article></body></html>"),
+        _flaresolverr_ok(
+            "<html><body><article><p>"
+            + _GATED_BODY.replace("\n\n", "</p><p>")
+            + "</p></article></body></html>"
+        ),
     )
     _patch_async_client(monkeypatch, transport)
     result = await extraction.extract("https://w42st.com/post/amazon", settings)
@@ -1833,7 +1899,9 @@ async def test_render_rule_with_cookies_is_held_to_its_floor(
     # An expired session renders the logged-out teaser: over 500 chars, under the rule's
     # 3000. It must fail, with the expired-cookies message.
     settings = _render_settings(monkeypatch)
-    teaser = extraction.ExtractionResult(markdown="Two paragraphs of the story before the wall. " * 25)
+    teaser = extraction.ExtractionResult(
+        markdown="Two paragraphs of the story before the wall. " * 25
+    )
     monkeypatch.setattr(extraction.render, "fetch", _render_fake(teaser))
     _patch_async_client(monkeypatch, _stub_transport(httpx.Response(401, text="blocked")))
     rule = extraction.SourceFallback("op", ("wsj.com",), "render", "", 3000, cookies="sid=old")
@@ -1841,7 +1909,7 @@ async def test_render_rule_with_cookies_is_held_to_its_floor(
         await extraction.extract("https://www.wsj.com/a", settings, (rule,))
 
 
-async def test_registration_render_runs_with_fallbacks_disabled(
+async def test_registration_render_is_disabled_with_fallbacks(
     env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, no_archive
 ) -> None:
     monkeypatch.setenv("EXTRACTION_FALLBACKS_ENABLED", "false")
@@ -1850,9 +1918,9 @@ async def test_registration_render_runs_with_fallbacks_disabled(
     calls: list = []
     monkeypatch.setattr(extraction.render, "fetch", _render_fake(_RENDERED_ARTICLE, calls))
     _patch_async_client(monkeypatch, _stub_transport(_ok_response(_GATED_BODY)))
-    result = await extraction.extract("https://w42st.com/post/amazon", settings)
-    assert result is _RENDERED_ARTICLE
-    assert calls[0]["email"] == "reader@example.test"
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://w42st.com/post/amazon", settings)
+    assert calls == []
 
 
 async def test_render_enrichment_skipped_for_opted_out_host(
@@ -1865,6 +1933,24 @@ async def test_render_enrichment_skipped_for_opted_out_host(
         raise AssertionError("render must not run for a host set to none")
 
     monkeypatch.setattr(extraction.render, "fetch", boom)
-    partial = extraction.ExtractionResult(markdown="Body text. EXPAND TO CONTINUE READING", metadata={})
+    partial = extraction.ExtractionResult(
+        markdown="Body text. EXPAND TO CONTINUE READING", metadata={}
+    )
     rule = extraction.SourceFallback("op", ("other.com",), "none", "", 0)
-    assert await extraction._maybe_render_full(partial, "https://other.com/a", settings, rule) is partial
+    assert (
+        await extraction._maybe_render_full(partial, "https://other.com/a", settings, rule)
+        is partial
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "The site invites readers to continue reading this story for free after registration.",
+        "Subscribe to continue is an example of wording used by publishers.",
+        "Create your free account was the first instruction on the page.",
+        '## "Subscribe to continue" was the headline being discussed.',
+    ],
+)
+def test_gate_offset_does_not_truncate_prose_containing_prompts(body):
+    assert extraction.gate_offset(body) is None

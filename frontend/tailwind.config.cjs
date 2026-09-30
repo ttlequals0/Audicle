@@ -12,7 +12,7 @@ module.exports = {
         paper: "#0a0a0c",
         surface: "#15151a",
         line: "#26262e",
-        mute: "#6b6b78",
+        mute: "#9a9aaa",
         dim: "#9a9aaa",
         fg: "#f5f5f5",
         accent: "#1ce783",

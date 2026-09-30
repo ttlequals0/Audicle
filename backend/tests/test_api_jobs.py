@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 
+from app.config import get_settings
 from app.core import database
 from app.main import create_app
-from app.services import jobs
+from app.services import episodes, file_extraction, jobs
 from fastapi.testclient import TestClient
 
 
@@ -76,6 +78,82 @@ def test_delete_job_removes_terminal_row(env: Path) -> None:
         listed = client.get("/api/v1/jobs")
     assert response.status_code == 204
     assert listed.headers["X-Total-Count"] == "0"
+
+
+def test_delete_done_job_preserves_episode_and_clears_provenance(env: Path) -> None:
+    job = _seed_job(env, url="https://example.test/del-preserve-episode")
+    _set_status(env, job.id, "done")
+    conn = database.connect(database.db_path(env))
+    try:
+        episodes.upsert(
+            conn,
+            id=job.episode_id,
+            job_id=job.id,
+            original_url=job.url,
+            title="Keep me",
+            author=None,
+            audio_path=None,
+            artwork_path=None,
+            transcript_vtt=None,
+            duration_secs=None,
+        )
+    finally:
+        conn.close()
+
+    with _client(env) as client:
+        response = client.delete(f"/api/v1/jobs/{job.id}")
+    assert response.status_code == 204
+    conn = database.connect(database.db_path(env))
+    try:
+        episode = episodes.get_by_id(conn, job.episode_id)
+        assert episode is not None
+        assert episode.job_id is None
+        assert jobs.get_job(conn, job.id) is None
+    finally:
+        conn.close()
+
+
+def test_requeue_upload_checks_original_and_enqueues_under_upload_lock(
+    env: Path, monkeypatch
+) -> None:
+    filename = "saved.md"
+    url = file_extraction.build_source_uri("a" * 64, filename)
+    episode_id = jobs.compute_episode_id(url)
+    database.run_migrations(env)
+    conn = database.connect(database.db_path(env))
+    try:
+        created = jobs.create_job(conn, url)
+        jobs.mark_failed(conn, created.job.id, stage="extract", error="retry")
+    finally:
+        conn.close()
+    source = file_extraction.source_path(get_settings(), episode_id, filename)
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"document")
+
+    original_lock = database.upload_staging_lock
+    original_create = jobs.create_job
+    lock_held = False
+
+    @contextmanager
+    def _tracked_lock(data_dir: Path, locked_episode_id: str, *, blocking: bool = True):
+        nonlocal lock_held
+        with original_lock(data_dir, locked_episode_id, blocking=blocking):
+            lock_held = True
+            try:
+                yield True
+            finally:
+                lock_held = False
+
+    def _locked_create(*args, **kwargs):
+        assert lock_held
+        return original_create(*args, **kwargs)
+
+    monkeypatch.setattr(database, "upload_staging_lock", _tracked_lock)
+    monkeypatch.setattr(jobs, "create_job", _locked_create)
+    with _client(env) as client:
+        response = client.post(f"/api/v1/jobs/{created.job.id}/requeue")
+    assert response.status_code == 201
+    assert response.json()["episode_id"] == episode_id
 
 
 def test_delete_job_rejects_processing(env: Path) -> None:
