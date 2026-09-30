@@ -26,6 +26,16 @@
   * {
     -webkit-tap-highlight-color: transparent;
   }
+  :focus-visible {
+    outline: 3px solid #1ce783;
+    outline-offset: 3px;
+  }
+  button {
+    min-height: 44px;
+  }
+  button[aria-label] {
+    min-width: 44px;
+  }
 }
 
 @layer components {
@@ -38,16 +48,17 @@
     flex: 1;
     padding: 0.875rem 0.5rem;
     font-family: "JetBrains Mono", monospace;
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.1em;
-    color: #6b6b78;
+    color: #9a9aaa;
     transition: color 0.15s;
     position: relative;
     background: transparent;
     border: none;
     cursor: pointer;
     text-align: center;
+    min-height: 44px;
   }
   .tab-btn.active {
     color: #1ce783;
@@ -75,7 +86,8 @@
     transition: border-color 0.15s;
   }
   .field:focus {
-    outline: none;
+    outline: 2px solid #1ce783;
+    outline-offset: 2px;
     border-color: #1ce783;
   }
 
@@ -116,7 +128,7 @@
     transform: translateY(-50%);
     background: transparent;
     border: none;
-    color: #6b6b78;
+    color: #9a9aaa;
     cursor: pointer;
     padding: 0.25rem 0.5rem;
     font-size: 1rem;
@@ -125,7 +137,6 @@
   .search-clear:hover,
   .search-clear:focus-visible {
     color: #1ce783;
-    outline: none;
   }
 
   /* Settings category heading. Sits above a run of sections, so it reads as a
@@ -133,10 +144,10 @@
      vocabulary, wider tracking, muted instead of accent. */
   .category-heading {
     font-family: "JetBrains Mono", monospace;
-    font-size: 0.625rem;
+    font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.18em;
-    color: #6b6b78;
+    color: #9a9aaa;
     padding: 0.75rem 0 0.125rem;
     border-bottom: 1px solid #1a1a20;
   }
@@ -194,7 +205,7 @@
     padding: 0.125rem 0;
     cursor: pointer;
     font-family: "JetBrains Mono", monospace;
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     /* Red at rest, not on hover alone: this is the one control on the page that
        discards values, so it should read that way before you touch it. The
        muted grey it used to sit at was too close to the card background to
@@ -205,12 +216,11 @@
   .reset-btn:hover:not(:disabled),
   .reset-btn:focus-visible:not(:disabled) {
     color: #ff7b7b;
-    outline: none;
   }
   /* Dimmed with an explicit colour rather than opacity, so "nothing to reset"
      stays legible instead of fading into the card. */
   .reset-btn:disabled {
-    color: #7a5a5e;
+    color: #9a9aaa;
     cursor: default;
   }
 
@@ -241,7 +251,7 @@
   .label {
     display: block;
     font-family: "JetBrains Mono", monospace;
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: #9a9aaa;
@@ -253,8 +263,8 @@
   .toggle {
     position: relative;
     flex-shrink: 0;
-    width: 40px;
-    height: 22px;
+    width: 48px;
+    height: 44px;
     padding: 0;
     border: 1px solid #26262e;
     border-radius: 999px;
@@ -265,8 +275,8 @@
   .toggle::after {
     content: "";
     position: absolute;
-    top: 2px;
-    left: 2px;
+    top: 14px;
+    left: 4px;
     width: 16px;
     height: 16px;
     border-radius: 50%;
@@ -278,7 +288,7 @@
     border-color: #1ce783;
   }
   .toggle[aria-checked="true"]::after {
-    transform: translateX(18px);
+    transform: translateX(22px);
     background: #040405;
   }
   .toggle:focus-visible {
@@ -296,6 +306,7 @@
     cursor: pointer;
     transition: transform 0.08s, background 0.15s;
     font-size: 0.9375rem;
+    min-height: 44px;
   }
   .btn-primary:active {
     transform: translateY(1px);
@@ -314,6 +325,7 @@
     border-radius: 6px;
     cursor: pointer;
     font-size: 0.8125rem;
+    min-height: 44px;
     transition: border-color 0.15s;
   }
   .btn-ghost:active {
@@ -333,7 +345,7 @@
     align-items: center;
     gap: 0.25rem;
     font-family: "JetBrains Mono", monospace;
-    font-size: 0.625rem;
+    font-size: 0.75rem;
     letter-spacing: 0.05em;
     text-transform: uppercase;
     padding: 0.25rem 0.5rem;
@@ -359,7 +371,7 @@
   }
   .tag-cancelled {
     background: #2a2a30;
-    color: #8a8a96;
+    color: #9a9aaa;
   }
   .tag-processing::before,
   .tag-queued::before {
@@ -385,8 +397,8 @@
   }
   .queue-index {
     font-family: "JetBrains Mono", monospace;
-    font-size: 0.6875rem;
-    color: #4a4a55;
+    font-size: 0.75rem;
+    color: #9a9aaa;
     padding-top: 0.125rem;
     flex-shrink: 0;
     font-variant-numeric: tabular-nums;
@@ -431,7 +443,7 @@
   }
   .ptr-label {
     font-family: "JetBrains Mono", monospace;
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: #9a9aaa;
@@ -459,7 +471,8 @@
     align-items: baseline;
     width: 100%;
     text-align: left;
-    padding: 0.5rem 0.5rem;
+    min-height: 44px;
+    padding: 0.625rem 0.5rem;
     border-radius: 6px;
     cursor: pointer;
     background: transparent;
@@ -498,7 +511,7 @@
   }
   .section-title {
     font-family: "JetBrains Mono", monospace;
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.12em;
     color: #1ce783;
@@ -527,7 +540,7 @@
   }
   .mono-xs {
     font-family: "JetBrains Mono", monospace;
-    font-size: 0.625rem;
+    font-size: 0.75rem;
     letter-spacing: 0.05em;
   }
 
@@ -573,7 +586,7 @@
     border-color: #1ce783;
   }
   .hero-input::placeholder {
-    color: #6b6b78;
+    color: #9a9aaa;
   }
 
   .dropzone {
@@ -608,7 +621,7 @@
   }
   .format-badge {
     font-family: "JetBrains Mono", monospace;
-    font-size: 0.5625rem;
+    font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.1em;
     color: #1ce783;
@@ -653,7 +666,7 @@
   }
   .builtin-note-tag {
     font-family: "JetBrains Mono", monospace;
-    font-size: 0.5625rem;
+    font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.1em;
     color: #1ce783;
@@ -671,7 +684,7 @@
   }
   .builtin-note-path {
     font-family: "JetBrains Mono", monospace;
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     color: #c9c9d4;
     background: #15151a;
     border: 1px solid #26262e;
@@ -695,13 +708,14 @@
   .audio-player {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 0.625rem;
     width: 100%;
   }
   .audio-toggle {
     flex-shrink: 0;
-    width: 34px;
-    height: 34px;
+    width: 44px;
+    height: 44px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -721,7 +735,7 @@
     appearance: none;
     flex: 1;
     min-width: 0;
-    height: 4px;
+    height: 24px;
     border-radius: 2px;
     background: linear-gradient(
       90deg,
@@ -752,8 +766,15 @@
   }
   .audio-time {
     flex-shrink: 0;
-    color: #6b6b78;
+    color: #9a9aaa;
     font-variant-numeric: tabular-nums;
+  }
+  .audio-error {
+    flex-basis: 100%;
+    margin: 0.25rem 0 0;
+    color: #ff7b7b;
+    font-size: 0.875rem;
+    line-height: 1.4;
   }
   .audio-rate {
     flex-shrink: 0;
@@ -763,7 +784,8 @@
     border-radius: 4px;
     padding: 0.25rem 0.4rem;
     cursor: pointer;
-    min-width: 36px;
+    min-width: 44px;
+    min-height: 44px;
     text-align: center;
     transition: border-color 0.15s, color 0.15s;
   }
@@ -771,6 +793,48 @@
     border-color: #1ce783;
     color: #1ce783;
   }
+
+  .audio-skip {
+    flex-shrink: 0;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0.25rem;
+    border: 1px solid #26262e;
+    border-radius: 6px;
+    background: transparent;
+    color: #f5f5f5;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.75rem;
+    cursor: pointer;
+  }
+  .audio-skip:active {
+    border-color: #1ce783;
+  }
+
+  @media (max-width: 400px) {
+    .audio-scrub {
+      flex: 1 1 4rem;
+    }
+    .audio-time {
+      margin-left: auto;
+    }
+  }
+}
+
+.skip-link {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 100;
+  transform: translateY(-200%);
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  background: #1ce783;
+  color: #040405;
+  font-weight: 700;
+}
+.skip-link:focus {
+  transform: translateY(0);
 }
 
 ::-webkit-scrollbar {

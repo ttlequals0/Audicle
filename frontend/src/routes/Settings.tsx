@@ -9,6 +9,7 @@ import {
   LlmConnectionTestResponse,
   LlmModelsResponse,
   SettingsPayload,
+  SidecarSettingsPayload,
   VoiceSlot,
 } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -56,6 +57,8 @@ const GROUPS: Record<string, string[]> = {
     "FEED_ARTWORK_URL",
   ],
   Connections: [
+    "BASE_URL",
+    "UI_BASE_URL",
     "FIRECRAWL_URL",
     "FIRECRAWL_API_KEY",
     "TTS_URL",
@@ -177,6 +180,7 @@ const GROUPS: Record<string, string[]> = {
   ],
   Chapters: ["CHAPTERS_ENABLED", "CHAPTERS_MIN_DURATION_SECS"],
   Artwork: [
+    "DEFAULT_ARTWORK_URL",
     "ARTWORK_SIZE_PX",
     "EMBED_ARTWORK_SIZE_PX",
     "ARTWORK_JPG_QUALITY",
@@ -205,9 +209,19 @@ const GROUPS: Record<string, string[]> = {
     "JOB_TIMEOUT_PER_CHUNK_SECONDS",
     "JOB_TIMEOUT_CEILING_MULTIPLIER",
   ],
-  Retention: ["RETENTION_DAYS"],
-  Logging: ["LOG_LEVEL"],
+  Retention: ["RETENTION_DAYS", "RETENTION_SWEEP_HOUR_UTC", "MIGRATION_BACKUP_RETENTION_DAYS"],
+  Logging: ["LOG_LEVEL", "LOG_FORMAT"],
   RSS: ["RSS_CACHE_MAX_AGE_SECONDS"],
+  Operations: ["QUEUE_POLL_INTERVAL_SECONDS"],
+  Security: [
+    "LOGIN_RATE_LIMIT",
+    "LOCKOUT_MAX_FAILED_ATTEMPTS",
+    "LOCKOUT_WINDOW_SECONDS",
+    "TRUST_PROXY_HEADERS",
+    "TRUSTED_PROXY_HOPS",
+    "SESSION_COOKIE_SECURE",
+    "SESSION_COOKIE_MAX_AGE_SECONDS",
+  ],
 };
 
 // Groups arranged into categories, ordered by how often an operator touches
@@ -223,8 +237,9 @@ const STANDALONE_SECTIONS = [
   "voices",
   "end chime",
   "authenticated feeds",
-  "security",
+  "Admin access",
   "system info",
+  "sidecar settings",
 ];
 
 // Settings arranged by the question an operator is answering, not by which
@@ -267,13 +282,13 @@ const CATEGORIES: { name: string; entries: string[] }[] = [
     // reader work out whether they mean different things. "Services" is also
     // what a self-hoster already calls these.
     name: "Services",
-    entries: ["LLM", "Connections", "Timeouts", "Webhooks"],
+    entries: ["LLM", "Connections", "Timeouts", "Webhooks", "sidecar settings"],
   },
   {
     // Running the app itself. Small on purpose: anything that belongs to a
     // subject above lives there instead.
     name: "System",
-    entries: ["Job timeouts", "Logging", "security", "system info"],
+    entries: ["Job timeouts", "Operations", "Logging", "Security", "Admin access", "system info"],
   },
 ];
 
@@ -295,6 +310,126 @@ const CATEGORIES: { name: string; entries: string[] }[] = [
 // A setting that belongs to the rule row above it: indented, tied to it by an accent line.
 const RULE_DETAIL = "block ml-3 pl-3.5 border-l-2 border-accent/35";
 const RULE_DETAIL_LABEL = "block mb-1.5 text-mute text-[0.8125rem]";
+
+const SETTING_LABELS: Record<string, string> = {
+  EXTRACTION_DIRECT_TIMEOUT_SECONDS: "Direct fetch timeout (seconds)",
+  EXTRACTION_ARC_TIMEOUT_SECONDS: "Archive fetch timeout (seconds)",
+  EXTRACTION_RENDER_TIMEOUT_SECONDS: "Browser render timeout (seconds)",
+  UPLOAD_MAX_MB: "Maximum upload size (MB)",
+  QUEUE_POLL_INTERVAL_SECONDS: "Queue polling interval (seconds)",
+  RETENTION_SWEEP_HOUR_UTC: "Retention cleanup hour (UTC)",
+  MIGRATION_BACKUP_RETENTION_DAYS: "Migration backup retention (days)",
+  LOGIN_RATE_LIMIT: "Login rate limit (attempts per minute)",
+  LOCKOUT_MAX_FAILED_ATTEMPTS: "Failed login attempts before lockout",
+  LOCKOUT_WINDOW_SECONDS: "Login lockout window (seconds)",
+  TRUST_PROXY_HEADERS: "Trust proxy headers",
+  TRUSTED_PROXY_HOPS: "Trusted proxy hops",
+  SESSION_COOKIE_SECURE: "Secure session cookie",
+  SESSION_COOKIE_MAX_AGE_SECONDS: "Session lifetime (seconds)",
+  BASE_URL: "Public feed base URL",
+  UI_BASE_URL: "Admin interface base URL",
+  DEFAULT_ARTWORK_URL: "Default feed artwork URL",
+  LOG_FORMAT: "Log format",
+};
+
+const ACRONYMS: Record<string, string> = {
+  API: "API",
+  CPU: "CPU",
+  GPU: "GPU",
+  HTTP: "HTTP",
+  ID: "ID",
+  LLM: "LLM",
+  MB: "MB",
+  OCR: "OCR",
+  RSS: "RSS",
+  TTS: "TTS",
+  URL: "URL",
+  UTC: "UTC",
+};
+
+function settingLabel(key: string): string {
+  if (SETTING_LABELS[key]) return SETTING_LABELS[key];
+  const rawWords = key.split("_");
+  const unit = ["SECONDS", "MINUTES", "HOURS", "DAYS", "MB", "GB", "KB", "BYTES", "PERCENT"].includes(
+    rawWords[rawWords.length - 1]
+  )
+    ? rawWords.pop()
+    : null;
+  const words = rawWords.map((word) => ACRONYMS[word] ?? word.toLowerCase());
+  return (
+    words.map((word, index) => (index === 0 ? word[0].toUpperCase() + word.slice(1) : word)).join(" ") +
+    (unit ? ` (${unit.toLowerCase()})` : "")
+  );
+}
+
+function feedbackRole(message: string): "alert" | "status" {
+  return /failed|error|cannot|incorrect|unable/i.test(message) ? "alert" : "status";
+}
+
+const SIDECAR_GROUPS = [
+  {
+    key: "render",
+    title: "Render sidecar",
+    keys: [
+      "RENDER_NAV_TIMEOUT_MS",
+      "RENDER_CLICK_TIMEOUT_MS",
+      "RENDER_GROW_WAIT_MS",
+      "RENDER_ATTEMPTS",
+      "RENDER_SETTLE_POLL_MS",
+      "RENDER_SETTLE_QUIET_POLLS",
+      "RENDER_SETTLE_MAX_MS",
+      "RENDER_BUDGET_SECONDS",
+      "LOG_LEVEL",
+      "LOG_FORMAT",
+    ],
+    note: "Browser extraction settings apply to the next article. Logging changes apply live.",
+  },
+  {
+    key: "tts_wrapper",
+    title: "TTS wrapper",
+    keys: [
+      "TTS_MEMORY_SOFT_LIMIT_MB",
+      "TTS_MEMORY_HARD_LIMIT_MB",
+      "TTS_IDLE_UNLOAD_SECONDS",
+      "WHISPER_ENABLED",
+      "WHISPER_MODEL",
+      "WHISPER_DEVICE",
+      "WHISPER_COMPUTE_TYPE",
+      "TTS_REQUEST_TIMEOUT_SECONDS",
+      "LOG_LEVEL",
+      "LOG_FORMAT",
+    ],
+    note: "Memory, timeout, and logging changes apply live. Whisper model changes load lazily on the next verification.",
+  },
+] as const;
+
+const SIDECAR_LABELS: Record<string, string> = {
+  RENDER_NAV_TIMEOUT_MS: "Page navigation timeout (ms)",
+  RENDER_CLICK_TIMEOUT_MS: "Gate click timeout (ms)",
+  RENDER_GROW_WAIT_MS: "Content growth wait (ms)",
+  RENDER_ATTEMPTS: "Render attempts",
+  RENDER_SETTLE_POLL_MS: "Page settle poll interval (ms)",
+  RENDER_SETTLE_QUIET_POLLS: "Quiet polls before complete",
+  RENDER_SETTLE_MAX_MS: "Maximum page settle wait (ms)",
+  RENDER_BUDGET_SECONDS: "Maximum time per article (seconds)",
+  TTS_MEMORY_SOFT_LIMIT_MB: "Soft memory limit (MB)",
+  TTS_MEMORY_HARD_LIMIT_MB: "Hard memory limit (MB)",
+  TTS_IDLE_UNLOAD_SECONDS: "Unload models after idle (seconds)",
+  WHISPER_ENABLED: "Enable speech verification",
+  WHISPER_MODEL: "Speech verification model",
+  WHISPER_DEVICE: "Speech verification device",
+  WHISPER_COMPUTE_TYPE: "Speech verification precision",
+  TTS_REQUEST_TIMEOUT_SECONDS: "TTS request timeout (seconds)",
+  LOG_LEVEL: "Log detail",
+  LOG_FORMAT: "Log format",
+};
+
+const SIDECAR_NUMERIC_KEYS = new Set(
+  SIDECAR_GROUPS.flatMap(({ keys }) => keys).filter((key) =>
+    /_MS$|_SECONDS$|_POLLS$|_ATTEMPTS$|_LIMIT_MB$/.test(key)
+  )
+);
+const SIDECAR_BOOLEAN_KEYS = new Set(["WHISPER_ENABLED"]);
 
 // Site-override strategies that drive a real browser, so a subscriber cookie jar applies.
 const acceptsCookies = (proxy: string) => proxy === "flaresolverr" || proxy === "render";
@@ -338,7 +473,7 @@ const GROUP_NOTES: Record<string, string> = {
     "the article url to that service (jina by default). turn it off to keep urls local. " +
     "registration_email answers free \"email to keep reading\" walls: the sidecar " +
     "types it into the signup form rather than lose the article. needs render_url. " +
-    "clearing it here falls back to the env value; the address does reach the publisher",
+    "clearing it disables registration submissions. the publisher receives the address",
   Webhooks:
     "posts episode.processed and episode.failed to this url. blank disables. " +
     "test sends to the saved url, so save first",
@@ -472,10 +607,12 @@ function Toggle({
   id,
   checked,
   onChange,
+  label,
 }: {
   id: string;
   checked: boolean;
   onChange: (v: boolean) => void;
+  label?: string;
 }) {
   return (
     <button
@@ -483,7 +620,7 @@ function Toggle({
       id={id}
       role="switch"
       aria-checked={checked}
-      aria-label={id}
+      aria-label={label ?? settingLabel(id)}
       className="toggle"
       onClick={() => onChange(!checked)}
     />
@@ -533,6 +670,7 @@ export default function SettingsRoute() {
   const jobRunning = (activeJobsQ.data?.length ?? 0) > 0;
   const healthQ = useHealthLive();
   const [draft, setDraft] = useState<Record<string, string>>({});
+  const [resetKeys, setResetKeys] = useState<Set<string>>(new Set());
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
   // Settings search. qInput is what the box shows; q is the trimmed value the
   // matcher uses. Matching runs over the group titles and their setting keys,
@@ -580,6 +718,18 @@ export default function SettingsRoute() {
   // the operator actually changed -- otherwise every default would be written
   // as an explicit override.
   const baseline = useRef<Record<string, string>>({});
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const updateDraft = (key: string, value: string) => {
+    setSaveErr(null);
+    setDraft((prev) => ({ ...prev, [key]: value }));
+    setResetKeys((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+  };
 
   // Seed the draft once on first arrival; subsequent refetches must not
   // clobber unsaved field edits.
@@ -600,15 +750,29 @@ export default function SettingsRoute() {
   }, [settingsQ.data]);
 
   const putM = useMutation({
-    mutationFn: (payload: Record<string, unknown>) =>
+    mutationFn: (request: {
+      payload: Record<string, unknown>;
+      draftSnapshot: Record<string, string>;
+      resetSnapshot: Set<string>;
+    }) =>
       api("/api/v1/settings", {
         method: "PUT",
-        body: JSON.stringify(payload),
+        body: JSON.stringify(request.payload),
       }),
-    onSuccess: () => {
+    onSuccess: (_data, request) => {
       // The saved values are the new baseline; without this the form stays
       // "dirty" forever and the save bar never goes away.
-      baseline.current = { ...draft };
+      for (const key of Object.keys(request.payload)) {
+        baseline.current[key] = request.draftSnapshot[key] ?? "";
+      }
+      setResetKeys((current) => {
+        const next = new Set(current);
+        for (const key of request.resetSnapshot) {
+          if (request.payload[key] !== null) continue;
+          if (draftRef.current[key] === request.draftSnapshot[key] && current.has(key)) next.delete(key);
+        }
+        return next;
+      });
       setSavedMsg("Saved");
       setTimeout(() => setSavedMsg(null), 2000);
       qc.invalidateQueries({ queryKey: ["settings"] });
@@ -628,22 +792,28 @@ export default function SettingsRoute() {
   const save = () => {
     const payload: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(draft)) {
+      if (resetKeys.has(key)) {
+        payload[key] = null;
+        continue;
+      }
       // Only persist keys the operator changed from the seeded value, so
       // leaving a field at its default doesn't pin it as an override.
       if (value === (baseline.current[key] ?? "")) continue;
       if (MASKED_KEYS.has(key)) {
         // Secrets are sent verbatim (never number-coerced). The mask sentinel
-        // round-trips and the backend ignores it; an empty value clears the
-        // stored override (reverts to the .env value).
+        // round-trips and the backend ignores it.
         payload[key] = value;
         continue;
       }
       if (value === "") {
-        // Blanking a text field drops the override, so the key reverts to its
-        // env value. Numbers and bools have no empty form, so an emptied one is
-        // a stray edit, not an intent.
+        // Numbers and bools have no empty form, so an emptied one is a stray
+        // edit. Blank text is explicit; reset uses JSON null.
         const def = settingsQ.data?.defaults[key];
-        if (typeof def === "number" || typeof def === "boolean") continue;
+        if (typeof def === "number") {
+          setSaveErr(`${settingLabel(key)} must contain a number or use Reset to default.`);
+          return;
+        }
+        if (typeof def === "boolean") continue;
         payload[key] = "";
         continue;
       }
@@ -653,10 +823,22 @@ export default function SettingsRoute() {
         payload[key] = Number(value);
       else payload[key] = value;
     }
-    putM.mutate(payload);
+    if (Object.keys(payload).length === 0) return;
+    setSaveErr(null);
+    putM.mutate({ payload, draftSnapshot: { ...draft }, resetSnapshot: new Set(resetKeys) });
   };
 
-  if (settingsQ.isLoading) return <p className="text-mute text-sm">loading...</p>;
+  if (settingsQ.isLoading) return <p className="text-mute text-sm" role="status">Loading settings...</p>;
+  if (settingsQ.isError) {
+    return (
+      <div className="text-danger text-sm" role="alert">
+        <p>Settings could not be loaded.</p>
+        <button className="btn-ghost mt-2" onClick={() => settingsQ.refetch()}>
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   // Keys whose effective default is a real boolean render as a switch, not a
   // text field. The defaults map carries the typed value from the backend.
@@ -694,9 +876,10 @@ export default function SettingsRoute() {
     voices: <VoicesWidget />,
     "end chime": <ChimeWidget />,
     "authenticated feeds": <AuthenticatedFeedsWidget />,
-    security: authStatus ? (
+    "Admin access": authStatus ? (
       <SecuritySection passwordSet={authStatus.password_set} onChanged={refreshAuth} />
     ) : null,
+    "sidecar settings": <SidecarSettingsWidget />,
     "system info": (
       <>
         <ReadOnlyRow label="version" value={healthQ.data?.version ?? "loading"} />
@@ -729,18 +912,32 @@ export default function SettingsRoute() {
   // save bar's existence: with nothing pending there is nothing to save, so the
   // control has no reason to occupy the screen.
   const dirtyKeys = Object.keys(draft).filter(
-    (key) => draft[key] !== (baseline.current[key] ?? "")
+    (key) => resetKeys.has(key) || draft[key] !== (baseline.current[key] ?? "")
   );
 
   const groupDiffersFromDefaults = (keys: string[]) =>
-    keys.some((key) => (draft[key] ?? "") !== defaultString(key));
+    keys.some(
+      (key) =>
+        (draft[key] ?? "") !== defaultString(key) ||
+        Object.prototype.hasOwnProperty.call(settingsQ.data?.values ?? {}, key)
+    );
 
-  const resetGroupToDefaults = (keys: string[]) =>
+  const resetGroupToDefaults = (keys: string[]) => {
+    setSaveErr(null);
     setDraft((prev) => {
       const next = { ...prev };
       for (const key of keys) next[key] = defaultString(key);
       return next;
     });
+    setResetKeys((prev) => {
+      const next = new Set(prev);
+      for (const key of keys) {
+        if (Object.prototype.hasOwnProperty.call(settingsQ.data?.values ?? {}, key)) next.add(key);
+        else next.delete(key);
+      }
+      return next;
+    });
+  };
 
   // A group matches when its own name matches, or any key it displays does.
   // Keys are matched with underscores treated as spaces too, so "max f0" finds
@@ -810,6 +1007,7 @@ export default function SettingsRoute() {
                   <CollapsibleSection
                     key={name}
                     title={name}
+                    storageKey={name === "Admin access" ? "settings-section-security" : undefined}
                     searchKey={name}
                     defaultOpen={name === "system info"}
                   >
@@ -849,6 +1047,10 @@ export default function SettingsRoute() {
                             ? ["none", "low", "medium", "high"]
                           : key === "OCR_LANGUAGE"
                             ? (ocrLangsQ.data?.languages ?? ["en"])
+                          : key === "LOG_LEVEL"
+                            ? ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+                          : key === "LOG_FORMAT"
+                            ? ["json", "text"]
                             : null;
               // Languages follow the model picked in the form, not just the
               // loaded one.
@@ -862,7 +1064,7 @@ export default function SettingsRoute() {
                   className={isBool ? "flex items-center justify-between gap-3 py-1" : undefined}
                 >
                   <label className={`label ${isBool ? "mb-0" : ""}`} htmlFor={key}>
-                    {key}
+                    {settingLabel(key)}
                   </label>
                   {key === "TTS_MODEL" || key === "TTS_LANGUAGE" ? (
                     <select
@@ -876,7 +1078,7 @@ export default function SettingsRoute() {
                           : undefined
                       }
                       onChange={(e) =>
-                        setDraft((p) => ({ ...p, [key]: e.target.value }))
+                        updateDraft(key, e.target.value)
                       }
                     >
                       {key === "TTS_MODEL" ? (
@@ -902,7 +1104,7 @@ export default function SettingsRoute() {
                       className="field"
                       value={draft[key] ?? ""}
                       onChange={(e) =>
-                        setDraft((p) => ({ ...p, [key]: e.target.value }))
+                        updateDraft(key, e.target.value)
                       }
                     >
                       {selectOptions.map((opt) => (
@@ -916,13 +1118,13 @@ export default function SettingsRoute() {
                       value={draft[key] ?? ""}
                       provider={draft["LLM_PROVIDER"] ?? ""}
                       draft={draft}
-                      onChange={(v) => setDraft((p) => ({ ...p, [key]: v }))}
+                      onChange={(v) => updateDraft(key, v)}
                     />
                   ) : isBool ? (
                     <Toggle
                       id={key}
                       checked={draft[key] === "true"}
-                      onChange={(v) => setDraft((p) => ({ ...p, [key]: v ? "true" : "false" }))}
+                      onChange={(v) => updateDraft(key, v ? "true" : "false")}
                     />
                   ) : (
                     <input
@@ -933,7 +1135,7 @@ export default function SettingsRoute() {
                       {...(MASKED_KEYS.has(key) ? PASSWORD_MANAGER_IGNORE : {})}
                       value={draft[key] ?? ""}
                       onChange={(e) =>
-                        setDraft((p) => ({ ...p, [key]: e.target.value }))
+                        updateDraft(key, e.target.value)
                       }
                     />
                   )}
@@ -976,13 +1178,13 @@ export default function SettingsRoute() {
           outlive that for its own confirmation to be readable. */}
       {(dirtyKeys.length > 0 || putM.isPending || savedMsg || saveErr) && (
         <div className="save-bar">
-          {saveErr ? (
-            <span className="mono-xs text-danger mr-auto">{saveErr}</span>
+        {saveErr ? (
+            <span className="mono-xs text-danger mr-auto" role="alert">{saveErr}</span>
           ) : savedMsg && dirtyKeys.length === 0 ? (
-            <span className="mono-xs text-accent mr-auto">{savedMsg}</span>
+            <span className="mono-xs text-accent mr-auto" role="status">{savedMsg}</span>
           ) : (
             <span className="mono-xs text-mute mr-auto">
-              // {dirtyKeys.length} changed
+              {putM.isPending ? "Saving settings..." : `${dirtyKeys.length} settings changed`}
             </span>
           )}
           {dirtyKeys.length > 0 && (
@@ -1127,7 +1329,7 @@ function ModelField({
         </span>
       )}
       {testM.isError && testM.variables === testConfigKey && (
-        <span className="mono-xs text-danger">provider test failed</span>
+        <span className="mono-xs text-danger" role="alert">Provider test failed.</span>
       )}
     </>
   );
@@ -1278,7 +1480,7 @@ function SecuritySection({
             remove password
           </button>
         )}
-        {msg && <span className="font-mono text-xs text-accent">{msg}</span>}
+      {msg && <span className={`font-mono text-sm ${msg.includes("failed") ? "text-danger" : "text-accent"}`} role={feedbackRole(msg)}>{msg}</span>}
       </div>
     </section>
   );
@@ -1346,7 +1548,7 @@ function PromptEditor({ initial }: { initial: string }) {
         >
           {reset.isPending ? "resetting..." : "reset to default"}
         </button>
-        {msg && <span className="font-mono text-xs text-accent">{msg}</span>}
+        {msg && <span className={`font-mono text-sm ${msg.includes("failed") || msg.includes("incorrect") ? "text-danger" : "text-accent"}`} role={feedbackRole(msg)}>{msg}</span>}
       </div>
     </section>
   );
@@ -1441,17 +1643,20 @@ function CorrectionsTable({ initial }: { initial: Record<string, CorrectionEntry
               <input
                 className="field flex-1 min-w-[8rem]"
                 placeholder="word"
+                aria-label="Word to correct"
                 value={row.k}
                 onChange={(e) => patch({ k: e.target.value })}
               />
               <input
                 className="field flex-1 min-w-[8rem]"
                 placeholder="spoken"
+                aria-label="Replacement pronunciation"
                 value={row.v}
                 onChange={(e) => patch({ v: e.target.value })}
               />
               <select
                 className="field w-28"
+                aria-label="Correction type"
                 value={row.mode}
                 onChange={(e) => patch({ mode: e.target.value as Mode })}
               >
@@ -1462,6 +1667,7 @@ function CorrectionsTable({ initial }: { initial: Record<string, CorrectionEntry
               <label className="mono-xs text-mute flex items-center gap-1" title="case-sensitive">
                 <input
                   type="checkbox"
+                  aria-label="Case sensitive"
                   checked={row.caseSensitive}
                   onChange={(e) => patch({ caseSensitive: e.target.checked })}
                 />
@@ -1469,6 +1675,7 @@ function CorrectionsTable({ initial }: { initial: Record<string, CorrectionEntry
               </label>
               <button
                 className="text-mute hover:text-danger flex items-center justify-center w-8"
+                aria-label="Remove pronunciation correction"
                 onClick={() => setRows((rs) => rs.filter((r) => r.id !== row.id))}
               >
                 &times;
@@ -1500,7 +1707,7 @@ function CorrectionsTable({ initial }: { initial: Record<string, CorrectionEntry
         >
           {reset.isPending ? "clearing..." : "clear all"}
         </button>
-        {msg && <span className="font-mono text-xs text-accent">{msg}</span>}
+        {msg && <span className={`font-mono text-sm ${msg.includes("failed") ? "text-danger" : "text-accent"}`} role={feedbackRole(msg)}>{msg}</span>}
       </div>
     </section>
   );
@@ -1675,11 +1882,13 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
                 <input
                   className="field flex-1 min-w-[10rem]"
                   placeholder="domain"
+                  aria-label="Site domain"
                   value={row.host}
                   onChange={(e) => patch({ host: e.target.value })}
                 />
                 <select
                   className="field w-48"
+                  aria-label={`Extraction strategy for ${host}`}
                   value={row.proxy}
                   onChange={(e) => patch({ proxy: e.target.value })}
                 >
@@ -1692,6 +1901,7 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
                 </select>
                 <button
                   className="text-mute hover:text-danger flex items-center justify-center w-8"
+                  aria-label={`Remove override for ${host}`}
                   onClick={() => setRows((rs) => rs.filter((r) => r.id !== row.id))}
                 >
                   &times;
@@ -1742,7 +1952,7 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
         <button className="btn-primary" disabled={m.isPending} onClick={() => m.mutate()}>
           {m.isPending ? "saving..." : "save site overrides"}
         </button>
-        {msg && <span className="font-mono text-xs text-accent">{msg}</span>}
+        {msg && <span className={`font-mono text-sm ${msg.includes("failed") ? "text-danger" : "text-accent"}`} role={feedbackRole(msg)}>{msg}</span>}
       </div>
 
       <div className="space-y-1 pt-2">
@@ -1750,6 +1960,7 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
           <input
             className="field flex-1 min-w-[12rem]"
             placeholder="test a URL"
+            aria-label="URL to test against site overrides"
             value={testUrl}
             onChange={(e) => setTestUrl(e.target.value)}
           />
@@ -1790,6 +2001,7 @@ function LexiconLookup() {
       <input
         className="field flex-1 min-w-[8rem]"
         placeholder="look up a word"
+        aria-label="Look up a word"
         value={q}
         onChange={(e) => {
           setResult(null);
@@ -1800,7 +2012,7 @@ function LexiconLookup() {
       <button className="btn-ghost" onClick={search}>
         look up
       </button>
-      {result && <span className="mono-xs text-mute">{result}</span>}
+      {result && <span className="mono text-mute" role="status" aria-live="polite">{result}</span>}
     </div>
   );
 }
@@ -1864,7 +2076,9 @@ function VoiceRow({
           {filled ? `${durationSecs ?? "?"}s` : "empty"}
         </span>
       </div>
-      {filled && <audio controls src={previewUrl} className="w-full" />}
+      {filled && (
+        <audio controls src={previewUrl} className="w-full" aria-label={`Preview reference voice slot ${badge}`} />
+      )}
       <div className="flex flex-wrap gap-2">
         <VoiceUploadButton replace={filled} onPick={onUpload} />
         {filled && (
@@ -1991,8 +2205,10 @@ function VoicesWidget() {
           onChange={(e) => setSample(e.target.value)}
         />
       </div>
-      {msg && <p className="mono-xs text-accent">{msg}</p>}
-      {auditionUrl && <audio src={auditionUrl} controls autoPlay className="w-full" />}
+      {msg && <p className={`mono ${/failed|cannot/i.test(msg) ? "text-danger" : "text-accent"}`} role={feedbackRole(msg)}>{msg}</p>}
+      {auditionUrl && (
+        <audio src={auditionUrl} controls autoPlay className="w-full" aria-label="Generated voice audition" />
+      )}
 
       {slots.map((s) => (
         <VoiceRow
@@ -2003,6 +2219,7 @@ function VoicesWidget() {
               className="field flex-1"
               defaultValue={s.label ?? ""}
               placeholder={`Slot ${s.slot} label`}
+              aria-label={`Name for reference voice slot ${s.slot}`}
               onBlur={(e) => {
                 if ((e.target.value ?? "") !== (s.label ?? "")) renameSlot(s.slot, e.target.value);
               }}
@@ -2105,9 +2322,14 @@ function ChimeWidget() {
           // enabled, but no clip uploaded yet. nothing plays until you add one
         </p>
       )}
-      {msg && <p className="mono-xs text-accent">{msg}</p>}
+      {msg && <p className={`mono ${/failed|cannot/i.test(msg) ? "text-danger" : "text-accent"}`} role={feedbackRole(msg)}>{msg}</p>}
       {data?.present && (
-        <audio src={`/api/v1/chime/preview?v=${bust}`} controls className="w-full" />
+        <audio
+          src={`/api/v1/chime/preview?v=${bust}`}
+          controls
+          className="w-full"
+          aria-label="End-of-episode chime preview"
+        />
       )}
       <div className="flex items-center gap-3">
         <label className="btn-ghost cursor-pointer">
@@ -2155,6 +2377,7 @@ function CopyRow({
       <div className="flex items-center gap-2">
         <input
           className="field flex-1 font-mono text-xs"
+          aria-label={label}
           readOnly
           value={value}
           onFocus={(e) => e.target.select()}
@@ -2265,12 +2488,279 @@ function AuthenticatedFeedsWidget() {
           onCopy={() => copy("key", data.key!)}
         />
       )}
-      {msg && <p className="mono-xs text-accent">{msg}</p>}
+      {msg && <p className={`mono ${/failed|cannot/i.test(msg) ? "text-danger" : "text-accent"}`} role={feedbackRole(msg)}>{msg}</p>}
       {enabled && (
         <button className="btn-ghost" onClick={regenerate} disabled={regenM.isPending}>
           {regenM.isPending ? "rotating..." : "Regenerate key"}
         </button>
       )}
+    </div>
+  );
+}
+
+function SidecarSettingsWidget() {
+  const qc = useQueryClient();
+  const sidecarsQ = useQuery({
+    queryKey: ["sidecar-settings"],
+    queryFn: () => api<SidecarSettingsPayload>("/api/v1/settings/sidecars"),
+    refetchInterval: (query) => {
+      const state = query.state.data as SidecarSettingsPayload | undefined;
+      return !state || !state.render.available || state.render.pending || !state.tts_wrapper.available || state.tts_wrapper.pending
+        ? 10000
+        : false;
+    },
+  });
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [resetKeys, setResetKeys] = useState<Set<string>>(new Set());
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const baseline = useRef<Record<string, string>>({});
+  const draftRef = useRef(draft);
+  const resetKeysRef = useRef(resetKeys);
+  draftRef.current = draft;
+  resetKeysRef.current = resetKeys;
+
+  useEffect(() => {
+    const data = sidecarsQ.data;
+    if (!data) return;
+    const next: Record<string, string> = { ...draftRef.current };
+    const nextBaseline = { ...baseline.current };
+    let changed = false;
+    for (const group of SIDECAR_GROUPS) {
+      const state = data[group.key];
+      for (const key of group.keys) {
+        const storageKey = `${group.key}.${key}`;
+        const untouched = !resetKeysRef.current.has(storageKey) &&
+          (draftRef.current[storageKey] === undefined || draftRef.current[storageKey] === baseline.current[storageKey]);
+        if (!untouched) continue;
+        const value = state.values[key] ?? state.defaults[key];
+        const textValue = value === undefined || value === null ? "" : String(value);
+        next[storageKey] = textValue;
+        nextBaseline[storageKey] = textValue;
+        if (draftRef.current[storageKey] !== textValue) changed = true;
+      }
+    }
+    if (changed) setDraft(next);
+    baseline.current = nextBaseline;
+  }, [sidecarsQ.data]);
+
+  const saveM = useMutation({
+    mutationFn: (request: {
+      payload: Partial<SidecarSettingsPayload>;
+      draftSnapshot: Record<string, string>;
+      resetSnapshot: Set<string>;
+    }) =>
+      api<SidecarSettingsPayload>("/api/v1/settings/sidecars", {
+        method: "PUT",
+        body: JSON.stringify(request.payload),
+      }),
+    onSuccess: (data, request) => {
+      qc.setQueryData(["sidecar-settings"], data);
+      qc.invalidateQueries({ queryKey: ["sidecar-settings"] });
+      for (const group of SIDECAR_GROUPS) {
+        const submitted = request.payload[group.key] as Record<string, unknown> | undefined;
+        for (const key of Object.keys(submitted ?? {})) {
+          const storageKey = `${group.key}.${key}`;
+          baseline.current[storageKey] = request.draftSnapshot[storageKey] ?? "";
+        }
+      }
+      setResetKeys((current) => {
+        const next = new Set(current);
+        for (const group of SIDECAR_GROUPS) {
+          const submitted = request.payload[group.key] as Record<string, unknown> | undefined;
+          for (const key of Object.keys(submitted ?? {})) {
+            const storageKey = `${group.key}.${key}`;
+            if (
+              submitted?.[key] === null &&
+              request.resetSnapshot.has(storageKey) &&
+              current.has(storageKey) &&
+              draftRef.current[storageKey] === request.draftSnapshot[storageKey]
+            ) next.delete(storageKey);
+          }
+        }
+        return next;
+      });
+      setError(null);
+      setMessage("Sidecar settings saved.");
+    },
+    onError: (e) => {
+      const status = e instanceof ApiError ? ` (HTTP ${e.status})` : "";
+      setMessage(null);
+      setError(`Sidecar settings could not be saved${status}.`);
+    },
+  });
+
+  if (sidecarsQ.isLoading) return <p className="text-mute text-sm" role="status">Loading sidecar settings...</p>;
+  if (sidecarsQ.isError && !sidecarsQ.data) {
+    return (
+      <div className="text-danger text-sm" role="alert">
+        <p>Sidecar settings could not be loaded.</p>
+        <button className="btn-ghost mt-2" onClick={() => sidecarsQ.refetch()}>
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  const data = sidecarsQ.data!;
+  const isOverridden = (group: (typeof SIDECAR_GROUPS)[number]["key"], key: string) =>
+    Object.prototype.hasOwnProperty.call(data[group].values, key);
+  const resetField = (group: (typeof SIDECAR_GROUPS)[number]["key"], key: string) => {
+    const storageKey = `${group}.${key}`;
+    const defaultValue = data[group].defaults[key];
+    setDraft((prev) => ({ ...prev, [storageKey]: defaultValue == null ? "" : String(defaultValue) }));
+    setResetKeys((prev) => {
+      const next = new Set(prev);
+      if (isOverridden(group, key)) next.add(storageKey);
+      else next.delete(storageKey);
+      return next;
+    });
+  };
+  const updateField = (
+    group: (typeof SIDECAR_GROUPS)[number]["key"],
+    key: string,
+    value: string
+  ) => {
+    const storageKey = `${group}.${key}`;
+    setDraft((prev) => ({ ...prev, [storageKey]: value }));
+    setResetKeys((prev) => {
+      if (!prev.has(storageKey)) return prev;
+      const next = new Set(prev);
+      next.delete(storageKey);
+      return next;
+    });
+  };
+  const dirty = (group: (typeof SIDECAR_GROUPS)[number]["key"], key: string) => {
+    const storageKey = `${group}.${key}`;
+    return resetKeys.has(storageKey) || draft[storageKey] !== (baseline.current[storageKey] ?? "");
+  };
+  const save = () => {
+    const payload: Record<string, Record<string, unknown>> = {};
+    for (const group of SIDECAR_GROUPS) {
+      const values: Record<string, unknown> = {};
+      for (const key of group.keys) {
+        if (!dirty(group.key, key)) continue;
+        const storageKey = `${group.key}.${key}`;
+        if (resetKeys.has(storageKey)) {
+          values[key] = null;
+        } else if (SIDECAR_BOOLEAN_KEYS.has(key)) {
+          values[key] = draft[storageKey] === "true";
+        } else if (SIDECAR_NUMERIC_KEYS.has(key)) {
+          if (!draft[storageKey]?.trim()) {
+            setMessage(null);
+            setError(`${SIDECAR_LABELS[key]} must contain a number, or use Reset to default.`);
+            return;
+          }
+          values[key] = Number(draft[storageKey]);
+        } else {
+          values[key] = draft[storageKey] ?? "";
+        }
+      }
+      if (Object.keys(values).length) payload[group.key] = values;
+    }
+    if (Object.keys(payload).length) {
+      setMessage(null);
+      setError(null);
+      saveM.mutate({
+        payload: payload as Partial<SidecarSettingsPayload>,
+        draftSnapshot: { ...draft },
+        resetSnapshot: new Set(resetKeys),
+      });
+    }
+  };
+  const hasChanges = SIDECAR_GROUPS.some((group) => group.keys.some((key) => dirty(group.key, key)));
+
+  return (
+    <div className="space-y-4">
+      {SIDECAR_GROUPS.map((group) => {
+        const state = data[group.key];
+        return (
+          <section key={group.key} className="card p-4 space-y-3">
+            <h3 className="section-title">{group.title}</h3>
+            <p className="text-dim text-sm">{group.note}</p>
+            {!state.available && (
+              <p className="text-mute text-sm" role="status">
+                Sidecar is offline. Saved overrides can still be edited for when it returns.
+              </p>
+            )}
+            {state.pending && (
+              <p className="text-danger text-sm" role="status">
+                Saved settings have not reached the sidecar yet.
+              </p>
+            )}
+            {group.keys.map((key) => {
+              const storageKey = `${group.key}.${key}`;
+              const id = `sidecar-${group.key}-${key.toLowerCase()}`;
+              const label = SIDECAR_LABELS[key];
+              const defaultValue = state.defaults[key];
+              const overridden = isOverridden(group.key, key);
+              const canReset = overridden || draft[storageKey] !== (defaultValue == null ? "" : String(defaultValue));
+              return (
+                <div key={key} className="sidecar-field">
+                  {SIDECAR_BOOLEAN_KEYS.has(key) ? (
+                    <div className="flex items-center justify-between gap-3 py-1">
+                      <label className="label mb-0" htmlFor={id}>{label}</label>
+                      <Toggle
+                        id={id}
+                        label={label}
+                        checked={draft[storageKey] === "true"}
+                        onChange={(value) => updateField(group.key, key, value ? "true" : "false")}
+                      />
+                    </div>
+                  ) : (
+                    <>
+                      <label className="label" htmlFor={id}>{label}</label>
+                      {key === "LOG_LEVEL" || key === "LOG_FORMAT" ? (
+                        <select
+                          id={id}
+                          className="field"
+                          value={draft[storageKey] ?? ""}
+                          onChange={(e) => updateField(group.key, key, e.target.value)}
+                        >
+                          <option value="" disabled>Select a value</option>
+                          {key === "LOG_LEVEL"
+                            ? ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"].map((value) => (
+                                <option key={value} value={value}>{value}</option>
+                              ))
+                            : ["json", "text"].map((value) => (
+                                <option key={value} value={value}>{value}</option>
+                              ))}
+                        </select>
+                      ) : (
+                        <input
+                          id={id}
+                          className="field"
+                          type={SIDECAR_NUMERIC_KEYS.has(key) ? "number" : "text"}
+                          min={SIDECAR_NUMERIC_KEYS.has(key) ? 0 : undefined}
+                          step={SIDECAR_NUMERIC_KEYS.has(key) ? "any" : undefined}
+                          value={draft[storageKey] ?? ""}
+                          onChange={(e) => updateField(group.key, key, e.target.value)}
+                        />
+                      )}
+                    </>
+                  )}
+                  {canReset && (
+                    <button
+                      type="button"
+                      className="reset-btn"
+                      disabled={saveM.isPending}
+                      onClick={() => resetField(group.key, key)}
+                      aria-label={`Reset ${label} to default`}
+                    >
+                      Reset to default
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </section>
+        );
+      })}
+      {error && <p className="text-danger text-sm" role="alert">{error}</p>}
+      {message && <p className="text-accent text-sm" role="status">{message}</p>}
+      <button className="btn-primary" disabled={!hasChanges || saveM.isPending} onClick={save}>
+        {saveM.isPending ? "Saving sidecar settings..." : "Save sidecar settings"}
+      </button>
     </div>
   );
 }

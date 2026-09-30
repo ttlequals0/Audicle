@@ -2,17 +2,31 @@
 
 The API lives under `/api/v1`, with interactive docs at `/api/v1/docs` (linked from Settings > system info) and a checked-in schema at `openapi.yaml`. Mutating endpoints need the session cookie plus the CSRF double-submit header; until an admin password is set, the app runs in open convenience mode.
 
-## The surface, by area
+## Sidecar settings
+
+`GET /api/v1/settings/sidecars` returns `render` and `tts_wrapper` groups. Each contains saved `values`, environment/code `defaults`, `available`, and `pending`. Defaults are empty when the sidecar cannot be reached; saved overrides remain visible.
+
+`PUT /api/v1/settings/sidecars` accepts partial updates grouped by sidecar. For example:
+
+```json
+{"render":{"RENDER_ATTEMPTS":2},"tts_wrapper":{"TTS_IDLE_UNLOAD_SECONDS":600}}
+```
+
+Send `null` for an individual setting to reset it. The app stores the desired values and retries applying them after a sidecar outage or restart. Rendering options apply per extraction request; logging and wrapper controls apply live. These endpoints require the same administrator session and CSRF token as other settings changes. The sidecars' internal `/runtime-config` endpoints must not be exposed publicly.
+
+## Common endpoints
 
 | Area | Endpoints |
 |---|---|
 | Submit | `POST /submit` (URL), `POST /upload` (one file per request; the UI loops for batches), `POST /upload/{episode_id}/reprocess` |
-| Jobs | `GET /jobs`, `POST /jobs/{id}/requeue`, `POST /jobs/{id}/cancel` |
+| Jobs | `GET /jobs`, `POST /jobs/{id}/requeue`, `POST /jobs/{id}/cancel`, `DELETE /jobs/{id}`, `DELETE /jobs?scope=all` |
 | Episodes | `GET /episodes?page=&per_page=&q=` (paginated, `X-Total-Count` header carries the filtered total; `q` matches title, source URL, and uploaded filename), `DELETE /episodes/{id}`, `POST /episodes/{id}/chapters` |
 | Feed | `GET/POST /feed-auth`, `POST /feed-auth/regenerate`, `POST /feed/recreate?confirm=true` (global GUID reset: every subscriber re-downloads) |
 | Settings | `GET/PUT /settings` (the runtime allowlist), `GET/PUT /prompt`, corrections, source-fallbacks, reference voice slots, chime |
 | Ops | `POST /purge?confirm=true&older_than_days=N`, `POST /webhooks/test` |
 | Health | `GET /health/live`, `GET /health/ready`, `GET /health/ingestion` (outside `/api/v1`) |
+
+The interactive docs and `openapi.yaml` list every route and its request schema.
 
 Media is served under `/media/`: `{id}.mp3`, `{id}.vtt`, `{id}.chapters.json`, `{id}.txt` (the cleaned article), and `{id}.jpg`. Published URLs add `?v=<generation>` to non-artwork media. Artwork carries the generation in its filename.
 

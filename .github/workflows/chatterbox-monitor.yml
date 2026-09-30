@@ -1,9 +1,6 @@
 name: Monitor Chatterbox upstream
 
-# Weekly check: opens a GitHub issue when a chatterbox-tts release newer than the version
-# pinned in tts-wrapper/pyproject.toml lands on PyPI, so we know to re-check the CVE pins,
-# the supported Python range, and pull it. Schedules only run from the default branch, so
-# this takes effect once merged to main. Also runnable on demand via the Actions tab.
+# Weekly release and source checks. Schedules run from the default branch.
 on:
   schedule:
     - cron: "0 9 * * 1" # Mondays 09:00 UTC
@@ -13,12 +10,20 @@ permissions:
   contents: read
   issues: write
 
+concurrency:
+  group: chatterbox-monitor
+  cancel-in-progress: false
+
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Check PyPI for a newer chatterbox-tts release
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: python3 -m pip install packaging==26.2
+      - name: Check Chatterbox releases and source updates
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 .github/scripts/check_chatterbox.py

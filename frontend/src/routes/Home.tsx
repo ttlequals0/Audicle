@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, DragEvent, FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, JobRow, JobStatus, postForm, SettingsPayload, VoiceSlot } from "../lib/api";
-import { fileExt, formatBytes } from "../lib/format";
+import { fileExt, formatBytes, formatDateTime } from "../lib/format";
 import { usePersistentOpen } from "../components/CollapsibleSection";
 import ActionMenu from "../components/ActionMenu";
 
@@ -49,18 +49,25 @@ export default function Home() {
   const [voiceOpen, setVoiceOpen] = usePersistentOpen("home.voice.open", false);
   const qc = useQueryClient();
 
-  const jobsQ = useQuery({
-    queryKey: ["jobs"],
-    queryFn: () => api<JobRow[]>("/api/v1/jobs?per_page=50"),
-    refetchInterval: 5000,
-  });
-
   // Effective upload cap (MB) from the operator-tunable UPLOAD_MAX_MB setting, so
   // the client-side guard and the dropzone copy track what the server enforces.
   const settingsQ = useQuery({
     queryKey: ["settings"],
     queryFn: () => api<SettingsPayload>("/api/v1/settings"),
     staleTime: 60_000,
+  });
+  const configuredPollSeconds = Number(
+    settingsQ.data?.values.QUEUE_POLL_INTERVAL_SECONDS ??
+      settingsQ.data?.defaults.QUEUE_POLL_INTERVAL_SECONDS ??
+      5
+  );
+  const jobsQ = useQuery({
+    queryKey: ["jobs"],
+    queryFn: () => api<JobRow[]>("/api/v1/jobs?per_page=50"),
+    refetchInterval:
+      Number.isFinite(configuredPollSeconds) && configuredPollSeconds > 0
+        ? configuredPollSeconds * 1000
+        : 5000,
   });
   // Filled reference-voice slots drive the optional per-submission voice picker.
   const slotsQ = useQuery({
@@ -351,7 +358,7 @@ export default function Home() {
             : "Audicle reads files aloud. Upload as many as you like and each one joins your feed."}
         </p>
 
-        <div className="flex border-b border-line mb-5">
+        <div className="flex border-b border-line mb-5" role="group" aria-label="Submission type">
           <button
             type="button"
             className={`tab-btn${mode === "url" ? " active" : ""}`}
@@ -380,6 +387,7 @@ export default function Home() {
               type="url"
               className="hero-input"
               placeholder="https://"
+              aria-label="Article URL"
               autoComplete="off"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
@@ -533,9 +541,9 @@ export default function Home() {
             </div>
           )}
         </form>
-        {error && <p className="text-danger text-xs font-mono mt-2 break-words">{error}</p>}
+        {error && <p className="text-danger text-sm font-mono mt-2 break-words" role="alert">{error}</p>}
         {rejected.length > 0 && (
-          <ul className="mono-xs text-danger mt-2 space-y-1">
+          <ul className="mono-xs text-danger mt-2 space-y-1" role="alert" aria-label="Files not added">
             {rejected.map((reason) => (
               <li key={reason} className="break-words">
                 {reason}
@@ -544,6 +552,14 @@ export default function Home() {
           </ul>
         )}
 
+        {jobsQ.isError && (
+          <div className="text-danger text-sm mt-4" role="alert">
+            <p>Submissions could not be loaded.</p>
+            <button className="btn-ghost mt-2" onClick={() => jobsQ.refetch()}>
+              Retry
+            </button>
+          </div>
+        )}
         {!jobs.length && jobsQ.data && (
           <p className="mono-xs text-mute mt-8">// no submissions yet</p>
         )}
@@ -552,7 +568,7 @@ export default function Home() {
       {active.length > 0 && (
         <section className="mt-8">
           <div className="mono-xs text-accent mb-3">// QUEUE ({active.length})</div>
-          {cancelMsg && <p className="mono-xs text-danger mb-2">{cancelMsg}</p>}
+          {cancelMsg && <p className="mono-xs text-danger mb-2" role="alert">{cancelMsg}</p>}
           <ul className="space-y-2">
             {active.map((j, i) => (
               <li
@@ -573,7 +589,7 @@ export default function Home() {
                     className="btn-ghost text-xs"
                     disabled={cancelM.isPending}
                     onClick={() => cancelM.mutate(j.id)}
-                    aria-label="Cancel this job"
+                    aria-label={`Cancel ${j.source_filename ?? j.url}`}
                   >
                     &times; cancel
                   </button>
@@ -622,7 +638,7 @@ export default function Home() {
               </div>
             )}
           </div>
-          {recentMsg && <p className="mono-xs text-danger mb-2">{recentMsg}</p>}
+          {recentMsg && <p className="mono-xs text-danger mb-2" role="alert">{recentMsg}</p>}
           {recentOpen && (
             <ul className="space-y-2">
               {history.map((j) => {
@@ -639,6 +655,7 @@ export default function Home() {
                         its fix stay readable. */}
                     {j.error && <p className="text-sm mt-1 text-danger break-words">{j.error}</p>}
                     <ActionMenu
+                      context={j.source_filename ?? j.url}
                       pending={requeueM.isPending || chaptersM.isPending}
                       actions={[
                         {
@@ -666,7 +683,7 @@ export default function Home() {
                   <div className="flex flex-col items-end gap-1 flex-shrink-0">
                     <span className={`tag ${statusTag(j.status)}`}>{j.status}</span>
                     <time className="mono-xs text-mute" dateTime={j.updated_at}>
-                      {formatJobTime(j.updated_at)}
+                      {formatDateTime(j.updated_at)}
                     </time>
                     {duration && (
                       <span className="mono-xs text-mute">took {duration}</span>
@@ -681,17 +698,6 @@ export default function Home() {
       )}
     </div>
   );
-}
-
-function formatJobTime(iso: string): string {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  return d.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
 }
 
 // Processing time = claim (started_at) to last update. Null/invalid/negative

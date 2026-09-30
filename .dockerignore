@@ -25,6 +25,9 @@ coverage*
 .DS_Store
 **/.DS_Store
 data/
+tmp/
+.worktrees/
+docs/superpowers/
 ref_audio/
 *.png
 !branding/*.png

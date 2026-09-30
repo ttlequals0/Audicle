@@ -18,8 +18,11 @@ dist/
 
 # Env / secrets
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
 
 # Runtime data (keep the directory so the bind mount has a target on first clone)
 data/*

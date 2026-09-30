@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import get_args
 
+from app.api.v1 import settings as settings_api
+from app.config import Settings, get_settings
 from app.core import database
 from app.main import create_app
-from app.services import settings_store
+from app.services import ocr, runtime_settings, settings_store
 from fastapi.testclient import TestClient
 
 
@@ -49,6 +52,18 @@ def test_get_returns_effective_defaults(env: Path) -> None:
     assert defaults["OPENROUTER_API_KEY"] in ("", "********")
 
 
+def test_settings_response_separates_saved_values_from_environment_defaults(env: Path) -> None:
+    database.run_migrations(env)
+    base = get_settings()
+    with database.connection(env) as conn:
+        runtime_settings.set_value(conn, "BASE_URL", "https://new.example.test")
+    with _client(env) as client:
+        body = client.get("/api/v1/settings").json()
+    assert body["values"]["BASE_URL"] == "https://new.example.test"
+    assert body["defaults"]["BASE_URL"] == base.BASE_URL
+    assert body["feed_url"].startswith("https://new.example.test/")
+
+
 def test_connection_urls_are_allowlisted_and_round_trip(env: Path) -> None:
     """FIRECRAWL_URL + TTS_URL are operator-tunable so an external Firecrawl/TTS
     can be configured without an env edit + restart."""
@@ -87,13 +102,28 @@ def test_put_settings_persists_and_coerces_types(env: Path) -> None:
 
 
 def test_put_log_level_applies_after_persist(env: Path, monkeypatch) -> None:
-    from app.api.v1 import settings as settings_api
-
     applied: list[str] = []
     monkeypatch.setattr(settings_api, "apply_level", applied.append)
     with _client(env) as client:
         assert client.put("/api/v1/settings", json={"LOG_LEVEL": "DEBUG"}).status_code == 200
     assert applied == ["DEBUG"]
+
+
+def test_put_log_format_applies_after_persist(env: Path, monkeypatch) -> None:
+    applied: list[str] = []
+    monkeypatch.setattr(settings_api, "apply_format", applied.append)
+    with _client(env) as client:
+        response = client.put("/api/v1/settings", json={"LOG_FORMAT": "text"})
+    assert response.status_code == 200
+    assert applied == ["text"]
+
+
+def test_login_rate_limit_rejects_zero_requests(env: Path) -> None:
+    with _client(env) as client:
+        zero = client.put("/api/v1/settings", json={"LOGIN_RATE_LIMIT": "0/minute"})
+        malformed = client.put("/api/v1/settings", json={"LOGIN_RATE_LIMIT": "5/0second"})
+    assert zero.status_code == 400
+    assert malformed.status_code == 400
 
 
 def test_put_rejects_invalid_complete_backend_configuration_atomically(env: Path) -> None:
@@ -189,8 +219,6 @@ def test_api_key_is_masked_on_get_and_survives_resave(env: Path) -> None:
     """A stored secret never echoes back; re-saving the form (which sends the
     mask sentinel) must not clobber the real value."""
 
-    from app.services import runtime_settings
-
     with _client(env) as client:
         client.put("/api/v1/settings", json={"OPENAI_API_KEY": "sk-secret-123"})
         masked = client.get("/api/v1/settings").json()["values"]["OPENAI_API_KEY"]
@@ -210,8 +238,6 @@ def test_api_key_is_masked_on_get_and_survives_resave(env: Path) -> None:
 def test_firecrawl_api_key_is_allowlisted_and_masked(env: Path) -> None:
     """The Firecrawl key is operator-settable and treated as a secret: allowlisted
     for PUT, never echoed back, and survives a sentinel re-save like the LLM keys."""
-
-    from app.services import runtime_settings
 
     with _client(env) as client:
         assert "FIRECRAWL_API_KEY" in client.get("/api/v1/settings").json()["allowlist"]
@@ -233,8 +259,6 @@ def test_firecrawl_api_key_is_allowlisted_and_masked(env: Path) -> None:
 def test_reader_settings_are_allowlisted_and_key_masked(env: Path) -> None:
     """READER_PROXY_TEMPLATE and READER_API_KEY are operator-settable (live UI/API). The
     key is a secret: masked on read and survives a sentinel re-save; the template is plain."""
-
-    from app.services import runtime_settings
 
     with _client(env) as client:
         allowlist = client.get("/api/v1/settings").json()["allowlist"]
@@ -263,8 +287,6 @@ def test_reader_settings_are_allowlisted_and_key_masked(env: Path) -> None:
 def test_api_key_cleared_by_empty_value(env: Path) -> None:
     """Sending an empty string for a masked key removes the override."""
 
-    from app.services import runtime_settings
-
     with _client(env) as client:
         client.put("/api/v1/settings", json={"OPENAI_API_KEY": "sk-to-clear"})
         client.put("/api/v1/settings", json={"OPENAI_API_KEY": ""})
@@ -274,15 +296,12 @@ def test_api_key_cleared_by_empty_value(env: Path) -> None:
         stored = runtime_settings.get_all(conn)
     finally:
         conn.close()
-    assert "OPENAI_API_KEY" not in stored
+    assert stored["OPENAI_API_KEY"] == ""
 
 
 def test_api_key_overlay_reaches_settings(env: Path) -> None:
     """An LLM override stored via the API is applied by overlay() -- the same
     resolution the worker now runs per job."""
-
-    from app.config import get_settings
-    from app.services import runtime_settings
 
     with _client(env) as client:
         client.put("/api/v1/settings", json={"OPENAI_API_KEY": "sk-overlaid", "LLM_MODEL": "m2"})
@@ -381,11 +400,6 @@ def test_ocr_languages_endpoint_lists_supported(env: Path) -> None:
 def test_ocr_language_literal_matches_supported_languages() -> None:
     """Drift pin: the config Literal and ocr.SUPPORTED_LANGUAGES must agree."""
 
-    from typing import get_args
-
-    from app.config import Settings
-    from app.services import ocr
-
     literal_args = get_args(Settings.model_fields["OCR_LANGUAGE"].annotation)
     assert tuple(str(a) for a in literal_args) == ocr.SUPPORTED_LANGUAGES
 
@@ -419,20 +433,19 @@ def test_put_rejects_malformed_tts_model_and_language(env: Path) -> None:
             "/api/v1/settings",
             json={"TTS_MODEL": "chatterbox-multilingual", "TTS_LANGUAGE": "de"},
         )
-        cleared = client.put("/api/v1/settings", json={"TTS_MODEL": ""})
+        cleared = client.put("/api/v1/settings", json={"TTS_MODEL": None})
     assert bad_model.status_code == 400
     assert bad_lang.status_code == 400
     assert ok.status_code == 200
     assert cleared.status_code == 200
 
 
-def test_blank_value_drops_the_override(env: Path) -> None:
-    """Clearing a field must delete the override, not pin an empty string: an empty
-    stored FEED_TITLE would move the feed to the default slug behind the operator."""
+def test_null_value_drops_the_override(env: Path) -> None:
+    """Null resets to the environment/code default; empty strings stay explicit."""
 
     with _client(env) as client:
         client.put("/api/v1/settings", json={"FEED_TITLE": "My Show"})
-        cleared = client.put("/api/v1/settings", json={"FEED_TITLE": ""})
+        cleared = client.put("/api/v1/settings", json={"FEED_TITLE": None})
     assert cleared.status_code == 200
     assert "FEED_TITLE" not in cleared.json()["values"]
 
@@ -441,7 +454,7 @@ def test_put_rejects_a_malformed_registration_email(env: Path) -> None:
     with _client(env) as client:
         bad = client.put("/api/v1/settings", json={"REGISTRATION_EMAIL": "not-an-address"})
         ok = client.put("/api/v1/settings", json={"REGISTRATION_EMAIL": "reader@example.test"})
-        cleared = client.put("/api/v1/settings", json={"REGISTRATION_EMAIL": ""})
+        cleared = client.put("/api/v1/settings", json={"REGISTRATION_EMAIL": None})
     assert bad.status_code == 400
     assert ok.json()["values"]["REGISTRATION_EMAIL"] == "reader@example.test"
     assert "REGISTRATION_EMAIL" not in cleared.json()["values"]

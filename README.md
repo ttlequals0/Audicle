@@ -71,7 +71,8 @@ You need Docker and docker-compose. The app boots unconfigured: set the LLM prov
 
 ```bash
 git clone https://github.com/ttlequals0/Audicle && cd Audicle
-cp .env.example .env   # compose requires .env to exist; pre-set BASE_URL and any defaults here
+cp .env.example .env
+# Set BUILD_VERSION in .env to the release tag you want to run.
 docker compose up -d
 ```
 

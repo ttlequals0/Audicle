@@ -14,6 +14,7 @@ import ipaddress
 import re
 import socket
 from dataclasses import dataclass
+import os
 from typing import Protocol
 from urllib.parse import urlsplit
 
@@ -71,6 +72,31 @@ class RenderResult:
     word_estimate: int = 0
 
 
+@dataclass(frozen=True)
+class RenderOptions:
+    nav_timeout_ms: int | None = None
+    click_timeout_ms: int | None = None
+    grow_wait_ms: int | None = None
+    attempts: int | None = None
+    settle_poll_ms: int | None = None
+    settle_quiet_polls: int | None = None
+    settle_max_ms: int | None = None
+    budget_seconds: float | None = None
+
+
+def default_runtime_config() -> dict[str, int | float]:
+    return {
+        "RENDER_NAV_TIMEOUT_MS": int(os.environ.get("RENDER_NAV_TIMEOUT_MS", "45000")),
+        "RENDER_CLICK_TIMEOUT_MS": int(os.environ.get("RENDER_CLICK_TIMEOUT_MS", "5000")),
+        "RENDER_GROW_WAIT_MS": int(os.environ.get("RENDER_GROW_WAIT_MS", "1500")),
+        "RENDER_ATTEMPTS": int(os.environ.get("RENDER_ATTEMPTS", "3")),
+        "RENDER_SETTLE_POLL_MS": int(os.environ.get("RENDER_SETTLE_POLL_MS", "300")),
+        "RENDER_SETTLE_QUIET_POLLS": int(os.environ.get("RENDER_SETTLE_QUIET_POLLS", "2")),
+        "RENDER_SETTLE_MAX_MS": int(os.environ.get("RENDER_SETTLE_MAX_MS", "8000")),
+        "RENDER_BUDGET_SECONDS": float(os.environ.get("RENDER_BUDGET_SECONDS", "120.0")),
+    }
+
+
 class Renderer(Protocol):
     async def render(
         self,
@@ -79,6 +105,7 @@ class Renderer(Protocol):
         email: str | None = None,
         cookies: str | None = None,
         budget_seconds: float | None = None,
+        options: RenderOptions | None = None,
     ) -> RenderResult: ...
 
 
@@ -95,7 +122,9 @@ def parse_cookie_header(cookie_header: str, url: str) -> list[dict[str, str]]:
     for part in cookie_header.split(";"):
         name, sep, value = part.strip().partition("=")
         if name.strip() and sep:
-            cookies.append({"name": name.strip(), "value": value.strip(), "domain": f".{host}", "path": "/"})
+            cookies.append(
+                {"name": name.strip(), "value": value.strip(), "domain": f".{host}", "path": "/"}
+            )
     return cookies
 
 
@@ -205,7 +234,11 @@ def is_public_url(url: str, proxied: bool = False) -> bool:
     public names at all, so this check then only catches literal IPs and internal names,
     and the proxy's firewall is what rejects a public name that resolves private."""
 
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+        parts.port
+    except ValueError:
+        return False
     if parts.scheme.lower() not in {"http", "https"}:
         return False
     host = (parts.hostname or "").strip()
@@ -215,7 +248,9 @@ def is_public_url(url: str, proxied: bool = False) -> bool:
         addresses = [ipaddress.ip_address(host)]  # a literal IP needs no DNS
     except ValueError:
         try:
-            addresses = [ipaddress.ip_address(info[4][0]) for info in socket.getaddrinfo(host, None)]
+            addresses = [
+                ipaddress.ip_address(info[4][0]) for info in socket.getaddrinfo(host, None)
+            ]
         except OSError:
             return proxied
     # ``not is_global`` is the canonical "public address" test: it rejects private,

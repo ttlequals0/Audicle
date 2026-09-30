@@ -88,6 +88,15 @@ async def process_artwork(
             error=str(exc),
         )
         return None
+    except httpx.InvalidURL as exc:
+        _log_fallback(
+            "download_unreachable",
+            episode_id,
+            source_url,
+            error_class=type(exc).__name__,
+            error=str(exc),
+        )
+        return None
     except _HttpError as exc:
         _log_fallback(
             "download_http_error",
@@ -234,7 +243,16 @@ _ALLOWED_SCHEMES = frozenset({"http", "https"})
 def _validate_scheme(url: str) -> str | None:
     """Return the offending scheme if not http/https, else None."""
 
-    scheme = urlsplit(url).scheme.lower()
+    try:
+        parts = urlsplit(url)
+        scheme = parts.scheme.lower()
+        if not parts.hostname:
+            return "<invalid>"
+        port = parts.port
+        if port is not None and port == 0:
+            return "<invalid>"
+    except ValueError:
+        return "<invalid>"
     if scheme in _ALLOWED_SCHEMES:
         return None
     return scheme or "<empty>"

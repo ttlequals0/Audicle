@@ -1,10 +1,11 @@
 # Installation
 
-You need Docker and docker-compose. The app boots unconfigured: set the LLM provider and model, feed metadata, and admin password, and upload a reference voice, from the Settings UI after it starts. No env editing or `voice.wav` required up front.
+You need Docker and docker-compose. The app boots unconfigured: set the LLM provider and model, feed metadata, and admin password, and upload a reference voice, from the Settings UI after it starts. Only the image release tag is required in `.env`; application settings and voices are configured after startup.
 
 ```bash
 git clone https://github.com/ttlequals0/Audicle && cd Audicle
-cp .env.example .env   # compose requires .env to exist; pre-set BASE_URL and any defaults here
+cp .env.example .env
+# Set BUILD_VERSION in .env to the release tag you want to run.
 docker compose up -d
 ```
 
@@ -12,7 +13,9 @@ The web UI is at `http://localhost:8000/`. It is an installable PWA: add it to a
 
 The RSS feed is served at a slug derived from the feed name, so `FEED_TITLE="Articles of Interest"` becomes `/rss/articles_of_interest.xml`. The Feed page shows the exact URL with a copy button; paste it into any podcatcher. Renaming the feed changes the slug and mints new feed and episode GUIDs, so subscribers resubscribe to the new URL.
 
-## Three containers
+## Services
+
+When upgrading from a TTS image that ran as root, stop the stack and run `sudo chown -R 1000:1000 ./data` from the Compose directory before starting the new image. Existing bind-mounted model caches keep their old ownership; the image cannot change it. Substitute the host data path if you use a different mount.
 
 | Service | Image | What it does |
 |---|---|---|
@@ -27,7 +30,7 @@ Size the `./data` volume for the TTS chunk cache too: it keeps roughly 170 MB pe
 
 ## File permissions
 
-The containers run as a non-root user (uid 1000). If you bind-mount host directories (or set `user:` in compose), make them writable by uid 1000 so the app can write the database and media and seed the default prompt and corrections:
+The app and TTS wrapper run as uid 1000. The renderer starts with limited privileges to configure its firewall, then drops to uid 1000. If you bind-mount host directories (or set `user:` in compose), make them writable by uid 1000 so the app can write the database and media and seed the default prompt and corrections:
 
 ```bash
 chown -R 1000:1000 ./data ./backend/app/prompts ./backend/app/corrections ./backend/app/reference
@@ -54,7 +57,7 @@ Then `docker compose up -d` as usual.
 
 ## Required configuration
 
-Nothing is strictly required to boot, but a working feed needs the variables below, set in `.env` or at runtime in Settings. See [Environment variables](environment-variables.md) for the full list.
+Set the public feed URL, an LLM connection and model, and a reference voice in Settings. Review the feed metadata below before subscribing. See [Environment variables](environment-variables.md) for the full list.
 
 | Variable | What it is | Example |
 |---|---|---|
@@ -65,6 +68,7 @@ Nothing is strictly required to boot, but a working feed needs the variables bel
 | `FEED_CATEGORY` | iTunes category ([valid list](feeds-and-podcasting.md#valid-itunes-categories)) | `Technology` |
 | `FEED_LANGUAGE` | RFC 5646 tag | `en-US` |
 | `LLM_PROVIDER` | One of the four [providers](llm-providers.md) | `openai-compatible` |
+| `LLM_MODEL` | A model available from your configured provider | Select from the model list |
 
 The admin password lives under Settings > security (a bcrypt hash in the DB); until it is set the app runs in open convenience mode, and warns you about it when the server looks internet-facing.
 

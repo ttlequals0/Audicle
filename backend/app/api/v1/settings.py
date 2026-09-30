@@ -12,16 +12,27 @@ import json
 import operator
 import re
 import sqlite3
-from typing import Annotated, Any, Literal, get_args, get_origin
+import types
+from typing import Annotated, Any, Literal, Union, get_args, get_origin
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Body, Depends, HTTPException
+from limits.util import parse as parse_rate_limit
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.api.deps import get_conn
 from app.config import RUNTIME_SETTING_BOUNDS, Settings, get_settings
-from app.services import feed, feed_auth, feed_revision, runtime_settings, settings_store, slug
+from app.services import (
+    feed,
+    feed_auth,
+    feed_revision,
+    runtime_settings,
+    settings_store,
+    sidecar_settings,
+    slug,
+)
 from app.services.ocr import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES
-from app.utils.logging import apply_level
+from app.utils.logging import apply_format, apply_level
 
 router = APIRouter(tags=["settings"])
 
@@ -53,7 +64,10 @@ async def get_settings_overrides(
     conn: Annotated[sqlite3.Connection, Depends(get_conn)],
 ) -> SettingsResponse:
     stored = runtime_settings.get_all(conn)
-    return _masked_response(stored, settings, _effective_feed_key(conn, settings))
+    effective = runtime_settings.validated_overlay(settings, stored)
+    return _masked_response(
+        stored, effective, _effective_feed_key(conn, effective), defaults_settings=settings
+    )
 
 
 class OcrLanguagesResponse(BaseModel):
@@ -71,6 +85,97 @@ async def get_ocr_languages() -> OcrLanguagesResponse:
     """Languages the shipped OCR model packs cover; drives the Settings dropdown."""
 
     return OcrLanguagesResponse(languages=list(SUPPORTED_LANGUAGES), default=DEFAULT_LANGUAGE)
+
+
+@router.get("/settings/sidecars")
+async def get_sidecar_settings(
+    settings: Annotated[Settings, Depends(get_settings)],
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+) -> dict[str, Any]:
+    effective = runtime_settings.validated_overlay(settings, runtime_settings.get_all(conn))
+    render_values = sidecar_settings.get_saved(conn, "render")
+    tts_values = sidecar_settings.get_saved(conn, "tts_wrapper")
+    render_config = await sidecar_settings.fetch_config(effective.RENDER_URL, "render")
+    tts_config = await sidecar_settings.fetch_config(effective.TTS_URL, "tts_wrapper")
+    return {
+        "render": _sidecar_response(render_config, render_values, "render"),
+        "tts_wrapper": _sidecar_response(tts_config, tts_values, "tts_wrapper"),
+    }
+
+
+@router.put("/settings/sidecars")
+async def put_sidecar_settings(
+    payload: Annotated[dict[str, dict[str, Any | None]], Body()],
+    settings: Annotated[Settings, Depends(get_settings)],
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+) -> dict[str, Any]:
+    unknown = set(payload) - {"render", "tts_wrapper"}
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"unknown sidecars: {sorted(unknown)}")
+    for sidecar, updates in payload.items():
+        allowed = sidecar_settings.RENDER_KEYS if sidecar == "render" else sidecar_settings.TTS_KEYS
+        keys = set(updates) - allowed
+        if keys:
+            raise HTTPException(
+                status_code=400, detail=f"unknown {sidecar} settings: {sorted(keys)}"
+            )
+        for key, value in updates.items():
+            if value is not None:
+                sidecar_settings._validate(key, value)
+    effective = runtime_settings.overlay(settings)
+    tts_config = (
+        await sidecar_settings.fetch_config(effective.TTS_URL, "tts_wrapper")
+        if "tts_wrapper" in payload
+        else None
+    )
+    if "tts_wrapper" in payload:
+        candidate = sidecar_settings.get_saved(conn, "tts_wrapper")
+        for key, value in payload["tts_wrapper"].items():
+            if value is None:
+                candidate.pop(key, None)
+            else:
+                candidate[key] = value
+        defaults = tts_config.get("defaults") if tts_config else None
+        sidecar_settings.validate_memory_limits(candidate, defaults)
+    saved = sidecar_settings.save_many(conn, payload)
+    if "render" in payload and set(payload["render"]) & {"LOG_LEVEL", "LOG_FORMAT"}:
+        await sidecar_settings.apply_config(
+            effective.RENDER_URL, "render", saved["render"]
+        )
+    if "tts_wrapper" in payload:
+        await sidecar_settings.apply_config(
+            effective.TTS_URL, "tts_wrapper", saved["tts_wrapper"]
+        )
+    render_config = await sidecar_settings.fetch_config(effective.RENDER_URL, "render")
+    tts_config = await sidecar_settings.fetch_config(effective.TTS_URL, "tts_wrapper")
+    render_values = sidecar_settings.get_saved(conn, "render")
+    tts_values = sidecar_settings.get_saved(conn, "tts_wrapper")
+    return {
+        "render": _sidecar_response(render_config, render_values, "render"),
+        "tts_wrapper": _sidecar_response(tts_config, tts_values, "tts_wrapper"),
+    }
+
+
+def _sidecar_response(
+    config: dict[str, Any] | None, saved: dict[str, Any], sidecar: str
+) -> dict[str, Any]:
+    defaults = config.get("defaults", {}) if config else {}
+    effective = config.get("effective", defaults) if config else defaults
+    if config is None:
+        pending = bool(saved)
+    elif sidecar == "render":
+        expected = {**defaults, **{key: value for key, value in saved.items() if key in {"LOG_LEVEL", "LOG_FORMAT"}}}
+        pending = any(
+            effective.get(key) != value for key, value in expected.items() if key in {"LOG_LEVEL", "LOG_FORMAT"}
+        )
+    else:
+        pending = any(effective.get(key) != value for key, value in {**defaults, **saved}.items())
+    return {
+        "available": config is not None,
+        "values": saved,
+        "defaults": defaults,
+        "pending": pending,
+    }
 
 
 @router.put(
@@ -112,7 +217,7 @@ async def put_settings_overrides(
         for key, value in payload.items():
             if key in runtime_settings.MASKED_KEYS and value == runtime_settings.MASK_SENTINEL:
                 continue
-            if value == "":
+            if value is None:
                 updates[key] = None
                 proposed.pop(key, None)
                 continue
@@ -128,10 +233,13 @@ async def put_settings_overrides(
         stored = runtime_settings.get_all(conn)
         if (
             "FEED_TITLE" in payload
-            and slug.feed_slug(_effective_title(stored, settings)) != old_slug
+            and slug.feed_slug(_effective_title(stored, effective)) != old_slug
         ):
-            settings_store.rotate_feed_guids(conn, settings.BASE_URL, commit=False)
-        if any(key.startswith("FEED_") for key in updates):
+            settings_store.rotate_feed_guids(conn, effective.BASE_URL, commit=False)
+        if any(
+            key.startswith("FEED_") or key in {"BASE_URL", "DEFAULT_ARTWORK_URL"}
+            for key in updates
+        ):
             feed_revision.bump(conn, effective)
         conn.commit()
     except Exception:
@@ -139,8 +247,13 @@ async def put_settings_overrides(
         raise
     if "LOG_LEVEL" in updates:
         apply_level(effective.LOG_LEVEL)
+    if "LOG_FORMAT" in updates:
+        apply_format(effective.LOG_FORMAT)
 
-    return _masked_response(stored, settings, _effective_feed_key(conn, settings))
+    effective = runtime_settings.validated_overlay(settings, stored)
+    return _masked_response(
+        stored, effective, _effective_feed_key(conn, effective), defaults_settings=settings
+    )
 
 
 def _validation_errors(exc: ValidationError) -> list[dict[str, Any]]:
@@ -158,27 +271,27 @@ def _effective_feed_key(conn: sqlite3.Connection, settings: Settings) -> str | N
 
 
 def _masked_response(
-    stored: dict[str, str], settings: Settings, feed_key: str | None = None
+    stored: dict[str, str],
+    settings: Settings,
+    feed_key: str | None = None,
+    *,
+    defaults_settings: Settings | None = None,
 ) -> SettingsResponse:
     """Build the GET/PUT response, masking secret-bearing keys so their stored
     value is never echoed to the client. ``feed_url`` carries the auth key when
     authenticated feeds are on, so the Feed page's copy button matches."""
 
-    values = {
-        key: (
-            runtime_settings.MASK_SENTINEL
-            if key in runtime_settings.MASKED_KEYS
-            else _coerce(key, value, settings)
-        )
-        for key, value in stored.items()
-    }
+    values = {}
+    for key, value in stored.items():
+        if key in runtime_settings.MASKED_KEYS:
+            values[key] = runtime_settings.MASK_SENTINEL if value else ""
+        else:
+            values[key] = _coerce(key, value, settings)
     return SettingsResponse(
         allowlist=sorted(runtime_settings.ALLOWED_KEYS),
         values=values,
-        defaults=_defaults_map(settings),
-        feed_url=feed.feed_url_with_key(
-            settings.BASE_URL, _effective_title(stored, settings), feed_key
-        ),
+        defaults=_defaults_map(defaults_settings or settings),
+        feed_url=feed.feed_url_with_key(settings.BASE_URL, _effective_title(stored, settings), feed_key),
     )
 
 
@@ -212,7 +325,25 @@ _STRING_SHAPES: dict[str, re.Pattern[str]] = {
     "TTS_LANGUAGE": re.compile(r"^[a-z]{2,3}$"),
     # A typo here would be typed into publishers' signup forms, so check the shape.
     "REGISTRATION_EMAIL": re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$"),
+    "LOGIN_RATE_LIMIT": re.compile(r"^\s*[1-9][0-9]*\s*/\s*(second|minute|hour|day)s?\s*$"),
 }
+
+_HTTP_URL_KEYS = frozenset(
+    {
+        "BASE_URL",
+        "UI_BASE_URL",
+        "DEFAULT_ARTWORK_URL",
+        "FEED_ARTWORK_URL",
+        "FIRECRAWL_URL",
+        "TTS_URL",
+        "RENDER_URL",
+        "FLARESOLVERR_URL",
+        "OPENAI_BASE_URL",
+        "OLLAMA_BASE_URL",
+        "TTS_API_BASE_URL",
+        "WHISPER_API_BASE_URL",
+    }
+)
 
 
 def _validate_value(key: str, value: Any, settings: Settings) -> None:
@@ -228,12 +359,51 @@ def _validate_value(key: str, value: Any, settings: Settings) -> None:
 
     shape = _STRING_SHAPES.get(key)
     if shape is not None:
-        # "" never reaches here: the caller treats it as a clear.
+        if value == "" and key != "LOGIN_RATE_LIMIT":
+            return
+        if key == "LOGIN_RATE_LIMIT":
+            if not shape.fullmatch(str(value)):
+                raise HTTPException(status_code=400, detail="LOGIN_RATE_LIMIT is invalid")
+            try:
+                parse_rate_limit(str(value))
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail="LOGIN_RATE_LIMIT is invalid") from exc
+            return
         if not shape.fullmatch(str(value)):
             raise HTTPException(
                 status_code=400,
                 detail=f"{key} must match {shape.pattern} (or be empty), got {value!r}",
             )
+        return
+    if key in _HTTP_URL_KEYS:
+        if value == "" and key != "BASE_URL":
+            return
+        try:
+            parsed = urlsplit(str(value))
+            valid = (
+                parsed.scheme in {"http", "https"}
+                and bool(parsed.hostname)
+                and parsed.username is None
+                and parsed.password is None
+                and (parsed.port is None or 1 <= parsed.port <= 65535)
+            )
+        except ValueError:
+            valid = False
+        if not valid:
+            raise HTTPException(status_code=400, detail=f"{key} must be an absolute HTTP(S) URL")
+        return
+    if key == "READER_PROXY_TEMPLATE":
+        if value == "":
+            return
+        if "{url}" not in str(value):
+            raise HTTPException(status_code=400, detail="READER_PROXY_TEMPLATE must contain {url}")
+        try:
+            parsed = urlsplit(str(value).replace("{url}", "article"))
+            valid = parsed.scheme in {"http", "https"} and bool(parsed.hostname) and parsed.port != 0
+        except ValueError:
+            valid = False
+        if not valid:
+            raise HTTPException(status_code=400, detail="READER_PROXY_TEMPLATE must use an HTTP(S) URL")
         return
     field = settings.__class__.model_fields.get(key)
     if field is None:
@@ -246,6 +416,8 @@ def _validate_value(key: str, value: Any, settings: Settings) -> None:
                 status_code=400, detail=f"{key} must be one of {allowed}, got {value!r}"
             )
         return
+    if get_origin(annotation) in (types.UnionType, Union):
+        annotation = next((arg for arg in get_args(annotation) if arg is not type(None)), annotation)
     if annotation in (int, float):
         coerced = _coerce(key, value if isinstance(value, str) else json.dumps(value), settings)
         if not isinstance(coerced, annotation):
@@ -285,6 +457,8 @@ def _coerce(key: str, value: str, settings: Settings) -> Any:
     if field is None:
         return value
     annotation = field.annotation
+    if get_origin(annotation) in (types.UnionType, Union):
+        annotation = next((arg for arg in get_args(annotation) if arg is not type(None)), annotation)
     if annotation is bool:
         try:
             return bool(json.loads(value))

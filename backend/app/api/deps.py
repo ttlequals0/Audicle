@@ -28,6 +28,7 @@ SESSION_KEY_USER = "audicle_user"
 
 
 def get_conn(
+    request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> Iterator[sqlite3.Connection]:
     """Request-scoped SQLite connection.
@@ -40,6 +41,10 @@ def get_conn(
     is per-request and never used concurrently.
     """
 
+    conn = getattr(request.state, "runtime_settings_conn", None)
+    if conn is not None:
+        yield conn
+        return
     with database.connection(settings.DATA_DIR, check_same_thread=False) as conn:
         yield conn
 
@@ -96,6 +101,7 @@ def require_admin(
 
 
 def get_effective_settings(
+    request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> Settings:
     """The env/code ``Settings`` with the ``runtime_settings`` overlay applied,
@@ -104,7 +110,7 @@ def get_effective_settings(
     read instead of each calling ``runtime_settings.overlay()`` itself (what the
     ``overlay`` docstring prescribes)."""
 
-    return runtime_settings.overlay(settings)
+    return getattr(request.state, "effective_settings", None) or runtime_settings.overlay(settings)
 
 
 def require_feed_key(

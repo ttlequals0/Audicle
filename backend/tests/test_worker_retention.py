@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
+import os
 import sqlite3
+import time as time_mod
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -8,7 +11,7 @@ import pytest
 from app import worker
 from app.config import get_settings
 from app.core import database
-from app.services import episodes
+from app.services import episodes, retention, runtime_settings, tts_cache
 
 
 def _freeze_now(monkeypatch: pytest.MonkeyPatch, fake_now: datetime) -> None:
@@ -75,6 +78,16 @@ def test_maybe_run_retention_sweep_runs_when_hour_matches(
         assert episodes.get_by_id(conn, "old") is None
     finally:
         conn.close()
+
+
+def test_maybe_run_retention_sweep_reads_saved_hour_override(env: Path, monkeypatch) -> None:
+    settings = get_settings()
+    database.run_migrations(env)
+    with database.connection(env) as conn:
+        runtime_settings.set_value(conn, "RETENTION_SWEEP_HOUR_UTC", 1)
+    _freeze_now(monkeypatch, datetime(2026, 5, 28, 4, 30, tzinfo=UTC))
+    result = worker._maybe_run_retention_sweep(settings, last_sweep_day=None)
+    assert result == "2026-05-28"
 
 
 def test_maybe_run_retention_sweep_keeps_all_when_days_zero(
@@ -146,10 +159,6 @@ def test_maybe_run_retention_sweep_logs_and_returns_unchanged_on_failure(
     """A failed sweep must not blow up the worker loop or mark the day as
     swept; the next iteration retries."""
 
-    import logging
-
-    from app.services import retention
-
     settings = get_settings()
     fake_now = datetime(2026, 5, 28, settings.RETENTION_SWEEP_HOUR_UTC, 30, 0, tzinfo=UTC)
     _freeze_now(monkeypatch, fake_now)
@@ -194,11 +203,6 @@ def test_maybe_run_retention_sweep_purges_old_tts_cache_entries(
     older than TTS_CACHE_RETENTION_DAYS, same as the other sweeps it runs
     alongside."""
 
-    import os
-    import time as time_mod
-
-    from app.services import tts_cache
-
     database.run_migrations(env)
     settings = get_settings()
     fake_now = datetime(2026, 5, 28, settings.RETENTION_SWEEP_HOUR_UTC, 30, 0, tzinfo=UTC)
@@ -233,10 +237,6 @@ def test_maybe_run_retention_sweep_logs_and_returns_unchanged_on_tts_cache_purge
     """A broken tts_cache.purge_older_than must be caught the same way as
     the other sweep failures above, not just the retention.py ones."""
 
-    import logging
-
-    from app.services import tts_cache
-
     database.run_migrations(env)
     settings = get_settings()
     fake_now = datetime(2026, 5, 28, settings.RETENTION_SWEEP_HOUR_UTC, 30, 0, tzinfo=UTC)
@@ -258,8 +258,6 @@ def test_maybe_run_retention_sweep_clamps_tts_cache_retention_days(
     """TTS_CACHE_RETENTION_DAYS has no pydantic Field constraint (bounds live
     only in RUNTIME_SETTING_BOUNDS), so the sweep must clamp an out-of-range
     env value itself before calling purge_older_than."""
-
-    from app.services import tts_cache
 
     database.run_migrations(env)
     monkeypatch.setenv("TTS_CACHE_RETENTION_DAYS", "0")

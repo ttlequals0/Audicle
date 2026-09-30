@@ -11,20 +11,8 @@
 # -- Debian trixie base (python:*-slim): no fixed package released yet.
 # Remove each when `apt-get upgrade` in a rebuild clears it from the scan.
 
-# perl / perl-base / libperl5.40 / perl-modules-5.40 (CRITICAL x3, HIGH x4):
-# interpreter ships in the slim base; nothing in Audicle invokes perl.
-# Statuses: CVE-2026-8376, CVE-2026-48962, CVE-2026-13221 and CVE-2026-57432
-# are "affected"; the other three are "fix_deferred". All seven are equally
-# not-yet-fixed in trixie.
-CVE-2026-42496
-CVE-2026-42497
-CVE-2026-8376
-CVE-2026-48962
+# Perl ships in the slim base; application code does not invoke it.
 CVE-2026-9538
-# regex engine silently-incorrect-match (CRITICAL) and S_measure_struct integer
-# overflow (HIGH), added 0.48.2:
-CVE-2026-13221
-CVE-2026-57432
 
 # curl / libcurl4t64 / libcurl3t64-gnutls (HIGH x3):
 # system curl ships in base; backend Python httpx does not use system libcurl.
@@ -35,9 +23,6 @@ CVE-2026-8927
 # ncurses (libncursesw6, libtinfo6, ncurses-base, ncurses-bin) (HIGH x1):
 # terminal handling in base; Audicle runs headless in a container.
 CVE-2025-69720
-
-# gzip (HIGH x1): compression utility in base; not invoked by application code.
-CVE-2026-41992
 
 # libacl1 (HIGH x1): POSIX ACL library in base; no ACL operations in Audicle.
 CVE-2026-54369
@@ -53,13 +38,6 @@ CVE-2026-54369
 # Present in app and tts images; included here so the app scan (shared-only) passes.
 CVE-2026-37555
 
-# perl Storable (perl-base in app/render; libperl5.40, perl, perl-base,
-# perl-modules-5.40 in tts) (CRITICAL x1, "affected"): signed integer overflow
-# in Storable before 3.41 (CVE-2026-57433). Perl rides in the Debian base;
-# no application code invokes perl or deserializes Storable data. No Debian
-# fix released. Added 0.48.3. Remove when trixie ships a patched perl.
-CVE-2026-57433
-
 # CVE-2026-8458 (curl/libcurl, HIGH): unauthorized connection reuse. No fixed
 # package exists in Debian trixie as of 2026-08-10 (trivy status: affected,
 # empty fixed-version). Present in all three images, which is why it lives in
@@ -67,29 +45,6 @@ CVE-2026-57433
 # healthcheck; article fetching uses httpx, never libcurl. Re-check each
 # release and drop this entry when deb13u ships a fixed curl.
 CVE-2026-8458
-
-# CVE-2026-58050 (libssh2-1t64, HIGH): the publickey-subsystem attribute-count
-# multiplication can overflow only on 32-bit platforms; the release app and GPU
-# wrapper images are amd64. libssh2 arrives through healthcheck curl, which makes
-# only localhost HTTP requests. The wrapper Dockerfile also installs git for its
-# dependency-install layer and currently retains it in the GPU runtime, but the
-# lock resolves dependencies from PyPI, runtime code never invokes git, no SSH
-# client is installed, and neither git+HTTPS nor curl HTTP calls libssh2's
-# publickey-list API. No fixed trixie package is available. Remove this entry
-# when deb13u ships a fixed libssh2.
-CVE-2026-58050
-
-# CVE-2026-11822 / CVE-2026-11824 (libsqlite3-0, HIGH x2): memory corruption in
-# the FTS5 full-text extension, reachable only by opening a crafted database
-# and running an FTS5 MATCH query against it. No fixed package in Debian trixie
-# as of 2026-09-02 (trivy status: affected, empty fixed-version); the fix is
-# upstream SQLite 3.53.2 and the base ships 3.46.1-7+deb13u1. Present in all
-# three images because Python's sqlite3 links the system library. Audicle
-# creates no FTS5 tables and issues no MATCH queries, and it only ever opens
-# the database it owns in its own volume, never an operator- or user-supplied
-# file. Re-check each release and drop these when deb13u ships a fixed sqlite3.
-CVE-2026-11822
-CVE-2026-11824
 
 # Owner: Audicle maintainers. Recheck: 2026-10-10.
 # CVE-2026-16742 affects systemd-homed record verification. None of the images
@@ -101,3 +56,11 @@ CVE-2026-76642
 CVE-2026-78408
 CVE-2026-78409
 CVE-2026-78410
+
+# OpenSSL DTLS retransmission heap disclosure and denial of service.
+# No fixed Trixie package is available.
+# App and TTS use HTTP(S), not DTLS. Renderer egress blocks non-DNS UDP;
+# its browser uses only the TCP proxy. Remove when Debian ships a fix.
+# https://security-tracker.debian.org/tracker/CVE-2026-84782
+# Owner: Audicle maintainers. Recheck: 2026-10-10.
+CVE-2026-84782

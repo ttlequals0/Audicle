@@ -305,7 +305,7 @@ def _register_failed_attempt(conn: sqlite3.Connection, identifier: str, settings
         INSERT INTO auth_lockout (
             identifier, failed_attempts, last_attempt_at, lockout_until
         )
-        VALUES (?, 1, ?, NULL)
+        VALUES (?, 1, ?, CASE WHEN 1 >= ? THEN ? ELSE NULL END)
         ON CONFLICT(identifier) DO UPDATE SET
             failed_attempts = failed_attempts + 1,
             last_attempt_at = excluded.last_attempt_at,
@@ -315,7 +315,7 @@ def _register_failed_attempt(conn: sqlite3.Connection, identifier: str, settings
                 ELSE NULL
             END
         """,
-        (identifier, now_iso, threshold, locked_until_iso),
+        (identifier, now_iso, threshold, locked_until_iso, threshold, locked_until_iso),
     )
     conn.commit()
     row = conn.execute(

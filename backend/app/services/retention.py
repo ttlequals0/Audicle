@@ -66,62 +66,62 @@ def purge_older_than(
         cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
         cutoff_iso = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    conn = database.connect(database.db_path(settings.DATA_DIR))
+    candidate_conn = database.connect(database.db_path(settings.DATA_DIR))
     try:
-        conn.execute("BEGIN IMMEDIATE")
-        rows = conn.execute(
-            """
-            SELECT id, audio_path, artwork_path
-            FROM episodes
-            WHERE pub_date < ?
-              AND id NOT IN (
-                  SELECT episode_id FROM jobs
-                  WHERE status IN ('staging', 'queued', 'processing')
-              )
-            """,
+        candidates = candidate_conn.execute(
+            "SELECT id FROM episodes WHERE pub_date < ? "
+            "AND id NOT IN (SELECT episode_id FROM jobs "
+            "WHERE status IN ('staging', 'queued', 'processing'))",
             (cutoff_iso,),
         ).fetchall()
-        episode_ids = tuple(row["id"] for row in rows)
-        generation_rows = []
-        if episode_ids:
-            placeholders = ",".join("?" for _ in episode_ids)
-            generation_rows = conn.execute(
-                "SELECT audio_path, artwork_path FROM episode_generations "
-                f"WHERE episode_id IN ({placeholders})",
-                episode_ids,
-            ).fetchall()
-        for row in rows:
-            conn.execute("DELETE FROM episodes WHERE id = ?", (row["id"],))
-        if rows:
-            feed_revision.bump(conn)
-        conn.execute("COMMIT")
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
     finally:
-        conn.close()
+        candidate_conn.close()
 
-    files_removed = 0
+    candidate_ids = tuple(sorted(row["id"] for row in candidates))
     out_root = media_dir(settings)
-    for row in rows:
-        for path_str in (row["audio_path"], row["artwork_path"]):
-            if path_str and _remove_path(Path(path_str), root_guard=out_root):
+    files_removed = 0
+    deleted_ids: list[str] = []
+    for episode_id in candidate_ids:
+        with database.upload_staging_lock(settings.DATA_DIR, episode_id):
+            conn = database.connect(database.db_path(settings.DATA_DIR))
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    "SELECT audio_path, artwork_path FROM episodes WHERE id = ? AND pub_date < ? "
+                    "AND id NOT IN (SELECT episode_id FROM jobs "
+                    "WHERE status IN ('staging', 'queued', 'processing'))",
+                    (episode_id, cutoff_iso),
+                ).fetchone()
+                if row is None:
+                    conn.execute("COMMIT")
+                    continue
+                generations = conn.execute(
+                    "SELECT audio_path, artwork_path FROM episode_generations WHERE episode_id = ?",
+                    (episode_id,),
+                ).fetchall()
+                conn.execute("DELETE FROM episodes WHERE id = ?", (episode_id,))
+                feed_revision.bump(conn)
+                conn.execute("COMMIT")
+            except Exception:
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
+                raise
+            finally:
+                conn.close()
+
+            deleted_ids.append(episode_id)
+            for path_str in (row["audio_path"], row["artwork_path"]):
+                if path_str and _remove_path(Path(path_str), root_guard=out_root):
+                    files_removed += 1
+            if _remove_path(out_root / f"{episode_id}.vtt", root_guard=out_root):
                 files_removed += 1
-        # The VTT lives in the DB, not on disk, so the row delete is the
-        # only cleanup for it. Older code paths may have created a stub
-        # .vtt under media_dir though; check for one.
-        if _remove_path(out_root / f"{row['id']}.vtt", root_guard=out_root):
-            files_removed += 1
-        # Uploaded episodes keep their original document at {id}.source.{ext};
-        # remove it alongside the audio/artwork (episode ids are hex, no glob meta).
-        for src in out_root.glob(f"{row['id']}.source.*"):
-            if _remove_path(src, root_guard=out_root):
-                files_removed += 1
-    for row in generation_rows:
-        for path_str in (row["audio_path"], row["artwork_path"]):
-            if path_str and _remove_path(Path(path_str), root_guard=out_root):
-                files_removed += 1
+            for src in out_root.glob(f"{episode_id}.source.*"):
+                if _remove_path(src, root_guard=out_root):
+                    files_removed += 1
+            for generation in generations:
+                for path_str in (generation["audio_path"], generation["artwork_path"]):
+                    if path_str and _remove_path(Path(path_str), root_guard=out_root):
+                        files_removed += 1
 
     logger.info(
         "Retention sweep complete",
@@ -129,13 +129,13 @@ def purge_older_than(
             "event": "retention_sweep_complete",
             "older_than_days": older_than_days,
             "cutoff": "wipe_all" if older_than_days == 0 else cutoff_iso,
-            "rows_deleted": len(rows),
+            "rows_deleted": len(deleted_ids),
             "files_removed": files_removed,
         },
     )
     return PurgeResult(
-        episode_ids=episode_ids,
-        rows_deleted=len(rows),
+        episode_ids=tuple(deleted_ids),
+        rows_deleted=len(deleted_ids),
         files_removed=files_removed,
     )
 

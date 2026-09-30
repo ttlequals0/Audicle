@@ -60,7 +60,7 @@ scan() {
     if trivy image --timeout 30m --severity HIGH,CRITICAL --exit-code 1 --quiet \
             --ignorefile "$ignorefile" "$tag" >"$out" 2>&1; then
         cat "$out"
-        echo "$tag CLEAN"
+        echo "$tag PASS (reviewed suppressions applied)"
     # trivy exits 1 for findings AND for fatal errors (cache lock held by a
     # concurrent scan, layer-analysis timeout). Distinguish them so an infra
     # hiccup is not read as a CVE failure -- and is still a gate failure.
@@ -89,4 +89,4 @@ if [ "$FAILED" -ne 0 ]; then
     exit 1
 fi
 
-echo "All images CLEAN."
+echo "All images passed the gate with reviewed suppressions applied."

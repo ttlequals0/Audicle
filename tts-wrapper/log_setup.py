@@ -75,7 +75,34 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(payload, default=str)
 
 
-def setup_logging(level: str | None = None) -> None:
+class TextFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        details = " ".join(
+            f"{key}={value}"
+            for key, value in record.__dict__.items()
+            if key not in _STANDARD_RECORD_ATTRS and not key.startswith("_") and value is not None
+        )
+        line = f"{record.levelname:<5} {record.name} {record.getMessage()}"
+        if details:
+            line = f"{line} [{details}]"
+        if record.exc_info:
+            line = f"{line}\n{self.formatException(record.exc_info)}"
+        return line
+
+
+def apply_logging(level: str, fmt: str) -> None:
+    resolved = getattr(logging, level.upper(), None)
+    if not isinstance(resolved, int) or fmt not in {"json", "text"}:
+        raise ValueError("invalid logging configuration")
+    root = logging.getLogger()
+    root.setLevel(resolved)
+    formatter = JSONFormatter() if fmt == "json" else TextFormatter()
+    for handler in root.handlers:
+        handler.setLevel(resolved)
+        handler.setFormatter(formatter)
+
+
+def setup_logging(level: str | None = None, fmt: str | None = None) -> None:
     """Install the JSON handler on the root logger and route uvicorn through it.
 
     Idempotent: clears existing handlers first so a reconfigure (or test
@@ -83,13 +110,14 @@ def setup_logging(level: str | None = None) -> None:
     """
 
     resolved = (level or os.environ.get("LOG_LEVEL", "INFO")).upper()
+    format_name = (fmt or os.environ.get("LOG_FORMAT") or "json").lower()
 
     root = logging.getLogger()
     for handler in list(root.handlers):
         root.removeHandler(handler)
 
     handler = logging.StreamHandler(stream=sys.stdout)
-    handler.setFormatter(JSONFormatter())
+    handler.setFormatter(JSONFormatter() if format_name == "json" else TextFormatter())
     root.addHandler(handler)
     try:
         root.setLevel(resolved)

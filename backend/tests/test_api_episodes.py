@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from app.config import get_settings
@@ -194,6 +195,48 @@ def test_delete_episode_removes_row_and_files(env: Path) -> None:
         conn.close()
 
 
+def test_delete_episode_waits_for_upload_and_preserves_reuploaded_source(
+    env: Path, monkeypatch
+) -> None:
+    _seed(env, id_="del-upload", with_files=True, filename="report.pdf")
+    media = media_dir(get_settings())
+    source = media / "del-upload.source.pdf"
+    source.write_bytes(b"old document")
+    client = _client(env)
+    delete_waiting = threading.Event()
+    original_lock = database.upload_staging_lock
+
+    def _signal_delete_lock(data_dir: Path, episode_id: str, *, blocking: bool = True):
+        delete_waiting.set()
+        return original_lock(data_dir, episode_id, blocking=blocking)
+
+    monkeypatch.setattr(database, "upload_staging_lock", _signal_delete_lock)
+    responses = []
+
+    def _delete() -> None:
+        with client:
+            responses.append(client.delete("/api/v1/episodes/del-upload"))
+
+    with original_lock(env, "del-upload"):
+        request = threading.Thread(target=_delete)
+        request.start()
+        assert delete_waiting.wait(timeout=5)
+        conn = database.connect(database.db_path(env))
+        try:
+            conn.execute(
+                "INSERT INTO jobs (id, url, episode_id, status, reprocess) "
+                "VALUES ('del-upload-job', 'upload://replacement/report.pdf', 'del-upload', 'staging', 1)"
+            )
+        finally:
+            conn.close()
+        source.write_bytes(b"replacement document")
+
+    request.join(timeout=5)
+    assert not request.is_alive()
+    assert responses[0].status_code == 409
+    assert source.read_bytes() == b"replacement document"
+
+
 def test_delete_episode_removes_every_generation(env: Path) -> None:
     _seed(env, id_="del", with_files=True)
     media = media_dir(get_settings())
@@ -232,6 +275,13 @@ def test_delete_episode_returns_404_when_missing(env: Path) -> None:
     with _client(env) as client:
         response = client.delete("/api/v1/episodes/unknown")
     assert response.status_code == 404
+
+
+def test_delete_episode_rejects_unsafe_id_before_opening_lock(env: Path) -> None:
+    with _client(env) as client:
+        response = client.delete("/api/v1/episodes/unsafe.id")
+    assert response.status_code == 404
+    assert not (env / ".upload-unsafe.id.lock").exists()
 
 
 def test_list_episodes_defaults_to_25_per_page(env: Path) -> None:

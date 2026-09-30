@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import get_conn
 from app.config import Settings, get_settings
+from app.core import database
 from app.core.paths import file_size_or_zero, media_dir
 from app.services import episodes as episodes_service
 from app.services import feed_revision, pipeline, runtime_settings, transcript
@@ -134,7 +135,7 @@ async def regenerate_chapters(
     survive a failed run, and the episode GUID is left alone because the audio
     does not change."""
 
-    if not _EPISODE_ID_RE.match(episode_id):
+    if not _EPISODE_ID_RE.fullmatch(episode_id):
         raise HTTPException(status_code=404, detail="episode not found")
     episode = episodes_service.get_by_id(conn, episode_id)
     if episode is None:
@@ -213,48 +214,50 @@ async def delete_episode(
     conn: Annotated[sqlite3.Connection, Depends(get_conn)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> DeleteEpisodeResponse:
-    episode = episodes_service.get_by_id(conn, episode_id)
-    if episode is None:
+    if not _EPISODE_ID_RE.fullmatch(episode_id):
         raise HTTPException(status_code=404, detail="episode not found")
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        active_job = conn.execute(
-            "SELECT 1 FROM jobs WHERE episode_id = ? "
-            "AND status IN ('staging', 'queued', 'processing') LIMIT 1",
-            (episode_id,),
-        ).fetchone()
-        if active_job is not None:
-            raise HTTPException(status_code=409, detail="episode is currently processing")
-        generations = conn.execute(
-            "SELECT audio_path, artwork_path FROM episode_generations WHERE episode_id = ?",
-            (episode_id,),
-        ).fetchall()
-        deleted = conn.execute(
-            "DELETE FROM episodes WHERE id = ? AND generation_token IS ?",
-            (episode_id, episode.generation_token),
-        )
-        if deleted.rowcount != 1:
-            raise HTTPException(status_code=409, detail="episode changed during deletion")
-        feed_revision.bump(conn)
-        conn.execute("COMMIT")
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
-    out_root = media_dir(settings)
+    with database.upload_staging_lock(settings.DATA_DIR, episode_id):
+        episode = episodes_service.get_by_id(conn, episode_id)
+        if episode is None:
+            raise HTTPException(status_code=404, detail="episode not found")
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            active_job = conn.execute(
+                "SELECT 1 FROM jobs WHERE episode_id = ? "
+                "AND status IN ('staging', 'queued', 'processing') LIMIT 1",
+                (episode_id,),
+            ).fetchone()
+            if active_job is not None:
+                raise HTTPException(status_code=409, detail="episode is currently processing")
+            generations = conn.execute(
+                "SELECT audio_path, artwork_path FROM episode_generations WHERE episode_id = ?",
+                (episode_id,),
+            ).fetchall()
+            deleted = conn.execute(
+                "DELETE FROM episodes WHERE id = ? AND generation_token IS ?",
+                (episode_id, episode.generation_token),
+            )
+            if deleted.rowcount != 1:
+                raise HTTPException(status_code=409, detail="episode changed during deletion")
+            feed_revision.bump(conn)
+            conn.execute("COMMIT")
+        except Exception:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        out_root = media_dir(settings)
 
-    files_removed = 0
-    for path_str in (episode.audio_path, episode.artwork_path):
-        if path_str and _remove_path(Path(path_str), root_guard=out_root):
-            files_removed += 1
-    for generation in generations:
-        for path_str in (generation["audio_path"], generation["artwork_path"]):
+        files_removed = 0
+        for path_str in (episode.audio_path, episode.artwork_path):
             if path_str and _remove_path(Path(path_str), root_guard=out_root):
                 files_removed += 1
-    if _remove_path(out_root / f"{episode_id}.vtt", root_guard=out_root):
-        files_removed += 1
-    # An uploaded episode also has its stored original ({id}.source.{ext}).
-    for src in out_root.glob(f"{episode_id}.source.*"):
-        if _remove_path(src, root_guard=out_root):
+        for generation in generations:
+            for path_str in (generation["audio_path"], generation["artwork_path"]):
+                if path_str and _remove_path(Path(path_str), root_guard=out_root):
+                    files_removed += 1
+        if _remove_path(out_root / f"{episode_id}.vtt", root_guard=out_root):
             files_removed += 1
+        for src in out_root.glob(f"{episode_id}.source.*"):
+            if _remove_path(src, root_guard=out_root):
+                files_removed += 1
     return DeleteEpisodeResponse(id=episode_id, files_removed=files_removed)

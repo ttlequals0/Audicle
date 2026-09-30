@@ -6,7 +6,7 @@ from pathlib import Path
 import httpx
 import pytest
 from app.config import get_settings
-from app.services import direct_fetch, ssrf
+from app.services import direct_fetch, pinned_fetch, ssrf
 from app.services.extraction_types import (
     ExtractionBlockedError,
     ExtractionPermanentError,
@@ -72,7 +72,9 @@ async def test_direct_fetch_extracts_article(env: Path, monkeypatch: pytest.Monk
 
 async def test_direct_fetch_pulls_og_image(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     html = _article_html(og_image="https://img.test/cover.jpg")
-    _patch_async_client(monkeypatch, httpx.MockTransport(lambda req: httpx.Response(200, text=html)))
+    _patch_async_client(
+        monkeypatch, httpx.MockTransport(lambda req: httpx.Response(200, text=html))
+    )
     result = await direct_fetch.fetch("https://blog.test/post", get_settings())
     # artwork._extract_og_image reads metadata["ogImage"] first, so the cover survives.
     assert result.metadata.get("ogImage") == "https://img.test/cover.jpg"
@@ -83,7 +85,9 @@ async def test_direct_fetch_detect_teaser_sets_raw_html_and_article_chars(
 ) -> None:
     body = "Declared article body. " * 50
     html = _article_html(article_body=body)
-    _patch_async_client(monkeypatch, httpx.MockTransport(lambda req: httpx.Response(200, text=html)))
+    _patch_async_client(
+        monkeypatch, httpx.MockTransport(lambda req: httpx.Response(200, text=html))
+    )
     result = await direct_fetch.fetch("https://blog.test/post", get_settings(), detect_teaser=True)
     assert result.raw_html == html
     assert result.article_chars == len(body.strip())
@@ -93,10 +97,28 @@ async def test_direct_fetch_no_teaser_omits_raw_html(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     html = _article_html(article_body="x " * 50)
-    _patch_async_client(monkeypatch, httpx.MockTransport(lambda req: httpx.Response(200, text=html)))
+    _patch_async_client(
+        monkeypatch, httpx.MockTransport(lambda req: httpx.Response(200, text=html))
+    )
     result = await direct_fetch.fetch("https://blog.test/post", get_settings(), detect_teaser=False)
     assert result.raw_html is None
     assert result.article_chars is None
+
+
+async def test_pinned_fetch_rejects_streamed_body_over_size_cap(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_async_client(
+        monkeypatch, httpx.MockTransport(lambda _request: httpx.Response(200, content=b"x" * 11))
+    )
+    with pytest.raises(ExtractionPermanentError, match="exceeds the size cap"):
+        await pinned_fetch.get_text(
+            "https://blog.test/post",
+            get_settings(),
+            headers={},
+            max_bytes=10,
+            timeout_seconds=5,
+        )
 
 
 async def test_direct_fetch_5xx_is_transient(

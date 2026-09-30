@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 export interface MenuAction {
@@ -23,15 +23,19 @@ export default function ActionMenu({
   actions,
   pending,
   label = "Redo",
+  context,
 }: {
   actions: MenuAction[];
   pending?: boolean;
   label?: string;
+  context?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
+  const itemIndex = useRef(0);
+  const menuLabel = context ? `${label} actions for ${context}` : `${label} actions`;
 
   const place = () => {
     const button = trigger.current;
@@ -48,8 +52,56 @@ export default function ActionMenu({
   };
 
   useLayoutEffect(() => {
-    if (open) place();
+    if (!open) return;
+    place();
+    const items = panel.current?.querySelectorAll<HTMLElement>("[role='menuitem']");
+    if (items?.length) items[Math.min(itemIndex.current, items.length - 1)].focus();
   }, [open]);
+
+  const close = (restoreFocus = false) => {
+    setOpen(false);
+    if (restoreFocus) trigger.current?.focus();
+  };
+
+  const onMenuKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const items = Array.from(panel.current?.querySelectorAll<HTMLElement>("[role='menuitem']") ?? []);
+    if (!items.length) return;
+    const current = items.indexOf(document.activeElement as HTMLElement);
+    let next = current;
+    if (e.key === "ArrowDown") next = (current + 1 + items.length) % items.length;
+    else if (e.key === "ArrowUp") next = (current - 1 + items.length) % items.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = items.length - 1;
+    else if (e.key === "Escape") {
+      e.preventDefault();
+      close(true);
+      return;
+    } else if (e.key === "Tab") {
+      const candidates = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])"
+        )
+      ).filter((el) => {
+        if (panel.current?.contains(el)) return false;
+        for (let node: HTMLElement | null = el; node; node = node.parentElement) {
+          const style = window.getComputedStyle(node);
+          if (node.hidden || style.display === "none" || style.visibility === "hidden") return false;
+        }
+        return true;
+      });
+      const triggerIndex = candidates.indexOf(trigger.current!);
+      const target = candidates[triggerIndex + (e.shiftKey ? -1 : 1)];
+      close();
+      if (target) {
+        e.preventDefault();
+        target.focus();
+      }
+      return;
+    } else return;
+    e.preventDefault();
+    itemIndex.current = next;
+    items[next].focus();
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -57,7 +109,12 @@ export default function ActionMenu({
       if (!panel.current?.contains(e.target as Node) && !trigger.current?.contains(e.target as Node))
         setOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape" && panel.current?.contains(document.activeElement)) {
+        e.preventDefault();
+        close(true);
+      }
+    };
     const onMove = () => place();
     document.addEventListener("mousedown", onDocDown);
     document.addEventListener("keydown", onKey);
@@ -81,6 +138,14 @@ export default function ActionMenu({
         disabled={pending}
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-label={context ? `${label} actions for ${context}` : label}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            itemIndex.current = e.key === "ArrowUp" ? actions.length - 1 : 0;
+            setOpen(true);
+          }
+        }}
         onClick={() => setOpen((v) => !v)}
       >
         &#8635; {label}
@@ -98,6 +163,7 @@ export default function ActionMenu({
           <div
             ref={panel}
             role="menu"
+            aria-label={menuLabel}
             className="menu-panel"
             style={{
               position: "fixed",
@@ -105,6 +171,7 @@ export default function ActionMenu({
               top: pos?.top ?? -9999,
               zIndex: 60,
             }}
+            onKeyDown={onMenuKeyDown}
           >
             {actions.map((a) => {
               const body = (
@@ -117,11 +184,12 @@ export default function ActionMenu({
                 <a
                   key={a.label}
                   role="menuitem"
+                  tabIndex={-1}
                   className="menu-item"
                   href={a.href}
                   target="_blank"
                   rel="noreferrer"
-                  onClick={() => setOpen(false)}
+                  onClick={() => close(true)}
                 >
                   {body}
                 </a>
@@ -129,9 +197,10 @@ export default function ActionMenu({
                 <button
                   key={a.label}
                   role="menuitem"
+                  tabIndex={-1}
                   className="menu-item"
                   onClick={() => {
-                    setOpen(false);
+                    close(true);
                     a.run?.();
                   }}
                 >

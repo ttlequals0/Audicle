@@ -16,7 +16,7 @@ The TTS model and narration language are switchable in Settings under TTS: `chat
 
 Generation tuning (temperature, repetition penalty, top-p, top-k, seed, per-call character cap) lives in the TTS generation group and rides on every request to the wrapper, so a change applies to the next job.
 
-The wrapper unloads its TTS and Whisper models after 300 idle seconds by default, releasing their GPU memory. The next synthesis request reloads the configured models before it runs. Set `TTS_IDLE_UNLOAD_SECONDS=0` to keep models resident, or choose another nonnegative timeout.
+The wrapper unloads its TTS and Whisper models after 300 idle seconds by default, releasing their GPU memory. The next synthesis request reloads the configured models before it runs. In the TTS wrapper settings, set `TTS_IDLE_UNLOAD_SECONDS` to `0` to keep models resident, or choose another nonnegative timeout. Memory limits, inference timeout, and Whisper configuration are also adjustable there. Whisper changes wait for active synthesis to finish and load the replacement verifier when needed.
 
 ## End-of-episode chime
 
@@ -30,7 +30,7 @@ By default the bundled wrapper does the synthesis (`TTS_BACKEND=wrapper`). If yo
 |---|---|
 | `TTS_BACKEND` | `wrapper` or `openai-api` |
 | `TTS_API_BASE_URL` | The remote server's `/v1` endpoint |
-| `TTS_API_KEY` | Bearer token, if the server wants one (stored masked) |
+| `TTS_API_KEY` | Bearer token, if the server wants one (masked in API responses) |
 | `TTS_API_MODEL` | Model name to request |
 | `TTS_API_VOICE` | Voice name on the remote server |
 
@@ -46,7 +46,7 @@ Verification transcribes each generated chunk and compares the transcript to the
 
 | Value | Where ASR runs | Needs |
 |---|---|---|
-| `wrapper` (default) | The bundled wrapper transcribes what it just synthesized | `WHISPER_ENABLED=true` on the wrapper (loads the model at its startup) plus `WHISPER_VERIFY_ENABLED=true` on the backend. No GPU required: the Whisper device follows `TTS_DEVICE`, float16 on CUDA and int8 on CPU, so a CPU wrapper verifies too, just slower per chunk |
+| `wrapper` (default) | The bundled wrapper transcribes what it just synthesized | `WHISPER_ENABLED=true` on the wrapper (loads the model when needed) plus `WHISPER_VERIFY_ENABLED=true` on the backend. No GPU required: the Whisper device follows `TTS_DEVICE`, float16 on CUDA and int8 on CPU, so a CPU wrapper verifies too, just slower per chunk |
 | `openai-api` | A remote OpenAI-compatible `/v1/audio/transcriptions` | `WHISPER_API_BASE_URL` (and optionally a key, model, timeout) |
 | `off` | Nowhere; verification is skipped | nothing |
 

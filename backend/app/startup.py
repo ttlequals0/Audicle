@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 from app.config import Settings
 from app.core import database
 from app.services import runtime_settings
-from app.utils.logging import apply_level, setup_logging
+from app.utils.logging import apply_format, apply_level, setup_logging
 from app.version import __version__
 
 _APP_DIR = Path(__file__).resolve().parent
@@ -45,7 +45,9 @@ def bootstrap(settings: Settings, *, process_label: str) -> None:
     )
     applied = database.run_migrations(settings.DATA_DIR)
     try:
-        apply_level(runtime_settings.overlay(settings).LOG_LEVEL)
+        effective = runtime_settings.overlay(settings)
+        apply_level(effective.LOG_LEVEL)
+        apply_format(effective.LOG_FORMAT)
     except Exception:
         logger.warning("Stored log level could not be applied", exc_info=True)
     logger.info(

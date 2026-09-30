@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api, SettingsPayload } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useHealthLive } from "../lib/useHealthLive";
 
@@ -23,11 +25,16 @@ function isLocal(baseUrl: string | undefined): boolean {
 export default function OpenModeBanner() {
   const { status } = useAuth();
   const health = useHealthLive();
+  const settings = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => api<SettingsPayload>("/api/v1/settings"),
+  });
   const [dismissed, setDismissed] = useState(false);
 
   if (dismissed || !status || status.password_set) return null;
 
-  const exposed = !isLocal(health.data?.base_url);
+  const baseUrl = settings.data?.values.BASE_URL ?? settings.data?.defaults.BASE_URL ?? health.data?.base_url;
+  const exposed = !isLocal(typeof baseUrl === "string" ? baseUrl : undefined);
   const tone = exposed
     ? "border-danger/60 bg-danger/10 text-danger"
     : "border-amber-400/50 bg-amber-400/10 text-amber-300";

@@ -75,6 +75,11 @@ COPY config.py engine.py log_setup.py main.py memory.py chatterbox_engine.py whi
 # install_engine.sh is shared with Dockerfile.cpu.
 RUN sh install_engine.sh
 
+RUN useradd --create-home --uid 1000 audicle \
+    && mkdir -p /data /tmp/.cache/torch/kernels /tmp/numba_cache /tmp/mpl \
+    && chown -R audicle:audicle /data /tmp/.cache /tmp/numba_cache /tmp/mpl
+USER audicle
+
 EXPOSE 8000
 
 # Single-source version: the build passes the repo-root VERSION value here

@@ -23,11 +23,12 @@ from app.services import (
     retention,
     runtime_settings,
     settings_store,
+    sidecar_settings,
     tts,
     tts_cache,
 )
 from app.startup import bootstrap
-from app.utils.logging import apply_level
+from app.utils.logging import apply_format, apply_level
 
 logger = logging.getLogger("app.worker")
 
@@ -73,10 +74,45 @@ async def _pickup_once(settings: Settings) -> jobs.Job | None:
         conn.close()
 
 
+async def _sync_tts_config(settings: Settings) -> bool:
+    ok = True
+    try:
+        with database.connection(settings.DATA_DIR) as conn:
+            render_desired = sidecar_settings.get_saved(conn, "render")
+            tts_desired = sidecar_settings.get_saved(conn, "tts_wrapper")
+        render_result = await sidecar_settings.ensure_config(
+            settings.RENDER_URL, "render", render_desired
+        )
+        if render_result is None and any(
+            key in {"LOG_LEVEL", "LOG_FORMAT"} for key in render_desired
+        ):
+            logger.debug(
+                "Render runtime settings are pending until the sidecar is reachable",
+                extra={"event": "render_runtime_config_pending"},
+            )
+            ok = False
+        if settings.TTS_BACKEND == "wrapper":
+            tts_result = await sidecar_settings.ensure_config(
+                settings.TTS_URL, "tts_wrapper", tts_desired
+            )
+            if tts_result is None and tts_desired:
+                logger.debug(
+                    "TTS wrapper runtime settings are pending until the sidecar is reachable",
+                    extra={"event": "tts_runtime_config_pending", "saved_keys": sorted(tts_desired)},
+                )
+                ok = False
+        return ok
+    except Exception:
+        logger.exception("Sidecar runtime settings sync failed")
+        return False
+
+
 async def _refresh_log_level(settings: Settings, shutdown: asyncio.Event) -> None:
     while not shutdown.is_set():
         try:
-            apply_level(runtime_settings.overlay(settings).LOG_LEVEL)
+            effective = runtime_settings.overlay(settings)
+            apply_level(effective.LOG_LEVEL)
+            apply_format(effective.LOG_FORMAT)
         except Exception:
             logger.exception("runtime log level refresh failed")
         with contextlib.suppress(asyncio.TimeoutError):
@@ -94,17 +130,15 @@ def _maybe_run_retention_sweep(settings: Settings, last_sweep_day: str | None) -
     """
 
     now = datetime.now(UTC)
-    due_day = (
-        now.date()
-        if now.hour >= settings.RETENTION_SWEEP_HOUR_UTC
-        else now.date() - timedelta(days=1)
-    ).isoformat()
-    if last_sweep_day is not None and last_sweep_day >= due_day:
-        return last_sweep_day
     try:
-        # Apply DB overrides so RETENTION_DAYS set via PUT /api/v1/settings
-        # takes effect on the next sweep without a worker restart.
         overlaid = runtime_settings.overlay(settings)
+        due_day = (
+            now.date()
+            if now.hour >= overlaid.RETENTION_SWEEP_HOUR_UTC
+            else now.date() - timedelta(days=1)
+        ).isoformat()
+        if last_sweep_day is not None and last_sweep_day >= due_day:
+            return last_sweep_day
         # RETENTION_DAYS <= 0 means "keep forever": skip the automatic episode/job
         # purge. The wipe-all-on-zero contract (year-9999 cutoff) is reserved for
         # the explicit operator-initiated POST /api/v1/purge?older_than_days=0
@@ -155,6 +189,7 @@ async def _process_one(settings: Settings) -> bool:
             extra={"event": "overlay_failed", "job_id": job.id},
         )
         effective = settings
+    await _sync_tts_config(effective)
     await pipeline.process_job(job, effective)
     return True
 
@@ -188,6 +223,7 @@ async def _maybe_restart_idle_wrapper(settings: Settings) -> None:
 
     if not effective.TTS_IDLE_RESTART_ENABLED or effective.TTS_BACKEND == "openai-api":
         return
+    await _sync_tts_config(effective)
     try:
         conn = database.connect(database.db_path(effective.DATA_DIR))
         try:
@@ -246,6 +282,7 @@ async def run() -> None:
     poll_interval = settings.QUEUE_POLL_INTERVAL_SECONDS
     with database.connection(settings.DATA_DIR) as conn:
         last_sweep_day = settings_store.get(conn, _RETENTION_SWEEP_DAY_KEY)
+    last_config_sync = 0.0
     log_refresh = asyncio.create_task(_refresh_log_level(settings, shutdown))
     try:
         while not shutdown.is_set():
@@ -268,8 +305,20 @@ async def run() -> None:
                 processed = False
             if processed:
                 await _maybe_restart_idle_wrapper(settings)
+                last_config_sync = asyncio.get_running_loop().time()
                 # Loop right back: a job may have arrived while we were working.
                 continue
+            loop_time = asyncio.get_running_loop().time()
+            if loop_time - last_config_sync >= 30:
+                try:
+                    await _sync_tts_config(runtime_settings.overlay(settings))
+                except Exception:
+                    logger.exception("runtime sidecar settings refresh failed")
+                last_config_sync = loop_time
+            try:
+                poll_interval = runtime_settings.overlay(settings).QUEUE_POLL_INTERVAL_SECONDS
+            except Exception:
+                logger.exception("runtime queue poll setting refresh failed")
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(shutdown.wait(), timeout=poll_interval)
     finally:

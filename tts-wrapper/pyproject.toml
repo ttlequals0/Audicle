@@ -1,6 +1,6 @@
 [project]
 name = "audicle-tts-wrapper"
-version = "0.58.10"
+version = "0.59.0"
 description = "FastAPI TTS wrapper for Audicle (Chatterbox)."
 requires-python = ">=3.11,<3.14"
 # The wrapper image uses Python 3.11. Keep the tested upper bound separate from
@@ -28,8 +28,8 @@ chatterbox = [
     "chatterbox-tts>=0.1.7",
     "torch",
     "torchaudio",
-    # resemble-perth imports pkg_resources, removed in setuptools 81.
-    "setuptools>=78.1.1,<81",
+    "resemble-perth",
+    "setuptools>=83.0.0",
 ]
 # whisper: optional faster-whisper (CTranslate2) ASR for the post-TTS verification
 # pass. CTranslate2 is independent of the engine's torch stack. Installed into
@@ -38,7 +38,7 @@ chatterbox = [
 whisper = ["faster-whisper>=1.0"]
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=83.0.0"]
 build-backend = "setuptools.build_meta"
 
 # The wrapper is a flat layout of top-level modules. Declare them explicitly:
@@ -79,6 +79,8 @@ url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [tool.uv.sources]
+# Uses importlib.resources while retaining Chatterbox's `perth` import.
+resemble-perth = { git = "https://github.com/resemble-ai/Perth", rev = "49cd0d1e712003452267c06d20a1bba9de32807b" }
 torch = { index = "pytorch-cpu" }
 torchaudio = { index = "pytorch-cpu" }
 

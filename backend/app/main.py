@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import secrets
 import time
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
-from starlette.middleware.sessions import SessionMiddleware
+from starlette.middleware.sessions import SessionMiddleware as StarletteSessionMiddleware
 
 from app.api import errors as error_handlers
 from app.api.access_log import AccessLogMiddleware
@@ -28,8 +29,9 @@ from app.api.v1.auth import _LOGIN_LIMITER
 from app.api.v1.router import router as v1_router
 from app.config import Settings, get_settings
 from app.core import database
-from app.services import settings_store
+from app.services import runtime_settings, settings_store
 from app.startup import bootstrap
+from app.utils.logging import apply_format, apply_level
 from app.version import __version__
 
 
@@ -38,7 +40,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     bootstrap(settings, process_label="web")
     app.state.started_at = time.monotonic()
-    yield
+    async def refresh_logging() -> None:
+        while True:
+            try:
+                effective = runtime_settings.overlay(settings)
+                apply_level(effective.LOG_LEVEL)
+                apply_format(effective.LOG_FORMAT)
+            except Exception:
+                logging.getLogger("app.main").exception("runtime logging refresh failed")
+            await asyncio.sleep(1)
+
+    task = asyncio.create_task(refresh_logging())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
     logging.getLogger("app.main").info("Audicle shutting down", extra={"event": "app_stopping"})
 
 
@@ -166,17 +184,42 @@ def _resolve_session_secret(settings: Settings) -> str:
         return secrets.token_urlsafe(64)
 
 
+class _RuntimeSessionMiddleware:
+    """Apply the stored cookie policy on each request without rebuilding the app."""
+
+    def __init__(self, app, settings: Settings) -> None:
+        self.app = app
+        self.settings = settings
+        self.secret = _resolve_session_secret(settings)
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] not in {"http", "websocket"}:
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        if path == "/health" or path.startswith("/health/"):
+            await self.app(scope, receive, send)
+            return
+        with database.connection(self.settings.DATA_DIR, check_same_thread=False) as conn:
+            effective = runtime_settings.overlay_from_conn(self.settings, conn)
+            state = scope.setdefault("state", {})
+            state["runtime_settings_conn"] = conn
+            state["effective_settings"] = effective
+            middleware = StarletteSessionMiddleware(
+                self.app,
+                secret_key=self.secret,
+                session_cookie="audicle_session",
+                max_age=effective.SESSION_COOKIE_MAX_AGE_SECONDS,
+                same_site="lax",
+                https_only=effective.SESSION_COOKIE_SECURE,
+            )
+            await middleware(scope, receive, send)
+
+
 def _attach_session_middleware(app: FastAPI, settings: Settings) -> None:
     # SessionMiddleware is always attached so request.session exists for the auth
     # router / require_admin (which read it even in open convenience mode).
-    app.add_middleware(
-        SessionMiddleware,
-        secret_key=_resolve_session_secret(settings),
-        session_cookie="audicle_session",
-        max_age=settings.SESSION_COOKIE_MAX_AGE_SECONDS,
-        same_site="lax",
-        https_only=settings.SESSION_COOKIE_SECURE,
-    )
+    app.add_middleware(_RuntimeSessionMiddleware, settings=settings)
 
 
 def _attach_rate_limiter(app: FastAPI) -> None:

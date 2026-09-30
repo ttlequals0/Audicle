@@ -13,6 +13,8 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     env_file: .env
+    environment:
+      RENDER_URL: ${RENDER_URL-http://render:8000}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -60,7 +62,7 @@ services:
     # Stealth headful-render sidecar (Camoufox + xvfb), CPU-only. Clicks the
     # "EXPAND TO CONTINUE READING" gate to recover full article bodies (e.g.
     # inc.com). Internal only -- never expose this; the app reaches it at
-    # RENDER_URL=http://render:8000 (set in .env). Disable by clearing RENDER_URL.
+    # RENDER_URL=http://render:8000 by default. Disable it in Settings.
     image: ttlequals0/audicle-render:${BUILD_VERSION:?set BUILD_VERSION}
     environment:
       - RENDER_PROXY_URL=http://${RENDER_PROXY_IP:-172.30.0.3}:3128
@@ -119,11 +121,8 @@ services:
       # /generate call, tunable live in Settings. SAMPLE_RATE is provisional
       # (the model's own rate replaces it at load).
       - TTS_SAMPLE_RATE=${TTS_SAMPLE_RATE:-24000}
-      # Post-TTS ASR verification (off by default). WHISPER_ENABLED loads the
-      # faster-whisper model here; the backend's WHISPER_VERIFY_ENABLED (via .env)
-      # decides whether to request a transcript per chunk. WHISPER_DEVICE defaults
-      # to TTS_DEVICE and WHISPER_COMPUTE_TYPE to a matching type (cuda -> float16,
-      # cpu -> int8); add them here only to override.
+      # Legacy environment defaults; saved wrapper settings override these.
+      # Configure transcription and model selection from Settings.
       - WHISPER_ENABLED=${WHISPER_ENABLED:-false}
       - WHISPER_MODEL=${WHISPER_MODEL:-base}
       # Memory ladder (0.55.0). This process serves hundreds of chunks from one
@@ -159,8 +158,7 @@ services:
               device_ids: ['0']
               capabilities: [gpu]
     healthcheck:
-      # Liveness (model loaded), not readiness: the app's depends_on gates on
-      # this, and a voice can be uploaded via the UI only after the app starts.
+      # Liveness stays healthy while models are idle or no voice is uploaded.
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
       interval: 30s
       timeout: 10s

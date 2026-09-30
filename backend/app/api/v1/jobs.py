@@ -10,6 +10,7 @@ running job at its next checkpoint).
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from typing import Annotated, Literal
 
@@ -19,12 +20,14 @@ from pydantic import BaseModel, ConfigDict
 from app.api.deps import get_conn, require_voice_loaded
 from app.api.v1.submit import SubmitResponse
 from app.config import Settings, get_settings
+from app.core import database
 from app.services import file_extraction, ssrf
 from app.services import jobs as jobs_service
 
 router = APIRouter(tags=["jobs"])
 
 _StatusFilter = Literal["staging", "queued", "processing", "done", "failed", "cancelled"]
+_EPISODE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 def _source_filename(url: str) -> str | None:
@@ -120,14 +123,27 @@ async def requeue_job(
         raise HTTPException(status_code=404, detail="job not found")
 
     if file_extraction.is_upload_source(job.url):
-        # An upload re-runs from the stored original on disk; it's gone once the
-        # orphan sweep reaps a never-finalized job's source, so check first.
-        _, filename = file_extraction.parse_source_uri(job.url)
-        if not file_extraction.source_path(settings, job.episode_id, filename).exists():
-            raise HTTPException(
-                status_code=409,
-                detail="the uploaded file is no longer on disk; re-upload it to reprocess",
-            )
+        if not _EPISODE_ID_RE.fullmatch(job.episode_id):
+            raise HTTPException(status_code=409, detail="the uploaded source id is invalid")
+        with database.upload_staging_lock(settings.DATA_DIR, job.episode_id):
+            job = jobs_service.get_job(conn, job_id)
+            if job is None:
+                raise HTTPException(status_code=404, detail="job not found")
+            _, filename = file_extraction.parse_source_uri(job.url)
+            if not file_extraction.source_path(settings, job.episode_id, filename).exists():
+                raise HTTPException(
+                    status_code=409,
+                    detail="the uploaded file is no longer on disk; re-upload it to reprocess",
+                )
+            try:
+                result = jobs_service.create_job(
+                    conn, job.url, reprocess=True, voice_id=job.voice_id
+                )
+            except jobs_service.DuplicateSubmissionError as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"error": "Already queued or processing", "reason": exc.reason},
+                ) from exc
     else:
         # URL job: same SSRF guard as /submit before re-fetching.
         try:
@@ -139,13 +155,13 @@ async def requeue_job(
                     detail="The job's URL resolves to a non-public address and was blocked.",
                 ) from exc
 
-    try:
-        result = jobs_service.create_job(conn, job.url, reprocess=True, voice_id=job.voice_id)
-    except jobs_service.DuplicateSubmissionError as exc:
-        raise HTTPException(
-            status_code=409,
-            detail={"error": "Already queued or processing", "reason": exc.reason},
-        ) from exc
+        try:
+            result = jobs_service.create_job(conn, job.url, reprocess=True, voice_id=job.voice_id)
+        except jobs_service.DuplicateSubmissionError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "Already queued or processing", "reason": exc.reason},
+            ) from exc
     return SubmitResponse(
         job_id=result.job.id,
         episode_id=result.job.episode_id,

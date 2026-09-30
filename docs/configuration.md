@@ -1,8 +1,10 @@
 # Configuration
 
-Two layers of configuration, resolved in order: code defaults, then environment variables, then runtime settings stored in the database. Anything editable in the Settings UI is a runtime setting: it applies without a restart (most take effect on the next job; connection and feed settings apply immediately), and clearing a field drops the override so the key falls back to its env value.
+Configure the app in Settings or through the authenticated API. Saved settings override legacy environment values, which override code defaults. Most processing settings apply to the next job; connection, feed, and request policies apply to subsequent requests.
 
-The allowlist of runtime-editable keys is enforced in `backend/app/services/runtime_settings.py`. Settings that guard the login path (session secret, lockout, rate limit, proxy trust) are env-only on purpose: reaching the Settings UI must not confer the ability to switch off the defences protecting it. The full variable list, with the runtime-editable ones flagged, is in [Environment variables](environment-variables.md).
+An empty text field saves an explicit empty value, so it can disable an optional service even when the environment supplies a URL. Resetting a field removes its override and restores its environment or code default. The API uses `null` for reset.
+
+Only deployment settings stay outside the UI: storage paths, worker count, session signing key, device assignment, and container networking. The [configuration reference](environment-variables.md) lists defaults and application timing. Existing environment files remain supported.
 
 ## The Settings page
 
@@ -56,8 +58,8 @@ The podcast as subscribers receive it: feed metadata, [artwork](feeds-and-podcas
 ## System
 
 - **Job timeouts**: when to give up on a stuck job; see [the job queue](how-it-works.md#the-job-queue).
-- **Logging**: `LOG_LEVEL`, live-tunable so you can raise a running deployment to DEBUG to watch one job and drop it back after.
-- **security**: the admin password. Until one is set the app runs in open convenience mode.
+- **Logging**: level and format, applied across web and worker processes.
+- **security**: the admin password, login rate and lockout limits, proxy trust, and session cookie policy. Until a password is set the app runs in open convenience mode.
 - **system info**: version, uptime, auth state, and a link to the interactive API docs.
 
 [< Docs index](README.md)

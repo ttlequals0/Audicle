@@ -86,6 +86,8 @@ def transcode_to_wav(data: bytes, *, max_seconds: int = 70) -> bytes:
             "-y",
             "-loglevel",
             "error",
+            "-protocol_whitelist",
+            "file,pipe",
             "-i",
             str(src),
             "-t",
