@@ -16,7 +16,7 @@ work lives under `[Unreleased]`.
 - Run both TTS images as an unprivileged user with writable model and compiler caches.
 - Restrict uploaded audio decoding to local file and pipe protocols.
 - Remove unused, vulnerable pip distributions from the TTS and renderer images.
-- Remove obsolete dependency and image CVE exceptions and document two unpatched Debian findings whose affected paths are not used. The scan gate now reports when reviewed suppressions are applied.
+- Remove obsolete dependency and image CVE exceptions and document two unpatched Debian findings in unused code paths. The scan gate now clarifies reviewed suppressions.
 
 ### Fixed
 
