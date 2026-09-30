@@ -69,6 +69,20 @@ override-dependencies = [
     "safetensors==0.8.0",
 ]
 
+# Inference-only metadata for the pinned Perth source.
+[[tool.uv.dependency-metadata]]
+name = "resemble-perth"
+version = "1.0.1"
+requires-dist = [
+    "numpy>=1.23.4",
+    "torch",
+    "torchaudio",
+    "librosa>=0.7.2",
+    "PyYAML>=5.4.1",
+    "scipy",
+]
+requires-python = ">=3.8"
+
 # Dev/CI installs resolve torch from the CPU index: the lockfile otherwise pins
 # PyPI torch, whose Linux wheels can pull the full NVIDIA dependency set,
 # onto machines that never run GPU inference here. Each image preinstalls the

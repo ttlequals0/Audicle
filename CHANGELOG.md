@@ -10,13 +10,13 @@ work lives under `[Unreleased]`.
 
 ### Security
 
-- Update the TTS lockfile to patched setuptools and pin Perth to an upstream revision that uses `importlib.resources`. Chatterbox's watermark support remains enabled.
+- Update the TTS lockfile to patched setuptools and pin Perth to an upstream revision that uses `importlib.resources`. Install only Perth's runtime dependencies, excluding unused training and benchmark packages. Chatterbox's watermark support remains enabled.
 - Exclude environment variants and private-key files from Git.
 - Verify registry dependency hashes in renderer and TTS builds. App builds reject stale Python and frontend lockfiles.
 - Run both TTS images as an unprivileged user with writable model and compiler caches.
 - Restrict uploaded audio decoding to local file and pipe protocols.
 - Remove unused, vulnerable pip distributions from the TTS and renderer images.
-- Remove obsolete image CVE exceptions and document two unpatched Debian findings whose affected paths are not used. The scan gate now reports when reviewed suppressions are applied.
+- Remove obsolete dependency and image CVE exceptions and document two unpatched Debian findings whose affected paths are not used. The scan gate now reports when reviewed suppressions are applied.
 
 ### Fixed
 
