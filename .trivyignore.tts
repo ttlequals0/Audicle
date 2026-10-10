@@ -9,3 +9,8 @@ CVE-2026-76957
 # No fixed Debian package is available. Recheck the next release or by 2026-11-10.
 CVE-2026-66046
 CVE-2026-93990
+
+# CVE-2026-77214 (HIGH): libexpat1 buffer over-read. GPU TTS only; CPU lacks it.
+# Both TTS variants accept text/audio without parsing untrusted XML.
+# Remove when Debian ships a fix. Recheck next release or by 2026-11-10.
+CVE-2026-77214

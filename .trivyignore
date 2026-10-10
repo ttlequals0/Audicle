@@ -64,3 +64,11 @@ CVE-2026-78410
 # https://security-tracker.debian.org/tracker/CVE-2026-84782
 # Owner: Audicle maintainers. Recheck: 2026-11-10.
 CVE-2026-84782
+
+# libgnutls30t64 (HIGH x2): certificate-validation flaws. No trixie fix.
+# Present in app, both TTS variants, and renderer. Provider and article clients
+# use Python TLS; the render browser uses NSS. System curl probes loopback HTTP.
+# No remote runtime GnuTLS validation path was found. Remove when Debian fixes it.
+# Owner: Audicle maintainers. Recheck: 2026-11-10.
+CVE-2026-88647
+CVE-2026-88648

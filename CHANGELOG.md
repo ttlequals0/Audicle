@@ -28,6 +28,7 @@ work lives under `[Unreleased]`.
 
 - Update fsspec to 2026.9.0 in the app lockfile for CVE-2026-104851 and bump the TTS lockfile to match. Require a patched fsspec version in both projects.
 - Update urllib3 to 2.8.0 in all Python lockfiles and pypdf to 6.20.0 (minimum 6.19.0). Update virtualenv to 21.14.6 with python-discovery 1.6.2 to fix the open dependency alerts.
+- Accept scoped exceptions for six unpatched Debian CVEs in GnuTLS, Expat, and Xvfb. Recheck the packages by 2026-11-10.
 
 ## [0.59.0] - 2026-09-30
 
