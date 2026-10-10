@@ -75,36 +75,48 @@ async def _pickup_once(settings: Settings) -> jobs.Job | None:
 
 
 async def _sync_tts_config(settings: Settings) -> bool:
-    ok = True
     try:
         with database.connection(settings.DATA_DIR) as conn:
             render_desired = sidecar_settings.get_saved(conn, "render")
             tts_desired = sidecar_settings.get_saved(conn, "tts_wrapper")
-        render_result = await sidecar_settings.ensure_config(
-            settings.RENDER_URL, "render", render_desired
+    except Exception:
+        logger.exception("Sidecar runtime settings could not be loaded")
+        return settings.TTS_BACKEND != "wrapper"
+
+    try:
+        await sidecar_settings.ensure_config(settings.RENDER_URL, "render", render_desired)
+    except Exception:
+        logger.debug(
+            "Render runtime settings sync failed; continuing",
+            extra={"event": "render_runtime_config_failed"},
+            exc_info=True,
         )
-        if render_result is None and any(
-            key in {"LOG_LEVEL", "LOG_FORMAT"} for key in render_desired
-        ):
-            logger.debug(
-                "Render runtime settings are pending until the sidecar is reachable",
-                extra={"event": "render_runtime_config_pending"},
-            )
-            ok = False
-        if settings.TTS_BACKEND == "wrapper":
-            tts_result = await sidecar_settings.ensure_config(
-                settings.TTS_URL, "tts_wrapper", tts_desired
-            )
-            if tts_result is None and tts_desired:
+
+    if settings.TTS_BACKEND != "wrapper":
+        return True
+
+    try:
+        tts_result = await sidecar_settings.ensure_config(
+            settings.TTS_URL, "tts_wrapper", tts_desired
+        )
+        if tts_result is None:
+            if tts_desired:
                 logger.debug(
                     "TTS wrapper runtime settings are pending until the sidecar is reachable",
                     extra={"event": "tts_runtime_config_pending", "saved_keys": sorted(tts_desired)},
                 )
-                ok = False
-        return ok
+                return False
+            return True
+        return sidecar_settings.config_matches_desired(
+            tts_result, "tts_wrapper", tts_desired
+        )
     except Exception:
-        logger.exception("Sidecar runtime settings sync failed")
-        return False
+        logger.debug(
+            "TTS wrapper runtime settings sync failed",
+            extra={"event": "tts_runtime_config_failed", "saved_keys": sorted(tts_desired)},
+            exc_info=True,
+        )
+        return not bool(tts_desired)
 
 
 async def _refresh_log_level(settings: Settings, shutdown: asyncio.Event) -> None:
@@ -173,9 +185,12 @@ def _maybe_run_retention_sweep(settings: Settings, last_sweep_day: str | None) -
 async def _process_one(settings: Settings) -> bool:
     """Pick up and run one job. Returns True if a job was processed."""
 
-    job = await _pickup_once(settings)
-    if job is None:
-        return False
+    conn = database.connect(database.db_path(settings.DATA_DIR))
+    try:
+        if jobs.count_queued(conn) == 0:
+            return False
+    finally:
+        conn.close()
     # Apply runtime_settings DB overrides per job so Settings-UI edits
     # (LLM/feed/chunk/cleanup tunables) take effect on the next submission
     # without a worker restart -- the resolution chain the build plan promises.
@@ -186,10 +201,14 @@ async def _process_one(settings: Settings) -> bool:
     except Exception:
         logger.exception(
             "runtime_settings overlay failed; running job on env settings",
-            extra={"event": "overlay_failed", "job_id": job.id},
+            extra={"event": "overlay_failed"},
         )
         effective = settings
-    await _sync_tts_config(effective)
+    if not await _sync_tts_config(effective):
+        return False
+    job = await _pickup_once(settings)
+    if job is None:
+        return False
     await pipeline.process_job(job, effective)
     return True
 

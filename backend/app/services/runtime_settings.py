@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from typing import Any
+import types
+from typing import Any, Union, get_args, get_origin
 
 from app.config import Settings
 from app.core import database
@@ -408,7 +409,10 @@ def validated_overlay(settings: Settings, stored: dict[str, str]) -> Settings:
 
 
 def _coerce_for_field(value: str, annotation: Any) -> Any:
-    """Best-effort coercion mirroring the api/v1/settings.py route logic."""
+    """Best-effort coercion for a stored value and Settings field type."""
+
+    if get_origin(annotation) in (types.UnionType, Union):
+        annotation = next((arg for arg in get_args(annotation) if arg is not type(None)), annotation)
 
     if annotation is bool:
         try:

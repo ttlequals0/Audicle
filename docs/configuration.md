@@ -4,6 +4,8 @@ Configure the app in Settings or through the authenticated API. Saved settings o
 
 An empty text field saves an explicit empty value, so it can disable an optional service even when the environment supplies a URL. Resetting a field removes its override and restores its environment or code default. The API uses `null` for reset.
 
+Before removing legacy `BASE_URL` or `UI_BASE_URL` environment values, save and verify the desired values in Settings. Once removed, resetting those settings returns to their code defaults.
+
 Only deployment settings stay outside the UI: storage paths, worker count, session signing key, device assignment, and container networking. The [configuration reference](environment-variables.md) lists defaults and application timing. Existing environment files remain supported.
 
 ## The Settings page

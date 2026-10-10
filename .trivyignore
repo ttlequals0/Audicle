@@ -57,14 +57,6 @@ CVE-2026-78408
 CVE-2026-78409
 CVE-2026-78410
 
-# OpenSSL DTLS retransmission heap disclosure and denial of service.
-# No fixed Trixie package is available.
-# App and TTS use HTTP(S), not DTLS. Renderer egress blocks non-DNS UDP;
-# its browser uses only the TCP proxy. Remove when Debian ships a fix.
-# https://security-tracker.debian.org/tracker/CVE-2026-84782
-# Owner: Audicle maintainers. Recheck: 2026-11-10.
-CVE-2026-84782
-
 # libgnutls30t64 (HIGH x2): certificate-validation flaws. No trixie fix.
 # Present in app, both TTS variants, and renderer. Provider and article clients
 # use Python TLS; the render browser uses NSS. System curl probes loopback HTTP.

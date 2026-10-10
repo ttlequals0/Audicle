@@ -2,7 +2,7 @@
 
 # Slim Python base (no GPU -- the browser is CPU-only). Camoufox + a headful
 # Firefox run under xvfb.
-FROM ghcr.io/astral-sh/uv:0.12.23 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.0 AS uv
 FROM python:3.12-slim AS runtime
 COPY --from=uv /uv /bin/
 

@@ -206,14 +206,23 @@ async def ensure_config(
     current = await fetch_config(base_url, sidecar)
     if current is None:
         return None
-    desired = (
-        {key: value for key, value in desired.items() if key in _LOG_KEYS}
-        if sidecar == "render"
-        else desired
-    )
-    defaults = current.get("defaults", {})
-    effective = current.get("effective", defaults)
-    expected = {**defaults, **desired}
-    if all(effective.get(key) == value for key, value in expected.items()):
+    if config_matches_desired(current, sidecar, desired):
         return current
     return await apply_config(base_url, sidecar, desired)
+
+
+def config_matches_desired(
+    config: dict[str, Any] | None, sidecar: str, desired: dict[str, Any]
+) -> bool:
+    if config is None:
+        return not desired
+    defaults = config.get("defaults", {})
+    effective = config.get("effective", defaults)
+    if sidecar == "render":
+        defaults = {key: value for key, value in defaults.items() if key in _LOG_KEYS}
+        desired = {key: value for key, value in desired.items() if key in _LOG_KEYS}
+        effective = {key: value for key, value in effective.items() if key in _LOG_KEYS}
+    elif sidecar != "tts_wrapper":
+        return False
+    expected = {**defaults, **desired}
+    return all(effective.get(key) == value for key, value in expected.items())

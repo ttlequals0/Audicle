@@ -6,6 +6,30 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.60.2] - 2026-10-10
+
+### Fixed
+
+- Keep audio transport controls grouped, with playback time and speed aligned together across player widths.
+- Truncate long author lists within feed cards so the source stays visible.
+
+## [0.60.1] - 2026-10-10
+
+### Changed
+
+- Inherit image health checks and built-in path and port defaults in Compose.
+- Update uv to 0.13.0, pydantic-settings to 2.15.0, slowapi to 0.1.10, pypdfium2 to 5.14.0, NumPy to 2.5.3, and optional lexicon-build tooling to huggingface-hub 2.1.1. Refresh the renderer egress base image.
+
+### Security
+
+- Remove the vulnerable frontend dependency chain with Tailwind 4.3.3 and source-map-js 1.2.2.
+- Refresh OpenSSL to Debian 3.5.7-1~deb13u3, fixing CVE-2026-84782, and remove its obsolete scan exceptions.
+
+### Fixed
+
+- Compare saved and effective sidecar settings consistently, and reconcile wrapper settings before claiming queued jobs. Jobs with saved settings remain queued until they can be applied.
+- Use consistent type conversion for saved settings in API responses and runtime configuration.
+
 ## [0.60.0] - 2026-10-10
 
 ### Changed

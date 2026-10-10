@@ -66,6 +66,12 @@ def test_overlay_coerces_bool_value(env: Path) -> None:
     assert overlaid.FEED_EXPLICIT is True
 
 
+def test_shared_coercion_unwraps_optional_scalar_types() -> None:
+    assert runtime_settings._coerce_for_field("12", int | None) == 12
+    assert runtime_settings._coerce_for_field("0.35", float | None) == 0.35
+    assert runtime_settings._coerce_for_field("true", bool | None) is True
+
+
 def test_flaresolverr_url_is_runtime_tunable(env: Path) -> None:
     assert "FLARESOLVERR_URL" in runtime_settings.ALLOWED_KEYS
     database.run_migrations(env)

@@ -218,7 +218,7 @@ export default function Feed() {
                   <span className="tag tag-done">done</span>
                 </div>
                 <div className="mono-xs text-mute flex items-center gap-1.5 min-w-0">
-                  {ep.author ? <span className="shrink-0">{ep.author} ·</span> : null}
+                  {ep.author ? <span className="min-w-0 max-w-[60%] shrink-0 truncate">{ep.author} ·</span> : null}
                   {ep.source_type === "upload" ? (
                     <>
                       <span className="format-badge">

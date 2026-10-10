@@ -971,7 +971,7 @@ export default function SettingsRoute() {
   return (
     <SettingsSearchContext.Provider value={q ? matchedGroups : null}>
     <div className="space-y-4">
-      <h1 className="text-2xl font-black tracking-tight mb-1">Settings</h1>
+      <h1 className="text-2xl font-black tracking-tight">Settings</h1>
       <div className="search-wrap mb-4">
         <span className="search-slash" aria-hidden="true">
           /
@@ -2385,7 +2385,7 @@ function CopyRow({
 }) {
   return (
     <div className="space-y-1">
-      <label className="label mb-0">{label}</label>
+      <label className="label">{label}</label>
       <div className="flex items-center gap-2">
         <input
           className="field flex-1 font-mono text-xs"
