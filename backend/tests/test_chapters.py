@@ -56,12 +56,20 @@ def test_normalize_merges_short_chapters_and_keeps_opening() -> None:
             (30, "Duplicate"),
             (300, "Brief"),
             (360, "Main topic"),
+            (390, "Duplicate"),
             (900, "Closing"),
             (990, "Short tail"),
         ],
         1000,
         180,
     ) == [(0, "Opening"), (360, "Main topic")]
+
+
+@pytest.mark.parametrize("boundary", [60, 100, 179])
+def test_normalize_merges_short_opening(boundary) -> None:
+    assert chapters.normalize_boundaries(
+        [(0, "Opening"), (boundary, "Early change"), (600, "Later topic")], 1200, 180
+    ) == [(0, "Opening"), (600, "Later topic")]
 
 
 def test_normalize_merges_short_chain_into_previous_topic() -> None:
@@ -180,14 +188,16 @@ async def test_empty_window_and_short_tail_need_no_fabricated_boundaries(
     assert [x["startTime"] for x in json.loads(result)["chapters"]] == [0, 600]
 
 
-async def test_boundary_cap_stops_calls_and_discards_invented_timestamps(
+async def test_boundary_cap_analyzes_later_windows_and_discards_invented_timestamps(
     env, monkeypatch, chapter_database
 ):
     calls = []
 
     async def detect(_system, user, _settings):
         calls.append(user)
-        return "00:00 Opening\n05:00 Invented\n10:00 Real\n20:00 Over budget\n99:00 Outside"
+        if "Window: 0" in user:
+            return "00:00 Opening\n05:00 Invented\n10:00 Real\n20:00 Over budget\n99:00 Outside"
+        return "50:00 Later"
 
     monkeypatch.setattr(pipeline, "_llm_with_retry", detect)
     result = await pipeline.generate_chapters_document(
@@ -196,8 +206,24 @@ async def test_boundary_cap_stops_calls_and_discards_invented_timestamps(
         None,
         get_settings().model_copy(update={"CHAPTERS_MAX_BOUNDARIES": 1}),
     )
-    assert len(calls) == 1
-    assert [x["startTime"] for x in json.loads(result)["chapters"]] == [0, 600]
+    assert len(calls) == 2
+    assert [x["startTime"] for x in json.loads(result)["chapters"]] == [0, 1200]
+
+
+@pytest.mark.parametrize(
+    ("maximum", "expected"),
+    [
+        (1, [0, 5400]),
+        (3, [0, 3000, 5400, 7800]),
+        (40, list(range(0, 10800, 600))),
+    ],
+)
+def test_normalize_caps_chapters_after_spacing(maximum, expected) -> None:
+    timed = [(at, str(at)) for at in range(0, 10800, 600)]
+    assert [
+        int(at)
+        for at, _ in chapters.normalize_boundaries(timed, 10800, 180, maximum)
+    ] == expected
 
 
 # --- reply parsing ----------------------------------------------------------
@@ -234,6 +260,11 @@ def test_parse_accepts_hms_and_long_minutes() -> None:
     assert (5700.0, "Long minutes") in parsed
 
 
+@pytest.mark.parametrize("seconds", ["70", "99", "9"])
+def test_parse_rejects_hms_seconds_out_of_range(seconds) -> None:
+    assert chapters.parse_llm_chapters(f"1:05:{seconds} Invalid", duration_secs=8000) == []
+
+
 def test_parse_drops_timestamps_past_the_episode() -> None:
     raw = "00:00 Start\n05:00 Real\n99:00 Beyond the end"
     assert chapters.parse_llm_chapters(raw, duration_secs=600) == [
@@ -256,6 +287,12 @@ def test_window_accepts_no_change_reply(raw):
 def test_window_rejects_reply_with_only_invented_timestamps():
     with pytest.raises(ValueError, match="no valid window timestamps"):
         chapters.window_boundaries("50:01 Invented topic", [(3000.25, "Real cue")], 2700, 5400, 4)
+
+
+@pytest.mark.parametrize("seconds", ["70", "99", "9"])
+def test_window_rejects_hms_seconds_out_of_range(seconds) -> None:
+    with pytest.raises(ValueError, match="no valid window timestamps"):
+        chapters.window_boundaries(f"1:05:{seconds} Invalid", [(65, "Real cue")], 0, 100, 4)
 
 
 def test_window_accepts_default_silence_marker_without_rounding_up():

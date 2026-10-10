@@ -1,7 +1,10 @@
 version: 2
 updates:
-  - package-ecosystem: pip
-    directory: "/"
+  - package-ecosystem: uv
+    directories:
+      - "/"
+      - "/tts-wrapper"
+      - "/render"
     schedule:
       interval: weekly
       day: monday
@@ -31,7 +34,11 @@ updates:
       include: scope
 
   - package-ecosystem: docker
-    directory: "/"
+    directories:
+      - "/"
+      - "/tts-wrapper"
+      - "/render"
+      - "/render/egress-proxy"
     schedule:
       interval: weekly
       day: monday

@@ -20,7 +20,7 @@ Each episode's cover goes into the feed (`itunes:image`) and is embedded in the 
 
 Episodes at least 10 minutes long are eligible for chapters by default. The LLM reads the full transcript text in 45-minute windows and marks topic changes, aiming for chapters around 10 minutes long. A 3-hour episode uses 4 windows, so its chapter count can grow with its length. A window continues the previous topic rather than adding a chapter just because a new window starts. Empty windows and windows shorter than the target are skipped, including a short final window. An eligible episode shorter than the target produces no chapters.
 
-Chapter timestamps come from the measured audio timeline used by the transcript. Boundaries less than 60 seconds apart are deduplicated, and chapters shorter than the configured minimum merge into the previous chapter. The opening chapter at zero is always retained; a missing opening title becomes "Introduction". Topic targets are guidance, not quotas; an episode with fewer topic changes can have fewer chapters.
+Chapter timestamps come from the measured audio timeline used by the transcript. Boundaries less than 60 seconds apart are deduplicated, and chapters shorter than the configured minimum merge into the previous chapter. The opening chapter at zero is always retained; a missing opening title becomes "Introduction". All eligible windows are analyzed before the boundary cap is applied. If the cap removes boundaries, the remaining changes are spread across the analyzed topics. Topic targets are guidance, not quotas; an episode with fewer topic changes can have fewer chapters.
 
 Chapters ship as both a Podcasting 2.0 `podcast:chapters` JSON document in the feed and ID3 chapter frames in the MP3, because clients differ in what they read.
 
@@ -33,7 +33,7 @@ The Chapters section in Settings exposes these controls:
 | `CHAPTERS_TARGET_SECONDS` | 600 seconds | Target chapter length |
 | `CHAPTERS_WINDOW_SECONDS` | 2700 seconds | Analysis window: transcript span per LLM call |
 | `CHAPTERS_MAX_BOUNDARIES` | 40 boundaries | Maximum topic changes, excluding the opening chapter |
-| `CHAPTERS_MIN_CHAPTER_SECONDS` | 180 seconds | Minimum chapter length, except the opening chapter |
+| `CHAPTERS_MIN_CHAPTER_SECONDS` | 180 seconds | Minimum chapter length |
 
 These values also work through `/api/v1/settings` and environment variables. The API accepts targets from 120 to 3600 seconds and windows from 600 to 10800 seconds. Caps are 1 to 200 boundaries; minimum chapter lengths are 30 to 900 seconds. The target cannot exceed the window, and the minimum cannot exceed the target. Generation clamps environment values to these ranges and relationships. Resetting a setting with `null` restores its environment or code default.
 

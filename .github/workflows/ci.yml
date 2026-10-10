@@ -20,7 +20,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           version: "0.12.23"
-      - run: uv run ruff check
+      - run: uv run --locked ruff check
 
   test-backend:
     runs-on: ubuntu-latest
@@ -32,7 +32,7 @@ jobs:
       # The audio/chapters/chime tests shell out to ffmpeg; without it 4 tests
       # fail outright and 28 more skip.
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
-      - run: uv run pytest
+      - run: uv run --locked pytest
 
   test-render:
     runs-on: ubuntu-latest
@@ -41,7 +41,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           version: "0.12.23"
-      - run: uv run pytest
+      - run: uv run --locked pytest
         working-directory: render
 
   test-tts-wrapper:
@@ -55,7 +55,7 @@ jobs:
       # it torch, is never installed here; the tests use the fake engine). The
       # lockfile also sources torch from the CPU index, so even a full
       # --all-extras sync stays off the multi-GB CUDA wheels.
-      - run: uv run pytest
+      - run: uv run --locked pytest
         working-directory: tts-wrapper
 
   test-frontend:

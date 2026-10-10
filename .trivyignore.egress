@@ -1,4 +1,4 @@
-# Owner: Audicle maintainers. Recheck: 2026-10-10.
+# Owner: Audicle maintainers. Recheck: 2026-11-10.
 # Debian 13 has no fixed package versions. The affected mount/nsenter/login tools
 # are not invoked by the proxy, which runs as a nonroot UID with no capabilities.
 CVE-2026-76642
@@ -6,28 +6,28 @@ CVE-2026-78408
 CVE-2026-78409
 CVE-2026-78410
 
-# Owner: Audicle maintainers. Recheck: 2026-10-10.
+# Owner: Audicle maintainers. Recheck: 2026-11-10.
 # Debian 13 has no fixed package version. The proxy does not run systemd or
 # systemd-homed; libsystemd is an OS dependency.
 CVE-2026-16742
 
-# Owner: Audicle maintainers. Recheck: 2026-10-10.
+# Owner: Audicle maintainers. Recheck: 2026-11-10.
 # Debian 13 has no fixed package version. Tinyproxy does not read or write ACLs,
 # and the container has no capabilities or writable host mounts.
 CVE-2026-54369
 
-# Owner: Audicle maintainers. Recheck: 2026-10-10.
+# Owner: Audicle maintainers. Recheck: 2026-11-10.
 # Debian 13 has no fixed package version. The proxy does not accept terminal
 # descriptions or invoke ncurses tools.
 CVE-2025-69720
 
-# Owner: Audicle maintainers. Recheck: 2026-10-10.
+# Owner: Audicle maintainers. Recheck: 2026-11-10.
 # Debian 13 has no fixed package versions. Tinyproxy does not invoke Perl,
 # compile caller-supplied expressions, deserialize Storable data, or extract
 # archives. The process runs as a nonroot UID with no capabilities.
 CVE-2026-9538
 
-# Owner: Audicle maintainers. Recheck: 2026-10-10.
+# Owner: Audicle maintainers. Recheck: 2026-11-10.
 # OpenSSL DTLS retransmission heap disclosure and denial of service.
 # No fixed Trixie package is available.
 # Tinyproxy relays TCP HTTP/CONNECT traffic; it does not use DTLS.

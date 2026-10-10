@@ -1909,9 +1909,6 @@ async def generate_chapters_document(
         failed_windows = 0
         for start in range(0, math.ceil(duration_secs), window):
             end = min(duration_secs, start + window)
-            remaining = maximum - sum(timestamp > 0 for timestamp, _ in timed)
-            if remaining <= 0:
-                break
             window_cues = [(at, text) for at, text in cues if start <= at < end]
             if end - start < target or not window_cues:
                 logger.info(
@@ -1923,7 +1920,7 @@ async def generate_chapters_document(
                     },
                 )
                 continue
-            budget = max(1, min(remaining, int((end - start) / target)))
+            budget = int((end - start) // target)
             context = chapters_service.window_context(start, end, budget, previous_title)
             body = chapters_service.timestamped_transcript(window_cues)
             raw = ""
@@ -1961,7 +1958,7 @@ async def generate_chapters_document(
                     return None
             finally:
                 _beat()
-        timed = chapters_service.normalize_boundaries(timed, duration_secs, minimum)
+        timed = chapters_service.normalize_boundaries(timed, duration_secs, minimum, maximum)
         if len(timed) < 2:
             # A lone forced "Introduction" chapter is noise, not navigation.
             logger.info(

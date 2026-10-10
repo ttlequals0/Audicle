@@ -20,7 +20,7 @@ from app.services import cleanup_output
 
 # ``MM:SS`` or ``H:MM:SS``, minutes allowed past 59 so a long episode's later
 # lines still parse. An optional ``-``/``:`` may separate the title.
-_LINE_RE = re.compile(r"^(\d{1,3}):([0-5]\d)(?::([0-5]\d))?\s*[-:]?\s*(.+)$")
+_LINE_RE = re.compile(r"^(\d{1,3}):([0-5]\d)(?::([0-5]\d))?(?!:\d)\s*[-:]?\s*(.+)$")
 _MIN_BOUNDARY_SPACING_SECONDS = 60
 # Conversational preamble the model sometimes prepends despite the prompt.
 _PREAMBLE_RE = re.compile(r"^(here|based|these|the |i )", re.IGNORECASE)
@@ -133,15 +133,20 @@ def parse_llm_chapters(raw: str, duration_secs: float) -> list[tuple[float, str]
 
 
 def normalize_boundaries(
-    timed: list[tuple[float, str]], duration_secs: float, minimum_secs: int
+    timed: list[tuple[float, str]],
+    duration_secs: float,
+    minimum_secs: int,
+    maximum: int | None = None,
 ) -> list[tuple[float, str]]:
-    """Deduplicate nearby boundaries and merge short chapters, retaining zero."""
+    """Normalize chapter spacing and count, retaining zero."""
     if not timed:
         return []
     found = dict(reversed(timed))  # Keep the first title for duplicate timestamps.
     found.setdefault(0.0, "Introduction")
     spaced = []
     for start, title in sorted(found.items()):
+        if 0 < start < minimum_secs:
+            continue
         if not spaced or start - spaced[-1][0] >= _MIN_BOUNDARY_SPACING_SECONDS:
             spaced.append((start, title))
     merged = []
@@ -150,7 +155,14 @@ def normalize_boundaries(
         if pair[0] == 0 or next_start - pair[0] >= minimum_secs:
             merged.append(pair)
             next_start = pair[0]
-    return list(reversed(merged))
+    normalized = list(reversed(merged))
+    if maximum is not None and len(normalized) > maximum + 1:
+        changes = normalized[1:]
+        normalized = [normalized[0]] + [
+            changes[(index + 1) * len(changes) // (maximum + 1)]
+            for index in range(maximum)
+        ]
+    return normalized
 
 
 def build_chapters_json(timed: list[tuple[float, str]]) -> str:

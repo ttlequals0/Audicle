@@ -85,6 +85,8 @@ dev = [
 
 [tool.uv]
 package = false
+# CVE-2026-104851 affects fsspec versions below 2026.6.0.
+constraint-dependencies = ["fsspec>=2026.6.0"]
 # rapidocr depends on opencv-python, which drags libGL into the runtime image.
 # The impossible marker removes it from the graph; the headless wheel above
 # provides the same cv2 module without any GL linkage.

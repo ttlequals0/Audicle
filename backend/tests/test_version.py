@@ -14,9 +14,7 @@ def test_app_version_matches_version_file() -> None:
 
 
 def test_pyprojects_in_sync_with_version_file() -> None:
-    # Drift guard: scripts/sync_version.py --check exits 0 only when both
-    # pyproject.toml versions equal the single-source VERSION file. If this
-    # fails, run `python scripts/sync_version.py` after bumping VERSION.
+    # Run scripts/sync_version.py if any package version differs from VERSION.
     result = subprocess.run(
         [sys.executable, str(_ROOT / "scripts" / "sync_version.py"), "--check"],
         capture_output=True,

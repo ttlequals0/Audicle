@@ -58,6 +58,8 @@ dev = [
 
 [tool.uv]
 package = false
+# CVE-2026-104851 affects fsspec versions below 2026.6.0.
+constraint-dependencies = ["fsspec>=2026.6.0"]
 # Chatterbox's core package has no Gradio imports; Gradio is used only by its
 # repository demo scripts and pins the wrapper server to vulnerable Starlette.
 exclude-dependencies = ["gradio"]
