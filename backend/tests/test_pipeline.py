@@ -3026,7 +3026,8 @@ async def test_stage_chapters_generates_document_with_exact_timestamps(
     import json as json_mod
 
     out = await pipeline._stage_chapters(
-        ["a", "b", "c"], [300.0, 200.0, 200.0], 700.0, Path("/tmp/x.mp3"), get_settings()
+        ["a", "b", "c"], [300.0, 200.0, 200.0], 700.0, Path("/tmp/x.mp3"),
+        get_settings().model_copy(update={"TTS_CHUNK_SILENCE_MS": 1500}),  # Match supplied cue markers.
     )
     assert out is not None
     doc = json_mod.loads(out)
@@ -3150,12 +3151,13 @@ async def test_stage_chapters_survives_a_chunk_duration_desync(
     database.run_migrations(env)
 
     async def _fake(_system, _user, _settings, **_k):
-        return "00:00 One\n05:00 Two"
+        return "00:00 One\n06:41 Two"
 
     monkeypatch.setattr(pipeline, "_llm_with_retry", _fake)
     monkeypatch.setattr(pipeline.audio, "embed_chapters", lambda *a, **k: None)
     out = await pipeline._stage_chapters(
-        ["a", "b", "c"], [400.0, 400.0], 800.0, Path("/tmp/x.mp3"), get_settings()
+        ["a", "b", "c"], [400.0, 400.0], 800.0, Path("/tmp/x.mp3"),
+        get_settings().model_copy(update={"TTS_CHUNK_SILENCE_MS": 1500}),  # Match supplied cue markers.
     )
     assert out is not None
 

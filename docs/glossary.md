@@ -16,7 +16,7 @@ Every term the app uses, in plain words, with a link to the part of the docs tha
 
 ## C
 
-**Chapters** - Marker points with titles in an episode, picked by one LLM call and shipped both as Podcasting 2.0 JSON and as ID3 frames in the MP3. [Feeds > Chapters](feeds-and-podcasting.md#chapters)
+**Chapters** - Topic markers with titles, picked from transcript windows and shipped as Podcasting 2.0 JSON and ID3 frames in the MP3. [Feeds > Chapters](feeds-and-podcasting.md#chapters)
 
 **Chime** - An optional short clip played at the end of every episode so back-to-back episodes are easy to tell apart. [Voices and TTS > End-of-episode chime](voices-and-tts.md#end-of-episode-chime)
 

@@ -258,18 +258,28 @@
     margin-bottom: 0.5rem;
   }
 
-  /* Boolean setting switch. On = accent track + dark knob (mirrors .btn-primary);
-     off = neutral track + muted knob. */
+  /* Keep a 44px touch target around the compact switch track. */
   .toggle {
     position: relative;
     flex-shrink: 0;
     width: 48px;
     height: 44px;
     padding: 0;
-    border: 1px solid #26262e;
-    border-radius: 999px;
-    background: #26262e;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
     cursor: pointer;
+  }
+  .toggle::before {
+    content: "";
+    position: absolute;
+    top: 10px;
+    left: 0;
+    width: 48px;
+    height: 24px;
+    border: 1px solid #26262e;
+    border-radius: 6px;
+    background: #151518;
     transition: background 0.15s, border-color 0.15s;
   }
   .toggle::after {
@@ -279,21 +289,17 @@
     left: 4px;
     width: 16px;
     height: 16px;
-    border-radius: 50%;
+    border-radius: 3px;
     background: #6b6b78;
     transition: transform 0.15s, background 0.15s;
   }
-  .toggle[aria-checked="true"] {
-    background: #1ce783;
+  .toggle[aria-checked="true"]::before {
+    background: #1ce7831f;
     border-color: #1ce783;
   }
   .toggle[aria-checked="true"]::after {
-    transform: translateX(22px);
-    background: #040405;
-  }
-  .toggle:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 2px #1ce78366;
+    transform: translateX(24px);
+    background: #1ce783;
   }
 
   .btn-primary {

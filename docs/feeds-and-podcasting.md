@@ -18,9 +18,30 @@ Each episode's cover goes into the feed (`itunes:image`) and is embedded in the 
 
 ## Chapters
 
-Episodes 10 minutes and over get 3 to 7 chapters. One LLM call over the episode's chunk list picks the start points and short titles; timestamps come from the measured audio, so they line up with the transcript. Chapters ship two ways, because clients differ in what they read: a Podcasting 2.0 `podcast:chapters` JSON document in the feed, and ID3 chapter frames embedded in the MP3.
+Episodes at least 10 minutes long are eligible for chapters by default. The LLM reads the full transcript text in 45-minute windows and marks topic changes, aiming for chapters around 10 minutes long. A 3-hour episode uses 4 windows, so its chapter count can grow with its length. A window continues the previous topic rather than adding a chapter just because a new window starts. Empty windows and windows shorter than the target are skipped, including a short final window. An eligible episode shorter than the target produces no chapters.
 
-`CHAPTERS_ENABLED` and `CHAPTERS_MIN_DURATION_SECS` control the feature; the prompt is editable via `/api/v1/prompt?kind=chapters`. Chapters can be regenerated for a finished episode from the Feed page without re-synthesizing audio. Episodes also open with a spoken "{title}. By {author}." line (`INTRO_READ_ENABLED`).
+Chapter timestamps come from the measured audio timeline used by the transcript. Boundaries less than 60 seconds apart are deduplicated, and chapters shorter than the configured minimum merge into the previous chapter. The opening chapter at zero is always retained; a missing opening title becomes "Introduction". Topic targets are guidance, not quotas; an episode with fewer topic changes can have fewer chapters.
+
+Chapters ship as both a Podcasting 2.0 `podcast:chapters` JSON document in the feed and ID3 chapter frames in the MP3, because clients differ in what they read.
+
+The Chapters section in Settings exposes these controls:
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `CHAPTERS_ENABLED` | `True` | Enable chapter generation |
+| `CHAPTERS_MIN_DURATION_SECS` | 600 seconds | Minimum episode length eligible for chapters |
+| `CHAPTERS_TARGET_SECONDS` | 600 seconds | Target chapter length |
+| `CHAPTERS_WINDOW_SECONDS` | 2700 seconds | Analysis window: transcript span per LLM call |
+| `CHAPTERS_MAX_BOUNDARIES` | 40 boundaries | Maximum topic changes, excluding the opening chapter |
+| `CHAPTERS_MIN_CHAPTER_SECONDS` | 180 seconds | Minimum chapter length, except the opening chapter |
+
+These values also work through `/api/v1/settings` and environment variables. The API accepts targets from 120 to 3600 seconds and windows from 600 to 10800 seconds. Caps are 1 to 200 boundaries; minimum chapter lengths are 30 to 900 seconds. The target cannot exceed the window, and the minimum cannot exceed the target. Generation clamps environment values to these ranges and relationships. Resetting a setting with `null` restores its environment or code default.
+
+The chapter prompt is editable via `/api/v1/prompt?kind=chapters`; existing custom prompts remain in use. Reset it with `DELETE /api/v1/prompt?kind=chapters` to use the current default. Window-specific instructions supply the time range, boundary allowance, and previous topic. They take precedence over count and opening rules in custom prompts. Each analyzed window makes a separate LLM call. Larger windows require more model context.
+
+Regenerate chapters from the Feed page without re-synthesizing audio. If any window fails after retries, regeneration keeps the existing chapters and audio. New episodes can use the successful windows. If fewer than 2 chapters survive, new episodes ship without chapters and regeneration keeps the existing chapters.
+
+Episodes also open with a spoken "{title}. By {author}." line (`INTRO_READ_ENABLED`).
 
 ## Valid iTunes categories
 

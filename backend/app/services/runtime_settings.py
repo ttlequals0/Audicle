@@ -207,6 +207,10 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "MP3_CHANNELS",
         "CHAPTERS_ENABLED",
         "CHAPTERS_MIN_DURATION_SECS",
+        "CHAPTERS_TARGET_SECONDS",
+        "CHAPTERS_WINDOW_SECONDS",
+        "CHAPTERS_MAX_BOUNDARIES",
+        "CHAPTERS_MIN_CHAPTER_SECONDS",
         "INTRO_READ_ENABLED",
         # The remaining four AUDIO_ANALYSIS_* keys. The group was split with 14
         # tunable and these 4 env-only as "structural"; they are read per job

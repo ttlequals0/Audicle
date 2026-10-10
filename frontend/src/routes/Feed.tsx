@@ -139,7 +139,7 @@ export default function Feed() {
         onClick={copy}
         disabled={!feedUrl}
       >
-        {copied ? "✓ Copied" : "⧉ Copy feed URL"}
+        {copied ? "Copied" : "Copy feed URL"}
       </button>
       {copyError && <p className="text-danger text-sm mb-2" role="alert">Could not copy the feed URL. Copy it from Settings.</p>}
       {/* URL is redundant with the copy button on mobile (and gets cut off), so

@@ -6,6 +6,24 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Changed
+
+- Generate chapters in transcript windows with a duration-based topic target instead of requesting 3 to 7 chapters for every episode. Settings now controls the target length, window length, boundary cap, and minimum chapter length, with clearer duration labels. Window instructions also take precedence over count and opening rules in custom prompts.
+- Log completed, skipped, and failed chapter windows, including a reply preview for failures.
+- Update uv build images to 0.12.23 and GitHub Actions setup-node and setup-python to v7.
+
+### Fixed
+
+- Reject invalid clock values and chapter timestamps absent from the supplied transcript markers.
+- Keep settings switches compact while preserving 44-pixel touch targets.
+- Use plain text on the feed copy button to avoid missing icon glyphs.
+- Check the shipped extraction default independently of local environment overrides.
+- Preserve full transcript cues for chapter analysis, carry topics across windows, and merge short chapters. Chapter regeneration keeps existing chapters and audio if any window fails; new episodes can use successful windows.
+
+### Security
+
+- Update urllib3 to 2.8.0 in all Python lockfiles, pypdf to 6.20.0 (minimum 6.19.0), virtualenv to 21.14.6, and its python-discovery dependency to 1.6.2 to address the open dependency alerts.
+
 ## [0.59.0] - 2026-09-30
 
 ### Security

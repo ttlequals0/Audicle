@@ -406,21 +406,25 @@ class Settings(BaseSettings):
     MP3_SAMPLE_RATE: int = 24000
     MP3_CHANNELS: int = 2
 
-    # Post-TTS audio quality analysis: detect a chunk that came back as a flat
-    # drone / steady noise / repetition and regenerate it (Chatterbox is
-    # non-deterministic, so a re-gen usually fixes it). Thresholds are starting
-    # points and need empirical tuning against real failures.
-    # Chapters (3b): one LLM call after the audio stage names 3-7 chapters;
-    # emitted as podcast:chapters JSON and embedded ID3 CHAP/CTOC frames.
+    # Windowed topic detection emits feed JSON and ID3 CHAP/CTOC frames.
+    # Geometry uses seconds; runtime writes reject inconsistencies, generation clamps them.
     # Episodes under the duration floor get none (navigation noise).
     CHAPTERS_ENABLED: bool = True
     CHAPTERS_MIN_DURATION_SECS: int = 600
+    CHAPTERS_TARGET_SECONDS: int = 600
+    CHAPTERS_WINDOW_SECONDS: int = 2700
+    CHAPTERS_MAX_BOUNDARIES: int = 40
+    CHAPTERS_MIN_CHAPTER_SECONDS: int = 180
 
     # Read "{title}. By {author}." at the top of each episode (3a). The line is
     # prepended to the cleaned text before chunking so it flows through
     # corrections, TTS, the transcript, and chapter timing with no special case.
     INTRO_READ_ENABLED: bool = True
 
+    # Post-TTS audio quality analysis: detect a chunk that came back as a flat
+    # drone / steady noise / repetition and regenerate it (Chatterbox is
+    # non-deterministic, so a re-gen usually fixes it). Thresholds are starting
+    # points and need empirical tuning against real failures.
     AUDIO_ANALYSIS_ENABLED: bool = True
     AUDIO_ANALYSIS_MAX_REGEN: int = 2  # extra attempts on a bad chunk
     AUDIO_ANALYSIS_FRAME_MS: int = 25
@@ -580,10 +584,15 @@ class Settings(BaseSettings):
 # Value ranges for the numeric runtime knobs, enforced by PUT /api/v1/settings
 # (api/v1/settings.py) so a bad value is rejected at save time instead of
 # failing every TTS call or chunker run later. Declared as data rather than
-# Field constraints so a stale env var can't fail Settings() at startup. The
+# Field constraints so a stale env var can't fail Settings() at startup.
+# Chapters also clamp environment geometry against these ranges. The
 # CHATTERBOX_* entries mirror the wrapper's request bounds
 # (tts-wrapper/engine.py GENERATION_BOUNDS); a test pins the two together.
 RUNTIME_SETTING_BOUNDS: dict[str, dict[str, float]] = {
+    "CHAPTERS_TARGET_SECONDS": {"ge": 120, "le": 3600},
+    "CHAPTERS_WINDOW_SECONDS": {"ge": 600, "le": 10800},
+    "CHAPTERS_MAX_BOUNDARIES": {"ge": 1, "le": 200},
+    "CHAPTERS_MIN_CHAPTER_SECONDS": {"ge": 30, "le": 900},
     "CHATTERBOX_TEMPERATURE": {"gt": 0, "le": 2.0},
     "CHATTERBOX_REPETITION_PENALTY": {"ge": 1.0, "le": 2.0},
     "CHATTERBOX_TOP_P": {"gt": 0, "le": 1.0},

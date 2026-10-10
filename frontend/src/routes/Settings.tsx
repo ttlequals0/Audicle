@@ -178,7 +178,14 @@ const GROUPS: Record<string, string[]> = {
     "AUDIO_INTERNAL_SILENCE_KEEP_MS",
     "INTRO_READ_ENABLED",
   ],
-  Chapters: ["CHAPTERS_ENABLED", "CHAPTERS_MIN_DURATION_SECS"],
+  Chapters: [
+    "CHAPTERS_ENABLED",
+    "CHAPTERS_MIN_DURATION_SECS",
+    "CHAPTERS_TARGET_SECONDS",
+    "CHAPTERS_WINDOW_SECONDS",
+    "CHAPTERS_MAX_BOUNDARIES",
+    "CHAPTERS_MIN_CHAPTER_SECONDS",
+  ],
   Artwork: [
     "DEFAULT_ARTWORK_URL",
     "ARTWORK_SIZE_PX",
@@ -312,6 +319,11 @@ const RULE_DETAIL = "block ml-3 pl-3.5 border-l-2 border-accent/35";
 const RULE_DETAIL_LABEL = "block mb-1.5 text-mute text-[0.8125rem]";
 
 const SETTING_LABELS: Record<string, string> = {
+  CHAPTERS_MIN_DURATION_SECS: "Minimum episode length (seconds)",
+  CHAPTERS_TARGET_SECONDS: "Target chapter length (seconds)",
+  CHAPTERS_WINDOW_SECONDS: "Analysis window (seconds)",
+  CHAPTERS_MAX_BOUNDARIES: "Maximum topic changes",
+  CHAPTERS_MIN_CHAPTER_SECONDS: "Minimum chapter length (seconds)",
   EXTRACTION_DIRECT_TIMEOUT_SECONDS: "Direct fetch timeout (seconds)",
   EXTRACTION_ARC_TIMEOUT_SECONDS: "Archive fetch timeout (seconds)",
   EXTRACTION_RENDER_TIMEOUT_SECONDS: "Browser render timeout (seconds)",

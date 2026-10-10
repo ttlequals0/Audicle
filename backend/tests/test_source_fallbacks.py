@@ -146,7 +146,7 @@ def test_render_rule_emits_a_render_attempt_with_its_cookies() -> None:
 
 def test_shipped_defaults_match_tuned_live() -> None:
     # Defaults a fresh deploy gets without any Settings-API tuning.
-    assert Settings().MIN_EXTRACTION_CHARS == 150
+    assert Settings.model_fields["MIN_EXTRACTION_CHARS"].default == 150
     for host in (
         "inc.com",
         "wsj.com",
