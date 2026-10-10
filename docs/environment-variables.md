@@ -4,6 +4,8 @@ Only `BUILD_VERSION` is required in the stock Compose `.env` file. Set it to an 
 
 Saved settings override legacy environment values, which override code defaults. Existing deployments can keep their environment files. Sending `null` to `PUT /api/v1/settings` removes an override; an empty string is an explicit empty value for text settings. Secrets are masked in API responses.
 
+Before removing legacy `BASE_URL` or `UI_BASE_URL` values from an environment file, save and verify the desired values in Settings. After the environment values are removed, resetting either setting returns to its code default.
+
 Storage paths, worker count, the session signing key, hardware assignment, and container networking are deployment settings. Changing them requires recreating the relevant container. `.env.example` lists these optional overrides. Application controls below are available at runtime unless marked env-only; job settings apply to the next job.
 
 The defaults below come from the backend configuration model. A deployed server's `GET /api/v1/settings` response reports its environment defaults and saved overrides.
@@ -233,7 +235,7 @@ Login protection and cookie policy are runtime settings. Only the signing key st
 
 ## TTS wrapper settings
 
-Use the TTS wrapper controls in Settings or `PUT /api/v1/settings/sidecars`. Memory limits, idle unloading, inference timeout, Whisper options, and logging apply at runtime. Saved values survive wrapper restarts; the app reapplies them when the sidecar is reachable. The environment remains the reset default. Device allocation, reference paths, and the allocator remain deployment settings.
+Use the TTS wrapper controls in Settings or `PUT /api/v1/settings/sidecars`. The app stores these values in its database and reapplies them before claiming the next queued job. For wrapper TTS, jobs with saved settings stay queued until those settings can be applied. A wrapper restart during an active job restores its environment defaults until the next job sync. Keep intentional startup values such as `WHISPER_ENABLED` in Compose. Device allocation, reference paths, and the allocator remain deployment settings.
 
 | Variable | Default | What it does |
 |---|---|---|

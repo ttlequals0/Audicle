@@ -8,6 +8,65 @@ from app.services import sidecar_settings
 from fastapi.testclient import TestClient
 
 
+def test_sidecar_config_comparison_tracks_tts_defaults_and_overrides() -> None:
+    defaults = {"TTS_MEMORY_SOFT_LIMIT_MB": 8000, "TTS_MEMORY_HARD_LIMIT_MB": 14000}
+    config = {
+        "defaults": defaults,
+        "effective": {**defaults, "TTS_MEMORY_SOFT_LIMIT_MB": 7000},
+    }
+    assert not sidecar_settings.config_matches_desired(config, "tts_wrapper", {})
+    assert sidecar_settings.config_matches_desired(
+        config,
+        "tts_wrapper",
+        {"TTS_MEMORY_SOFT_LIMIT_MB": 7000},
+    )
+    assert sidecar_settings.config_matches_desired(
+        {"defaults": defaults, "effective": defaults}, "tts_wrapper", {}
+    )
+
+
+def test_sidecar_config_comparison_ignores_render_request_options() -> None:
+    config = {
+        "defaults": {"LOG_LEVEL": "INFO", "LOG_FORMAT": "json", "RENDER_ATTEMPTS": 2},
+        "effective": {"LOG_LEVEL": "INFO", "LOG_FORMAT": "json", "RENDER_ATTEMPTS": 8},
+    }
+    assert sidecar_settings.config_matches_desired(config, "render", {"RENDER_ATTEMPTS": 4})
+    assert not sidecar_settings.config_matches_desired(
+        {**config, "effective": {**config["effective"], "LOG_LEVEL": "DEBUG"}},
+        "render",
+        {},
+    )
+
+
+def test_sidecar_config_comparison_preserves_unavailable_pending_semantics() -> None:
+    assert sidecar_settings.config_matches_desired(None, "tts_wrapper", {})
+    assert not sidecar_settings.config_matches_desired(
+        None, "tts_wrapper", {"WHISPER_ENABLED": True}
+    )
+
+
+async def test_ensure_config_resets_stale_tts_values_with_empty_desired(monkeypatch) -> None:
+    defaults = {"TTS_MEMORY_SOFT_LIMIT_MB": 8000}
+    effective = {"TTS_MEMORY_SOFT_LIMIT_MB": 7000}
+    applied: list[dict] = []
+
+    async def fetch_config(_base_url: str, _sidecar: str):
+        return {"defaults": defaults, "effective": effective}
+
+    async def apply_config(_base_url: str, _sidecar: str, values: dict):
+        applied.append(values)
+        effective.clear()
+        effective.update(defaults)
+        effective.update(values)
+        return {"defaults": defaults, "effective": effective}
+
+    monkeypatch.setattr(sidecar_settings, "fetch_config", fetch_config)
+    monkeypatch.setattr(sidecar_settings, "apply_config", apply_config)
+    result = await sidecar_settings.ensure_config("http://wrapper", "tts_wrapper", {})
+    assert applied == [{}]
+    assert result == {"defaults": defaults, "effective": defaults}
+
+
 def test_sidecar_settings_persist_desired_and_apply_tts_config(env: Path, monkeypatch) -> None:
     database.run_migrations(env)
     wrapper_defaults = {

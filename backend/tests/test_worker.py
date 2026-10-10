@@ -6,8 +6,10 @@ import threading
 from pathlib import Path
 
 import pytest
+from app import worker
+from app.config import get_settings
 from app.core import database
-from app.services import jobs
+from app.services import jobs, sidecar_settings
 
 
 async def test_log_level_refresh_applies_changes_and_recovers(
@@ -168,6 +170,9 @@ async def test_pickup_runs_pipeline_against_a_queued_job(
 
     from app.services import audio, llm, tts
 
+    async def _sync(_settings):
+        return True
+
     async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
         _ = text  # acknowledge
         _ = settings
@@ -198,6 +203,7 @@ async def test_pickup_runs_pipeline_against_a_queued_job(
     monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
     monkeypatch.setattr(audio, "concat_with_padding", _fake_concat)
     monkeypatch.setattr(audio, "normalize_and_encode", _fake_encode)
+    monkeypatch.setattr("app.worker._sync_tts_config", _sync)
 
     # Insert one queued job via the helper so episode_id is computed.
     conn = database.connect(database.db_path(env))
@@ -228,6 +234,102 @@ async def test_pickup_returns_false_when_no_queued_jobs(env: Path) -> None:
 
     database.run_migrations(env)
     assert await _process_one(get_settings()) is False
+
+
+async def test_process_one_leaves_queued_job_until_wrapper_sync_succeeds(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    with database.connection(env) as conn:
+        jobs.create_job(conn, "https://example.test/article")
+    sync_results = iter([False, True])
+    pipeline_calls: list[str] = []
+
+    async def sync(_settings):
+        return next(sync_results)
+
+    async def process(job, _settings):
+        pipeline_calls.append(job.id)
+
+    monkeypatch.setattr("app.worker._sync_tts_config", sync)
+    monkeypatch.setattr("app.worker.pipeline.process_job", process)
+    settings = get_settings().model_copy(update={"TTS_BACKEND": "wrapper"})
+
+    assert await worker._process_one(settings) is False
+    with database.connection(env) as conn:
+        assert jobs.count_queued(conn) == 1
+    assert pipeline_calls == []
+
+    assert await worker._process_one(settings) is True
+    assert len(pipeline_calls) == 1
+
+
+async def test_process_one_skips_sidecar_sync_when_queue_is_empty(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+
+    async def unexpected(_settings):
+        raise AssertionError("empty queue must not make sidecar requests")
+
+    monkeypatch.setattr("app.worker._sync_tts_config", unexpected)
+    assert await worker._process_one(get_settings()) is False
+
+
+async def test_tts_sync_requires_saved_whisper_config_but_not_empty_defaults(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    with database.connection(env) as conn:
+        sidecar_settings.save(conn, "tts_wrapper", {"WHISPER_ENABLED": True})
+    calls: list[tuple[str, dict]] = []
+
+    async def unavailable(_url, sidecar, desired):
+        calls.append((sidecar, desired))
+        if sidecar == "render":
+            return {"defaults": {}, "effective": {}}
+        return None
+
+    monkeypatch.setattr(sidecar_settings, "ensure_config", unavailable)
+    settings = get_settings().model_copy(update={"TTS_BACKEND": "wrapper"})
+    assert await worker._sync_tts_config(settings) is False
+    assert ("tts_wrapper", {"WHISPER_ENABLED": True}) in calls
+
+    with database.connection(env) as conn:
+        sidecar_settings.save(conn, "tts_wrapper", {"WHISPER_ENABLED": None})
+    assert await worker._sync_tts_config(settings) is True
+
+
+async def test_tts_sync_rejects_mismatched_config_after_apply(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    defaults = {"TTS_MEMORY_SOFT_LIMIT_MB": 8000}
+    stale = {"defaults": defaults, "effective": {"TTS_MEMORY_SOFT_LIMIT_MB": 7000}}
+
+    async def mismatched(_url, sidecar, _desired):
+        if sidecar == "render":
+            return {"defaults": {}, "effective": {}}
+        return stale
+
+    monkeypatch.setattr(sidecar_settings, "ensure_config", mismatched)
+    settings = get_settings().model_copy(update={"TTS_BACKEND": "wrapper"})
+    assert await worker._sync_tts_config(settings) is False
+
+
+async def test_renderer_outage_does_not_gate_remote_tts(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+
+    async def unavailable_renderer(_url, sidecar, _desired):
+        if sidecar == "render":
+            raise RuntimeError("renderer unavailable")
+        raise AssertionError("remote TTS must not sync the local wrapper")
+
+    monkeypatch.setattr(sidecar_settings, "ensure_config", unavailable_renderer)
+    settings = get_settings().model_copy(update={"TTS_BACKEND": "openai-api"})
+    assert await worker._sync_tts_config(settings) is True
 
 
 async def test_run_exits_cleanly_when_reachability_passes_and_shutdown_set(

@@ -12,7 +12,7 @@ The API lives under `/api/v1`, with interactive docs at `/api/v1/docs` (linked f
 {"render":{"RENDER_ATTEMPTS":2},"tts_wrapper":{"TTS_IDLE_UNLOAD_SECONDS":600}}
 ```
 
-Send `null` for an individual setting to reset it. The app stores the desired values and retries applying them after a sidecar outage or restart. Rendering options apply per extraction request; logging and wrapper controls apply live. These endpoints require the same administrator session and CSRF token as other settings changes. The sidecars' internal `/runtime-config` endpoints must not be exposed publicly.
+Send `null` for an individual setting to reset it. The app stores desired values in its database and reconciles them with the sidecars. Before claiming a queued job, the worker applies saved wrapper settings. For wrapper TTS, jobs with saved settings stay queued until those settings can be applied. A wrapper restart during an active job restores its environment defaults until the next job sync. Keep intentional startup values such as `WHISPER_ENABLED` in Compose. Rendering options apply per extraction request; logging and wrapper controls apply live. These endpoints require the same administrator session and CSRF token as other settings changes. The sidecars' internal `/runtime-config` endpoints must not be exposed publicly.
 
 ## Common endpoints
 

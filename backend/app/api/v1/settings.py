@@ -161,16 +161,7 @@ def _sidecar_response(
     config: dict[str, Any] | None, saved: dict[str, Any], sidecar: str
 ) -> dict[str, Any]:
     defaults = config.get("defaults", {}) if config else {}
-    effective = config.get("effective", defaults) if config else defaults
-    if config is None:
-        pending = bool(saved)
-    elif sidecar == "render":
-        expected = {**defaults, **{key: value for key, value in saved.items() if key in {"LOG_LEVEL", "LOG_FORMAT"}}}
-        pending = any(
-            effective.get(key) != value for key, value in expected.items() if key in {"LOG_LEVEL", "LOG_FORMAT"}
-        )
-    else:
-        pending = any(effective.get(key) != value for key, value in {**defaults, **saved}.items())
+    pending = not sidecar_settings.config_matches_desired(config, sidecar, saved)
     return {
         "available": config is not None,
         "values": saved,
@@ -462,28 +453,4 @@ def _coerce(key: str, value: str, settings: Settings) -> Any:
     field = settings.__class__.model_fields.get(key)
     if field is None:
         return value
-    annotation = field.annotation
-    if get_origin(annotation) in (types.UnionType, Union):
-        annotation = next((arg for arg in get_args(annotation) if arg is not type(None)), annotation)
-    if annotation is bool:
-        try:
-            return bool(json.loads(value))
-        except (TypeError, ValueError):
-            return value.lower() in {"true", "1", "yes"}
-    if annotation is int:
-        try:
-            return int(json.loads(value))
-        except (TypeError, ValueError):
-            try:
-                return int(value)
-            except ValueError:
-                return value
-    if annotation is float:
-        try:
-            return float(json.loads(value))
-        except (TypeError, ValueError):
-            try:
-                return float(value)
-            except ValueError:
-                return value
-    return value
+    return runtime_settings._coerce_for_field(value, field.annotation)

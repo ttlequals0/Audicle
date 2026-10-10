@@ -41,12 +41,6 @@ services:
       # No depends_on for the render sidecar: it is optional enrichment and the app
       # tolerates it being down or absent (render.fetch fails closed to the cascade
       # result), so it must not gate app startup or block `up` if its image is missing.
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
@@ -67,19 +61,12 @@ services:
     environment:
       - RENDER_PROXY_URL=http://${RENDER_PROXY_IP:-172.30.0.3}:3128
       - RENDER_PROXY_IP=${RENDER_PROXY_IP:-172.30.0.3}
-      - RENDER_PROXY_PORT=3128
     # Headful Firefox needs a large /dev/shm or it crashes mid-render; the Docker
     # default (64m) is too small.
     shm_size: "1gb"
     depends_on:
       render-egress:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "setpriv --reuid=1001 --regid=1001 --clear-groups --inh-caps=-all --bounding-set=-all --no-new-privs curl -fsS http://localhost:8000/health/live || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
     restart: unless-stopped
     # The root entrypoint receives only the capabilities needed to install its
     # fail-closed egress rules and change UID. It drops them before starting
@@ -111,11 +98,6 @@ services:
     environment:
       - TTS_DEVICE=${TTS_DEVICE:-cuda}
       - TTS_LANGUAGE=${TTS_LANGUAGE:-en}
-      - DATA_DIR=/data
-      # Anchor for the slots dir: the wrapper conditions on voices/slot{n}.wav next
-      # to this path (its lowest filled slot at boot). The voice.wav file itself is
-      # no longer required (slots-only since 0.35.0).
-      - TTS_REFERENCE_PATH=/app/reference/voice.wav
       # Generation knobs (temperature, repetition penalty, top_p, top_k, seed,
       # max chars) are NOT env vars (0.44.0): the backend sends them on every
       # /generate call, tunable live in Settings. SAMPLE_RATE is provisional
@@ -142,8 +124,9 @@ services:
     volumes:
       - ./data:/data
       # Reference voices: read-only here; the app writes voices/slot{n}.wav (host
-      # edit or UI upload) and the wrapper selects/reloads them. No slot yet just
-      # means /generate is unavailable until one is uploaded.
+      # edit or UI upload) and the wrapper selects/reloads them. The wrapper's
+      # default /app/reference/voice.wav path anchors the slots directory; no
+      # voice.wav file itself is required. No slot yet makes /generate unavailable.
       - ./backend/app/reference:/app/reference:ro
       # Multi-GB model weights download on first run (Chatterbox from HuggingFace,
       # and the faster-whisper model when WHISPER_ENABLED=true). HF_HOME/TTS_HOME
@@ -157,14 +140,6 @@ services:
             - driver: nvidia
               device_ids: ['0']
               capabilities: [gpu]
-    healthcheck:
-      # Liveness stays healthy while models are idle or no voice is uploaded.
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      # Generous: first boot downloads multi-GB model weights before loading.
-      start_period: 300s
     restart: unless-stopped
     # Match the app service security posture: no-new-privileges + cap_drop.
     # The nvidia runtime grants device access via the deploy.resources block,
@@ -194,11 +169,6 @@ services:
       - SETPCAP
     security_opt:
       - no-new-privileges:true
-    healthcheck:
-      test: ["CMD-SHELL", "setpriv --reuid=1001 --regid=1001 --clear-groups --inh-caps=-all --bounding-set=-all --no-new-privs nc -z 127.0.0.1 3128"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
     networks:
       render-control:
         ipv4_address: ${RENDER_PROXY_IP:-172.30.0.3}

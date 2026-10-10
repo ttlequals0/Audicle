@@ -6,6 +6,17 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.60.1] - 2026-10-10
+
+### Changed
+
+- Inherit image health checks and built-in path and port defaults in Compose.
+
+### Fixed
+
+- Compare saved and effective sidecar settings consistently, and reconcile wrapper settings before claiming queued jobs. Jobs with saved settings remain queued until they can be applied.
+- Use consistent type conversion for saved settings in API responses and runtime configuration.
+
 ## [0.60.0] - 2026-10-10
 
 ### Changed
