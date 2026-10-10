@@ -7,10 +7,11 @@ import json
 from pathlib import Path
 
 import pytest
+from app.config import get_settings
 from app.core import database
 from app.core.paths import media_dir
 from app.main import create_app
-from app.services import episodes, transcript
+from app.services import episodes, llm, pipeline, transcript
 from fastapi.testclient import TestClient
 
 
@@ -19,7 +20,14 @@ def _client(env: Path) -> TestClient:
     return TestClient(create_app())
 
 
-def _seed(env: Path, *, id_: str = "ep1", duration: int = 1800, vtt: str | None = None) -> None:
+def _seed(
+    env: Path,
+    *,
+    id_: str = "ep1",
+    duration: int = 1800,
+    vtt: str | None = None,
+    chapters_json: str | None = None,
+) -> None:
     database.run_migrations(env)
     if vtt is None:
         vtt = transcript.build_vtt(
@@ -31,8 +39,6 @@ def _seed(env: Path, *, id_: str = "ep1", duration: int = 1800, vtt: str | None 
             silence_ms=0,
         )
     conn = database.connect(database.db_path(env))
-    from app.config import get_settings
-
     audio_path = media_dir(get_settings()) / f"{id_}.mp3"
     try:
         episodes.upsert(
@@ -46,6 +52,7 @@ def _seed(env: Path, *, id_: str = "ep1", duration: int = 1800, vtt: str | None 
             artwork_path=None,
             transcript_vtt=vtt,
             duration_secs=duration,
+            chapters_json=chapters_json,
         )
     finally:
         conn.close()
@@ -149,6 +156,41 @@ def test_regenerate_404_for_unknown_episode(env: Path) -> None:
     database.run_migrations(env)
     with _client(env) as client:
         assert client.post("/api/v1/episodes/nope/chapters").status_code == 404
+
+
+def test_failed_window_keeps_existing_chapters_audio_and_generation(env, monkeypatch):
+    existing = '{"version":"1.2.0","chapters":[{"startTime":0,"title":"Existing"}]}'
+    vtt = transcript.build_vtt(
+        [
+            transcript.TranscriptChunk(text="Opening words.", duration_secs=1350),
+            transcript.TranscriptChunk(text="The middle part.", duration_secs=1350),
+            transcript.TranscriptChunk(text="The closing part.", duration_secs=2700),
+        ],
+        silence_ms=0,
+    )
+    _seed(env, duration=5400, vtt=vtt, chapters_json=existing)
+
+    async def detect(_system, user, _settings):
+        if "Window: 2700" in user:
+            raise llm.LLMProviderError("provider unavailable")
+        return "00:00 Opening\n22:30 Middle"
+
+    monkeypatch.setattr(pipeline, "_llm_with_retry", detect)
+    with database.connection(env) as conn:
+        before = episodes.get_by_id(conn, "ep1")
+    original = Path(before.audio_path)
+    original.parent.mkdir(parents=True, exist_ok=True)
+    original.write_bytes(b"OLD_AUDIO")
+    with _client(env) as client:
+        response = client.post("/api/v1/episodes/ep1/chapters")
+    assert response.status_code == 422
+    with database.connection(env) as conn:
+        after = episodes.get_by_id(conn, "ep1")
+    assert after.chapters_json == existing
+    assert after.generation_token == before.generation_token
+    assert after.audio_path == before.audio_path
+    assert original.read_bytes() == b"OLD_AUDIO"
+    assert list(original.parent.glob("ep1.*.mp3")) == []  # No staged audio remains.
 
 
 def test_regenerate_409_without_a_transcript(env: Path) -> None:

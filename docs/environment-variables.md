@@ -194,6 +194,10 @@ The quality gates. WHISPER_BACKEND selects where ASR runs.
 | `ARTWORK_MAX_DOWNLOAD_BYTES` | `26214400` | yes |
 | `CHAPTERS_ENABLED` | `True` | yes |
 | `CHAPTERS_MIN_DURATION_SECS` | `600` | yes |
+| `CHAPTERS_TARGET_SECONDS` | `600` | yes |
+| `CHAPTERS_WINDOW_SECONDS` | `2700` | yes |
+| `CHAPTERS_MAX_BOUNDARIES` | `40` | yes |
+| `CHAPTERS_MIN_CHAPTER_SECONDS` | `180` | yes |
 
 ## Jobs, webhooks, operations
 

@@ -6,7 +6,7 @@
 # the tts and render allowlists from reviewed static per-image membership before
 # adding their image-specific files; it explicitly removes the app/tts-only
 # libsndfile entry from the render allowlist.
-# Owner: Audicle maintainers. Recheck all retained entries: 2026-10-10.
+# Owner: Audicle maintainers. Recheck all retained entries: 2026-11-10.
 
 # -- Debian trixie base (python:*-slim): no fixed package released yet.
 # Remove each when `apt-get upgrade` in a rebuild clears it from the scan.
@@ -46,7 +46,7 @@ CVE-2026-37555
 # release and drop this entry when deb13u ships a fixed curl.
 CVE-2026-8458
 
-# Owner: Audicle maintainers. Recheck: 2026-10-10.
+# Owner: Audicle maintainers. Recheck: 2026-11-10.
 # CVE-2026-16742 affects systemd-homed record verification. None of the images
 # runs systemd-homed. The four util-linux findings affect privileged mount and
 # nsenter operations; the services run as nonroot with no capabilities and do
@@ -62,5 +62,13 @@ CVE-2026-78410
 # App and TTS use HTTP(S), not DTLS. Renderer egress blocks non-DNS UDP;
 # its browser uses only the TCP proxy. Remove when Debian ships a fix.
 # https://security-tracker.debian.org/tracker/CVE-2026-84782
-# Owner: Audicle maintainers. Recheck: 2026-10-10.
+# Owner: Audicle maintainers. Recheck: 2026-11-10.
 CVE-2026-84782
+
+# libgnutls30t64 (HIGH x2): certificate-validation flaws. No trixie fix.
+# Present in app, both TTS variants, and renderer. Provider and article clients
+# use Python TLS; the render browser uses NSS. System curl probes loopback HTTP.
+# No remote runtime GnuTLS validation path was found. Remove when Debian fixes it.
+# Owner: Audicle maintainers. Recheck: 2026-11-10.
+CVE-2026-88647
+CVE-2026-88648

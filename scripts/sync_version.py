@@ -1,12 +1,7 @@
 #!/usr/bin/env python3
-"""Propagate the repo-root VERSION file into both pyproject.toml files.
+"""Sync VERSION into the app and sidecar pyproject.toml files.
 
-VERSION is the single source of truth humans edit. The two packages
-(backend "audicle" + "audicle-tts-wrapper") have separate build contexts and the
-backend is a uv virtual package, so a dynamic pyproject read is fragile across
-both; instead this script writes the value into each pyproject's ``version``
-field. Run it after bumping VERSION. ``--check`` (used in tests/CI) exits non-zero
-if any pyproject has drifted from VERSION instead of writing.
+Run after bumping VERSION. --check reports drift without writing.
 """
 
 from __future__ import annotations
@@ -22,7 +17,7 @@ _PYPROJECTS = (
     _ROOT / "tts-wrapper" / "pyproject.toml",
     _ROOT / "render" / "pyproject.toml",
 )
-# Match the first ``version = "..."`` (the [project] one is first in both files).
+# Match the first version field, which belongs to [project].
 _VERSION_RE = re.compile(r'^version = "[^"]*"', re.MULTILINE)
 
 

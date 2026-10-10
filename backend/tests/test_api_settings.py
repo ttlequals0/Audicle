@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import get_args
 
+import pytest
 from app.api.v1 import settings as settings_api
 from app.config import Settings, get_settings
 from app.core import database
@@ -50,6 +51,71 @@ def test_get_returns_effective_defaults(env: Path) -> None:
     # Secret keys are masked even in defaults (env sets OPENAI_API_KEY).
     assert defaults["OPENAI_API_KEY"] in ("", "********")
     assert defaults["OPENROUTER_API_KEY"] in ("", "********")
+
+
+def test_chapter_controls_round_trip_and_reset(env):
+    updates = {
+        "CHAPTERS_TARGET_SECONDS": 300,
+        "CHAPTERS_WINDOW_SECONDS": 1800,
+        "CHAPTERS_MAX_BOUNDARIES": 80,
+        "CHAPTERS_MIN_CHAPTER_SECONDS": 120,
+    }
+    with _client(env) as client:
+        initial = client.get("/api/v1/settings").json()
+        assert initial["defaults"]["CHAPTERS_TARGET_SECONDS"] == 600
+        assert initial["defaults"]["CHAPTERS_WINDOW_SECONDS"] == 2700
+        assert initial["defaults"]["CHAPTERS_MAX_BOUNDARIES"] == 40
+        assert initial["defaults"]["CHAPTERS_MIN_CHAPTER_SECONDS"] == 180
+        response = client.put("/api/v1/settings", json=updates)
+        assert response.status_code == 200
+        assert response.json()["values"] == updates
+        assert client.get("/api/v1/settings").json()["values"] == updates
+        reset = client.put("/api/v1/settings", json=dict.fromkeys(updates))
+        assert reset.status_code == 200
+        assert reset.json()["values"] == {}
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"CHAPTERS_TARGET_SECONDS": 119},
+        {"CHAPTERS_TARGET_SECONDS": 3601},
+        {"CHAPTERS_WINDOW_SECONDS": 599},
+        {"CHAPTERS_WINDOW_SECONDS": 10801},
+        {"CHAPTERS_MAX_BOUNDARIES": 0},
+        {"CHAPTERS_MAX_BOUNDARIES": 201},
+        {"CHAPTERS_MIN_CHAPTER_SECONDS": 29},
+        {"CHAPTERS_MIN_CHAPTER_SECONDS": 901},
+        {"CHAPTERS_TARGET_SECONDS": 3000},
+        {"CHAPTERS_MIN_CHAPTER_SECONDS": 700},
+    ],
+)
+def test_invalid_chapter_controls_do_not_persist(env, updates):
+    with _client(env) as client:
+        response = client.put("/api/v1/settings", json=updates)
+        assert response.status_code == 400
+        assert client.get("/api/v1/settings").json()["values"] == {}
+
+
+def test_chapter_reset_validates_the_complete_candidate(env):
+    with _client(env) as client:
+        assert (
+            client.put(
+                "/api/v1/settings",
+                json={
+                    "CHAPTERS_TARGET_SECONDS": 1200,
+                    "CHAPTERS_MIN_CHAPTER_SECONDS": 900,
+                },
+            ).status_code
+            == 200
+        )
+        assert (
+            client.put("/api/v1/settings", json={"CHAPTERS_TARGET_SECONDS": None}).status_code
+            == 400
+        )
+        values = client.get("/api/v1/settings").json()["values"]
+        assert values["CHAPTERS_TARGET_SECONDS"] == 1200
+        assert values["CHAPTERS_MIN_CHAPTER_SECONDS"] == 900
 
 
 def test_settings_response_separates_saved_values_from_environment_defaults(env: Path) -> None:
@@ -244,9 +310,7 @@ def test_firecrawl_api_key_is_allowlisted_and_masked(env: Path) -> None:
         client.put("/api/v1/settings", json={"FIRECRAWL_API_KEY": "fc-secret-123"})
         masked = client.get("/api/v1/settings").json()["values"]["FIRECRAWL_API_KEY"]
         assert masked == runtime_settings.MASK_SENTINEL
-        client.put(
-            "/api/v1/settings", json={"FIRECRAWL_API_KEY": runtime_settings.MASK_SENTINEL}
-        )
+        client.put("/api/v1/settings", json={"FIRECRAWL_API_KEY": runtime_settings.MASK_SENTINEL})
 
     conn = database.connect(database.db_path(env))
     try:
@@ -366,9 +430,7 @@ def test_put_rejects_invalid_extraction_engine(env: Path) -> None:
 
 def test_put_rejects_non_numeric_int_setting(env: Path) -> None:
     with _client(env) as client:
-        resp = client.put(
-            "/api/v1/settings", json={"EXTRACTION_DIRECT_TIMEOUT_SECONDS": "abc"}
-        )
+        resp = client.put("/api/v1/settings", json={"EXTRACTION_DIRECT_TIMEOUT_SECONDS": "abc"})
         assert resp.status_code == 400
 
 

@@ -1,4 +1,5 @@
 .git
+**/.git
 .gitignore
 .github
 .githooks
@@ -7,13 +8,21 @@
 venv
 **/venv
 __pycache__
+**/__pycache__
 *.pyc
+**/*.pyc
 *.pyo
+**/*.pyo
 *.pyd
+**/*.pyd
 .pytest_cache
+**/.pytest_cache
 .ruff_cache
+**/.ruff_cache
 .mypy_cache
+**/.mypy_cache
 node_modules
+**/node_modules
 dist
 **/dist
 build
@@ -27,6 +36,7 @@ coverage*
 data/
 tmp/
 .worktrees/
+.playwright-mcp/
 docs/superpowers/
 ref_audio/
 *.png
@@ -36,6 +46,7 @@ ref_audio/
 *.mp3
 *.wav
 .env*
+**/.env*
 !.env.example
 CHANGELOG.md
 build-plan.md

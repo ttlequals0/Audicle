@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 import shutil
 import time
@@ -1878,13 +1879,15 @@ async def generate_chapters_document(
     duration_secs: float,
     mp3_path: Path | None,
     settings: Settings,
+    *,
+    allow_partial: bool = False,
 ) -> str | None:
     """Chapters document for a finished episode, or None.
 
     Shared by the pipeline stage and the regenerate endpoint: both supply
     ``(start_secs, text)`` cues, which is what the transcript already stores.
-    Never raises: chapters are non-essential, so any failure returns None and
-    the caller keeps whatever it had.
+    Regeneration rejects failed windows; allow_partial keeps successful windows.
+    Never raises; failures and fewer than 2 surviving chapters return None.
     """
 
     if not settings.CHAPTERS_ENABLED or duration_secs < settings.CHAPTERS_MIN_DURATION_SECS:
@@ -1900,23 +1903,70 @@ async def generate_chapters_document(
     try:
         with database.connection(settings.DATA_DIR) as conn:
             instructions = prompt_service.load_effective(conn, "chapters")
-        body = chapters_service.timestamped_transcript(cues)
-        # Instructions ride in the user turn, ahead of the transcript. With them
-        # in the system prompt and only the transcript as the user message, the
-        # model read the transcript and asked what to do with it.
-        raw = await _llm_with_retry(
-            _CHAPTERS_ROLE, f"{instructions}\n\nTranscript:\n\n{body}", settings
-        )
-        timed = chapters_service.parse_llm_chapters(raw, duration_secs)
+        target, window, maximum, minimum = chapters_service.resolve_geometry(settings)
+        timed: list[tuple[float, str]] = []
+        previous_title = None
+        failed_windows = 0
+        for start in range(0, math.ceil(duration_secs), window):
+            end = min(duration_secs, start + window)
+            window_cues = [(at, text) for at, text in cues if start <= at < end]
+            if end - start < target or not window_cues:
+                logger.info(
+                    "Chapter window skipped",
+                    extra={
+                        "event": "chapters_window_skipped",
+                        "window_start_secs": start,
+                        "reason": "below_target" if end - start < target else "empty_transcript",
+                    },
+                )
+                continue
+            budget = int((end - start) // target)
+            context = chapters_service.window_context(start, end, budget, previous_title)
+            body = chapters_service.timestamped_transcript(window_cues)
+            raw = ""
+            try:
+                # User-turn instructions prevent the model from asking what to do with the transcript.
+                raw = await _llm_with_retry(
+                    _CHAPTERS_ROLE, f"{instructions}\n\n{context}\n\nTranscript:\n\n{body}", settings
+                )
+                chosen = chapters_service.window_boundaries(raw, window_cues, start, end, budget)
+                timed.extend(chosen)
+                if chosen:
+                    previous_title = chosen[-1][1]
+                logger.info(
+                    "Chapter window analyzed",
+                    extra={
+                        "event": "chapters_window_complete",
+                        "window_start_secs": start,
+                        "window_end_secs": end,
+                        "boundary_count": sum(at > 0 for at, _ in chosen),
+                    },
+                )
+            except Exception as exc:
+                failed_windows += 1
+                logger.warning(
+                    "Chapter window failed",
+                    extra={
+                        "event": "chapters_window_failed",
+                        "window_start_secs": start,
+                        "reason": str(exc),
+                        "reply_preview": raw[:300],
+                    },
+                    exc_info=not isinstance(exc, ValueError),
+                )
+                if not allow_partial:
+                    return None
+            finally:
+                _beat()
+        timed = chapters_service.normalize_boundaries(timed, duration_secs, minimum, maximum)
         if len(timed) < 2:
             # A lone forced "Introduction" chapter is noise, not navigation.
-            # The preview makes a zero-parse reply diagnosable.
             logger.info(
-                "Chapters skipped: too few parsed from the LLM reply",
+                "Chapters skipped: too few chapters after merging",
                 extra={
                     "event": "chapters_too_few",
-                    "parsed": len(timed),
-                    "reply_preview": raw[:300],
+                    "count": len(timed),
+                    "failed_windows": failed_windows,
                 },
             )
             return None
@@ -1931,7 +1981,11 @@ async def generate_chapters_document(
                 )
         logger.info(
             "Chapters generated",
-            extra={"event": "chapters_complete", "chapter_count": len(timed)},
+            extra={
+                "event": "chapters_complete",
+                "chapter_count": len(timed),
+                "failed_windows": failed_windows,
+            },
         )
         return chapters_service.build_chapters_json(timed)
     except Exception:
@@ -1957,7 +2011,9 @@ async def _stage_chapters(
     # zip, not index: a chunk/duration desync is the transcript stage's job to
     # report loudly, and chapters must never be what fails an episode.
     cues = [(start / 1000, text) for start, text in zip(starts_ms, chunks, strict=False)]
-    return await generate_chapters_document(cues, duration_secs, mp3_path, settings)
+    return await generate_chapters_document(
+        cues, duration_secs, mp3_path, settings, allow_partial=True
+    )
 
 
 async def _stage_transcript(

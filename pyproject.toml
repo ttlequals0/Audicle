@@ -1,6 +1,6 @@
 [project]
 name = "audicle"
-version = "0.59.0"
+version = "0.60.0"
 description = "Self-hosted service that turns article URLs into a Podcasting 2.0 feed."
 requires-python = ">=3.13"
 license = { text = "MIT" }
@@ -45,7 +45,7 @@ dependencies = [
     "python-multipart>=0.0.30",
     # Direct file upload (0.30.0): parse uploaded PDF/DOCX into article text. HTML
     # reuses the existing trafilatura path (html_markdown); md/txt are read directly.
-    "pypdf>=6.15.0",
+    "pypdf>=6.19.0",
     "python-docx>=1.1",
     # OCR fallback for scanned/image uploads (0.51.0). rapidocr runs PaddleOCR-
     # derived ONNX models on CPU; pypdfium2 rasterizes PDF pages (bundled
@@ -85,6 +85,8 @@ dev = [
 
 [tool.uv]
 package = false
+# CVE-2026-104851 affects fsspec versions below 2026.6.0.
+constraint-dependencies = ["fsspec>=2026.6.0"]
 # rapidocr depends on opencv-python, which drags libGL into the runtime image.
 # The impossible marker removes it from the graph; the headless wheel above
 # provides the same cv2 module without any GL linkage.

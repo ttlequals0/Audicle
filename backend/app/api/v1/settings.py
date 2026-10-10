@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from app.api.deps import get_conn
 from app.config import RUNTIME_SETTING_BOUNDS, Settings, get_settings
 from app.services import (
+    chapters,
     feed,
     feed_auth,
     feed_revision,
@@ -229,6 +230,11 @@ async def put_settings_overrides(
             effective = runtime_settings.validated_overlay(settings, proposed)
         except ValidationError as exc:
             raise HTTPException(status_code=400, detail=_validation_errors(exc)) from exc
+        if any(key.startswith("CHAPTERS_") for key in updates):
+            try:
+                chapters.validate_geometry(effective)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
         runtime_settings.apply(conn, updates, manage_transaction=False)
         stored = runtime_settings.get_all(conn)
         if (

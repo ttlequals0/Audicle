@@ -6,6 +6,30 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.60.0] - 2026-10-10
+
+### Changed
+
+- Exclude nested build artifacts from image contexts and use committed Python lockfiles in CI. Monitor all Python packages and image contexts with Dependabot.
+- Generate chapters in transcript windows with a duration-based topic target instead of requesting 3 to 7 chapters for every episode. Settings now controls the target length, window length, boundary cap, and minimum chapter length, with clearer duration labels. Window instructions also take precedence over count and opening rules in custom prompts.
+- Log completed, skipped, and failed chapter windows, including a reply preview for failures.
+- Update uv build images to 0.12.23 and GitHub Actions setup-node and setup-python to v7.
+
+### Fixed
+
+- Apply the boundary cap after analyzing all windows and merge opening chapters shorter than the configured minimum.
+- Reject invalid clock values and chapter timestamps absent from the supplied transcript markers.
+- Preserve the existing pill switches while keeping their tracks compact and touch targets 44 pixels tall.
+- Use plain text on the feed copy button to avoid missing icon glyphs.
+- Check the shipped extraction default independently of local environment overrides.
+- Preserve full transcript cues for chapter analysis, carry topics across windows, and merge short chapters. Chapter regeneration keeps existing chapters and audio if any window fails; new episodes can use successful windows.
+
+### Security
+
+- Update fsspec to 2026.9.0 in the app lockfile for CVE-2026-104851 and bump the TTS lockfile to match. Require a patched fsspec version in both projects.
+- Update urllib3 to 2.8.0 in all Python lockfiles and pypdf to 6.20.0 (minimum 6.19.0). Update virtualenv to 21.14.6 with python-discovery 1.6.2 to fix the open dependency alerts.
+- Accept scoped exceptions for six unpatched Debian CVEs in GnuTLS, Expat, and Xvfb. Recheck the packages by 2026-11-10.
+
 ## [0.59.0] - 2026-09-30
 
 ### Security

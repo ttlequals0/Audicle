@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -178,5 +178,56 @@ describe("SettingsRoute saves", () => {
 
     await waitFor(() => expect(screen.getByLabelText("Page navigation timeout (ms)")).toHaveValue(14000));
     expect(screen.getByRole("button", { name: "Save sidecar settings" })).toBeEnabled();
+  });
+
+  it("saves and resets chapter density controls in the existing settings form", async () => {
+    const user = userEvent.setup();
+    const chapterDefaults = {
+      CHAPTERS_TARGET_SECONDS: 600,
+      CHAPTERS_WINDOW_SECONDS: 2700,
+      CHAPTERS_MAX_BOUNDARIES: 40,
+      CHAPTERS_MIN_CHAPTER_SECONDS: 180,
+    };
+    const chapterSettings = {
+      ...settings,
+      allowlist: Object.keys(chapterDefaults),
+      defaults: chapterDefaults,
+      values: {} as Record<string, number>,
+    };
+    const implementation = apiMock.getMockImplementation()!;
+    apiMock.mockImplementation((path: string, options?: RequestInit) => {
+      if (path === "/api/v1/settings") {
+        if (options?.method === "PUT") {
+          for (const [key, value] of Object.entries(JSON.parse(String(options.body)))) {
+            if (value === null) delete chapterSettings.values[key];
+            else chapterSettings.values[key] = value as number;
+          }
+        }
+        return Promise.resolve({ ...chapterSettings, values: { ...chapterSettings.values } });
+      }
+      return implementation(path, options);
+    });
+    renderSettings();
+    const sectionButton = await screen.findByRole("button", { name: /^Chapters/ });
+    await user.click(sectionButton);
+    const target = await screen.findByLabelText("Target chapter length (seconds)");
+    expect(target).toHaveValue("600");
+    expect(screen.getByLabelText("Analysis window (seconds)")).toHaveValue("2700");
+    expect(screen.getByLabelText("Maximum topic changes")).toHaveValue("40");
+    expect(screen.getByLabelText("Minimum chapter length (seconds)")).toHaveValue("180");
+    fireEvent.change(target, { target: { value: "300" } });
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(apiMock).toHaveBeenCalledWith("/api/v1/settings", {
+      method: "PUT", body: JSON.stringify({ CHAPTERS_TARGET_SECONDS: 300 }),
+    }));
+    await waitFor(() => expect(target).toHaveValue("300"));
+    const reset = within(sectionButton.closest("section")!).getByRole("button", { name: /reset to defaults/ });
+    await waitFor(() => expect(reset).toBeEnabled());
+    await user.click(reset);
+    expect(target).toHaveValue("600");
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(apiMock).toHaveBeenCalledWith("/api/v1/settings", {
+      method: "PUT", body: JSON.stringify({ CHAPTERS_TARGET_SECONDS: null }),
+    }));
   });
 });
