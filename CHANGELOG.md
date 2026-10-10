@@ -6,6 +6,13 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.60.2] - 2026-10-10
+
+### Fixed
+
+- Keep audio transport controls grouped, with playback time and speed aligned together across player widths.
+- Truncate long author lists within feed cards so the source stays visible.
+
 ## [0.60.1] - 2026-10-10
 
 ### Changed

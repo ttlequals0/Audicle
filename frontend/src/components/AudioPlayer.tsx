@@ -205,53 +205,57 @@ export default function AudioPlayer({
   return (
     <div className="audio-player">
       <audio key={`${src}:${persistenceKey}`} ref={audioRef} src={src} preload="metadata" data-audicle-player />
-      <button
-        className="audio-toggle"
-        onClick={toggle}
-        aria-label={`${playing ? "Pause" : "Play"}${accessibleContext}`}
-      >
-        {playing ? (
-          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-            <rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor" />
-            <rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor" />
-          </svg>
-        ) : (
-          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-            <path d="M7 5l12 7-12 7z" fill="currentColor" />
-          </svg>
-        )}
-      </button>
-      <button className="audio-skip" onClick={() => skip(-15)} aria-label={`Back 15 seconds${accessibleContext}`}>
-        -15
-      </button>
-      <input
-        type="range"
-        className="audio-scrub"
-        min={0}
-        max={duration || 0}
-        step={0.1}
-        value={current}
-        onChange={(e) => seek(Number(e.target.value))}
-        onPointerUp={flushSeek}
-        onKeyUp={flushSeek}
-        onBlur={flushSeek}
-        style={{ "--pct": `${pct}%` } as React.CSSProperties}
-        aria-label={`Seek${accessibleContext}`}
-        aria-valuetext={`${formatEpisodeDuration(current)} of ${formatEpisodeDuration(duration)}`}
-      />
-      <button className="audio-skip" onClick={() => skip(15)} aria-label={`Forward 15 seconds${accessibleContext}`}>
-        +15
-      </button>
-      <span className="mono-xs text-mute audio-time">
-        {formatEpisodeDuration(current)}/{formatEpisodeDuration(duration)}
-      </span>
-      <button
-        className="audio-rate mono-xs"
-        onClick={cycleRate}
-        aria-label={`Playback speed ${rate} times${accessibleContext}. Change speed`}
-      >
-        {rate}x
-      </button>
+      <div className="audio-transport">
+        <button
+          className="audio-toggle"
+          onClick={toggle}
+          aria-label={`${playing ? "Pause" : "Play"}${accessibleContext}`}
+        >
+          {playing ? (
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor" />
+              <rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path d="M7 5l12 7-12 7z" fill="currentColor" />
+            </svg>
+          )}
+        </button>
+        <button className="audio-skip" onClick={() => skip(-15)} aria-label={`Back 15 seconds${accessibleContext}`}>
+          -15
+        </button>
+        <input
+          type="range"
+          className="audio-scrub"
+          min={0}
+          max={duration || 0}
+          step={0.1}
+          value={current}
+          onChange={(e) => seek(Number(e.target.value))}
+          onPointerUp={flushSeek}
+          onKeyUp={flushSeek}
+          onBlur={flushSeek}
+          style={{ "--pct": `${pct}%` } as React.CSSProperties}
+          aria-label={`Seek${accessibleContext}`}
+          aria-valuetext={`${formatEpisodeDuration(current)} of ${formatEpisodeDuration(duration)}`}
+        />
+        <button className="audio-skip" onClick={() => skip(15)} aria-label={`Forward 15 seconds${accessibleContext}`}>
+          +15
+        </button>
+      </div>
+      <div className="audio-meta">
+        <span className="mono-xs text-mute audio-time">
+          {formatEpisodeDuration(current)}/{formatEpisodeDuration(duration)}
+        </span>
+        <button
+          className="audio-rate mono-xs"
+          onClick={cycleRate}
+          aria-label={`Playback speed ${rate} times${accessibleContext}. Change speed`}
+        >
+          {rate}x
+        </button>
+      </div>
       {error && <p className="audio-error" role="alert">{error}</p>}
     </div>
   );
