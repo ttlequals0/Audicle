@@ -498,7 +498,7 @@ export default function Home() {
                   : "Submit"}
           </button>
           {noVoiceLoaded && (
-            <p className="mono-xs text-mute mt-2">
+            <p className="mono-xs text-mute">
               // no voice loaded. add a voice slot in settings first
             </p>
           )}
@@ -583,7 +583,7 @@ export default function Home() {
                     {progressSuffix(j)}
                   </p>
                 </div>
-                <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                <div className="flex flex-col items-end gap-1 shrink-0">
                   <span className={`tag ${statusTag(j.status)}`}>{statusLabel(j.status)}</span>
                   <button
                     className="btn-ghost text-xs"
@@ -680,7 +680,7 @@ export default function Home() {
                       ]}
                     />
                   </div>
-                  <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                  <div className="flex flex-col items-end gap-1 shrink-0">
                     <span className={`tag ${statusTag(j.status)}`}>{j.status}</span>
                     <time className="mono-xs text-mute" dateTime={j.updated_at}>
                       {formatDateTime(j.updated_at)}

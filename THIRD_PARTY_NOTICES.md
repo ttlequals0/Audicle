@@ -1,8 +1,9 @@
 # Third-party notices
 
-The bundled base-lexicon artifact (`backend/app/data/base_lexicon.jsonl.gz`),
-built by `scripts/build_base_lexicon.py`, is derived from the following sources.
-Each entry records the source's license and the attribution it requires.
+Audicle includes the third-party components and derived data sources listed below.
+Each entry records the applicable license and attribution. The base-lexicon
+artifact (`backend/app/data/base_lexicon.jsonl.gz`) is built by
+`scripts/build_base_lexicon.py`.
 
 ## ISLEX (via pysle)
 - Project: https://github.com/timmahrt/pysle
@@ -45,3 +46,10 @@ Each entry records the source's license and the attribution it requires.
 - License: Apache-2.0
 - Use: abbreviation -> expansion pairs (ingested but applied below the
   base-lexicon confidence gate, as the crowd data is noisy).
+
+## pypdfium2
+
+- Project: https://pypi.org/project/pypdfium2/5.14.0/#licensing
+- License: runtime code is Apache-2.0/BSD-3-Clause; CC-BY-4.0 applies to
+  documentation and examples.
+- Use: PDF page rasterization. Bundled wheel license notices are retained.

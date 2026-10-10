@@ -117,7 +117,7 @@ function Shell() {
         <div className="max-w-2xl mx-auto px-4">
           <div className="flex items-center justify-between py-3.5">
             <NavLink to="/" className="flex items-center gap-2.5 text-accent">
-              <Mark className="flex-shrink-0" />
+              <Mark className="shrink-0" />
               <span className="wordmark text-lg text-fg">audicle</span>
             </NavLink>
             <div className="flex items-center gap-3">

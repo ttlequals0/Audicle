@@ -11,6 +11,11 @@ work lives under `[Unreleased]`.
 ### Changed
 
 - Inherit image health checks and built-in path and port defaults in Compose.
+- Update uv to 0.13.0, pydantic-settings to 2.15.0, slowapi to 0.1.10, pypdfium2 to 5.14.0, NumPy to 2.5.3, and optional lexicon-build tooling to huggingface-hub 2.1.1. Refresh the renderer egress base image.
+
+### Security
+
+- Remove the vulnerable frontend dependency chain with Tailwind 4.3.3 and source-map-js 1.2.2.
 
 ### Fixed
 

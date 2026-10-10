@@ -1,8 +1,14 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@config "../tailwind.config.cjs";
 
 @layer base {
+  button:not(:disabled) {
+    cursor: pointer;
+  }
+  ::placeholder {
+    color: #9ca3af;
+    opacity: 1;
+  }
   html,
   body {
     background: #040405;
@@ -163,7 +169,6 @@
     align-items: center;
     justify-content: flex-end;
     gap: 0.75rem;
-    margin-top: 1.5rem;
     padding: 0.625rem 0.75rem;
     background: #0a0a0cf2;
     border: 1px solid #26262e;
