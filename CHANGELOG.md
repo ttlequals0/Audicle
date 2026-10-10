@@ -6,6 +6,8 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.60.0] - 2026-10-10
+
 ### Changed
 
 - Generate chapters in transcript windows with a duration-based topic target instead of requesting 3 to 7 chapters for every episode. Settings now controls the target length, window length, boundary cap, and minimum chapter length, with clearer duration labels. Window instructions also take precedence over count and opening rules in custom prompts.
@@ -14,6 +16,7 @@ work lives under `[Unreleased]`.
 
 ### Fixed
 
+- Exclude local files and build artifacts from sidecar image contexts.
 - Reject invalid clock values and chapter timestamps absent from the supplied transcript markers.
 - Preserve the existing pill switches while keeping their tracks compact and touch targets 44 pixels tall.
 - Use plain text on the feed copy button to avoid missing icon glyphs.

@@ -10,3 +10,12 @@ __pycache__
 tests
 README.md
 .dockerignore
+node_modules
+*.pyo
+*.pyd
+.mypy_cache
+dist
+build
+coverage*
+*.log
+.DS_Store
