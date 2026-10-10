@@ -15,7 +15,7 @@ work lives under `[Unreleased]`.
 ### Fixed
 
 - Reject invalid clock values and chapter timestamps absent from the supplied transcript markers.
-- Keep settings switches compact while preserving 44-pixel touch targets.
+- Preserve the existing pill switches while keeping their tracks compact and touch targets 44 pixels tall.
 - Use plain text on the feed copy button to avoid missing icon glyphs.
 - Check the shipped extraction default independently of local environment overrides.
 - Preserve full transcript cues for chapter analysis, carry topics across windows, and merge short chapters. Chapter regeneration keeps existing chapters and audio if any window fails; new episodes can use successful windows.
