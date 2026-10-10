@@ -26,11 +26,3 @@ CVE-2025-69720
 # compile caller-supplied expressions, deserialize Storable data, or extract
 # archives. The process runs as a nonroot UID with no capabilities.
 CVE-2026-9538
-
-# Owner: Audicle maintainers. Recheck: 2026-11-10.
-# OpenSSL DTLS retransmission heap disclosure and denial of service.
-# No fixed Trixie package is available.
-# Tinyproxy relays TCP HTTP/CONNECT traffic; it does not use DTLS.
-# https://security-tracker.debian.org/tracker/CVE-2026-84782
-# Remove when Debian ships a fix.
-CVE-2026-84782

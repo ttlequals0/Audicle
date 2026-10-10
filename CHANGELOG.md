@@ -16,6 +16,7 @@ work lives under `[Unreleased]`.
 ### Security
 
 - Remove the vulnerable frontend dependency chain with Tailwind 4.3.3 and source-map-js 1.2.2.
+- Refresh OpenSSL to Debian 3.5.7-1~deb13u3, fixing CVE-2026-84782, and remove its obsolete scan exceptions.
 
 ### Fixed
 
