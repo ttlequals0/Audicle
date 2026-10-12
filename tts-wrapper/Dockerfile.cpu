@@ -9,7 +9,7 @@
 # wheel from PyTorch's CPU index before the rest of the deps, so chatterbox-tts
 # reuses it instead of pulling the much larger CUDA build.
 FROM ghcr.io/astral-sh/uv:0.13.0 AS uv
-FROM python:3.11-slim AS runtime
+FROM python:3.14-slim AS runtime
 COPY --from=uv /uv /uvx /bin/
 
 # Cache locations target writable paths so the image runs as a non-root user
