@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api, SettingsPayload } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useHealthLive } from "../lib/useHealthLive";
+import Banner from "./Banner";
 
 function isLocal(baseUrl: string | undefined): boolean {
   if (!baseUrl) return true;
@@ -43,16 +44,19 @@ export default function OpenModeBanner({ pageWidth = "max-w-2xl" }: { pageWidth?
     : "No password set, so admin actions are open. Fine on your own machine; set one before you expose this.";
 
   return (
-    <div className={`border-b ${tone}`}>
-      <div className={`${pageWidth} mx-auto px-4 py-2 flex items-center justify-between gap-3`}>
-        <span className="text-sm">{message}</span>
+    <Banner
+      tone={tone}
+      pageWidth={pageWidth}
+      action={
         <button
           className="text-sm underline shrink-0 hover:opacity-80"
           onClick={() => setDismissed(true)}
         >
           Dismiss
         </button>
-      </div>
-    </div>
+      }
+    >
+      {message}
+    </Banner>
   );
 }

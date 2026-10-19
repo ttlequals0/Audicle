@@ -15,6 +15,7 @@ import {
 } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useHealthLive } from "../lib/useHealthLive";
+import { useUnsavedChanges } from "../lib/useUnsavedChanges";
 import CollapsibleSection from "../components/CollapsibleSection";
 import { SettingsSearchContext } from "../components/SettingsSearchContext";
 
@@ -894,6 +895,13 @@ export default function SettingsRoute() {
     putM.mutate({ payload, draftSnapshot: { ...draft }, resetSnapshot: new Set(resetKeys) });
   };
 
+  // Drives the save bar and the unsaved-draft guard.
+  const dirtyKeys = Object.keys(draft).filter(
+    (key) => resetKeys.has(key) || draft[key] !== (baseline.current[key] ?? "")
+  );
+  const hasPendingWork = dirtyKeys.length > 0 || putM.isPending;
+  useUnsavedChanges(hasPendingWork);
+
   if (settingsQ.isLoading) return <p className="text-mute text-sm" role="status">Loading settings...</p>;
   if (settingsQ.isError) {
     return (
@@ -973,13 +981,6 @@ export default function SettingsRoute() {
     const d = settingsQ.data?.defaults[key];
     return d === undefined || d === null ? "" : String(d);
   };
-
-  // Keys edited since the page was seeded (or since the last save). Drives the
-  // save bar's existence: with nothing pending there is nothing to save, so the
-  // control has no reason to occupy the screen.
-  const dirtyKeys = Object.keys(draft).filter(
-    (key) => resetKeys.has(key) || draft[key] !== (baseline.current[key] ?? "")
-  );
 
   const groupDiffersFromDefaults = (keys: string[]) =>
     keys.some(
@@ -1282,7 +1283,7 @@ export default function SettingsRoute() {
       {/* Appears only when there is something to save, or something to report
           about the last attempt. Saving clears the dirty set, so the bar has to
           outlive that for its own confirmation to be readable. */}
-      {(dirtyKeys.length > 0 || putM.isPending || savedMsg || saveErr) && (
+      {(hasPendingWork || savedMsg || saveErr) && (
         <div className="save-bar">
         {saveErr ? (
             <span className="text-sm text-danger mr-auto" role="alert">{saveErr}</span>
@@ -1636,6 +1637,7 @@ function PromptEditor({ initial }: { initial: string }) {
     },
     onError: () => setMsg("Reset failed. Try again."),
   });
+  useUnsavedChanges(text !== initial || m.isPending);
 
   return (
     <section className="space-y-3">
@@ -1677,6 +1679,9 @@ interface Row {
   mode: Mode;
   caseSensitive: boolean;
 }
+
+const rowsContent = (rows: { id: number }[]) =>
+  JSON.stringify(rows.map(({ id: _id, ...rest }) => rest));
 
 let _rowCounter = 0;
 const newRow = (k = "", entry?: Partial<CorrectionEntry>): Row => ({
@@ -1732,6 +1737,10 @@ function CorrectionsTable({ initial }: { initial: Record<string, CorrectionEntry
     },
     onError: () => setMsg("Clear failed. Try again."),
   });
+  useUnsavedChanges(
+    rowsContent(rows) !== rowsContent(Object.entries(initial).map(([k, entry]) => newRow(k, entry))) ||
+      m.isPending
+  );
 
   return (
     <section className="space-y-3">
@@ -1904,6 +1913,13 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
       setMsg(detail ? `Save failed: ${detail}` : "Save failed. Try again.");
     },
   });
+
+  useUnsavedChanges(
+    defaultProxy !== initial.default_proxy ||
+      minChars !== String(initial.min_chars) ||
+      rowsContent(rows) !== rowsContent(initial.rules.map((r) => newFallbackRow(r))) ||
+      m.isPending
+  );
 
   // Run the saved rules against one URL so the operator can confirm a rule (and its
   // cookie jar) actually fetches the article. Never returns the cookie value.
@@ -2699,6 +2715,12 @@ function SidecarSettingsWidget() {
       setError(`Sidecar settings could not be saved${status}.`);
     },
   });
+
+  useUnsavedChanges(
+    saveM.isPending ||
+      resetKeys.size > 0 ||
+      Object.keys(draft).some((key) => draft[key] !== (baseline.current[key] ?? ""))
+  );
 
   if (sidecarsQ.isLoading) return <p className="text-mute text-sm" role="status">Loading sidecar settings...</p>;
   if (sidecarsQ.isError && !sidecarsQ.data) {

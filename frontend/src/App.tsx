@@ -6,6 +6,7 @@ import { api } from "./lib/api";
 import { useHealthLive } from "./lib/useHealthLive";
 import PullToRefresh from "./components/PullToRefresh";
 import OpenModeBanner from "./components/OpenModeBanner";
+import UpdateBanner from "./components/UpdateBanner";
 import Home from "./routes/Home";
 import Feed from "./routes/Feed";
 import SettingsRoute from "./routes/Settings";
@@ -157,6 +158,7 @@ function Shell() {
         <div className="accent-line" />
       </header>
 
+      <UpdateBanner pageWidth={pageWidth} />
       <OpenModeBanner pageWidth={pageWidth} />
 
       <main
