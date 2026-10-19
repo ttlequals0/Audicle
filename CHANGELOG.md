@@ -6,10 +6,6 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
-### Fixed
-
-- Keep the reference voice float32 through Chatterbox's loudness normalization. numpy 2 promotes the normalized waveform to float64, which made the Python 3.14 wrapper image reject every reference voice and leave speech generation unavailable.
-
 ### Changed
 
 - Show one Settings category at a time, with side navigation on desktop, a category selector on mobile, bookmarkable category URLs and browser Back support. Each section carries a one-line summary.
@@ -23,6 +19,7 @@ work lives under `[Unreleased]`.
 
 - Load Satoshi with a single-family Fontshare request; the combined request returned an empty stylesheet.
 - Raise processing-tag contrast and fix disclosure labels, keyboard focus and reduced-motion behavior in Settings.
+- Keep the reference voice float32 through Chatterbox's loudness normalization. numpy 2 promotes the normalized waveform to float64, which made the Python 3.14 wrapper image reject every reference voice and leave speech generation unavailable.
 
 ## [0.60.2] - 2026-10-10
 
