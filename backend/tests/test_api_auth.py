@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.core import database
 from app.main import create_app
 from app.services import auth, runtime_settings
+from fastapi.routing import iter_route_contexts
 from fastapi.testclient import TestClient
 
 PASSWORD = "correct-horse"
@@ -248,7 +249,7 @@ def test_every_v1_get_route_is_gated_when_password_set(auth_env) -> None:
     app = create_app()
     get_paths = {
         route.path
-        for route in app.routes
+        for route in iter_route_contexts(app.routes)
         if getattr(route, "path", "").startswith("/api/v1/")
         and "GET" in (getattr(route, "methods", None) or set())
         and not route.path.startswith("/api/v1/auth")
