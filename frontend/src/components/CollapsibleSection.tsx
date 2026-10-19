@@ -1,8 +1,10 @@
-import { useState, useEffect, type ReactNode } from "react";
+import { useState, useEffect, useId, type ReactNode } from "react";
 import { useSettingsSearch } from "./SettingsSearchContext";
 
 interface CollapsibleSectionProps {
   title: string;
+  description?: string;
+  active?: boolean;
   defaultOpen?: boolean;
   children: ReactNode;
   storageKey?: string;
@@ -39,6 +41,8 @@ export function usePersistentOpen(
 
 export default function CollapsibleSection({
   title,
+  description,
+  active = true,
   defaultOpen = false,
   children,
   storageKey,
@@ -49,35 +53,47 @@ export default function CollapsibleSection({
   const matches = useSettingsSearch();
   const resolvedKey = searchKey ?? title;
 
-  // No search running: behave exactly as before, honouring the stored toggle.
+  const id = useId();
   const searching = matches !== null;
   const isMatch = !searching || matches.has(resolvedKey);
-  if (searching && !isMatch) return null;
-  // A search result is shown expanded. The stored preference is untouched, so
-  // clearing the box restores whatever was open beforehand.
-  const expanded = searching ? true : open;
+  const expanded = searching && isMatch ? true : open;
+  const [visited, setVisited] = useState(false);
+  useEffect(() => {
+    if (active && isMatch && expanded) setVisited(true);
+  }, [active, isMatch, expanded]);
 
   return (
-    <section className="section">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between px-5 py-4 text-left"
-        aria-expanded={expanded}
-        // While searching the section is already open and its state is driven
-        // by the query, so the toggle would only be able to fight it.
-        disabled={searching}
-      >
-        <span className="section-title">{title}</span>
-        <span
-          className={`text-mute text-lg leading-none transition-transform ${
-            expanded ? "rotate-90" : ""
-          }`}
+    <section className="section" hidden={!isMatch}>
+      <h3>
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          className="w-full flex items-center justify-between px-5 py-4 text-left"
+          aria-expanded={expanded}
+          aria-controls={`${id}-body`}
+          aria-labelledby={`${id}-title`}
+          aria-describedby={description ? `${id}-description` : undefined}
+          // While searching the section is already open and its state is driven
+          // by the query, so the toggle would only be able to fight it.
+          disabled={searching}
         >
-          &rsaquo;
-        </span>
-      </button>
-      {expanded && <div className="px-5 pb-5 space-y-3">{children}</div>}
+          <span className="min-w-0">
+            <span id={`${id}-title`} className="section-title">{title}</span>
+            {description && <span id={`${id}-description`} className="section-description">{description}</span>}
+          </span>
+          <span
+            aria-hidden="true"
+            className={`text-mute text-lg leading-none transition-transform ${
+              expanded ? "rotate-90" : ""
+            }`}
+          >
+            &rsaquo;
+          </span>
+        </button>
+      </h3>
+      <div id={`${id}-body`} hidden={!expanded} className="px-5 pb-5 space-y-3">
+        {(visited || (active && isMatch && expanded)) && children}
+      </div>
     </section>
   );
 }

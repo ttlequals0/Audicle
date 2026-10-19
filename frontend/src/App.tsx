@@ -55,6 +55,7 @@ const TABS: [string, string][] = [
 function Shell() {
   const { status, loading, failed, refresh } = useAuth();
   const location = useLocation();
+  const pageWidth = location.pathname === "/settings" ? "max-w-5xl" : "max-w-2xl";
   const mainRef = useRef<HTMLElement>(null);
   const previousPath = useRef(location.pathname);
   const healthQ = useHealthLive();
@@ -114,7 +115,7 @@ function Shell() {
         Skip to main content
       </a>
       <header className="safe-top sticky top-0 z-20 bg-ink/95 backdrop-blur-md border-b border-line">
-        <div className="max-w-2xl mx-auto px-4">
+        <div className={`${pageWidth} mx-auto px-4`}>
           <div className="flex items-center justify-between py-3.5">
             <NavLink to="/" className="flex items-center gap-2.5 text-accent">
               <Mark className="shrink-0" />
@@ -123,7 +124,7 @@ function Shell() {
             <div className="flex items-center gap-3">
               {status?.password_set && status?.authenticated && (
                 <button
-                  className="mono-xs text-mute hover:text-fg"
+                  className="text-xs text-mute hover:text-fg"
                   disabled={logoutM.isPending}
                   onClick={() => logoutM.mutate()}
                 >
@@ -134,7 +135,7 @@ function Shell() {
                 href="https://github.com/ttlequals0/Audicle"
                 target="_blank"
                 rel="noreferrer"
-                className="mono-xs text-mute hover:text-fg"
+                className="text-xs text-mute hover:text-fg"
               >
                 {healthQ.data ? `v${healthQ.data.version}` : ""}
               </a>
@@ -162,7 +163,7 @@ function Shell() {
         ref={mainRef}
         id="main-content"
         tabIndex={-1}
-        className="flex-1 max-w-2xl mx-auto w-full px-4 py-6 relative z-10 safe-bottom"
+        className={`flex-1 ${pageWidth} mx-auto w-full px-4 py-6 relative z-10 safe-bottom`}
       >
         <Routes>
           <Route path="/" element={<Home />} />

@@ -245,11 +245,11 @@ export default function AudioPlayer({
         </button>
       </div>
       <div className="audio-meta">
-        <span className="mono-xs text-mute audio-time">
+        <span className="text-xs text-mute audio-time">
           {formatEpisodeDuration(current)}/{formatEpisodeDuration(duration)}
         </span>
         <button
-          className="audio-rate mono-xs"
+          className="audio-rate text-xs"
           onClick={cycleRate}
           aria-label={`Playback speed ${rate} times${accessibleContext}. Change speed`}
         >

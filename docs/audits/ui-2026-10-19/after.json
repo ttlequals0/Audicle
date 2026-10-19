@@ -1,0 +1,121 @@
+{
+  "phase": "after",
+  "baseURL": "http://127.0.0.1:5173",
+  "pages": [
+    {
+      "route": "settings",
+      "device": "desktop",
+      "width": 1440,
+      "height": 1000,
+      "pageHeight": 1000,
+      "overflow": false,
+      "font": "Satoshi, system-ui, -apple-system, sans-serif",
+      "loadedFonts": [
+        "Satoshi",
+        "Satoshi",
+        "Satoshi"
+      ],
+      "headings": [
+        "Settings",
+        "Content",
+        "Extraction",
+        "Site overrides",
+        "Cleanup",
+        "Cleanup prompt",
+        "Uploads"
+      ]
+    },
+    {
+      "route": "home",
+      "device": "desktop",
+      "width": 1440,
+      "height": 1000,
+      "pageHeight": 1000,
+      "overflow": false,
+      "font": "Satoshi, system-ui, -apple-system, sans-serif",
+      "loadedFonts": [
+        "Satoshi",
+        "Satoshi",
+        "Satoshi"
+      ],
+      "headings": [
+        "Drop a link.Get a podcast."
+      ]
+    },
+    {
+      "route": "feed",
+      "device": "desktop",
+      "width": 1440,
+      "height": 1000,
+      "pageHeight": 1000,
+      "overflow": false,
+      "font": "Satoshi, system-ui, -apple-system, sans-serif",
+      "loadedFonts": [
+        "Satoshi",
+        "Satoshi",
+        "Satoshi"
+      ],
+      "headings": [
+        "Feed"
+      ]
+    },
+    {
+      "route": "settings",
+      "device": "mobile",
+      "width": 390,
+      "height": 844,
+      "pageHeight": 1124,
+      "overflow": false,
+      "font": "Satoshi, system-ui, -apple-system, sans-serif",
+      "loadedFonts": [
+        "Satoshi",
+        "Satoshi",
+        "Satoshi",
+        "Satoshi"
+      ],
+      "headings": [
+        "Settings",
+        "Content",
+        "Extraction",
+        "Site overrides",
+        "Cleanup",
+        "Cleanup prompt",
+        "Uploads"
+      ]
+    },
+    {
+      "route": "home",
+      "device": "mobile",
+      "width": 390,
+      "height": 844,
+      "pageHeight": 844,
+      "overflow": false,
+      "font": "Satoshi, system-ui, -apple-system, sans-serif",
+      "loadedFonts": [
+        "Satoshi",
+        "Satoshi",
+        "Satoshi"
+      ],
+      "headings": [
+        "Drop a link.Get a podcast."
+      ]
+    },
+    {
+      "route": "feed",
+      "device": "mobile",
+      "width": 390,
+      "height": 844,
+      "pageHeight": 844,
+      "overflow": false,
+      "font": "Satoshi, system-ui, -apple-system, sans-serif",
+      "loadedFonts": [
+        "Satoshi",
+        "Satoshi",
+        "Satoshi"
+      ],
+      "headings": [
+        "Feed"
+      ]
+    }
+  ]
+}

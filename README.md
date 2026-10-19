@@ -39,22 +39,22 @@ That's what this is. No GPU? It runs on CPU too, just slower.
 Home: paste a URL or drop files (up to 20 at once), and they join the feed.
 
 <p align="center">
-  <img src="docs/screenshots/home-desktop.png" alt="Home, desktop" width="600">
-  <img src="docs/screenshots/home-mobile.png" alt="Home, mobile" width="190">
+  <img src="docs/audits/ui-2026-10-19/screenshots/after-home-desktop.png" alt="Home, desktop" width="600">
+  <img src="docs/audits/ui-2026-10-19/screenshots/after-home-mobile.png" alt="Home, mobile" width="190">
 </p>
 
 Feed: search and page through your episodes, with inline players, transcripts, and per-episode actions.
 
 <p align="center">
-  <img src="docs/screenshots/feed-desktop.png" alt="Feed, desktop" width="600">
-  <img src="docs/screenshots/feed-mobile.png" alt="Feed, mobile" width="190">
+  <img src="docs/audits/ui-2026-10-19/screenshots/after-feed-desktop.png" alt="Feed, desktop" width="600">
+  <img src="docs/audits/ui-2026-10-19/screenshots/after-feed-mobile.png" alt="Feed, mobile" width="190">
 </p>
 
-Settings: everything grouped by subject, searchable as you type.
+Settings: browse one category at a time, or search across all settings.
 
 <p align="center">
-  <img src="docs/screenshots/settings-desktop.png" alt="Settings, desktop" width="600">
-  <img src="docs/screenshots/settings-mobile.png" alt="Settings, mobile" width="190">
+  <img src="docs/audits/ui-2026-10-19/screenshots/after-settings-desktop.png" alt="Settings, desktop" width="600">
+  <img src="docs/audits/ui-2026-10-19/screenshots/after-settings-mobile.png" alt="Settings, mobile" width="190">
 </p>
 
 ## Sample

@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
@@ -42,10 +43,12 @@ function createClient() {
   });
 }
 
-function renderSettings(client = createClient()) {
+function renderSettings(client = createClient(), category = "services") {
   render(
     <QueryClientProvider client={client}>
-      <SettingsRoute />
+      <MemoryRouter initialEntries={[`/settings?category=${category}`]}>
+        <SettingsRoute />
+      </MemoryRouter>
     </QueryClientProvider>
   );
   return client;
@@ -124,7 +127,7 @@ describe("SettingsRoute saves", () => {
     fireEvent.change(field, { target: { value: "15" } });
     resolveSave(settings);
 
-    expect(await screen.findByText("1 settings changed")).toBeInTheDocument();
+    expect(await screen.findByText("1 unsaved change")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save settings" })).toBeEnabled();
   });
 
@@ -132,7 +135,7 @@ describe("SettingsRoute saves", () => {
     const user = userEvent.setup();
     const client = renderSettings();
 
-    await user.click(await screen.findByRole("button", { name: /sidecar settings/ }));
+    await user.click(await screen.findByRole("button", { name: /sidecar settings/i }));
     expect(await screen.findAllByText(/Sidecar is offline/)).toHaveLength(2);
 
     sidecarOnline = true;
@@ -166,7 +169,7 @@ describe("SettingsRoute saves", () => {
     });
     renderSettings();
 
-    await user.click(await screen.findByRole("button", { name: /sidecar settings/ }));
+    await user.click(await screen.findByRole("button", { name: /sidecar settings/i }));
     const field = await screen.findByLabelText("Page navigation timeout (ms)");
     fireEvent.change(field, { target: { value: "13000" } });
     await user.click(screen.getByRole("button", { name: "Save sidecar settings" }));
@@ -207,7 +210,7 @@ describe("SettingsRoute saves", () => {
       }
       return implementation(path, options);
     });
-    renderSettings();
+    renderSettings(createClient(), "publishing");
     const sectionButton = await screen.findByRole("button", { name: /^Chapters/ });
     await user.click(sectionButton);
     const target = await screen.findByLabelText("Target chapter length (seconds)");
@@ -221,7 +224,7 @@ describe("SettingsRoute saves", () => {
       method: "PUT", body: JSON.stringify({ CHAPTERS_TARGET_SECONDS: 300 }),
     }));
     await waitFor(() => expect(target).toHaveValue("300"));
-    const reset = within(sectionButton.closest("section")!).getByRole("button", { name: /reset to defaults/ });
+    const reset = within(sectionButton.closest("section")!).getByRole("button", { name: /reset to defaults/i });
     await waitFor(() => expect(reset).toBeEnabled());
     await user.click(reset);
     expect(target).toHaveValue("600");

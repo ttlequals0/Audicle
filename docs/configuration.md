@@ -20,7 +20,11 @@ Settings are grouped by the question you are answering, not by which mechanism s
 | Services | LLM, Connections, Timeouts, Webhooks |
 | System | Job timeouts, Logging, security, system info |
 
-Search at the top filters the page as you type. The save bar appears only when the generic form has unsaved edits; the widget sections (voices, corrections, site overrides, chime, authenticated feeds, security) each save themselves. Every generic card has a reset-to-defaults control, clickable only when something in it differs from the shipped defaults.
+Choose a category from the side navigation, or the category selector on mobile. Only that category is shown. Category links such as `/settings?category=voice` support bookmarks and browser Back.
+
+Search at the top covers all categories, matching readable labels, technical keys and section descriptions. Matching sections open automatically. Clear search or press Escape to return to the selected category and its previous disclosure state.
+
+Switching categories, collapsing a section or searching preserves unsaved edits while Settings remains open. The save bar counts generic form changes across categories. Widget sections (voices, corrections, site overrides, chime, authenticated feeds, security) each save themselves. Reloading or leaving Settings discards unsaved edits. Every generic card has a reset-to-defaults control; resetting changes the draft until you save it.
 
 ## Content
 

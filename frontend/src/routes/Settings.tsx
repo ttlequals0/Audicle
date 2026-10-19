@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   api,
@@ -254,16 +255,18 @@ const STANDALONE_SECTIONS = [
 // the hand-written widget sections, and both render inline here: leaving the
 // widgets to trail the page was what made "voices" impossible to find under
 // Voice and turned the last category into a junk drawer.
-const CATEGORIES: { name: string; entries: string[] }[] = [
+const CATEGORIES: { name: string; description: string; entries: string[] }[] = [
   {
     // Getting the article and preparing its text.
     name: "Content",
+    description: "Article extraction, cleanup and uploads",
     entries: ["Extraction", "site overrides", "Cleanup", "cleanup prompt", "Uploads"],
   },
   {
     // Everything that shapes how it sounds, in the order you set it up:
     // pick a voice, choose the engine, tune it, check the result, shape output.
     name: "Voice",
+    description: "Narration, pronunciation and audio quality",
     entries: [
       "voices",
       "TTS",
@@ -280,6 +283,7 @@ const CATEGORIES: { name: string; entries: string[] }[] = [
   {
     // The podcast as subscribers receive it.
     name: "Publishing",
+    description: "Podcast details, artwork and subscribers",
     entries: ["Feed", "Artwork", "Chapters", "RSS", "authenticated feeds", "Retention"],
   },
   {
@@ -289,15 +293,52 @@ const CATEGORIES: { name: string; entries: string[] }[] = [
     // reader work out whether they mean different things. "Services" is also
     // what a self-hoster already calls these.
     name: "Services",
+    description: "AI providers, connections and integrations",
     entries: ["LLM", "Connections", "Timeouts", "Webhooks", "sidecar settings"],
   },
   {
     // Running the app itself. Small on purpose: anything that belongs to a
     // subject above lives there instead.
     name: "System",
+    description: "Admin access, job limits and diagnostics",
     entries: ["Job timeouts", "Operations", "Logging", "Security", "Admin access", "system info"],
   },
 ];
+
+const SECTION_SUMMARIES: Record<string, string> = {
+  Extraction: "Choose how articles are fetched and when to try a fallback.",
+  "site overrides": "Set extraction rules for individual websites.",
+  Cleanup: "Control text cleanup and minimum article length.",
+  "cleanup prompt": "Edit the instructions used to prepare articles for narration.",
+  Uploads: "Set file size limits and text recognition for scanned documents.",
+  voices: "Upload and preview the reference voices used for narration.",
+  TTS: "Choose a speech model, language and chunk size.",
+  "TTS backend": "Choose where speech generation and verification run.",
+  "TTS generation": "Tune Chatterbox sampling, caching and chunk sizing.",
+  "pronunciation corrections": "Teach the narrator how to say names and acronyms.",
+  Verification: "Compare narration with the source text and retry mismatches.",
+  "Audio analysis": "Detect noise, silence and pacing problems.",
+  "Audio output": "Set MP3 encoding, loudness and silence handling.",
+  "end chime": "Upload or preview the sound at the end of each episode.",
+  "TTS delivery": "Set retry budgets and wrapper restart behavior.",
+  Feed: "Set your podcast title, description, author and cover image.",
+  Artwork: "Configure fallback artwork, image sizes and quality.",
+  Chapters: "Control chapter detection and target chapter length.",
+  RSS: "Set how long podcast apps can cache the feed.",
+  "authenticated feeds": "Manage the access key used by podcast subscribers.",
+  Retention: "Choose when old episodes and backups are deleted.",
+  LLM: "Choose your AI provider, model and API credentials.",
+  Connections: "Set public URLs and connect extraction and speech services.",
+  Timeouts: "Set request time limits for upstream services.",
+  Webhooks: "Send episode notifications to another service.",
+  "sidecar settings": "Configure the browser renderer and speech wrapper.",
+  "Job timeouts": "Set limits for stalled jobs and total processing time.",
+  Operations: "Set how often the worker checks the queue.",
+  Logging: "Choose the log level and output format.",
+  Security: "Configure login limits, trusted proxies and session cookies.",
+  "Admin access": "Set or change the password for the admin interface.",
+  "system info": "View the app version, uptime and API documentation.",
+};
 
 // Runs once at import. An entry that matches neither a GROUPS key nor a widget
 // section would never render, and a duplicate would render twice. Both are easy
@@ -641,6 +682,8 @@ function Toggle({
 
 export default function SettingsRoute() {
   const qc = useQueryClient();
+  const [params, setParams] = useSearchParams();
+  const activeCategory = CATEGORIES.find((category) => category.name.toLowerCase() === params.get("category")) ?? CATEGORIES[0];
   // Shared app-wide auth status so a password change here also updates the
   // header (a separate query would leave the header's useAuth() stale).
   const { status: authStatus, refresh: refreshAuth } = useAuth();
@@ -690,6 +733,19 @@ export default function SettingsRoute() {
   const [qInput, setQInput] = useState("");
   const q = qInput.trim().toLowerCase();
   const searchRegionRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const chooseCategory = (name: string) => {
+    setQInput("");
+    setParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.set("category", name.toLowerCase());
+      return next;
+    });
+  };
+  const clearSearch = () => {
+    setQInput("");
+    searchInputRef.current?.focus();
+  };
 
   // Paint the matched text using the CSS Custom Highlight API: ranges are
   // registered with the browser, so nothing in the DOM is mutated and React
@@ -951,45 +1007,52 @@ export default function SettingsRoute() {
     });
   };
 
-  // A group matches when its own name matches, or any key it displays does.
-  // Keys are matched with underscores treated as spaces too, so "max f0" finds
-  // AUDIO_ANALYSIS_MAX_F0_SEMITONES.
+  const presentByCategory = CATEGORIES.map((category) => ({
+    ...category,
+    entries: category.entries.filter((name) =>
+      name in GROUPS ? visibleKeysByGroup[name].length > 0 : widgets[name] != null
+    ),
+  }));
   const matchedGroups = new Set<string>();
   if (q) {
-    for (const [group, keys] of Object.entries(visibleKeysByGroup)) {
-      const hay = [group, GROUP_NOTES[group] ?? "", ...keys]
-        .join(" ")
-        .toLowerCase()
-        .replace(/_/g, " ");
-      if (hay.includes(q.replace(/_/g, " "))) matchedGroups.add(group);
-    }
-    for (const title of STANDALONE_SECTIONS) {
-      if (title.toLowerCase().includes(q)) matchedGroups.add(title);
+    const terms = q.replace(/_/g, " ").split(/\s+/);
+    for (const category of presentByCategory) {
+      for (const group of category.entries) {
+        const keys = visibleKeysByGroup[group] ?? [];
+        const hay = [category.name, group, SECTION_SUMMARIES[group], GROUP_NOTES[group] ?? "", ...keys, ...keys.map(settingLabel)]
+          .join(" ").toLowerCase().replace(/_/g, " ");
+        if (terms.every((term) => hay.includes(term))) matchedGroups.add(group);
+      }
     }
   }
 
   return (
     <SettingsSearchContext.Provider value={q ? matchedGroups : null}>
-    <div className="space-y-4">
-      <h1 className="text-2xl font-black tracking-tight">Settings</h1>
-      <div className="search-wrap mb-4">
+    <div className="settings-page space-y-6">
+      <div>
+        <h1 className="text-2xl font-black tracking-tight">Settings</h1>
+        <p className="text-sm text-dim mt-1">Choose a category or search all settings.</p>
+      </div>
+      <div className="search-wrap">
         <span className="search-slash" aria-hidden="true">
           /
         </span>
         <input
+          ref={searchInputRef}
           type="search"
           className="field"
-          placeholder="Search settings"
+          placeholder="Search all settings"
           autoComplete="off"
           value={qInput}
           onChange={(e) => setQInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Escape") clearSearch(); }}
           aria-label="Search settings"
         />
         {qInput && (
           <button
             type="button"
             className="search-clear"
-            onClick={() => setQInput("")}
+            onClick={clearSearch}
             aria-label="Clear search"
           >
             &times;
@@ -997,28 +1060,50 @@ export default function SettingsRoute() {
         )}
       </div>
 
-      {q && matchedGroups.size === 0 && (
-        <p className="text-mute text-sm">nothing matches "{qInput.trim()}".</p>
+      <div className="settings-layout">
+        <aside className="settings-sidebar">
+          <nav className="settings-nav" aria-label="Settings categories">
+            {CATEGORIES.map((category) => (
+              <button key={category.name} type="button" aria-pressed={!q && activeCategory.name === category.name}
+                aria-controls="settings-sections" onClick={() => chooseCategory(category.name)}>
+                <span>{category.name}</span>
+                <span className="settings-nav-description">{category.description}</span>
+              </button>
+            ))}
+          </nav>
+          <div className="settings-category-select">
+            <label className="label" htmlFor="settings-category">Settings category</label>
+            <select id="settings-category" className="field" value={q ? "search" : activeCategory.name}
+              onChange={(e) => chooseCategory(e.target.value)}>
+              {q && <option value="search" disabled>Search results in all categories</option>}
+              {CATEGORIES.map((category) => <option key={category.name}>{category.name}</option>)}
+            </select>
+          </div>
+        </aside>
+      <div ref={searchRegionRef} id="settings-sections" className="settings-content space-y-4">
+      {q && (
+        <div className="settings-search-status" role="status">
+          <p>{matchedGroups.size === 0 ? `No settings match "${qInput.trim()}".` : `${matchedGroups.size} matching section${matchedGroups.size === 1 ? "" : "s"} across all categories`}</p>
+          {matchedGroups.size === 0 && <p className="text-dim mt-1">Try a name such as voice, password or chapters.</p>}
+          <button className="btn-ghost mt-3" type="button" onClick={clearSearch}>Back to {activeCategory.name}</button>
+        </div>
       )}
-
-      <div ref={searchRegionRef} className="space-y-4">
-      {CATEGORIES.map((category) => {
-        // An entry appears only if it has something to show: a group with at
-        // least one visible key, or a widget whose data has loaded.
-        const present = category.entries.filter((name) =>
-          name in GROUPS ? (visibleKeysByGroup[name]?.length ?? 0) > 0 : widgets[name] != null
-        );
-        const shown = q ? present.filter((name) => matchedGroups.has(name)) : present;
-        if (shown.length === 0) return null;
+      {presentByCategory.map((category) => {
+        const active = q ? category.entries.some((name) => matchedGroups.has(name)) : activeCategory.name === category.name;
         return (
-          <section key={category.name} className="space-y-3">
-            <h2 className="category-heading">{category.name}</h2>
-            {shown.map((name) => {
+          <section key={category.name} hidden={!active} className="space-y-3" aria-labelledby={`category-${category.name}`}>
+            <div className="settings-category-header">
+              <h2 id={`category-${category.name}`} className="category-heading">{category.name}</h2>
+              <p className="text-sm text-dim">{category.description}</p>
+            </div>
+            {category.entries.map((name) => {
               if (!(name in GROUPS)) {
                 return (
                   <CollapsibleSection
                     key={name}
-                    title={name}
+                    title={name[0].toUpperCase() + name.slice(1)}
+                    description={SECTION_SUMMARIES[name]}
+                    active={active}
                     storageKey={name === "Admin access" ? "settings-section-security" : undefined}
                     searchKey={name}
                     defaultOpen={name === "system info"}
@@ -1033,11 +1118,13 @@ export default function SettingsRoute() {
                 <CollapsibleSection
                   key={group}
                   title={group}
+                  description={SECTION_SUMMARIES[group]}
+                  active={active}
                   searchKey={group}
                   defaultOpen={group === "LLM"}
                 >
                   {GROUP_NOTES[group] && (
-                    <p className="mono-xs text-mute mb-3">// {GROUP_NOTES[group]}</p>
+                    <p className="text-sm text-dim mb-4 leading-relaxed">{GROUP_NOTES[group]}</p>
                   )}
             {visible.map((key) => {
               const isBool = boolKeys.has(key);
@@ -1174,7 +1261,7 @@ export default function SettingsRoute() {
                 }
                 onClick={() => resetGroupToDefaults(visible)}
               >
-                // reset to defaults
+                Reset to defaults
               </button>
             </div>
                 </CollapsibleSection>
@@ -1183,6 +1270,7 @@ export default function SettingsRoute() {
           </section>
         );
       })}
+      </div>
       </div>
 
       {/* Appears only when there is something to save, or something to report
@@ -1195,8 +1283,8 @@ export default function SettingsRoute() {
           ) : savedMsg && dirtyKeys.length === 0 ? (
             <span className="mono-xs text-accent mr-auto" role="status">{savedMsg}</span>
           ) : (
-            <span className="mono-xs text-mute mr-auto">
-              {putM.isPending ? "Saving settings..." : `${dirtyKeys.length} settings changed`}
+            <span className="text-sm text-dim mr-auto" role="status">
+              {putM.isPending ? "Saving settings..." : `${dirtyKeys.length} unsaved ${dirtyKeys.length === 1 ? "change" : "changes"}`}
             </span>
           )}
           {dirtyKeys.length > 0 && (
@@ -1545,6 +1633,7 @@ function PromptEditor({ initial }: { initial: string }) {
   return (
     <section className="space-y-3">
       <textarea
+        aria-label="Cleanup prompt"
         className="field min-h-[200px] font-mono text-xs"
         value={text}
         onChange={(e) => setText(e.target.value)}

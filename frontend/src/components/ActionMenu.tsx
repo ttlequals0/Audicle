@@ -177,7 +177,7 @@ export default function ActionMenu({
               const body = (
                 <>
                   <span className="text-sm text-fg">{a.label}</span>
-                  <span className="mono-xs text-mute col-start-2">// {a.hint}</span>
+                  <span className="text-xs text-mute col-start-2">{a.hint}</span>
                 </>
               );
               return a.href ? (
