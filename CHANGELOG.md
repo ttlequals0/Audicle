@@ -8,16 +8,13 @@ work lives under `[Unreleased]`.
 
 ### Changed
 
-- Show each site override as its own bordered card with a labelled Remove button, so neighbouring rules and their proxy or cookie details read apart.
-
-### Changed
-
 - Show one Settings category at a time, with side navigation on desktop, a category selector on mobile, bookmarkable category URLs and browser Back support. Each section carries a one-line summary.
 - Search Settings across all categories by readable label, technical key or section description. Drafts survive category changes and search, and Escape clears the query.
 - Use Satoshi for all interface text, drop the monospace UI styling on Home and Feed, and define colors once in branding/tokens.json with a build-time drift check. Add the UI design guide.
 - Run the render and TTS wrapper images on Python 3.14. The TTS image compiles spacy-pkuseg from its locked source archive because the package publishes no 3.14 wheel, and removes the compiler afterwards.
 - Update FastAPI to 0.143.0, pydantic to 2.14.0, Starlette to 1.9.0 and uvicorn to 0.54.0 in all three Python lockfiles, mutagen to 1.48.1, soundfile to 0.14.0, rapidocr to 3.10.0, and the uv build image to 0.13.1. Walk FastAPI's included-router contexts in the route-gating test since 0.143 no longer flattens them into the application route list.
 - Wait for an explicit reload before applying interface updates. A banner offers the reload when a new version is ready, stays disabled while Settings has unsaved edits in any editor, and the browser asks before leaving the page with unsaved edits.
+- Show each site override as its own bordered card with a labelled Remove button, so neighbouring rules and their proxy or cookie details read apart.
 
 ### Fixed
 

@@ -2028,7 +2028,7 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
                   onChange={(e) => patch({ host: e.target.value })}
                 />
                 <button
-                  className="btn-ghost btn-danger shrink-0"
+                  className="btn-ghost btn-danger"
                   aria-label={`Remove override for ${host}`}
                   onClick={() => setRows((rs) => rs.filter((r) => r.id !== row.id))}
                 >
