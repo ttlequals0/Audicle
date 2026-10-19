@@ -2,13 +2,15 @@
 
 # ---- Stage 1: frontend builder (Vite + React + Tailwind). ----
 FROM node:26-alpine AS frontend
-WORKDIR /build
+WORKDIR /build/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
 # ``--ignore-scripts`` blocks dependency lifecycle hooks from running with
 # the npm install -- defense-in-depth against malicious postinstall scripts
 # in transitive deps.
 RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY frontend/ ./
+COPY branding/tokens.json branding/tokens.css /build/branding/
+COPY scripts/sync_design_tokens.mjs /build/scripts/
 RUN npm run build
 
 # ---- Stage 2: uv builder ----
@@ -75,7 +77,7 @@ RUN uv sync --no-dev --locked
 
 COPY backend/app ./app
 COPY VERSION ./
-COPY --from=frontend /build/dist ./static/ui
+COPY --from=frontend /build/frontend/dist ./static/ui
 COPY entrypoint.sh ./
 RUN chmod +x entrypoint.sh && chown -R audicle:audicle /app
 

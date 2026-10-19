@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   api,
@@ -196,6 +197,7 @@ const GROUPS: Record<string, string[]> = {
     "ARTWORK_MAX_DOWNLOAD_BYTES",
   ],
   Cleanup: [
+    "LLM_CLEANUP_WINDOW_CHARS",
     "MIN_CLEANUP_CHARS",
     "CLEANUP_MIN_RETENTION_RATIO",
     "MAX_PROMPT_LENGTH_BYTES",
@@ -238,49 +240,52 @@ const GROUPS: Record<string, string[]> = {
 // The hand-written sections below the generic form. Listed so the search can
 // match them by title; their bodies are widgets, not settings keys.
 const STANDALONE_SECTIONS = [
-  "cleanup prompt",
-  "pronunciation corrections",
-  "site overrides",
-  "voices",
-  "end chime",
-  "authenticated feeds",
+  "Cleanup prompt",
+  "Pronunciation corrections",
+  "Site overrides",
+  "Voices",
+  "End chime",
+  "Authenticated feeds",
   "Admin access",
-  "system info",
-  "sidecar settings",
+  "System info",
+  "Sidecar settings",
 ];
 
 // Settings arranged by the question an operator is answering, not by which
 // mechanism happens to store them. Entries name either a GROUPS key or one of
 // the hand-written widget sections, and both render inline here: leaving the
-// widgets to trail the page was what made "voices" impossible to find under
+// widgets to trail the page was what made "Voices" impossible to find under
 // Voice and turned the last category into a junk drawer.
-const CATEGORIES: { name: string; entries: string[] }[] = [
+const CATEGORIES: { name: string; description: string; entries: string[] }[] = [
   {
     // Getting the article and preparing its text.
     name: "Content",
-    entries: ["Extraction", "site overrides", "Cleanup", "cleanup prompt", "Uploads"],
+    description: "Article extraction, cleanup and uploads",
+    entries: ["Extraction", "Site overrides", "Cleanup", "Cleanup prompt", "Uploads"],
   },
   {
     // Everything that shapes how it sounds, in the order you set it up:
     // pick a voice, choose the engine, tune it, check the result, shape output.
     name: "Voice",
+    description: "Narration, pronunciation and audio quality",
     entries: [
-      "voices",
+      "Voices",
       "TTS",
       "TTS backend",
       "TTS generation",
-      "pronunciation corrections",
+      "Pronunciation corrections",
       "Verification",
       "Audio analysis",
       "Audio output",
-      "end chime",
+      "End chime",
       "TTS delivery",
     ],
   },
   {
     // The podcast as subscribers receive it.
     name: "Publishing",
-    entries: ["Feed", "Artwork", "Chapters", "RSS", "authenticated feeds", "Retention"],
+    description: "Podcast details, artwork and subscribers",
+    entries: ["Feed", "Artwork", "Chapters", "RSS", "Authenticated feeds", "Retention"],
   },
   {
     // The services this app talks to. Named "Services" rather than
@@ -289,36 +294,59 @@ const CATEGORIES: { name: string; entries: string[] }[] = [
     // reader work out whether they mean different things. "Services" is also
     // what a self-hoster already calls these.
     name: "Services",
-    entries: ["LLM", "Connections", "Timeouts", "Webhooks", "sidecar settings"],
+    description: "AI providers, connections and integrations",
+    entries: ["LLM", "Connections", "Timeouts", "Webhooks", "Sidecar settings"],
   },
   {
     // Running the app itself. Small on purpose: anything that belongs to a
     // subject above lives there instead.
     name: "System",
-    entries: ["Job timeouts", "Operations", "Logging", "Security", "Admin access", "system info"],
+    description: "Admin access, job limits and diagnostics",
+    entries: ["Job timeouts", "Operations", "Logging", "Security", "Admin access", "System info"],
   },
 ];
 
-// Runs once at import. An entry that matches neither a GROUPS key nor a widget
-// section would never render, and a duplicate would render twice. Both are easy
-// to miss by eye and this is the only thing that keeps the two lists in step.
-{
-  const placed = CATEGORIES.flatMap((c) => c.entries);
-  const known = [...Object.keys(GROUPS), ...STANDALONE_SECTIONS];
-  const missing = known.filter((g) => !placed.includes(g));
-  const duplicated = placed.filter((g, i) => placed.indexOf(g) !== i);
-  const unknown = placed.filter((g) => !known.includes(g));
-  if (missing.length || duplicated.length || unknown.length) {
-    console.error("CATEGORIES mismatch", { missing, duplicated, unknown });
-  }
-}
-
+const SECTION_SUMMARIES: Record<string, string> = {
+  Extraction: "Choose how articles are fetched and when to try a fallback.",
+  "Site overrides": "Set extraction rules for individual websites.",
+  Cleanup: "Control text cleanup and minimum article length.",
+  "Cleanup prompt": "Edit the instructions used to prepare articles for narration.",
+  Uploads: "Set file size limits and text recognition for scanned documents.",
+  Voices: "Upload and preview the reference voices used for narration.",
+  TTS: "Choose a speech model, language and chunk size.",
+  "TTS backend": "Choose where speech generation and verification run.",
+  "TTS generation": "Tune Chatterbox sampling, caching and chunk sizing.",
+  "Pronunciation corrections": "Teach the narrator how to say names and acronyms.",
+  Verification: "Compare narration with the source text and retry mismatches.",
+  "Audio analysis": "Detect noise, silence and pacing problems.",
+  "Audio output": "Set MP3 encoding, loudness and silence handling.",
+  "End chime": "Upload or preview the sound at the end of each episode.",
+  "TTS delivery": "Set retry budgets and wrapper restart behavior.",
+  Feed: "Set your podcast title, description, author and cover image.",
+  Artwork: "Configure fallback artwork, image sizes and quality.",
+  Chapters: "Control chapter detection and target chapter length.",
+  RSS: "Set how long podcast apps can cache the feed.",
+  "Authenticated feeds": "Manage the access key used by podcast subscribers.",
+  Retention: "Choose when old episodes and backups are deleted.",
+  LLM: "Choose your AI provider, model and API credentials.",
+  Connections: "Set public URLs and connect extraction and speech services.",
+  Timeouts: "Set request time limits for upstream services.",
+  Webhooks: "Send episode notifications to another service.",
+  "Sidecar settings": "Configure the browser renderer and speech wrapper.",
+  "Job timeouts": "Set limits for stalled jobs and total processing time.",
+  Operations: "Set how often the worker checks the queue.",
+  Logging: "Choose the log level and output format.",
+  Security: "Configure login limits, trusted proxies and session cookies.",
+  "Admin access": "Set or change the password for the admin interface.",
+  "System info": "View the app version, uptime and API documentation.",
+};
 
 // A setting that belongs to the rule row above it: indented, tied to it by an accent line.
 const RULE_DETAIL = "block ml-3 pl-3.5 border-l-2 border-accent/35";
 const RULE_DETAIL_LABEL = "block mb-1.5 text-mute text-[0.8125rem]";
 
 const SETTING_LABELS: Record<string, string> = {
+  LLM_CLEANUP_WINDOW_CHARS: "Cleanup window (characters)",
   CHAPTERS_MIN_DURATION_SECS: "Minimum episode length (seconds)",
   CHAPTERS_TARGET_SECONDS: "Target chapter length (seconds)",
   CHAPTERS_WINDOW_SECONDS: "Analysis window (seconds)",
@@ -375,7 +403,13 @@ function settingLabel(key: string): string {
 }
 
 function feedbackRole(message: string): "alert" | "status" {
-  return /failed|error|cannot|incorrect|unable/i.test(message) ? "alert" : "status";
+  return /failed|error|cannot|incorrect|unable|invalid|must be/i.test(message) ? "alert" : "status";
+}
+
+function FeedbackMsg({ msg, as: Tag = "span" }: { msg: string | null; as?: "span" | "p" }) {
+  if (!msg) return null;
+  const role = feedbackRole(msg);
+  return <Tag className={`text-sm ${role === "alert" ? "text-danger" : "text-accent"}`} role={role}>{msg}</Tag>;
 }
 
 const SIDECAR_GROUPS = [
@@ -436,6 +470,34 @@ const SIDECAR_LABELS: Record<string, string> = {
   LOG_FORMAT: "Log format",
 };
 
+const WIDGET_SEARCH_TERMS: Record<string, string[]> = {
+  "Sidecar settings": SIDECAR_GROUPS.flatMap(group => [group.title, ...group.keys, ...group.keys.map(key => SIDECAR_LABELS[key])]),
+  "Site overrides": ["domain", "default strategy", "teaser threshold", "proxy template", "cookie jar", "subscriber login", "test URL"],
+  Voices: ["reference voice slots", "audition sample text", "upload", "replace", "rename"],
+  "End chime": ["CHIME_ENABLED", "upload clip", "preview"],
+  "Authenticated feeds": ["FEED_AUTH_ENABLED", "FEED_AUTH_KEY", "feed URL", "regenerate key", "copy"],
+  "Pronunciation corrections": ["word", "spoken", "override", "spell", "case sensitive", "lexicon", "export"],
+  "Admin access": ["current password", "new password", "change password", "remove password"],
+};
+
+// Runs once at import. An entry that matches neither a GROUPS key nor a widget
+// section would never render, and a duplicate would render twice. Both are easy
+// to miss by eye and this is the only thing that keeps the lists in step; the
+// same goes for a section without a summary or search terms for a name that
+// does not exist.
+{
+  const placed = CATEGORIES.flatMap((c) => c.entries);
+  const known = [...Object.keys(GROUPS), ...STANDALONE_SECTIONS];
+  const missing = known.filter((g) => !placed.includes(g));
+  const duplicated = placed.filter((g, i) => placed.indexOf(g) !== i);
+  const unknown = placed.filter((g) => !known.includes(g));
+  const unsummarized = known.filter((g) => !(g in SECTION_SUMMARIES));
+  const strayTerms = Object.keys(WIDGET_SEARCH_TERMS).filter((g) => !known.includes(g));
+  if (missing.length || duplicated.length || unknown.length || unsummarized.length || strayTerms.length) {
+    console.error("CATEGORIES mismatch", { missing, duplicated, unknown, unsummarized, strayTerms });
+  }
+}
+
 const SIDECAR_NUMERIC_KEYS = new Set(
   SIDECAR_GROUPS.flatMap(({ keys }) => keys).filter((key) =>
     /_MS$|_SECONDS$|_POLLS$|_ATTEMPTS$|_LIMIT_MB$/.test(key)
@@ -460,58 +522,33 @@ const PASSWORD_MANAGER_IGNORE = {
 
 // One terse help line per group, rendered above the group's fields.
 const GROUP_NOTES: Record<string, string> = {
-  Feed: "applies on the next podcast-app refresh",
+  Feed: "Changes appear when the podcast app next refreshes the feed.",
   "TTS backend":
-    "wrapper is the bundled container. openai-api points at chatterbox on " +
-    "another host. that host manages its own voices, so voice slots do not " +
-    "apply and tts_api_voice names the one to use. it also returns no " +
-    "transcript, so verification needs whisper_backend on openai-api too, or off",
+    "The wrapper runs locally. The openai-api backend uses another speech server and its voices. " +
+    "Choose its voice with TTS API voice. Remote speech needs remote verification or verification turned off.",
   "TTS delivery":
-    "how long to keep trying when the wrapper is slow or restarting. a restart " +
-    "takes about 90 seconds while the models reload, so connect_retry_max_seconds " +
-    "has to outlast that or a long job dies a few seconds short",
+    "Set how long to retry a slow or restarting wrapper. The connection retry budget must outlast model loading after a restart.",
   "Job timeouts":
-    "when to give up on a job. the budget is the base plus per-chunk time, so " +
-    "long documents get proportionally longer, and stall_seconds kills one that " +
-    "has stopped making progress",
+    "The total time limit grows with the chunk count. The stall limit stops a job that no longer makes progress.",
   Timeouts:
-    "per-request budgets for the extraction cascade. raise one when an upstream " +
-    "is slow rather than losing the article",
+    "Set request time limits for extraction services. Increase a limit when that service needs more time.",
   Connections:
-    "firecrawl key optional when self-hosting. reader key is a jina key, " +
-    "free at jina.ai/reader; the keyless endpoint is rate limited",
+    "Self-hosted Firecrawl can run without a key. The reader key is for Jina Reader; requests without a key are rate limited.",
   Extraction:
-    "reader_auto_enabled retries a short scrape through the reader proxy, which sends " +
-    "the article url to that service (jina by default). turn it off to keep urls local. " +
-    "registration_email answers free \"email to keep reading\" walls: the sidecar " +
-    "types it into the signup form rather than lose the article. needs render_url. " +
-    "clearing it disables registration submissions. the publisher receives the address",
+    "Automatic reader fallback sends the article URL to the reader proxy (Jina by default). Turn it off to keep URLs local. " +
+    "Registration email lets the render service submit your address to free registration forms. Clear it to stop these submissions.",
   Webhooks:
-    "posts episode.processed and episode.failed to this url. blank disables. " +
-    "test sends to the saved url, so save first",
+    "Send episode.processed and episode.failed events to this URL. Leave it blank to disable webhooks. Save before sending a test.",
   TTS:
-    "model and language apply to the next episode, and lock while a job runs. " +
-    "the rest sizes chunks: words, char ceiling, silence between them",
+    "Model and language apply to the next episode and are locked while a job runs. Other controls set chunk sizes and silence between chunks.",
   "TTS generation":
-    "chatterbox sampling, applied to the next job. lower temperature reads " +
-    "steadier. raise repetition_penalty if words loop. lower top_p/top_k is " +
-    "safer. seed 0 is random",
+    "Sampling changes apply to the next job. Lower temperature reduces variation. Raise the repetition penalty if words loop. Seed 0 chooses a random seed.",
   Verification:
-    "regenerates a chunk when the audio drifts from the text. needs " +
-    "WHISPER_ENABLED on the wrapper. lower threshold is stricter",
+    "Regenerate chunks when narration differs from the requested text. Wrapper verification needs Whisper enabled. A lower threshold is stricter.",
   "Audio analysis":
-    "signal checks on every chunk: drone, noise, dead air, pacing. a failing " +
-    "take regenerates with a new seed and stiffer settings, up to max_regen " +
-    "(shared with the whisper checks). leave the thresholds alone unless " +
-    "chunks are being flagged wrongly",
+    "Check each chunk for noise, silence and pacing problems. Failed checks retry synthesis within the regeneration budget shared with speech verification.",
   Uploads:
-    "upload size cap, applied immediately. scanned pdfs and images are read " +
-    "with built-in ocr when there is no text layer. min_confidence rejects " +
-    "unreadable scans",
-  Pipeline:
-    "a job is stopped after stall_seconds with no progress, not for running " +
-    "long. raise it if single chunks take longer on slow hardware. the other " +
-    "three cap total runtime",
+    "The upload size limit applies immediately. OCR reads scanned PDFs and images. The minimum confidence rejects unreadable scans.",
 };
 
 // Secret fields: rendered as password inputs. The backend masks them on read
@@ -522,6 +559,8 @@ const MASKED_KEYS = new Set([
   "OPENROUTER_API_KEY",
   "FIRECRAWL_API_KEY",
   "READER_API_KEY",
+  "TTS_API_KEY",
+  "WHISPER_API_KEY",
 ]);
 // Allowlisted so the backend overlay reads them, but written only through the
 // dedicated AuthenticatedFeedsWidget -- keep them out of the generic form's
@@ -575,7 +614,7 @@ interface PromptBody {
 }
 
 // Sends a sample payload to the saved WEBHOOK_URL and reports the outcome inline,
-// reusing the same btn-ghost + mono-xs message language as the voice audition.
+// using the shared action and feedback styles.
 function WebhookTest() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [pending, setPending] = useState(false);
@@ -591,14 +630,14 @@ function WebhookTest() {
       const code = r.status_code ? ` (${r.status_code})` : "";
       setMsg(
         r.delivered
-          ? { ok: true, text: `// delivered${code}` }
-          : { ok: false, text: `// failed${code}: ${r.error ?? "no response"}` }
+          ? { ok: true, text: `Delivered${code}` }
+          : { ok: false, text: `Failed${code}: ${r.error ?? "no response"}` }
       );
     } catch (e) {
       const status = e instanceof ApiError ? e.status : 0;
       setMsg({
         ok: false,
-        text: status === 409 ? "// save a webhook URL above first" : `// request failed (${status})`,
+        text: status === 409 ? "Save a webhook URL above first." : `Request failed (${status})`,
       });
     } finally {
       setPending(false);
@@ -608,9 +647,9 @@ function WebhookTest() {
   return (
     <div className="mt-3 flex items-center gap-3 flex-wrap">
       <button type="button" className="btn-ghost" disabled={pending} onClick={run}>
-        {pending ? "testing..." : "send test webhook"}
+        {pending ? "Testing..." : "Send test webhook"}
       </button>
-      {msg && <span className={`mono-xs ${msg.ok ? "text-accent" : "text-danger"}`}>{msg.text}</span>}
+      {msg && <span className={`text-sm ${msg.ok ? "text-accent" : "text-danger"}`} role={msg.ok ? "status" : "alert"}>{msg.text}</span>}
     </div>
   );
 }
@@ -641,6 +680,8 @@ function Toggle({
 
 export default function SettingsRoute() {
   const qc = useQueryClient();
+  const [params, setParams] = useSearchParams();
+  const activeCategory = CATEGORIES.find((category) => category.name.toLowerCase() === params.get("category")) ?? CATEGORIES[0];
   // Shared app-wide auth status so a password change here also updates the
   // header (a separate query would leave the header's useAuth() stale).
   const { status: authStatus, refresh: refreshAuth } = useAuth();
@@ -690,6 +731,19 @@ export default function SettingsRoute() {
   const [qInput, setQInput] = useState("");
   const q = qInput.trim().toLowerCase();
   const searchRegionRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const chooseCategory = (name: string) => {
+    setQInput("");
+    setParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.set("category", name.toLowerCase());
+      return next;
+    });
+  };
+  const clearSearch = () => {
+    setQInput("");
+    searchInputRef.current?.focus();
+  };
 
   // Paint the matched text using the CSS Custom Highlight API: ranges are
   // registered with the browser, so nothing in the DOM is mutated and React
@@ -797,7 +851,7 @@ export default function SettingsRoute() {
       // it wants); a silent no-op reads as a successful save.
       const body = e instanceof ApiError ? (e.detail as { error?: string; detail?: string }) : null;
       setSavedMsg(null);
-      setSaveErr(body?.error || body?.detail || "save failed");
+      setSaveErr(body?.error || body?.detail || "Save failed");
     },
   });
 
@@ -879,27 +933,27 @@ export default function SettingsRoute() {
   // alongside the generic groups. null means "nothing to show yet", which keeps
   // an empty shell out of the page while its query is still loading.
   const widgets: Record<string, ReactNode | null> = {
-    "cleanup prompt":
+    "Cleanup prompt":
       promptQ.data !== undefined ? <PromptEditor initial={promptQ.data.prompt} /> : null,
-    "pronunciation corrections":
+    "Pronunciation corrections":
       correctionsQ.data !== undefined ? <CorrectionsTable initial={correctionsQ.data} /> : null,
-    "site overrides":
+    "Site overrides":
       fallbacksQ.data !== undefined ? <SourceFallbacksTable initial={fallbacksQ.data} /> : null,
-    voices: <VoicesWidget />,
-    "end chime": <ChimeWidget />,
-    "authenticated feeds": <AuthenticatedFeedsWidget />,
+    Voices: <VoicesWidget />,
+    "End chime": <ChimeWidget />,
+    "Authenticated feeds": <AuthenticatedFeedsWidget />,
     "Admin access": authStatus ? (
       <SecuritySection passwordSet={authStatus.password_set} onChanged={refreshAuth} />
     ) : null,
-    "sidecar settings": <SidecarSettingsWidget />,
-    "system info": (
+    "Sidecar settings": <SidecarSettingsWidget />,
+    "System info": (
       <>
-        <ReadOnlyRow label="version" value={healthQ.data?.version ?? "loading"} />
-        <ReadOnlyRow label="uptime" value={formatUptime(healthQ.data?.uptime_seconds)} />
-        <ReadOnlyRow label="password_set" value={String(authStatus?.password_set ?? "loading")} />
-        <ReadOnlyRow label="authenticated" value={String(authStatus?.authenticated ?? "loading")} />
-        <div className="flex justify-between font-mono text-[11px] pt-1">
-          <span className="text-dim uppercase">api docs</span>
+        <ReadOnlyRow label="Version" value={healthQ.data?.version ?? "loading"} />
+        <ReadOnlyRow label="Uptime" value={formatUptime(healthQ.data?.uptime_seconds)} />
+        <ReadOnlyRow label="Password set" value={String(authStatus?.password_set ?? "loading")} />
+        <ReadOnlyRow label="Authenticated" value={String(authStatus?.authenticated ?? "loading")} />
+        <div className="flex flex-wrap justify-between gap-2 text-sm pt-1">
+          <span className="text-dim">API docs</span>
           <a
             href="/api/v1/docs"
             target="_blank"
@@ -951,45 +1005,60 @@ export default function SettingsRoute() {
     });
   };
 
-  // A group matches when its own name matches, or any key it displays does.
-  // Keys are matched with underscores treated as spaces too, so "max f0" finds
-  // AUDIO_ANALYSIS_MAX_F0_SEMITONES.
-  const matchedGroups = new Set<string>();
-  if (q) {
-    for (const [group, keys] of Object.entries(visibleKeysByGroup)) {
-      const hay = [group, GROUP_NOTES[group] ?? "", ...keys]
-        .join(" ")
-        .toLowerCase()
-        .replace(/_/g, " ");
-      if (hay.includes(q.replace(/_/g, " "))) matchedGroups.add(group);
-    }
-    for (const title of STANDALONE_SECTIONS) {
-      if (title.toLowerCase().includes(q)) matchedGroups.add(title);
-    }
-  }
+  const presentByCategory = CATEGORIES.map((category) => ({
+    ...category,
+    entries: category.entries.filter((name) =>
+      name in GROUPS ? visibleKeysByGroup[name].length > 0 : widgets[name] != null
+    ),
+  }));
+  // Every word of the query must appear somewhere in the section's own text:
+  // name, summary, help note, keys, labels, widget terms. Category names stay
+  // out so "voice" does not light up every Voice section.
+  const terms = q.replace(/_/g, " ").split(/\s+/);
+  const matchedGroups = new Set(
+    q
+      ? presentByCategory
+          .flatMap((category) => category.entries)
+          .filter((group) => {
+            const keys = visibleKeysByGroup[group] ?? [];
+            const hay = [
+              group,
+              SECTION_SUMMARIES[group],
+              GROUP_NOTES[group] ?? "",
+              ...keys,
+              ...keys.map(settingLabel),
+              ...(WIDGET_SEARCH_TERMS[group] ?? []),
+            ].join(" ").toLowerCase().replace(/_/g, " ");
+            return terms.every((term) => hay.includes(term));
+          })
+      : []
+  );
 
   return (
     <SettingsSearchContext.Provider value={q ? matchedGroups : null}>
-    <div className="space-y-4">
-      <h1 className="text-2xl font-black tracking-tight">Settings</h1>
-      <div className="search-wrap mb-4">
-        <span className="search-slash" aria-hidden="true">
-          /
-        </span>
+    <div className="settings-page space-y-6">
+      <div>
+        <h1 className="text-2xl font-black tracking-tight">Settings</h1>
+        <p className="text-sm text-dim mt-1">Choose a category or search all settings.</p>
+      </div>
+      <div className="search-wrap">
+        <span className="search-icon" aria-hidden="true" />
         <input
+          ref={searchInputRef}
           type="search"
           className="field"
-          placeholder="Search settings"
+          placeholder="Search all settings"
           autoComplete="off"
           value={qInput}
           onChange={(e) => setQInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Escape") clearSearch(); }}
           aria-label="Search settings"
         />
         {qInput && (
           <button
             type="button"
             className="search-clear"
-            onClick={() => setQInput("")}
+            onClick={clearSearch}
             aria-label="Clear search"
           >
             &times;
@@ -997,31 +1066,53 @@ export default function SettingsRoute() {
         )}
       </div>
 
-      {q && matchedGroups.size === 0 && (
-        <p className="text-mute text-sm">nothing matches "{qInput.trim()}".</p>
+      <div className="settings-layout">
+        <aside className="settings-sidebar">
+          <nav className="settings-nav" aria-label="Settings categories">
+            {CATEGORIES.map((category) => (
+              <button key={category.name} type="button" aria-current={!q && activeCategory.name === category.name ? "true" : undefined}
+                aria-controls="settings-sections" onClick={() => chooseCategory(category.name)}>
+                <span>{category.name}</span>
+                <span className="settings-nav-description">{category.description}</span>
+              </button>
+            ))}
+          </nav>
+          <div className="settings-category-select">
+            <label className="label" htmlFor="settings-category">Settings category</label>
+            <select id="settings-category" className="field" value={q ? "search" : activeCategory.name}
+              onChange={(e) => chooseCategory(e.target.value)}>
+              {q && <option value="search" disabled>Search results in all categories</option>}
+              {CATEGORIES.map((category) => <option key={category.name}>{category.name}</option>)}
+            </select>
+          </div>
+        </aside>
+      <div ref={searchRegionRef} id="settings-sections" className="settings-content space-y-4">
+      {q && (
+        <div className="settings-search-status" role="status">
+          <p>{matchedGroups.size === 0 ? `No settings match "${qInput.trim()}".` : `${matchedGroups.size} matching section${matchedGroups.size === 1 ? "" : "s"} across all categories`}</p>
+          {matchedGroups.size === 0 && <p className="text-dim mt-1">Try a name such as voice, password or chapters.</p>}
+          <button className="btn-ghost mt-3" type="button" onClick={clearSearch}>Back to {activeCategory.name}</button>
+        </div>
       )}
-
-      <div ref={searchRegionRef} className="space-y-4">
-      {CATEGORIES.map((category) => {
-        // An entry appears only if it has something to show: a group with at
-        // least one visible key, or a widget whose data has loaded.
-        const present = category.entries.filter((name) =>
-          name in GROUPS ? (visibleKeysByGroup[name]?.length ?? 0) > 0 : widgets[name] != null
-        );
-        const shown = q ? present.filter((name) => matchedGroups.has(name)) : present;
-        if (shown.length === 0) return null;
+      {presentByCategory.map((category) => {
+        const active = q ? category.entries.some((name) => matchedGroups.has(name)) : activeCategory.name === category.name;
         return (
-          <section key={category.name} className="space-y-3">
-            <h2 className="category-heading">{category.name}</h2>
-            {shown.map((name) => {
+          <section key={category.name} hidden={!active} className="space-y-3" aria-labelledby={`category-${category.name}`}>
+            <div className="settings-category-header">
+              <h2 id={`category-${category.name}`} className="category-heading">{category.name}</h2>
+              <p className="text-sm text-dim">{category.description}</p>
+            </div>
+            {category.entries.map((name) => {
               if (!(name in GROUPS)) {
                 return (
                   <CollapsibleSection
                     key={name}
                     title={name}
+                    description={SECTION_SUMMARIES[name]}
+                    active={active}
                     storageKey={name === "Admin access" ? "settings-section-security" : undefined}
                     searchKey={name}
-                    defaultOpen={name === "system info"}
+                    defaultOpen={name === "System info"}
                   >
                     {widgets[name]}
                   </CollapsibleSection>
@@ -1033,11 +1124,13 @@ export default function SettingsRoute() {
                 <CollapsibleSection
                   key={group}
                   title={group}
+                  description={SECTION_SUMMARIES[group]}
+                  active={active}
                   searchKey={group}
                   defaultOpen={group === "LLM"}
                 >
                   {GROUP_NOTES[group] && (
-                    <p className="mono-xs text-mute mb-3">// {GROUP_NOTES[group]}</p>
+                    <p className="text-sm text-dim mb-4 leading-relaxed">{GROUP_NOTES[group]}</p>
                   )}
             {visible.map((key) => {
               const isBool = boolKeys.has(key);
@@ -1174,7 +1267,7 @@ export default function SettingsRoute() {
                 }
                 onClick={() => resetGroupToDefaults(visible)}
               >
-                // reset to defaults
+                Reset to defaults
               </button>
             </div>
                 </CollapsibleSection>
@@ -1184,6 +1277,7 @@ export default function SettingsRoute() {
         );
       })}
       </div>
+      </div>
 
       {/* Appears only when there is something to save, or something to report
           about the last attempt. Saving clears the dirty set, so the bar has to
@@ -1191,12 +1285,12 @@ export default function SettingsRoute() {
       {(dirtyKeys.length > 0 || putM.isPending || savedMsg || saveErr) && (
         <div className="save-bar">
         {saveErr ? (
-            <span className="mono-xs text-danger mr-auto" role="alert">{saveErr}</span>
+            <span className="text-sm text-danger mr-auto" role="alert">{saveErr}</span>
           ) : savedMsg && dirtyKeys.length === 0 ? (
-            <span className="mono-xs text-accent mr-auto" role="status">{savedMsg}</span>
+            <span className="text-sm text-accent mr-auto" role="status">{savedMsg}</span>
           ) : (
-            <span className="mono-xs text-mute mr-auto">
-              {putM.isPending ? "Saving settings..." : `${dirtyKeys.length} settings changed`}
+            <span className="text-sm text-dim mr-auto" role="status">
+              {putM.isPending ? "Saving settings..." : `${dirtyKeys.length} unsaved ${dirtyKeys.length === 1 ? "change" : "changes"}`}
             </span>
           )}
           {dirtyKeys.length > 0 && (
@@ -1224,10 +1318,9 @@ function ArtworkPreview({ value }: { value: string }) {
     <div className="mt-2 flex items-center gap-3">
       {failed ? (
         <div
-          className="artwork-preview grid place-items-center mono-xs text-mute"
-          style={{ background: "#15151a" }}
+          className="artwork-preview grid place-items-center text-xs text-mute bg-surface"
         >
-          no image
+          No image
         </div>
       ) : (
         <img
@@ -1237,8 +1330,8 @@ function ArtworkPreview({ value }: { value: string }) {
           onError={() => setFailed(true)}
         />
       )}
-      <span className="mono-xs text-mute">
-        {value.trim() ? "custom cover" : "branding default (/media/default.jpg)"}
+      <span className="text-sm text-mute">
+        {value.trim() ? "Custom cover" : "Default cover"}
       </span>
     </div>
   );
@@ -1333,15 +1426,15 @@ function ModelField({
         disabled={testM.isPending || provider === ""}
         onClick={() => testM.mutate(testConfigKey)}
       >
-        {testM.isPending ? "testing..." : "test provider"}
+        {testM.isPending ? "Testing..." : "Test provider"}
       </button>
       {testM.data && testM.variables === testConfigKey && (
-        <span className={`mono-xs ${testM.data.ok ? "text-accent" : "text-danger"}`}>
+        <span className={`text-sm ${testM.data.ok ? "text-accent" : "text-danger"}`} role={testM.data.ok ? "status" : "alert"}>
           {testM.data.detail}
         </span>
       )}
       {testM.isError && testM.variables === testConfigKey && (
-        <span className="mono-xs text-danger" role="alert">Provider test failed.</span>
+        <span className="text-sm text-danger" role="alert">Provider test failed.</span>
       )}
     </>
   );
@@ -1353,11 +1446,11 @@ function ModelField({
           id="LLM_MODEL"
           className="field flex-1 min-w-[12rem]"
           value={value}
-          placeholder="model id"
+          placeholder="Model ID"
           onChange={(e) => onChange(e.target.value)}
         />
         <button type="button" className="btn-ghost" onClick={() => setFreeText(false)}>
-          list
+          Choose from list
         </button>
         {testControl}
       </div>
@@ -1385,12 +1478,12 @@ function ModelField({
         className="btn-ghost"
         disabled={refreshM.isPending || provider === ""}
         onClick={() => refreshM.mutate()}
-        title="refresh model list from provider"
+        title="Refresh model list from provider"
       >
         {refreshM.isPending ? "..." : "refresh"}
       </button>
       <button type="button" className="btn-ghost" onClick={() => setFreeText(true)}>
-        custom
+        Custom model
       </button>
       {testControl}
     </div>
@@ -1415,7 +1508,7 @@ function SecuritySection({
       return api("/api/v1/auth/password", { method: "PUT", body: JSON.stringify(body) });
     },
     onSuccess: (_data, clear) => {
-      setMsg(clear ? "password removed" : "password saved");
+      setMsg(clear ? "Password removed" : "Password saved");
       setCurrent("");
       setNext("");
       onChanged();
@@ -1423,12 +1516,12 @@ function SecuritySection({
     },
     onError: (e) => {
       if (e instanceof ApiError) {
-        if (e.status === 401) setMsg("current password is incorrect");
+        if (e.status === 401) setMsg("Current password is incorrect");
         else if (e.status === 400)
           setMsg(
             typeof e.detail === "object" && e.detail && "detail" in e.detail
               ? String((e.detail as { detail: unknown }).detail)
-              : "invalid request"
+              : "Invalid request"
           );
         else setMsg(`error ${e.status}`);
       } else {
@@ -1440,14 +1533,14 @@ function SecuritySection({
   return (
     <section className="space-y-3">
       {!passwordSet && (
-        <p className="text-danger text-xs font-mono">
-          no password set - the admin UI and API are open to anyone. set one below.
+        <p className="text-danger text-sm">
+          No password is set. Set one below to restrict admin access.
         </p>
       )}
       {passwordSet && (
         <div>
           <label className="label" htmlFor="cur-pw">
-            current password
+            Current password
           </label>
           <input
             id="cur-pw"
@@ -1461,7 +1554,7 @@ function SecuritySection({
       )}
       <div>
         <label className="label" htmlFor="new-pw">
-          {passwordSet ? "new password (min 8 chars)" : "password (min 8 chars)"}
+          {passwordSet ? "New password (minimum 8 characters)" : "Password (minimum 8 characters)"}
         </label>
         <input
           id="new-pw"
@@ -1478,21 +1571,21 @@ function SecuritySection({
           disabled={m.isPending || next.length < 8}
           onClick={() => m.mutate(false)}
         >
-          {passwordSet ? "change password" : "set password"}
+          {passwordSet ? "Change password" : "Set password"}
         </button>
         {passwordSet && (
           <button
-            className="btn-ghost text-danger"
+            className="btn-ghost btn-danger"
             disabled={m.isPending}
             onClick={() => {
               if (confirm("Remove the password and reopen the admin UI to anyone?"))
                 m.mutate(true);
             }}
           >
-            remove password
+            Remove password
           </button>
         )}
-      {msg && <span className={`font-mono text-sm ${msg.includes("failed") ? "text-danger" : "text-accent"}`} role={feedbackRole(msg)}>{msg}</span>}
+      <FeedbackMsg msg={msg} />
       </div>
     </section>
   );
@@ -1500,9 +1593,9 @@ function SecuritySection({
 
 function ReadOnlyRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex justify-between font-mono text-[11px]">
-      <span className="text-dim uppercase">{label}</span>
-      <span className="text-fg">{value}</span>
+    <div className="flex flex-wrap justify-between gap-2 text-sm">
+      <span className="text-dim">{label}</span>
+      <span className="text-fg font-mono break-all">{value}</span>
     </div>
   );
 }
@@ -1524,10 +1617,11 @@ function PromptEditor({ initial }: { initial: string }) {
         body: JSON.stringify({ prompt: text }),
       }),
     onSuccess: () => {
-      setMsg("saved");
+      setMsg("Saved");
       setTimeout(() => setMsg(null), 2000);
       qc.invalidateQueries({ queryKey: ["prompt"] });
     },
+    onError: () => setMsg("Save failed. Try again."),
   });
 
   // Reset clears the DB override; the response carries the packaged default,
@@ -1536,31 +1630,33 @@ function PromptEditor({ initial }: { initial: string }) {
     mutationFn: () => api<PromptBody>("/api/v1/prompt", { method: "DELETE" }),
     onSuccess: (data) => {
       setText(data.prompt);
-      setMsg("reset to default");
+      setMsg("Reset to default");
       setTimeout(() => setMsg(null), 2000);
       qc.invalidateQueries({ queryKey: ["prompt"] });
     },
+    onError: () => setMsg("Reset failed. Try again."),
   });
 
   return (
     <section className="space-y-3">
       <textarea
+        aria-label="Cleanup prompt"
         className="field min-h-[200px] font-mono text-xs"
         value={text}
         onChange={(e) => setText(e.target.value)}
       />
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <button className="btn-primary" disabled={m.isPending} onClick={() => m.mutate()}>
-          {m.isPending ? "saving..." : "save prompt"}
+          {m.isPending ? "Saving..." : "Save prompt"}
         </button>
         <button
           className="btn-ghost"
           disabled={reset.isPending}
           onClick={() => reset.mutate()}
         >
-          {reset.isPending ? "resetting..." : "reset to default"}
+          {reset.isPending ? "Resetting..." : "Reset to default"}
         </button>
-        {msg && <span className={`font-mono text-sm ${msg.includes("failed") || msg.includes("incorrect") ? "text-danger" : "text-accent"}`} role={feedbackRole(msg)}>{msg}</span>}
+        <FeedbackMsg msg={msg} />
       </div>
     </section>
   );
@@ -1618,10 +1714,11 @@ function CorrectionsTable({ initial }: { initial: Record<string, CorrectionEntry
       });
     },
     onSuccess: () => {
-      setMsg("saved");
+      setMsg("Saved");
       setTimeout(() => setMsg(null), 2000);
       qc.invalidateQueries({ queryKey: ["corrections"] });
     },
+    onError: () => setMsg("Save failed. Try again."),
   });
 
   // Clear all user corrections (built-in fixes are unaffected).
@@ -1629,10 +1726,11 @@ function CorrectionsTable({ initial }: { initial: Record<string, CorrectionEntry
     mutationFn: () => api("/api/v1/corrections", { method: "DELETE" }),
     onSuccess: () => {
       setRows([]);
-      setMsg("cleared");
+      setMsg("Cleared");
       setTimeout(() => setMsg(null), 2000);
       qc.invalidateQueries({ queryKey: ["corrections"] });
     },
+    onError: () => setMsg("Clear failed. Try again."),
   });
 
   return (
@@ -1676,7 +1774,7 @@ function CorrectionsTable({ initial }: { initial: Record<string, CorrectionEntry
                 <option value="word">word</option>
                 <option value="spell">spell</option>
               </select>
-              <label className="mono-xs text-mute flex items-center gap-1" title="case-sensitive">
+              <label className="text-sm text-mute flex items-center gap-1" title="case-sensitive">
                 <input
                   type="checkbox"
                   aria-label="Case sensitive"
@@ -1696,30 +1794,30 @@ function CorrectionsTable({ initial }: { initial: Record<string, CorrectionEntry
           );
         })}
         <button className="btn-ghost" onClick={() => setRows((r) => [...r, newRow()])}>
-          add row
+          Add row
         </button>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="mono-xs text-mute">export:</span>
+        <span className="text-sm text-mute">Export:</span>
         <a className="btn-ghost" href="/api/v1/corrections/export?scope=user">
           JSON
         </a>
         <a className="btn-ghost" href="/api/v1/corrections/export?scope=all">
-          full lexicon (JSON)
+          Full lexicon (JSON)
         </a>
       </div>
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <button className="btn-primary" disabled={m.isPending} onClick={() => m.mutate()}>
-          {m.isPending ? "saving..." : "save corrections"}
+          {m.isPending ? "Saving..." : "Save corrections"}
         </button>
         <button
           className="btn-ghost"
           disabled={reset.isPending || rows.length === 0}
           onClick={() => reset.mutate()}
         >
-          {reset.isPending ? "clearing..." : "clear all"}
+          {reset.isPending ? "Clearing..." : "Clear all"}
         </button>
-        {msg && <span className={`font-mono text-sm ${msg.includes("failed") ? "text-danger" : "text-accent"}`} role={feedbackRole(msg)}>{msg}</span>}
+        <FeedbackMsg msg={msg} />
       </div>
     </section>
   );
@@ -1796,14 +1894,14 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
         }),
       }),
     onSuccess: () => {
-      setMsg("saved");
+      setMsg("Saved");
       setTimeout(() => setMsg(null), 2000);
       qc.invalidateQueries({ queryKey: ["source-fallbacks"] });
     },
     onError: (e) => {
       const detail =
         e instanceof ApiError ? (e.detail as { detail?: string })?.detail : null;
-      setMsg(detail || "save failed");
+      setMsg(detail ? `Save failed: ${detail}` : "Save failed. Try again.");
     },
   });
 
@@ -1826,7 +1924,7 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
       ),
     onError: (e) =>
       setTestResult(
-        (e instanceof ApiError ? (e.detail as { detail?: string })?.detail : null) || "test failed"
+        (e instanceof ApiError ? (e.detail as { detail?: string })?.detail : null) || "Test failed"
       ),
   });
 
@@ -1853,7 +1951,7 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
       <div className="flex flex-wrap items-end gap-4">
         <div>
           <label className="label" htmlFor="fb-default-proxy">
-            default strategy
+            Default strategy
           </label>
           <select
             id="fb-default-proxy"
@@ -1870,7 +1968,7 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
         </div>
         <div>
           <label className="label" htmlFor="fb-min-chars">
-            teaser threshold (chars)
+            Teaser threshold (characters)
           </label>
           <input
             id="fb-min-chars"
@@ -1956,22 +2054,22 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
           className="btn-ghost"
           onClick={() => setRows((r) => [...r, newFallbackRow()])}
         >
-          add site
+          Add site
         </button>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <button className="btn-primary" disabled={m.isPending} onClick={() => m.mutate()}>
-          {m.isPending ? "saving..." : "save site overrides"}
+          {m.isPending ? "Saving..." : "Save site overrides"}
         </button>
-        {msg && <span className={`font-mono text-sm ${msg.includes("failed") ? "text-danger" : "text-accent"}`} role={feedbackRole(msg)}>{msg}</span>}
+        <FeedbackMsg msg={msg} />
       </div>
 
       <div className="space-y-1 pt-2">
         <div className="flex flex-wrap items-center gap-2">
           <input
             className="field flex-1 min-w-[12rem]"
-            placeholder="test a URL"
+            placeholder="Test a URL"
             aria-label="URL to test against site overrides"
             value={testUrl}
             onChange={(e) => setTestUrl(e.target.value)}
@@ -1984,10 +2082,10 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
               testM.mutate();
             }}
           >
-            {testM.isPending ? "testing..." : "test"}
+            {testM.isPending ? "Testing..." : "Test"}
           </button>
         </div>
-        {testResult && <p className="text-mute text-xs font-mono">{testResult}</p>}
+        {testResult && <p className="text-mute text-sm">{testResult}</p>}
       </div>
     </section>
   );
@@ -2005,14 +2103,14 @@ function LexiconLookup() {
     setResult(
       body.entry
         ? `${body.entry.origin}: "${body.entry.spoken}" (${body.entry.mode})`
-        : "no match in the built-in lexicon"
+        : "No match in the built-in lexicon"
     );
   };
   return (
     <div className="flex flex-wrap items-center gap-2">
       <input
         className="field flex-1 min-w-[8rem]"
-        placeholder="look up a word"
+        placeholder="Look up a word"
         aria-label="Look up a word"
         value={q}
         onChange={(e) => {
@@ -2022,9 +2120,9 @@ function LexiconLookup() {
         onKeyDown={(e) => e.key === "Enter" && search()}
       />
       <button className="btn-ghost" onClick={search}>
-        look up
+        Look up
       </button>
-      {result && <span className="mono text-mute" role="status" aria-live="polite">{result}</span>}
+      {result && <span className="text-sm text-mute" role="status" aria-live="polite">{result}</span>}
     </div>
   );
 }
@@ -2084,7 +2182,7 @@ function VoiceRow({
       <div className="flex items-center gap-2">
         <span className="format-badge">{badge}</span>
         {name}
-        <span className="mono-xs text-mute shrink-0">
+        <span className="text-sm text-mute shrink-0">
           {filled ? `${durationSecs ?? "?"}s` : "empty"}
         </span>
       </div>
@@ -2095,7 +2193,7 @@ function VoiceRow({
         <VoiceUploadButton replace={filled} onPick={onUpload} />
         {filled && (
           <button className="btn-ghost" disabled={auditioning} onClick={onAudition}>
-            {auditioning ? "auditioning..." : "Audition"}
+            {auditioning ? "Auditioning..." : "Audition"}
           </button>
         )}
         {filled && onClear && (
@@ -2148,7 +2246,7 @@ function VoicesWidget() {
   };
 
   const upload = async (path: string, f: File, ok: string) => {
-    setMsg("uploading...");
+    setMsg("Uploading...");
     const fd = new FormData();
     fd.append("voice", f);
     const r = await sendForm(path, "POST", fd);
@@ -2158,7 +2256,7 @@ function VoicesWidget() {
 
   const audition = async (key: string, path: string) => {
     if (sample.trim().length < 4) {
-      setMsg("audition sample text must be at least 4 characters");
+      setMsg("Audition sample text must be at least 4 characters");
       return;
     }
     setAuditioning(key);
@@ -2202,13 +2300,13 @@ function VoicesWidget() {
 
   return (
     <div className="space-y-3">
-      <p className="mono-xs text-mute">
-        // a random filled slot narrates each episode unless you pick one at submit.
-        at least one slot must stay loaded. uploads take wav, mp3, m4a, flac, or ogg
+      <p className="text-sm text-mute">
+        A random filled slot narrates each episode unless you choose a voice on Home.
+        Keep at least one slot loaded. Upload WAV, MP3, M4A, FLAC or OGG.
       </p>
       <div>
         <label className="label" htmlFor="voice-sample">
-          audition sample text
+          Audition sample text
         </label>
         <textarea
           id="voice-sample"
@@ -2217,7 +2315,7 @@ function VoicesWidget() {
           onChange={(e) => setSample(e.target.value)}
         />
       </div>
-      {msg && <p className={`mono ${/failed|cannot/i.test(msg) ? "text-danger" : "text-accent"}`} role={feedbackRole(msg)}>{msg}</p>}
+      <FeedbackMsg msg={msg} as="p" />
       {auditionUrl && (
         <audio src={auditionUrl} controls autoPlay className="w-full" aria-label="Generated voice audition" />
       )}
@@ -2287,12 +2385,12 @@ function ChimeWidget() {
   };
 
   const upload = async (f: File) => {
-    setMsg("uploading...");
+    setMsg("Uploading...");
     const fd = new FormData();
     fd.append("file", f);
     try {
       await postForm("/api/v1/chime", fd);
-      setMsg("chime saved");
+      setMsg("Chime saved");
       invalidate();
     } catch (e) {
       const status = e instanceof ApiError ? e.status : 0;
@@ -2304,7 +2402,7 @@ function ChimeWidget() {
     if (!confirm("Remove the end-of-episode chime?")) return;
     try {
       await api("/api/v1/chime", { method: "DELETE" });
-      setMsg("chime removed");
+      setMsg("Chime removed");
       invalidate();
     } catch (e) {
       const status = e instanceof ApiError ? e.status : 0;
@@ -2315,26 +2413,26 @@ function ChimeWidget() {
   const data = chimeQ.data;
   return (
     <div className="space-y-3">
-      <p className="mono-xs text-mute">
-        // plays at the end of every episode. wav/mp3/m4a/flac/ogg, trimmed to 15s
+      <p className="text-sm text-mute">
+        Plays at the end of every episode. Upload WAV, MP3, M4A, FLAC or OGG, trimmed to 15 seconds.
       </p>
       <div className="flex items-center justify-between gap-3 py-1">
         <label className="label mb-0" htmlFor="CHIME_ENABLED">
-          enabled
+          Enabled
         </label>
         <Toggle id="CHIME_ENABLED" checked={enabled} onChange={(v) => toggleM.mutate(v)} />
       </div>
       {data?.present && !enabled && (
-        <p className="mono-xs text-danger">
-          // a clip is uploaded but the chime is off. enable it above to hear it
+        <p className="text-sm text-danger">
+          A clip is uploaded, but the chime is off. Enable it above to hear it.
         </p>
       )}
       {!data?.present && enabled && (
-        <p className="mono-xs text-mute">
-          // enabled, but no clip uploaded yet. nothing plays until you add one
+        <p className="text-sm text-mute">
+          The chime is enabled. Upload a clip to hear it at the end of each episode.
         </p>
       )}
-      {msg && <p className={`mono ${/failed|cannot/i.test(msg) ? "text-danger" : "text-accent"}`} role={feedbackRole(msg)}>{msg}</p>}
+      <FeedbackMsg msg={msg} as="p" />
       {data?.present && (
         <audio
           src={`/api/v1/chime/preview?v=${bust}`}
@@ -2343,7 +2441,7 @@ function ChimeWidget() {
           aria-label="End-of-episode chime preview"
         />
       )}
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <label className="btn-ghost cursor-pointer">
           {data?.present ? "Replace clip" : "Upload clip"}
           <input
@@ -2359,8 +2457,8 @@ function ChimeWidget() {
         </label>
         {data?.present && (
           <>
-            <span className="mono-xs text-mute">chime: {data.duration_secs}s</span>
-            <button className="btn-ghost" onClick={clear}>
+            <span className="text-sm text-mute">Chime: {data.duration_secs} seconds</span>
+            <button className="btn-ghost btn-danger" onClick={clear}>
               Clear
             </button>
           </>
@@ -2395,7 +2493,7 @@ function CopyRow({
           onFocus={(e) => e.target.select()}
         />
         <button className="btn-ghost shrink-0" onClick={onCopy}>
-          {copied ? "copied" : "copy"}
+          {copied ? "Copied" : "Copy"}
         </button>
       </div>
     </div>
@@ -2435,7 +2533,7 @@ function AuthenticatedFeedsWidget() {
     onSuccess: (d) => {
       qc.setQueryData(["feed-auth"], d);
       qc.invalidateQueries({ queryKey: ["settings"] });
-      setMsg("key rotated. re-subscribe every app with the new url");
+      setMsg("Key rotated. Subscribe again in each app using the new URL.");
     },
     onError: (e) => setMsg(`rotate failed${e instanceof ApiError ? ` (${e.status})` : ""}`),
   });
@@ -2446,7 +2544,7 @@ function AuthenticatedFeedsWidget() {
       setCopied(field);
       setTimeout(() => setCopied((c) => (c === field ? null : c)), 1500);
     } catch {
-      setMsg("copy failed. select the field and copy manually");
+      setMsg("Copy failed. Select the field and copy manually.");
     }
   };
 
@@ -2463,12 +2561,12 @@ function AuthenticatedFeedsWidget() {
 
   return (
     <div className="space-y-3">
-      <p className="mono-xs text-mute">
-        // requires a key on every feed and media url. off = anyone with the url can subscribe
+      <p className="text-sm text-mute">
+        Require a key on feed and media URLs. When disabled, anyone with the URL can subscribe.
       </p>
       <div className="flex items-center justify-between gap-3 py-1">
         <label className="label mb-0" htmlFor="FEED_AUTH_ENABLED">
-          enabled
+          Enabled
         </label>
         <Toggle
           id="FEED_AUTH_ENABLED"
@@ -2480,13 +2578,13 @@ function AuthenticatedFeedsWidget() {
         />
       </div>
       {enabled && (
-        <p className="mono-xs text-danger">
-          // subscribed apps get 401 until re-subscribed with the keyed url below
+        <p className="text-sm text-danger">
+          Subscribe again using the feed URL below. Apps with the old URL cannot access the feed.
         </p>
       )}
       {enabled && data?.keyed_feed_url && (
         <CopyRow
-          label="feed url"
+          label="Feed URL"
           value={data.keyed_feed_url}
           copied={copied === "url"}
           onCopy={() => copy("url", data.keyed_feed_url!)}
@@ -2500,10 +2598,10 @@ function AuthenticatedFeedsWidget() {
           onCopy={() => copy("key", data.key!)}
         />
       )}
-      {msg && <p className={`mono ${/failed|cannot/i.test(msg) ? "text-danger" : "text-accent"}`} role={feedbackRole(msg)}>{msg}</p>}
+      <FeedbackMsg msg={msg} as="p" />
       {enabled && (
-        <button className="btn-ghost" onClick={regenerate} disabled={regenM.isPending}>
-          {regenM.isPending ? "rotating..." : "Regenerate key"}
+        <button className="btn-ghost btn-danger" onClick={regenerate} disabled={regenM.isPending}>
+          {regenM.isPending ? "Rotating..." : "Regenerate key"}
         </button>
       )}
     </div>

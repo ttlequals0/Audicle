@@ -2,7 +2,7 @@
 
 ## Reference voice slots
 
-The wrapper narrates each episode by conditioning on a short reference clip you supply. Manage clips in Settings under "voices": five labelled slots. Each row plays its stored clip and can audition a TTS sample, so you hear a voice before you use it.
+The wrapper narrates each episode by conditioning on a short reference clip you supply. Manage clips under Settings > Voice > Voices: five labelled slots. Each row plays its stored clip and can audition a TTS sample, so you hear a voice before you use it.
 
 Each episode picks a voice at submit time from the picker under the Submit button on Home: Random (a random filled slot), Last used, or a specific slot. At least one slot must stay filled: submit and upload are rejected with a 400 until a voice is loaded (unless TTS runs on a [remote backend](#running-tts-on-another-host), which manages its own voices). A job with no recorded voice falls back to the lowest filled slot at synthesis time.
 
@@ -12,15 +12,15 @@ Output quality mostly tracks clip quality. Cleaning the source (noise reduction,
 
 ## Models and languages
 
-The TTS model and narration language are switchable in Settings under TTS: `chatterbox` (English, the default) or `chatterbox-multilingual`. Both apply on the next episode with no restart, and the dropdowns lock while a job is running so an episode never changes voice partway through.
+The TTS model and narration language are switchable under Settings > Voice > TTS: `chatterbox` (English, the default) or `chatterbox-multilingual`. Both apply on the next episode with no restart, and the dropdowns lock while a job is running so an episode never changes voice partway through.
 
 Generation tuning (temperature, repetition penalty, top-p, top-k, seed, per-call character cap) lives in the TTS generation group and rides on every request to the wrapper, so a change applies to the next job.
 
-The wrapper unloads its TTS and Whisper models after 300 idle seconds by default, releasing their GPU memory. The next synthesis request reloads the configured models before it runs. In the TTS wrapper settings, set `TTS_IDLE_UNLOAD_SECONDS` to `0` to keep models resident, or choose another nonnegative timeout. Memory limits, inference timeout, and Whisper configuration are also adjustable there. Whisper changes wait for active synthesis to finish and load the replacement verifier when needed.
+The wrapper unloads its TTS and Whisper models after 300 idle seconds by default, releasing their GPU memory. The next synthesis request reloads the configured models before it runs. Under Settings > Services > Sidecar settings > TTS wrapper, set `TTS_IDLE_UNLOAD_SECONDS` to `0` to keep models resident, or choose another nonnegative timeout. Memory limits, inference timeout, and Whisper configuration are also adjustable there. Whisper changes wait for active synthesis to finish and load the replacement verifier when needed.
 
 ## End-of-episode chime
 
-Settings has an "end chime" section: upload one short clip that plays at the end of every episode, so back-to-back episodes are easy to tell apart on autoplay. Turn it on with the toggle in that same section (`CHIME_ENABLED`); the clip is transcoded and loudness-matched to the narration. Upload WAV/MP3/M4A/FLAC/OGG, trimmed to about 15 seconds. Delete it to stop.
+Under Settings > Voice > End chime, upload one short clip that plays at the end of every episode, so back-to-back episodes are easy to tell apart on autoplay. Turn it on with the toggle in that same section (`CHIME_ENABLED`); the clip is transcoded and loudness-matched to the narration. Upload WAV/MP3/M4A/FLAC/OGG, trimmed to about 15 seconds. Delete it to stop.
 
 ## Running TTS on another host
 

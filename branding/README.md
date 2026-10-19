@@ -2,6 +2,8 @@
 
 Canonical brand assets for Audicle. Single source of truth across backend, frontend, and any other consumer.
 
+For application layouts, component states, accessibility and settings navigation, follow the [UI design guide](design-guide.md).
+
 ## Contents
 
 | File | Purpose |
@@ -15,7 +17,7 @@ Canonical brand assets for Audicle. Single source of truth across backend, front
 | `favicon.svg` | Optimized for small sizes (thicker strokes). |
 | `favicon-32.png`, `favicon-16.png` | Rasterized favicons. |
 | `tokens.json` | Design tokens (color, typography, radius). Machine-readable. |
-| `tokens.css` | CSS custom properties version of the tokens. |
+| `tokens.css` | Generated CSS custom properties, imported by the frontend. Run `node scripts/sync_design_tokens.mjs` after editing `tokens.json`. |
 
 ## Palette
 
@@ -28,18 +30,18 @@ Canonical brand assets for Audicle. Single source of truth across backend, front
 | line | `#26262e` | Borders, dividers. |
 | text | `#f5f5f5` | Primary text. |
 | text_dim | `#9a9aaa` | Secondary text. |
-| text_mute | `#6b6b78` | Helper text and muted labels. |
+| text_mute | `#9a9aaa` | Helper text and muted labels. |
 | danger | `#ff5252` | Errors, destructive actions. |
 
 Palette inspired by Hulu's brand identity (green-on-black, single accent, no gradients).
 
 ## Typography
 
-Two families, used together for a terminal-utility aesthetic.
+Use Satoshi throughout the interface, including Home and Feed metadata. Use system monospace only for code editors and raw diagnostic values.
 
-**Sans (display, UI body):** Satoshi. Loaded via Fontshare. Weights: 400, 500, 700, 900.
+**Sans (display, navigation, labels, UI body):** Satoshi. Loaded via Fontshare. Weights: 400, 500, 700, 900. This is the approved fallback for Hulu's Graphik; Graphik is not bundled.
 
-**Mono (technical accents):** JetBrains Mono. Used for IDs, timestamps, status tags, section labels styled as code comments, version strings. Weights: 400, 500, 700.
+**Mono (code and diagnostics):** the system monospace stack. Do not use it for page navigation, notices, episode metadata or player controls.
 
 Inter is explicitly avoided to keep the brand distinctive.
 

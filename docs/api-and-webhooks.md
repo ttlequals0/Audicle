@@ -1,6 +1,6 @@
 # API and webhooks
 
-The API lives under `/api/v1`, with interactive docs at `/api/v1/docs` (linked from Settings > system info) and a checked-in schema at `openapi.yaml`. Mutating endpoints need the session cookie plus the CSRF double-submit header; until an admin password is set, the app runs in open convenience mode.
+The API lives under `/api/v1`, with interactive docs at `/api/v1/docs` (linked from Settings > System > System info) and a checked-in schema at `openapi.yaml`. Mutating endpoints need the session cookie plus the CSRF double-submit header; until an admin password is set, the app runs in open convenience mode.
 
 ## Sidecar settings
 
@@ -32,7 +32,7 @@ Media is served under `/media/`: `{id}.mp3`, `{id}.vtt`, `{id}.chapters.json`, `
 
 ## Webhooks
 
-Audicle can POST a JSON payload to a URL of yours every time an episode finishes (`episode.processed`) or fails (`episode.failed`): handy for a Slack/Discord ping, a dashboard, or a downstream trigger. Set `WEBHOOK_URL` in Settings (the Webhooks group); leave it blank to turn it off. The "send test webhook" button fires a sample at the saved URL and shows the response, so you can wire up a receiver first.
+Audicle can POST a JSON payload to a URL of yours every time an episode finishes (`episode.processed`) or fails (`episode.failed`): handy for a Slack/Discord ping, a dashboard, or a downstream trigger. Set `WEBHOOK_URL` under Settings > Services > Webhooks; leave it blank to turn it off. The "Send test webhook" button fires a sample at the saved URL and shows the response, so you can wire up a receiver first.
 
 Payload fields:
 

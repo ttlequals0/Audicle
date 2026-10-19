@@ -50,7 +50,7 @@ Feed: search and page through your episodes, with inline players, transcripts, a
   <img src="docs/screenshots/feed-mobile.png" alt="Feed, mobile" width="190">
 </p>
 
-Settings: everything grouped by subject, searchable as you type.
+Settings: browse one category at a time, or search across all settings.
 
 <p align="center">
   <img src="docs/screenshots/settings-desktop.png" alt="Settings, desktop" width="600">
@@ -89,6 +89,7 @@ The full index is [docs/README.md](docs/README.md). The short version:
 | [How it works](docs/how-it-works.md) | Pipeline from URL to episode, extraction cascade, quality gates |
 | [Installation](docs/installation.md) | Requirements, quick start, CPU-only deployment |
 | [Web interface](docs/web-interface.md) | Home, Feed, and Settings pages |
+| [UI design guide](branding/design-guide.md) | Colors, fonts, controls and UI review checks |
 | [Configuration](docs/configuration.md) | Every settings category, what saves where |
 | [Environment variables](docs/environment-variables.md) | Every variable, runtime-editable ones flagged |
 | [Voices and TTS](docs/voices-and-tts.md) | Voice cloning, running Chatterbox or Whisper on other hosts |
@@ -124,8 +125,14 @@ uv run uvicorn app.main:create_app --factory --reload --app-dir backend
 Frontend:
 
 ```bash
-cd frontend && npm install && npm run dev   # Vite, hot reload
+cd frontend
+npm ci
+npm run dev
 ```
+
+Run `npm test` and `npm run build` from `frontend/` before submitting UI changes. The build fails on stale design tokens: edit `branding/tokens.json`, then run `node scripts/sync_design_tokens.mjs` from the repository root to regenerate the CSS.
+
+Follow the [UI design guide](branding/design-guide.md) and include before and after screenshots for UI changes.
 
 The `tts-wrapper/` and `render/` packages have their own test suites (`uv run pytest` in each). Lint with `uv run ruff check` from the root; one run covers everything. The OpenAPI schema lives at `openapi.yaml`; regenerate it with `uv run python scripts/dump_openapi.py`.
 

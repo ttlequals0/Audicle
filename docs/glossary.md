@@ -24,7 +24,7 @@ Every term the app uses, in plain words, with a link to the part of the docs tha
 
 **Chunk cache** - Gate-passing chunks stored on disk, keyed on everything that determines the audio, so a re-run or reprocess with unchanged settings skips synthesis it already paid for. [How it works > The chunk cache](how-it-works.md#the-chunk-cache)
 
-**Cleanup** - The LLM pass that strips an extracted page down to the article. Its prompt is editable. [How it works](how-it-works.md#cleanup-normalize-summary)
+**Cleanup** - The LLM pass that strips an extracted page down to the article. Its prompt is editable. [How it works](how-it-works.md#cleanup-summary-chunking-and-pronunciation)
 
 **Convenience mode** - The state before an admin password is set: every admin endpoint is open. Fine on a private network, warned about loudly otherwise. [Installation](installation.md#required-configuration)
 
@@ -64,11 +64,11 @@ Every term the app uses, in plain words, with a link to the part of the docs tha
 
 ## N
 
-**Normalize** - The pipeline stage that rewrites cleaned text for narration: an LLM pronunciation pass plus the base lexicon and your corrections. [How it works](how-it-works.md#cleanup-normalize-summary)
+**Normalize** - The pipeline stage that rewrites cleaned text for narration: an LLM pronunciation pass plus the base lexicon and your corrections. [How it works](how-it-works.md#cleanup-summary-chunking-and-pronunciation)
 
 ## P
 
-**Pronunciation scope** - What each pronunciation LLM call sends: the whole chunk (default), or only the sentences that matched a correction term, spliced back after respelling. [How it works](how-it-works.md#cleanup-normalize-summary)
+**Pronunciation scope** - What each pronunciation LLM call sends: the whole chunk (default), or only the sentences that matched a correction term, spliced back after respelling. [How it works](how-it-works.md#cleanup-summary-chunking-and-pronunciation)
 
 ## O
 
@@ -84,7 +84,7 @@ Every term the app uses, in plain words, with a link to the part of the docs tha
 
 **Reprocess** - Re-running the whole pipeline for an existing episode. The episode's GUID revision bumps so subscribed clients re-download the new audio. [Web interface > Feed](web-interface.md#feed)
 
-**Reset to defaults** - The per-card control on Settings that puts a card's fields back to the shipped defaults. Edits the form; nothing changes until you save. [Web interface > Settings](web-interface.md#settings)
+**Reset to defaults** - The per-card control on Settings that restores a card's environment or code defaults. Edits the form; nothing changes until you save. [Web interface > Settings](web-interface.md#settings)
 
 **Retention** - The daily sweep that deletes episodes older than `RETENTION_DAYS`. [Feeds > Retention](feeds-and-podcasting.md#retention)
 
@@ -96,7 +96,7 @@ Every term the app uses, in plain words, with a link to the part of the docs tha
 
 **Slot** - One of the five labelled reference-voice positions. [Voices and TTS](voices-and-tts.md#reference-voice-slots)
 
-**Summary** - The LLM-written episode description that lands in the feed. [How it works](how-it-works.md#cleanup-normalize-summary)
+**Summary** - The LLM-written episode description that lands in the feed. [How it works](how-it-works.md#cleanup-summary-chunking-and-pronunciation)
 
 ## T
 

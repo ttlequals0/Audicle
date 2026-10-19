@@ -24,7 +24,7 @@ Your episodes, with inline players, transcripts, and per-episode actions.
   <img src="screenshots/feed-mobile.png" alt="Feed, mobile" width="190">
 </p>
 
-- **Search** covers the whole feed, not the page on screen: it matches episode titles, source URLs, and uploaded filenames as you type. A typed `%` or `_` is literal text, not a wildcard.
+- **Search** covers the whole feed, not the page on screen: it matches episode titles, source URLs, and uploaded filenames as you type. A typed `%` or `_` is literal text, not a wildcard. Clear search or press Escape to reset the query and keep focus in the search field.
 - **Pagination** shows 25 episodes per page. The pager appears only when there is more than one page, and deleting the last episode on the last page drops you back a page instead of showing an empty list.
 - Per episode: play inline, open the transcript, chapters, or cleaned text, reprocess the whole episode, regenerate chapters alone, or delete it (which also removes its files on disk).
 - The player can skip backward or forward by 15 seconds. Playback speed cycles through 0.75x, 1x, 1.25x, 1.5x, and 2x. This browser remembers each episode's position and speed; finished playback resets the position. Reprocessed audio starts with a fresh position.
@@ -32,21 +32,26 @@ Your episodes, with inline players, transcripts, and per-episode actions.
 
 ## Settings
 
-Everything the app does, grouped by subject: Content, Voice, Publishing, Services, System.
+Choose Content, Voice, Publishing, Services or System from the side navigation. On mobile, use the category selector. Each section has a short description of what it controls.
 
 <p align="center">
   <img src="screenshots/settings-desktop.png" alt="Settings, desktop" width="600">
   <img src="screenshots/settings-mobile.png" alt="Settings, mobile" width="190">
 </p>
 
-- **Search as you type.** The box at the top filters the page and paints the matching words; matches open themselves so nothing hides behind a collapsed header, and clearing the box restores whatever was open before.
+- **Search all settings.** Match readable labels, technical keys or section descriptions across categories. Results open automatically; clearing search or pressing Escape returns to the selected category. Matching phrases are highlighted in browsers that support custom text highlights.
 
 <p align="center">
-  <img src="screenshots/settings-search-desktop.png" alt="Settings search with highlighted matches" width="600">
+  <img src="screenshots/settings-search-desktop.png" alt="Settings search across categories" width="600">
 </p>
 
-- The save bar exists only while there is something to save. Edit a field and a bar slides in at the bottom right with a count of pending changes; save it or undo your edits and it goes away. The sections with their own save buttons (voices, corrections, site overrides, and so on) are unaffected.
+- The save bar counts pending generic settings across categories. It remains visible while saving or displaying a result. Sections with separate save buttons keep their own drafts; voice uploads, voice renames, chime controls and feed authentication save immediately.
 - Each generic settings card has a reset control at its foot, clickable only when something in that card has a saved override or a pending change. Reset restores the environment or code default. It edits the form rather than saving, so a reset is undoable until you press save.
+- Drafts survive category changes, search and collapsing a section while Settings stays open. Reloading or leaving the page still discards unsaved changes.
+
+Category URLs such as `/settings?category=voice` support bookmarks and browser Back. Unknown categories open Content. Provider-specific fields appear only for the selected backend.
+
+When an admin password is set, Sign in gates the interface. Manage it under System > Admin access; login and session policies are under System > Security.
 
 What each group holds is covered in [Configuration](configuration.md).
 

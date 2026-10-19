@@ -22,7 +22,7 @@ function isLocal(baseUrl: string | undefined): boolean {
 // Shown only in convenience mode (no admin password). Dismiss is state-only, so
 // it comes back on the next load until a password is set. Turns red when the
 // server looks internet-facing (non-localhost BASE_URL).
-export default function OpenModeBanner() {
+export default function OpenModeBanner({ pageWidth = "max-w-2xl" }: { pageWidth?: string }) {
   const { status } = useAuth();
   const health = useHealthLive();
   const settings = useQuery({
@@ -37,20 +37,20 @@ export default function OpenModeBanner() {
   const exposed = !isLocal(typeof baseUrl === "string" ? baseUrl : undefined);
   const tone = exposed
     ? "border-danger/60 bg-danger/10 text-danger"
-    : "border-amber-400/50 bg-amber-400/10 text-amber-300";
+    : "border-warning/50 bg-warning/10 text-warning";
   const message = exposed
     ? "No password set and this server looks internet-facing. Anyone who can reach it has full admin access. Set a password in Settings."
     : "No password set, so admin actions are open. Fine on your own machine; set one before you expose this.";
 
   return (
     <div className={`border-b ${tone}`}>
-      <div className="max-w-2xl mx-auto px-4 py-2 flex items-center justify-between gap-3">
-        <span className="mono-xs">{message}</span>
+      <div className={`${pageWidth} mx-auto px-4 py-2 flex items-center justify-between gap-3`}>
+        <span className="text-sm">{message}</span>
         <button
-          className="mono-xs underline shrink-0 hover:opacity-80"
+          className="text-sm underline shrink-0 hover:opacity-80"
           onClick={() => setDismissed(true)}
         >
-          dismiss
+          Dismiss
         </button>
       </div>
     </div>

@@ -346,7 +346,7 @@ export default function Home() {
   return (
     <div>
       <div className="pt-10 pb-2">
-        <div className="mono-xs text-accent mb-3">// SUBMIT_ARTICLE</div>
+        <div className="text-sm font-bold text-accent mb-3">Submit article</div>
         <h1 className="text-4xl font-black tracking-tight mb-2 leading-tight">
           {mode === "url" ? "Drop a link." : "Drop your files."}
           <br />
@@ -433,13 +433,13 @@ export default function Home() {
                         <div className="flex-1 min-w-0 text-left">
                           <div className="truncate text-sm">{f.name}</div>
                           {status?.message ? (
-                            <div className="mono-xs text-danger break-words">{status.message}</div>
+                            <div className="text-xs text-danger break-words">{status.message}</div>
                           ) : null}
                         </div>
                         {status ? (
                           <span className={`tag ${uploadTag(status.state)}`}>{status.state}</span>
                         ) : (
-                          <span className="mono-xs text-mute shrink-0">{formatBytes(f.size)}</span>
+                          <span className="text-xs text-mute shrink-0">{formatBytes(f.size)}</span>
                         )}
                         <button
                           type="button"
@@ -459,7 +459,7 @@ export default function Home() {
                   })}
                   <button
                     type="button"
-                    className="mono-xs text-mute hover:text-fg"
+                    className="text-xs text-mute hover:text-fg"
                     disabled={uploadM.isPending}
                     onClick={(e) => {
                       e.preventDefault();
@@ -468,14 +468,14 @@ export default function Home() {
                       setError(null);
                     }}
                   >
-                    // clear all ({files.length})
+                    Clear all ({files.length})
                   </button>
                 </div>
               ) : (
                 <>
-                  <div className="mono-xs text-accent mb-2">// DROP_FILES</div>
+                  <div className="text-xs text-accent mb-2">Upload files</div>
                   <div className="text-sm text-dim">Drag files here, or browse</div>
-                  <div className="mono-xs text-mute mt-2">
+                  <div className="text-xs text-mute mt-2">
                     PDF · DOCX · MD · TXT · HTML · images
                     <br />
                     up to {maxUploadMb} MB each, {MAX_BATCH} at a time
@@ -498,22 +498,22 @@ export default function Home() {
                   : "Submit"}
           </button>
           {noVoiceLoaded && (
-            <p className="mono-xs text-mute">
-              // no voice loaded. add a voice slot in settings first
+            <p className="text-xs text-mute">
+              No voice loaded. Add a voice in Settings to get started.
             </p>
           )}
           {effectiveTtsBackend === "wrapper" && (
             <div>
               <button
               type="button"
-              className="mono-xs text-mute flex items-center gap-1.5 hover:text-fg"
+              className="text-xs text-mute flex items-center gap-1.5 hover:text-fg"
               onClick={() => setVoiceOpen(!voiceOpen)}
               aria-expanded={voiceOpen}
             >
               <span className={`transition-transform ${voiceOpen ? "rotate-90" : ""}`}>
                 &rsaquo;
               </span>
-              // voice: {voiceChoiceLabel}
+              Voice: {voiceChoiceLabel}
               </button>
               {voiceOpen && (
                 <>
@@ -532,8 +532,8 @@ export default function Home() {
                   ))}
                 </select>
                 {filledSlots.length === 0 && (
-                  <p className="mono-xs text-mute mt-1">
-                    // no voice loaded. add a slot in settings first
+                  <p className="text-xs text-mute mt-1">
+                    No voice loaded. Add a voice in Settings to get started.
                   </p>
                 )}
                 </>
@@ -541,9 +541,9 @@ export default function Home() {
             </div>
           )}
         </form>
-        {error && <p className="text-danger text-sm font-mono mt-2 break-words" role="alert">{error}</p>}
+        {error && <p className="text-danger text-sm mt-2 break-words" role="alert">{error}</p>}
         {rejected.length > 0 && (
-          <ul className="mono-xs text-danger mt-2 space-y-1" role="alert" aria-label="Files not added">
+          <ul className="text-xs text-danger mt-2 space-y-1" role="alert" aria-label="Files not added">
             {rejected.map((reason) => (
               <li key={reason} className="break-words">
                 {reason}
@@ -561,14 +561,14 @@ export default function Home() {
           </div>
         )}
         {!jobs.length && jobsQ.data && (
-          <p className="mono-xs text-mute mt-8">// no submissions yet</p>
+          <p className="text-sm text-mute mt-8">No submissions yet.</p>
         )}
       </div>
 
       {active.length > 0 && (
         <section className="mt-8">
-          <div className="mono-xs text-accent mb-3">// QUEUE ({active.length})</div>
-          {cancelMsg && <p className="mono-xs text-danger mb-2" role="alert">{cancelMsg}</p>}
+          <div className="text-xs text-accent mb-3">Queue ({active.length})</div>
+          {cancelMsg && <p className="text-xs text-danger mb-2" role="alert">{cancelMsg}</p>}
           <ul className="space-y-2">
             {active.map((j, i) => (
               <li
@@ -577,8 +577,8 @@ export default function Home() {
               >
                 <span className="queue-index">{String(i + 1).padStart(2, "0")}</span>
                 <div className="min-w-0 flex-1">
-                  <p className="mono text-dim truncate">{j.url}</p>
-                  <p className="mono-xs text-mute mt-1 truncate">
+                  <p className="text-xs text-dim truncate">{j.url}</p>
+                  <p className="text-xs text-mute mt-1 truncate">
                     stage: {j.stage ?? "-"}
                     {progressSuffix(j)}
                   </p>
@@ -604,20 +604,20 @@ export default function Home() {
         <section className="mt-8">
           <div className="mb-3 flex items-center justify-between gap-3">
             <button
-              className="mono-xs text-mute flex items-center gap-1.5 hover:text-fg"
+              className="text-xs text-mute flex items-center gap-1.5 hover:text-fg"
               onClick={() => setRecentOpen(!recentOpen)}
               aria-expanded={recentOpen}
             >
               <span className={`transition-transform ${recentOpen ? "rotate-90" : ""}`}>
                 &rsaquo;
               </span>
-              // RECENT ({history.length})
+              Recent ({history.length})
             </button>
             {recentOpen && (
               <div className="flex items-center gap-3">
                 {failedHistoryCount > 0 && (
                   <button
-                    className={`mono-xs ${clearArmed === "failed" ? "text-danger" : "text-mute hover:text-fg"}`}
+                    className={`text-xs ${clearArmed === "failed" ? "text-danger" : "text-mute hover:text-fg"}`}
                     onClick={() => armClear("failed")}
                     disabled={clearJobsM.isPending}
                     title="Removes failed and cancelled runs from this list. Episodes are not affected."
@@ -628,7 +628,7 @@ export default function Home() {
                   </button>
                 )}
                 <button
-                  className={`mono-xs ${clearArmed === "all" ? "text-danger" : "text-mute hover:text-fg"}`}
+                  className={`text-xs ${clearArmed === "all" ? "text-danger" : "text-mute hover:text-fg"}`}
                   onClick={() => armClear("all")}
                   disabled={clearJobsM.isPending}
                   title="Removes every finished run from this list. Episodes are not affected."
@@ -638,7 +638,7 @@ export default function Home() {
               </div>
             )}
           </div>
-          {recentMsg && <p className="mono-xs text-danger mb-2" role="alert">{recentMsg}</p>}
+          {recentMsg && <p className="text-xs text-danger mb-2" role="alert">{recentMsg}</p>}
           {recentOpen && (
             <ul className="space-y-2">
               {history.map((j) => {
@@ -646,7 +646,7 @@ export default function Home() {
                 return (
                 <li key={j.id} className="card p-4 flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="mono-xs text-mute truncate">{j.source_filename ?? j.url}</p>
+                    <p className="text-xs text-mute truncate">{j.source_filename ?? j.url}</p>
                     <p className="text-sm mt-1 truncate text-dim">
                       {j.episode_id} &middot; {j.stage ?? "-"}
                       {progressSuffix(j)}
@@ -682,11 +682,11 @@ export default function Home() {
                   </div>
                   <div className="flex flex-col items-end gap-1 shrink-0">
                     <span className={`tag ${statusTag(j.status)}`}>{j.status}</span>
-                    <time className="mono-xs text-mute" dateTime={j.updated_at}>
+                    <time className="text-xs text-mute" dateTime={j.updated_at}>
                       {formatDateTime(j.updated_at)}
                     </time>
                     {duration && (
-                      <span className="mono-xs text-mute">took {duration}</span>
+                      <span className="text-xs text-mute">took {duration}</span>
                     )}
                   </div>
                 </li>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { keepPreviousData, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, apiList, Episode, SettingsPayload } from "../lib/api";
 import { fileExt, formatBytes, formatDateTime, formatEpisodeDuration } from "../lib/format";
@@ -13,10 +13,16 @@ export default function Feed() {
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
+  const [actionFailed, setActionFailed] = useState(false);
   const [page, setPage] = useState(1);
   // qInput is what the box shows; q is the debounced value the server sees.
   const [qInput, setQInput] = useState("");
   const [q, setQ] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+  const clearSearch = () => {
+    setQInput("");
+    searchRef.current?.focus();
+  };
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -40,6 +46,7 @@ export default function Feed() {
   const feedUrl = settingsQ.data?.feed_url ?? "";
 
   const onActionError = (verb: string) => (err: unknown) => {
+    setActionFailed(true);
     const status = (err as { status?: number })?.status;
     setActionMsg(
       status === 409
@@ -79,6 +86,7 @@ export default function Feed() {
             body: JSON.stringify({ url: ep.original_url, reprocess: true }),
           }),
     onSuccess: () => {
+      setActionFailed(false);
       setActionMsg("reprocess queued");
       setTimeout(() => setActionMsg(null), 4000);
       qc.invalidateQueries({ queryKey: ["episodes"] });
@@ -92,6 +100,7 @@ export default function Feed() {
     mutationFn: (id: string) =>
       api<{ chapter_count: number }>(`/api/v1/episodes/${id}/chapters`, { method: "POST" }),
     onSuccess: (r) => {
+      setActionFailed(false);
       setActionMsg(`chapters regenerated (${r.chapter_count})`);
       setTimeout(() => setActionMsg(null), 5000);
       qc.invalidateQueries({ queryKey: ["episodes"] });
@@ -129,7 +138,7 @@ export default function Feed() {
     <div>
       <div className="flex items-baseline justify-between mb-3">
         <h1 className="text-2xl font-black tracking-tight">Feed</h1>
-        <div className="mono-xs text-mute">
+        <div className="text-xs text-mute">
           {q ? `${total} matching` : `${total} episode${total === 1 ? "" : "s"}`}
         </div>
       </div>
@@ -144,28 +153,28 @@ export default function Feed() {
       {copyError && <p className="text-danger text-sm mb-2" role="alert">Could not copy the feed URL. Copy it from Settings.</p>}
       {/* URL is redundant with the copy button on mobile (and gets cut off), so
           hide it there; show it on wider screens where there's room. */}
-      <p className="mono-xs text-mute truncate mb-5 hidden sm:block" title={feedUrl} role={settingsQ.isError ? "alert" : undefined}>
+      <p className="text-xs text-mute truncate mb-5 hidden sm:block" title={feedUrl} role={settingsQ.isError ? "alert" : undefined}>
         {feedUrl || (settingsQ.isError ? "feed URL unavailable" : "loading...")}
       </p>
 
       <div className="search-wrap mb-4">
-        <span className="search-slash" aria-hidden="true">
-          /
-        </span>
+        <span className="search-icon" aria-hidden="true" />
         <input
+          ref={searchRef}
           type="search"
           className="field"
           placeholder="Search title or URL"
           autoComplete="off"
           value={qInput}
           onChange={(e) => setQInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Escape") clearSearch(); }}
           aria-label="Search episodes"
         />
         {qInput && (
           <button
             type="button"
             className="search-clear"
-            onClick={() => setQInput("")}
+            onClick={clearSearch}
             aria-label="Clear search"
           >
             &times;
@@ -173,7 +182,7 @@ export default function Feed() {
         )}
       </div>
 
-      {actionMsg && <p className="mono-xs text-accent mb-3" role="status" aria-live="polite">{actionMsg}</p>}
+      {actionMsg && <p className={`text-sm mb-3 ${actionFailed ? "text-danger" : "text-accent"}`} role={actionFailed ? "alert" : "status"}>{actionMsg}</p>}
       {episodesQ.isLoading && <p className="text-mute text-sm" role="status" aria-live="polite">Loading episodes...</p>}
       {episodesQ.isError && (
         <div className="text-danger text-sm mb-3" role="alert">
@@ -185,7 +194,7 @@ export default function Feed() {
       )}
       {episodes.length === 0 && !episodesQ.isLoading && !episodesQ.isError && (
         <p className="text-mute text-sm">
-          {q ? `nothing matches "${q}".` : "no episodes yet."}
+          {q ? `No episodes match "${q}".` : "No episodes yet."}
         </p>
       )}
 
@@ -217,7 +226,7 @@ export default function Feed() {
                   )}
                   <span className="tag tag-done">done</span>
                 </div>
-                <div className="mono-xs text-mute flex items-center gap-1.5 min-w-0">
+                <div className="text-xs text-mute flex items-center gap-1.5 min-w-0">
                   {ep.author ? <span className="min-w-0 max-w-[60%] shrink-0 truncate">{ep.author} ·</span> : null}
                   {ep.source_type === "upload" ? (
                     <>
@@ -230,7 +239,7 @@ export default function Feed() {
                     <span className="truncate">{sourceDomain(ep.original_url)}</span>
                   )}
                 </div>
-                <div className="mono-xs text-mute mt-0.5">
+                <div className="text-xs text-mute mt-0.5">
                   <time dateTime={ep.pub_date}>{formatDateTime(ep.pub_date)}</time>
                   {" · "}
                   {formatEpisodeDuration(ep.duration_secs)}
@@ -322,7 +331,7 @@ export default function Feed() {
           <button className="btn-ghost" disabled={page <= 1} onClick={() => goToPage(page - 1)}>
             &lsaquo; Prev
           </button>
-          <span className="mono-xs text-mute" aria-live="polite">
+          <span className="text-xs text-mute" aria-live="polite">
             PAGE {String(page).padStart(2, "0")} / {String(totalPages).padStart(2, "0")}
           </span>
           <button
@@ -340,7 +349,7 @@ export default function Feed() {
 
 /**
  * Per-episode artwork: the episode's own JPG when present, else the seeded
- * default podcast art at /media/default.jpg. Falls back to a gradient tile only
+ * default podcast art at /media/default.jpg. Falls back to a green tile only
  * if that image fails to load (e.g. default not seeded yet).
  */
 function EpisodeArtwork({ ep }: { ep: Episode }) {
@@ -349,7 +358,7 @@ function EpisodeArtwork({ ep }: { ep: Episode }) {
     return (
       <div
         className="artwork"
-        style={{ background: "linear-gradient(135deg, #1ce783, #16d076)" }}
+        style={{ background: "var(--audicle-color-primary)" }}
       />
     );
   }

@@ -7,6 +7,7 @@ Full documentation for Audicle. Start with the [project README](../README.md) fo
 - [How it works](how-it-works.md) - the pipeline from URL to episode: extraction cascade, LLM cleanup, chunking, TTS, the quality gates, and the wrapper's memory ladder
 - [Installation](installation.md) - requirements, quickstart, CPU-only deployment, first-run configuration
 - [Web interface](web-interface.md) - the Home, Feed, and Settings pages, with screenshots
+- [UI design guide](../branding/design-guide.md) - colors, typography, components, settings navigation and review checks for frontend work
 - [Configuration](configuration.md) - every settings category, what saves where, runtime versus env-only, per-card reset
 - [Environment variables](environment-variables.md) - every variable, grouped, with the runtime-editable ones flagged
 - [Voices and TTS](voices-and-tts.md) - reference voice slots, models and languages, the end-of-episode chime, and running Chatterbox or Whisper on another host
