@@ -104,6 +104,7 @@ Keep a single content column inside settings categories. On smaller screens, rep
 | `.toggle` | Use a button with `role="switch"`, `aria-checked` and a readable name. Retain the visible keyboard focus outline. |
 | `.section` | Show a short heading and a one-sentence summary before expansion. Avoid repeating long instructions in the collapsed header. |
 | `.card` | Use for feed or job content. Do not make a passive card look like a button. |
+| `.rule-card` | One bordered block per editable item in a list, such as a site override. Passive, with no hover state. Keep one rule per card and nest its details inside. |
 | `.tag` | Keep the status word visible. Processing and queued animation stops with reduced motion enabled. |
 | `.save-bar` | Appears for pending generic settings or save feedback. Remains available across categories; reports the total unsaved count. |
 | Native audio | Keep browser controls for voice and chime previews. Use `AudioPlayer` for episodes. Browser-owned controls may use platform typography. |
