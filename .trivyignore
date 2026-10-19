@@ -14,11 +14,9 @@
 # Perl ships in the slim base; application code does not invoke it.
 CVE-2026-9538
 
-# curl / libcurl4t64 / libcurl3t64-gnutls (HIGH x3):
+# curl / libcurl4t64 / libcurl3t64-gnutls (HIGH x1):
 # system curl ships in base; backend Python httpx does not use system libcurl.
 CVE-2026-12064
-CVE-2026-8286
-CVE-2026-8927
 
 # ncurses (libncursesw6, libtinfo6, ncurses-base, ncurses-bin) (HIGH x1):
 # terminal handling in base; Audicle runs headless in a container.
@@ -56,11 +54,3 @@ CVE-2026-76642
 CVE-2026-78408
 CVE-2026-78409
 CVE-2026-78410
-
-# libgnutls30t64 (HIGH x2): certificate-validation flaws. No trixie fix.
-# Present in app, both TTS variants, and renderer. Provider and article clients
-# use Python TLS; the render browser uses NSS. System curl probes loopback HTTP.
-# No remote runtime GnuTLS validation path was found. Remove when Debian fixes it.
-# Owner: Audicle maintainers. Recheck: 2026-11-10.
-CVE-2026-88647
-CVE-2026-88648

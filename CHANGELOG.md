@@ -6,6 +6,8 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.61.1] - 2026-10-19
+
 ### Changed
 
 - Show one Settings category at a time, with side navigation on desktop, a category selector on mobile, bookmarkable category URLs and browser Back support. Each section carries a one-line summary.
@@ -14,11 +16,17 @@ work lives under `[Unreleased]`.
 - Run the render and TTS wrapper images on Python 3.14. The TTS image compiles spacy-pkuseg from its locked source archive because the package publishes no 3.14 wheel, and removes the compiler afterwards.
 - Update FastAPI to 0.143.0, pydantic to 2.14.0, Starlette to 1.9.0 and uvicorn to 0.54.0 in all three Python lockfiles, mutagen to 1.48.1, soundfile to 0.14.0, rapidocr to 3.10.0, and the uv build image to 0.13.1. Walk FastAPI's included-router contexts in the route-gating test since 0.143 no longer flattens them into the application route list.
 - Wait for an explicit reload before applying interface updates. A banner offers the reload when a new version is ready, stays disabled while Settings has unsaved edits in any editor, and the browser asks before leaving the page with unsaved edits.
+- Show each site override as its own bordered card with a labelled Remove button, so neighbouring rules and their proxy or cookie details read apart.
 
 ### Fixed
 
 - Load Satoshi with a single-family Fontshare request; the combined request returned an empty stylesheet.
 - Raise processing-tag contrast and fix disclosure labels, keyboard focus and reduced-motion behavior in Settings.
+- Keep the reference voice float32 through Chatterbox's loudness normalization. numpy 2 promotes the normalized waveform to float64, which made the Python 3.14 wrapper image reject every reference voice and leave speech generation unavailable.
+
+### Security
+
+- Remove scan exceptions that no longer apply: curl CVE-2026-8286 and CVE-2026-8927, GnuTLS CVE-2026-88647 and CVE-2026-88648, and the five libexpat1 findings in the TTS and render images. Accept two unpatched Debian findings in the render image with scoped rationale: Xvfb CVE-2026-93516 and libcups2 CVE-2026-55453. Recheck both by 2026-11-19.
 
 ## [0.60.2] - 2026-10-10
 
