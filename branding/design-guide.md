@@ -56,7 +56,7 @@ Normal text must meet the [WCAG minimum contrast ratio of 4.5:1](https://www.w3.
 
 Use `font-sans` for headings, navigation, labels, explanations, buttons and episode metadata. It resolves to Satoshi, then system fonts. Reserve `font-mono` for code editors and raw diagnostic values. Home, Feed, login, settings help, player controls and notices use Satoshi throughout. The wordmark uses Satoshi at weight 700 with `-0.02em` tracking.
 
-Load Satoshi through the single-family Fontshare URL in `frontend/index.html`. The previous combined Satoshi/JetBrains Mono request returned an empty stylesheet. Do not assume a computed font-family proves that a webfont loaded: verify a loaded Satoshi face in `document.fonts`. The capture script checks this before saving after images. Fontshare access is required; if it is unavailable, the system sans fallback remains readable. Font files are not committed to this repository.
+Load Satoshi through the single-family Fontshare URL in `frontend/index.html`. The combined Satoshi and JetBrains Mono request returned an empty stylesheet. A computed font-family does not prove the webfont loaded, so check for a loaded Satoshi face in `document.fonts`. If Fontshare is unreachable the system sans fallback is still readable. Font files are not committed to this repository.
 
 The following scale uses the default root size of 16 px. Use rem units in CSS so browser text settings still apply.
 
@@ -138,7 +138,5 @@ Follow the [WAI disclosure pattern](https://www.w3.org/WAI/ARIA/apg/patterns/dis
 - Test keyboard navigation, visible focus, labels, search clearing and reduced motion. Verify any new color pairing.
 - Test saved, unsaved, loading, error, empty and disabled states affected by the change. Use the real backend for screenshots.
 - For settings, test edits across category changes, search, collapse and browser history. Confirm hidden widgets retain their drafts and are absent from keyboard navigation.
-- Run `npm test` and `npm run build` from `frontend/`. Reuse the [browser audit scripts](../docs/audits/ui-2026-10-19/README.md) for navigation changes.
+- Run `npm test` and `npm run build` from `frontend/`. Check navigation changes in a real browser at 390 px and 1440 px widths.
 - Include comparable before/after screenshots in UI PRs. Record the viewport, data state and limits of the verification.
-
-The [UI audit](../docs/audits/ui-2026-10-19/README.md) records the findings behind these rules and the original comparisons.

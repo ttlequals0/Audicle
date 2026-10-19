@@ -39,22 +39,22 @@ That's what this is. No GPU? It runs on CPU too, just slower.
 Home: paste a URL or drop files (up to 20 at once), and they join the feed.
 
 <p align="center">
-  <img src="docs/audits/ui-2026-10-19/screenshots/after-home-desktop.png" alt="Home, desktop" width="600">
-  <img src="docs/audits/ui-2026-10-19/screenshots/after-home-mobile.png" alt="Home, mobile" width="190">
+  <img src="docs/screenshots/home-desktop.png" alt="Home, desktop" width="600">
+  <img src="docs/screenshots/home-mobile.png" alt="Home, mobile" width="190">
 </p>
 
 Feed: search and page through your episodes, with inline players, transcripts, and per-episode actions.
 
 <p align="center">
-  <img src="docs/audits/ui-2026-10-19/screenshots/after-feed-desktop.png" alt="Feed, desktop" width="600">
-  <img src="docs/audits/ui-2026-10-19/screenshots/after-feed-mobile.png" alt="Feed, mobile" width="190">
+  <img src="docs/screenshots/feed-desktop.png" alt="Feed, desktop" width="600">
+  <img src="docs/screenshots/feed-mobile.png" alt="Feed, mobile" width="190">
 </p>
 
 Settings: browse one category at a time, or search across all settings.
 
 <p align="center">
-  <img src="docs/audits/ui-2026-10-19/screenshots/after-settings-desktop.png" alt="Settings, desktop" width="600">
-  <img src="docs/audits/ui-2026-10-19/screenshots/after-settings-mobile.png" alt="Settings, mobile" width="190">
+  <img src="docs/screenshots/settings-desktop.png" alt="Settings, desktop" width="600">
+  <img src="docs/screenshots/settings-mobile.png" alt="Settings, mobile" width="190">
 </p>
 
 ## Sample
@@ -130,9 +130,9 @@ npm ci
 npm run dev
 ```
 
-Run `npm test` and `npm run build` from `frontend/` before submitting UI changes. The build checks shared design tokens. Edit `branding/tokens.json`, then run `node scripts/sync_design_tokens.mjs` from the repository root to regenerate CSS. Keep `branding/` and `scripts/` beside `frontend/` in build environments.
+Run `npm test` and `npm run build` from `frontend/` before submitting UI changes. The build fails on stale design tokens: edit `branding/tokens.json`, then run `node scripts/sync_design_tokens.mjs` from the repository root to regenerate the CSS.
 
-Follow the [UI design guide](branding/design-guide.md) and include before/after screenshots. The [browser audit](docs/audits/ui-2026-10-19/README.md#reproduce) documents real-backend checks and screenshot capture.
+Follow the [UI design guide](branding/design-guide.md) and include before and after screenshots for UI changes.
 
 The `tts-wrapper/` and `render/` packages have their own test suites (`uv run pytest` in each). Lint with `uv run ruff check` from the root; one run covers everything. The OpenAPI schema lives at `openapi.yaml`; regenerate it with `uv run python scripts/dump_openapi.py`.
 
