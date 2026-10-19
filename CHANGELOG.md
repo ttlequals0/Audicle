@@ -6,7 +6,7 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
-## [0.61.0] - 2026-10-19
+## [0.61.1] - 2026-10-19
 
 ### Changed
 
