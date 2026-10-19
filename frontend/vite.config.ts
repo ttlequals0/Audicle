@@ -6,9 +6,12 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: "autoUpdate",
+      registerType: "prompt",
       includeAssets: ["favicon.svg"],
       workbox: {
+        // The user's reload applies the update.
+        skipWaiting: false,
+        clientsClaim: true,
         // Without this, the SW's navigate-fallback serves index.html for ANY
         // navigation -- including /api/v1/docs, /rss, /media, /health -- so the
         // browser gets the SPA shell and the router bounces unknown paths to /.

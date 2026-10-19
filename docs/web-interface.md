@@ -1,6 +1,6 @@
 # Web interface
 
-Three pages: Home for submitting, Feed for what you have, Settings for how it behaves. The UI is an installable PWA; on a phone home screen it behaves like an app.
+Three pages: Home for submitting, Feed for what you have, Settings for how it behaves. The UI is an installable PWA; on a phone home screen it behaves like an app. When a new version of the interface is ready, a banner offers a reload; the button waits until unsaved Settings changes are saved.
 
 ## Home
 
