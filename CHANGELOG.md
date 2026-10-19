@@ -21,6 +21,10 @@ work lives under `[Unreleased]`.
 - Load Satoshi with a single-family Fontshare request; the combined request returned an empty stylesheet.
 - Raise processing-tag contrast and fix disclosure labels, keyboard focus and reduced-motion behavior in Settings.
 
+### Security
+
+- Remove scan exceptions that no longer apply: curl CVE-2026-8286 and CVE-2026-8927, GnuTLS CVE-2026-88647 and CVE-2026-88648, and the five libexpat1 findings in the TTS and render images. Accept two unpatched Debian findings in the render image with scoped rationale: Xvfb CVE-2026-93516 and libcups2 CVE-2026-55453. Recheck both by 2026-11-19.
+
 ## [0.60.2] - 2026-10-10
 
 ### Fixed

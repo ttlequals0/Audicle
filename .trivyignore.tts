@@ -1,16 +1,8 @@
-# CVE-2026-76956 and CVE-2026-76957 affect Debian trixie libexpat1 2.8.3-1~deb13u1.
-# No fixed Debian package is available. Recheck the next release or by 2026-11-10.
-CVE-2026-76956
-CVE-2026-76957
-
-# CVE-2026-66046 (quadratic-complexity DoS) and CVE-2026-93990 (malformed UTF-16
-# input) affect the same Debian trixie libexpat1 2.8.3-1~deb13u1, added 0.58.0.
-# The wrapper parses no untrusted XML: it takes text and returns audio.
-# No fixed Debian package is available. Recheck the next release or by 2026-11-10.
-CVE-2026-66046
-CVE-2026-93990
-
-# CVE-2026-77214 (HIGH): libexpat1 buffer over-read. GPU TTS only; CPU lacks it.
-# Both TTS variants accept text/audio without parsing untrusted XML.
-# Remove when Debian ships a fix. Recheck next release or by 2026-11-10.
-CVE-2026-77214
+# Accepted residual CVEs for the TTS images (ttlequals0/audicle-tts and the -cpu tag).
+# Concatenated with .trivyignore by scripts/trivy_gate.sh for the tts scans.
+# Every entry documents why it is accepted and when to remove it.
+# Owner: Audicle maintainers.
+#
+# No image-specific exceptions as of 0.61.0: the Debian libexpat1 findings that
+# lived here (CVE-2026-76956, CVE-2026-76957, CVE-2026-77214, CVE-2026-66046,
+# CVE-2026-93990) no longer appear in the unfiltered scan.

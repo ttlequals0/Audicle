@@ -52,19 +52,11 @@ CVE-2026-52490
 # shared-mime-info and Mesa; its vulnerable Python bindings are not installed.
 # Python lxml bundles its own libxml2. Camoufox uses its own XML parser for
 # pages; libxul has no undefined XML_Parse or XML_Parser symbols.
-# System Expat is loaded through fontconfig and used by Mesa and D-Bus
-# for local configuration, not fetched page XML.
 CVE-2026-74860
 CVE-2026-86140
-CVE-2026-76956
-CVE-2026-76957
-# CVE-2026-77214 (HIGH): Expat buffer over-read, same local configuration scope.
-CVE-2026-77214
 # Added 0.58.0 under the same reasoning, no fixed Debian package yet:
-# libexpat1 CVE-2026-66046 and CVE-2026-93990, and libxml2 CVE-2026-86138,
-# CVE-2026-86139, CVE-2026-86142, CVE-2026-86143, CVE-2026-86144.
-CVE-2026-66046
-CVE-2026-93990
+# libxml2 CVE-2026-86138, CVE-2026-86139, CVE-2026-86142, CVE-2026-86143,
+# CVE-2026-86144.
 CVE-2026-86138
 CVE-2026-86139
 CVE-2026-86142
@@ -96,3 +88,20 @@ CVE-2026-94286
 CVE-2026-88812
 CVE-2026-93521
 CVE-2026-93523
+
+# Owner: Audicle maintainers. Recheck: 2026-11-19. Added 0.61.0.
+# xserver-common / xvfb (HIGH, "affected"): CVE-2026-93516 is a use-after-free
+# when a local X client holds a passive grab and an input device is removed.
+# Xvfb here has no physical input devices, serves only the render process over a
+# local socket with TCP disabled, and runs as the browser's nonroot uid. No fixed
+# trixie package yet. Remove when Debian ships a fix.
+CVE-2026-93516
+
+# Owner: Audicle maintainers. Recheck: 2026-11-19. Added 0.61.0.
+# libcups2t64 (HIGH, "affected"): CVE-2026-55453 is newline injection in the
+# cupsd ipp backend's status reporting, executed through a Foomatic print queue.
+# The image holds only the libcups client library pulled in by Playwright's
+# Firefox dependencies; it has no cupsd, no backends and no print queue, so the
+# vulnerable scheduler path is absent. Fixed upstream in CUPS 2.4.20; no trixie
+# package yet. Remove when Debian ships it.
+CVE-2026-55453
