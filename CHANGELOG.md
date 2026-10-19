@@ -6,6 +6,8 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.61.0] - 2026-10-19
+
 ### Changed
 
 - Show one Settings category at a time, with side navigation on desktop, a category selector on mobile, bookmarkable category URLs and browser Back support. Each section carries a one-line summary.
