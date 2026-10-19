@@ -128,7 +128,7 @@ function Shell() {
                   disabled={logoutM.isPending}
                   onClick={() => logoutM.mutate()}
                 >
-                  logout
+                  Sign out
                 </button>
               )}
               <a

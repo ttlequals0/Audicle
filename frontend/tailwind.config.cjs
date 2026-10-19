@@ -17,6 +17,7 @@ module.exports = {
         fg: "var(--audicle-color-text)",
         accent: "var(--audicle-color-primary)",
         danger: "var(--audicle-color-danger)",
+        warning: "var(--audicle-color-warning-text)",
       },
     },
   },

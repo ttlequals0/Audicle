@@ -18,7 +18,7 @@ const baseURL = process.env.AUDICLE_URL || 'http://127.0.0.1:5173';
         await page.goto(`${baseURL}/${route === 'home' ? '' : route}`);
         await page.getByRole('heading', { level: 1 }).waitFor();
         if (route === 'settings') await page.getByRole('button', { name: /^Extraction/ }).waitFor();
-        if (route === 'feed') await page.getByText('no episodes yet.', { exact: true }).waitFor();
+        if (route === 'feed') await page.getByText(/no episodes yet\./i, { exact: true }).waitFor();
         await page.evaluate(() => document.fonts.ready);
         if (phase === 'after') {
           assert.ok(await page.evaluate(() => [...document.fonts].some(font => font.family === 'Satoshi' && font.status === 'loaded')), 'Satoshi must load before capturing the updated UI');

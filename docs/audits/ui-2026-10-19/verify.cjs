@@ -68,6 +68,18 @@ const baseURL = process.env.AUDICLE_URL || 'http://127.0.0.1:5173';
         await page.getByRole('button', { name: 'Admin access', exact: true }).waitFor();
         await page.getByRole('button', { name: 'Clear search', exact: true }).click();
         assert.equal(await search.evaluate(el => document.activeElement === el), true);
+        for (const [query, section] of [
+          ['RENDER_NAV_TIMEOUT_MS', 'Sidecar settings'],
+          ['page navigation timeout', 'Sidecar settings'],
+          ['cookie jar', 'Site overrides'],
+          ['audition sample text', 'Voices'],
+          ['CHIME_ENABLED', 'End chime'],
+          ['FEED_AUTH_KEY', 'Authenticated feeds'],
+        ]) {
+          await search.fill(query);
+          await page.getByRole('button', { name: section, exact: true }).waitFor();
+        }
+        await search.press('Escape');
         if (await page.getByRole('navigation', { name: 'Settings categories' }).isVisible()) {
           const voice = page.getByRole('navigation', { name: 'Settings categories' }).getByRole('button', { name: /^Voice/ });
           await voice.focus();
@@ -84,7 +96,29 @@ const baseURL = process.env.AUDICLE_URL || 'http://127.0.0.1:5173';
             const bodyId = await button.getAttribute('aria-controls');
             assert.ok(bodyId);
             assert.equal(await page.locator(`[id="${bodyId}"]`).count(), 1);
+            if (await button.getAttribute('aria-expanded') === 'false') await button.click();
           }
+          if (category === 'Content') {
+            await page.getByLabel('Cleanup window (characters)', { exact: true }).waitFor();
+          }
+          if (category === 'Voice') {
+            for (const [backend, key] of [['TTS_BACKEND', 'TTS_API_KEY'], ['WHISPER_BACKEND', 'WHISPER_API_KEY']]) {
+              const select = page.locator(`#${backend}`);
+              const original = await select.inputValue();
+              await select.selectOption('openai-api');
+              assert.ok(await page.locator(`#${key}`).evaluate(el => el.classList.contains('field-secret')));
+              await select.selectOption(original);
+            }
+          }
+          if (category === 'Services') await page.getByRole('button', { name: 'Save sidecar settings', exact: true }).waitFor();
+          const outside = await page.locator('#settings-sections input:not(.sr-only), #settings-sections textarea, #settings-sections select, #settings-sections button, #settings-sections .btn-ghost').evaluateAll(elements => elements.filter(el => {
+            if (!el.getClientRects().length) return false;
+            const rect = el.getBoundingClientRect();
+            return rect.left < -1 || rect.right > innerWidth + 1;
+          }).map(el => el.id || el.textContent || el.getAttribute('aria-label')));
+          assert.deepEqual(outside, [], `${category} expanded controls must fit at ${width}px`);
+          const wrongFonts = await page.locator('#settings-sections .label, #settings-sections button, #settings-sections p').evaluateAll(elements => elements.filter(el => el.getClientRects().length && !getComputedStyle(el).fontFamily.startsWith('Satoshi')).map(el => el.textContent));
+          assert.deepEqual(wrongFonts, [], 'Labels, help and controls must use Satoshi');
         }
         for (const route of ['', 'feed']) {
           await page.goto(`${baseURL}/${route}`);
@@ -94,15 +128,24 @@ const baseURL = process.env.AUDICLE_URL || 'http://127.0.0.1:5173';
           assert.ok(await page.getByRole('heading', { level: 1 }).evaluate(el => getComputedStyle(el).fontFamily.startsWith('Satoshi')));
           assert.equal(await page.locator('#main-content [class*="mono"]').count(), 0, 'Home and Feed must use the UI font');
           assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+          if (route === 'feed') {
+            const search = page.getByRole('searchbox', { name: 'Search episodes' });
+            await search.fill('no-matching-episode');
+            await search.press('Escape');
+            assert.equal(await search.inputValue(), '');
+            await search.fill('no-matching-episode');
+            await page.getByRole('button', { name: 'Clear search', exact: true }).click();
+            assert.equal(await search.evaluate(el => document.activeElement === el), true);
+          }
         }
         assert.deepEqual(errors, [], 'No uncaught browser errors');
         assert.deepEqual(writes, [], 'Browsing and drafts must not write to the backend');
-        console.log(`${engine} ${width}px: categories, history, search, drafts, keyboard, overflow, disclosures, Home/Feed Satoshi passed`);
+        console.log(`${engine} ${width}px: categories, history, search, drafts, keyboard, expanded controls, disclosures, Satoshi passed`);
         await context.close();
       }
     } catch (error) {
       const page = browser.contexts().at(-1)?.pages().at(-1);
-      if (page) console.error(await page.evaluate(() => ({ url: location.href, width: innerWidth, navigationDisplay: getComputedStyle(document.querySelector('.settings-nav')).display, mobile: matchMedia('(max-width: 767px)').matches, error: document.querySelector('[role="alert"]')?.textContent })));
+      if (page) console.error(await page.evaluate(() => ({ url: location.href, width: innerWidth, mobile: matchMedia('(max-width: 767px)').matches, error: document.querySelector('[role="alert"]')?.textContent })));
       throw error;
     } finally {
       await browser.close();

@@ -8,7 +8,7 @@ Episodes carry a Podcasting 2.0 `podcast:transcript` (WebVTT), `podcast:chapters
 
 ## Authenticated feeds
 
-The feed is open by default: anyone with the URL can read it. The "authenticated feeds" section in Settings puts a 64-hex key on every feed and media URL: `?key=<key>` on the RSS, MP3, transcript, chapters, and text URLs, and `/media/<id>-v<generation>-<key>.jpg` for artwork. Podcast apps can drop query strings from image URLs, so artwork carries both tokens in the path. With the toggle on, a request without a valid key gets a 401. Protected responses use `Cache-Control: private, no-store`, so a shared cache cannot keep serving a revoked key.
+The feed is open by default: anyone with the URL can read it. Settings > Publishing > Authenticated feeds puts a 64-hex key on every feed and media URL: `?key=<key>` on the RSS, MP3, transcript, chapters, and text URLs, and `/media/<id>-v<generation>-<key>.jpg` for artwork. Podcast apps can drop query strings from image URLs, so artwork carries both tokens in the path. With the toggle on, a request without a valid key gets a 401. Protected responses use `Cache-Control: private, no-store`, so a shared cache cannot keep serving a revoked key.
 
 The Feed page shows the subscribe URL with the key included. Regenerating the key changes every protected URL, so existing subscriptions need the new feed URL. Disabling authentication removes the key from generated URLs. The same controls sit behind `GET`/`POST /api/v1/feed-auth` and `POST /api/v1/feed-auth/regenerate`.
 
@@ -24,7 +24,7 @@ Chapter timestamps come from the measured audio timeline used by the transcript.
 
 Chapters ship as both a Podcasting 2.0 `podcast:chapters` JSON document in the feed and ID3 chapter frames in the MP3, because clients differ in what they read.
 
-The Chapters section in Settings exposes these controls:
+Settings > Publishing > Chapters exposes these controls:
 
 | Setting | Default | Purpose |
 |---------|---------|---------|

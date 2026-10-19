@@ -38,7 +38,7 @@ Change a token in `tokens.json`, then run `node scripts/sync_design_tokens.mjs`.
 | `control` | `#6b6b78` | Inactive switch thumb; never helper text |
 | `danger` | `#ff5252` | Errors and destructive actions |
 | `danger_surface` | `#4a1f1f` | Error tags and destructive borders |
-| `warning_text` / `warning_surface` | `#fcd67a` / `#3b2b0a` | Processing status |
+| `warning_text` / `warning_surface` | `#fcd67a` / `#3b2b0a` | Processing status and warning notices |
 
 Use black text on filled green controls. Pair status colors with a readable label; color alone must not communicate success, failure or selection. Use opacity only for disabled controls, not secondary text.
 
@@ -54,7 +54,7 @@ Normal text must meet the [WCAG minimum contrast ratio of 4.5:1](https://www.w3.
 
 ## Typography
 
-Use `font-sans` for headings, navigation, labels, explanations, buttons and episode metadata. It resolves to Satoshi, then system fonts. Reserve `font-mono`, `.mono` and `.mono-xs` for code editors and raw diagnostic values. Home, Feed, player controls and notices use Satoshi throughout. The wordmark uses Satoshi at weight 700 with `-0.02em` tracking.
+Use `font-sans` for headings, navigation, labels, explanations, buttons and episode metadata. It resolves to Satoshi, then system fonts. Reserve `font-mono` for code editors and raw diagnostic values. Home, Feed, login, settings help, player controls and notices use Satoshi throughout. The wordmark uses Satoshi at weight 700 with `-0.02em` tracking.
 
 Load Satoshi through the single-family Fontshare URL in `frontend/index.html`. The previous combined Satoshi/JetBrains Mono request returned an empty stylesheet. Do not assume a computed font-family proves that a webfont loaded: verify a loaded Satoshi face in `document.fonts`. The capture script checks this before saving after images. Fontshare access is required; if it is unavailable, the system sans fallback remains readable. Font files are not committed to this repository.
 
@@ -97,15 +97,17 @@ Keep a single content column inside settings categories. On smaller screens, rep
 | Component | Rules |
 | --- | --- |
 | `.btn-primary` | Filled green with black text. Use for the main action in a form. Show progress and disable while submitting. |
-| `.btn-ghost` | Secondary action with a quiet border. Keep the same minimum target size as primary actions. |
+| `.btn-ghost` | Secondary action with a quiet border. Buttons, links and upload labels share its inline-flex target. Upload labels show focus when their hidden file input is focused. |
 | `.btn-danger` | Reserve for deletion or destructive changes. Explain consequences and retain existing confirmation behavior. |
+| Search | Use the shared magnifying-glass icon and clear action. Clear and Escape reset the query and return focus to the input. |
 | `.field` and `.label` | Every control needs an associated label. Placeholders supplement labels. Keep focus visible and secret fields masked. |
 | `.toggle` | Use a button with `role="switch"`, `aria-checked` and a readable name. Retain the visible keyboard focus outline. |
 | `.section` | Show a short heading and a one-sentence summary before expansion. Avoid repeating long instructions in the collapsed header. |
 | `.card` | Use for feed or job content. Do not make a passive card look like a button. |
 | `.tag` | Keep the status word visible. Processing and queued animation stops with reduced motion enabled. |
 | `.save-bar` | Appears for pending generic settings or save feedback. Remains available across categories; reports the total unsaved count. |
-| Reset to defaults | Secondary action for generic settings. It changes the draft and still requires Save settings. Widget resets keep their existing save behavior. |
+| Native audio | Keep browser controls for voice and chime previews. Use `AudioPlayer` for episodes. Browser-owned controls may use platform typography. |
+| Reset to defaults | Secondary action for generic settings. It changes the draft and still requires Save settings. Prompt resets and clearing corrections save immediately. |
 
 Loading must say what is loading. Errors must explain the failure and offer the available recovery action. Empty search results must show the query and a way back. Use `role="alert"` for errors and `role="status"` for nonblocking results.
 
@@ -121,10 +123,11 @@ Loading must say what is loading. Errors must explain the failure and offer the 
 
 - Put every section in exactly one category. Add a summary that answers what the user can change there.
 - Default to Content. Use `/settings?category=publishing` for a category link. Unknown categories fall back to Content.
-- Search all categories regardless of the selection. Match section names, summaries, readable labels and technical keys. Keep provider-dependent fields scoped to the selected provider.
+- Search all categories regardless of the selection. Match section names, summaries, readable labels and technical keys. Add widget control names to `WIDGET_SEARCH_TERMS`. Keep provider-dependent fields scoped to the selected provider.
 - Open matching sections during search, then restore the previous disclosure state when search clears. Escape and Clear search return focus to the search input.
 - Preserve drafts across category changes, collapsed sections, search and browser Back while Settings remains mounted. Reloading or leaving Settings still discards unsaved drafts.
 - Mount an editor when first opened; retain it while hidden. Do not load every widget merely to search its text.
+- Include every runtime key in a group or dedicated widget, with a readable label and search coverage.
 - Keep generic settings saves and independent widget saves distinct. Changing categories must not save anything automatically.
 
 Follow the [WAI disclosure pattern](https://www.w3.org/WAI/ARIA/apg/patterns/disclosure/): use a button, expose `aria-expanded`, and connect it to its body with `aria-controls`. Use native navigation buttons and a native mobile selector. Do not claim tab semantics without implementing the corresponding keyboard behavior.

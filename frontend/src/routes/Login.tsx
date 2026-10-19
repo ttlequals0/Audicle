@@ -29,10 +29,10 @@ export default function Login() {
     },
     onError: (e) => {
       if (e instanceof ApiError) {
-        if (e.status === 423) setError("account locked - wait and retry");
-        else if (e.status === 401) setError("invalid password");
-        else if (e.status === 400) setError("no password set; auth is open");
-        else setError(`error ${e.status}`);
+        if (e.status === 423) setError("Account locked. Wait and try again.");
+        else if (e.status === 401) setError("Invalid password. Try again.");
+        else if (e.status === 400) setError("Sign-in could not be completed. Check your password or reload the page.");
+        else setError(`Sign-in failed (HTTP ${e.status}). Try again.`);
       } else {
         setError((e as Error).message);
       }
@@ -46,10 +46,10 @@ export default function Login() {
 
   return (
     <form onSubmit={submit} className="card p-6 space-y-4 max-w-md mx-auto mt-10">
-      <h1 className="section-title">login</h1>
+      <h1 className="text-2xl font-black tracking-tight">Sign in</h1>
       <div>
         <label className="label" htmlFor="pw">
-          password
+          Password
         </label>
         <input
           id="pw"
@@ -63,13 +63,13 @@ export default function Login() {
           }}
         />
       </div>
-      {error && <p className="text-danger text-sm font-mono" role="alert">{error}</p>}
+      {error && <p className="text-danger text-sm" role="alert">{error}</p>}
       <button
         type="submit"
         className="btn-primary w-full"
         disabled={loginM.isPending || !password}
       >
-        {loginM.isPending ? "signing in..." : "sign in"}
+        {loginM.isPending ? "Signing in..." : "Sign in"}
       </button>
     </form>
   );

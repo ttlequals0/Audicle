@@ -57,7 +57,7 @@ Then `docker compose up -d` as usual.
 
 ## Required configuration
 
-Set the public feed URL, an LLM connection and model, and a reference voice in Settings. Review the feed metadata below before subscribing. See [Environment variables](environment-variables.md) for the full list.
+Set the public feed URL, an LLM connection and model, and a reference voice in Settings. Use Services > Connections for the public URL, Services > LLM for the AI provider, Voice > Voices for a reference clip, and Publishing > Feed for podcast metadata. See [Environment variables](environment-variables.md) for the full list.
 
 | Variable | What it is | Example |
 |---|---|---|
@@ -70,7 +70,9 @@ Set the public feed URL, an LLM connection and model, and a reference voice in S
 | `LLM_PROVIDER` | One of the four [providers](llm-providers.md) | `openai-compatible` |
 | `LLM_MODEL` | A model available from your configured provider | Select from the model list |
 
-The admin password lives under Settings > security (a bcrypt hash in the DB); until it is set the app runs in open convenience mode, and warns you about it when the server looks internet-facing.
+The admin password lives under Settings > System > Admin access (a bcrypt hash in the DB); until it is set the app runs in open convenience mode, and warns you about it when the server looks internet-facing.
+
+For local HTTP access, turn off Secure session cookie under System > Security before setting a password. Keep it enabled when serving the app over HTTPS.
 
 ## Extraction out of the box
 

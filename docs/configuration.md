@@ -14,23 +14,23 @@ Settings are grouped by the question you are answering, not by which mechanism s
 
 | Category | Groups |
 |---|---|
-| Content | Extraction, site overrides, Cleanup, cleanup prompt, Uploads |
-| Voice | voices, TTS, TTS backend, TTS generation, pronunciation corrections, Verification, Audio analysis, Audio output, end chime, TTS delivery |
-| Publishing | Feed, Artwork, Chapters, RSS, authenticated feeds, Retention |
-| Services | LLM, Connections, Timeouts, Webhooks |
-| System | Job timeouts, Logging, security, system info |
+| Content | Extraction, Site overrides, Cleanup, Cleanup prompt, Uploads |
+| Voice | Voices, TTS, TTS backend, TTS generation, Pronunciation corrections, Verification, Audio analysis, Audio output, End chime, TTS delivery |
+| Publishing | Feed, Artwork, Chapters, RSS, Authenticated feeds, Retention |
+| Services | LLM, Connections, Timeouts, Webhooks, Sidecar settings |
+| System | Job timeouts, Operations, Logging, Security, Admin access, System info |
 
 Choose a category from the side navigation, or the category selector on mobile. Only that category is shown. Category links such as `/settings?category=voice` support bookmarks and browser Back.
 
-Search at the top covers all categories, matching readable labels, technical keys and section descriptions. Matching sections open automatically. Clear search or press Escape to return to the selected category and its previous disclosure state.
+Search at the top covers all categories, matching readable labels, technical keys and section descriptions. Widget controls are searchable too: try "cookie jar", "audition sample text" or `RENDER_NAV_TIMEOUT_MS`. Matching sections open automatically. Clear search or press Escape to return to the selected category and its previous disclosure state.
 
-Switching categories, collapsing a section or searching preserves unsaved edits while Settings remains open. The save bar counts generic form changes across categories. Widget sections (voices, corrections, site overrides, chime, authenticated feeds, security) each save themselves. Reloading or leaving Settings discards unsaved edits. Every generic card has a reset-to-defaults control; resetting changes the draft until you save it.
+Switching categories, collapsing a section or searching preserves unsaved edits while Settings remains open. The save bar counts generic form changes across categories. Use the separate save buttons for the cleanup prompt, corrections, site overrides, sidecar settings and admin password. Voice uploads, voice renames, chime controls and feed authentication save immediately. Reloading or leaving Settings discards unsaved edits. Every generic card has a reset-to-defaults control; resetting changes the draft until you save it.
 
 ## Content
 
 - **Extraction**: the engine (`direct` or `firecrawl`), fetch timeouts and user agent, the extraction floor (`MIN_EXTRACTION_CHARS`), the automatic reader and archive fallbacks, the registration-wall email, and the Firecrawl content flags.
 - **site overrides**: per-host paywall rules; see [Paywalled articles](paywalls.md).
-- **Cleanup** and **cleanup prompt**: the floor below which a cleaned article fails, the prompt-size cap, and the editable cleanup prompt itself.
+- **Cleanup** and **cleanup prompt**: the cleanup window (`LLM_CLEANUP_WINDOW_CHARS`), minimum article length, prompt-size cap and editable cleanup prompt.
 - **Uploads**: the per-file size cap and the `OCR_*` knobs for scanned documents.
 
 ## Voice
@@ -61,11 +61,15 @@ The podcast as subscribers receive it: feed metadata, [artwork](feeds-and-podcas
 - **Timeouts**: per-request budgets for the extraction cascade. Raise one when an upstream is slow rather than losing the article.
 - **Webhooks**: the notification URL and a test button; see [API and webhooks](api-and-webhooks.md#webhooks).
 
+- **Sidecar settings**: renderer and TTS wrapper controls, including memory limits, model unloading, verification and logging. Use Save sidecar settings to apply these drafts. Offline sidecars keep their saved overrides; pending changes apply when the service returns. See [sidecar configuration](api-and-webhooks.md#sidecar-settings).
+
 ## System
 
 - **Job timeouts**: when to give up on a stuck job; see [the job queue](how-it-works.md#the-job-queue).
 - **Logging**: level and format, applied across web and worker processes.
-- **security**: the admin password, login rate and lockout limits, proxy trust, and session cookie policy. Until a password is set the app runs in open convenience mode.
-- **system info**: version, uptime, auth state, and a link to the interactive API docs.
+- **Operations**: the interval between worker queue checks.
+- **Security**: login rate and lockout limits, proxy trust and session cookie policy.
+- **Admin access**: set, change or remove the admin password. Until one is set, admin actions are open.
+- **System info**: version, uptime, auth state, and a link to the interactive API docs.
 
 [< Docs index](README.md)

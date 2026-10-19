@@ -37,7 +37,7 @@ export default function OpenModeBanner() {
   const exposed = !isLocal(typeof baseUrl === "string" ? baseUrl : undefined);
   const tone = exposed
     ? "border-danger/60 bg-danger/10 text-danger"
-    : "border-amber-400/50 bg-amber-400/10 text-amber-300";
+    : "border-warning/50 bg-warning/10 text-warning";
   const message = exposed
     ? "No password set and this server looks internet-facing. Anyone who can reach it has full admin access. Set a password in Settings."
     : "No password set, so admin actions are open. Fine on your own machine; set one before you expose this.";
@@ -50,7 +50,7 @@ export default function OpenModeBanner() {
           className="text-sm underline shrink-0 hover:opacity-80"
           onClick={() => setDismissed(true)}
         >
-          dismiss
+          Dismiss
         </button>
       </div>
     </div>

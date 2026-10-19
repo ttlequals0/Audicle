@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { keepPreviousData, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, apiList, Episode, SettingsPayload } from "../lib/api";
 import { fileExt, formatBytes, formatDateTime, formatEpisodeDuration } from "../lib/format";
@@ -13,10 +13,16 @@ export default function Feed() {
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
+  const [actionFailed, setActionFailed] = useState(false);
   const [page, setPage] = useState(1);
   // qInput is what the box shows; q is the debounced value the server sees.
   const [qInput, setQInput] = useState("");
   const [q, setQ] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+  const clearSearch = () => {
+    setQInput("");
+    searchRef.current?.focus();
+  };
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -40,6 +46,7 @@ export default function Feed() {
   const feedUrl = settingsQ.data?.feed_url ?? "";
 
   const onActionError = (verb: string) => (err: unknown) => {
+    setActionFailed(true);
     const status = (err as { status?: number })?.status;
     setActionMsg(
       status === 409
@@ -79,6 +86,7 @@ export default function Feed() {
             body: JSON.stringify({ url: ep.original_url, reprocess: true }),
           }),
     onSuccess: () => {
+      setActionFailed(false);
       setActionMsg("reprocess queued");
       setTimeout(() => setActionMsg(null), 4000);
       qc.invalidateQueries({ queryKey: ["episodes"] });
@@ -92,6 +100,7 @@ export default function Feed() {
     mutationFn: (id: string) =>
       api<{ chapter_count: number }>(`/api/v1/episodes/${id}/chapters`, { method: "POST" }),
     onSuccess: (r) => {
+      setActionFailed(false);
       setActionMsg(`chapters regenerated (${r.chapter_count})`);
       setTimeout(() => setActionMsg(null), 5000);
       qc.invalidateQueries({ queryKey: ["episodes"] });
@@ -149,23 +158,23 @@ export default function Feed() {
       </p>
 
       <div className="search-wrap mb-4">
-        <span className="search-slash" aria-hidden="true">
-          /
-        </span>
+        <span className="search-icon" aria-hidden="true" />
         <input
+          ref={searchRef}
           type="search"
           className="field"
           placeholder="Search title or URL"
           autoComplete="off"
           value={qInput}
           onChange={(e) => setQInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Escape") clearSearch(); }}
           aria-label="Search episodes"
         />
         {qInput && (
           <button
             type="button"
             className="search-clear"
-            onClick={() => setQInput("")}
+            onClick={clearSearch}
             aria-label="Clear search"
           >
             &times;
@@ -173,7 +182,7 @@ export default function Feed() {
         )}
       </div>
 
-      {actionMsg && <p className="text-xs text-accent mb-3" role="status" aria-live="polite">{actionMsg}</p>}
+      {actionMsg && <p className={`text-sm mb-3 ${actionFailed ? "text-danger" : "text-accent"}`} role={actionFailed ? "alert" : "status"}>{actionMsg}</p>}
       {episodesQ.isLoading && <p className="text-mute text-sm" role="status" aria-live="polite">Loading episodes...</p>}
       {episodesQ.isError && (
         <div className="text-danger text-sm mb-3" role="alert">
@@ -185,7 +194,7 @@ export default function Feed() {
       )}
       {episodes.length === 0 && !episodesQ.isLoading && !episodesQ.isError && (
         <p className="text-mute text-sm">
-          {q ? `nothing matches "${q}".` : "no episodes yet."}
+          {q ? `No episodes match "${q}".` : "No episodes yet."}
         </p>
       )}
 

@@ -30,7 +30,7 @@ Events worth alerting on or graphing:
 
 - **`TTS unreachable: All connection attempts failed`** - nothing was listening at `TTS_URL` for longer than the connect budget (`TTS_CONNECT_RETRY_MAX_SECONDS`, default 180 s). A wrapper restart is covered by that budget; exceeding it means the wrapper is staying down. Check its logs, then the host's kernel log for an OOM kill.
 - **A job failed at `extract`** - the error names the fix: a hard block with no solver points at `FLARESOLVERR_URL`; a solver that could not clear it means the site needs a login; a short teaser means add a [site override](paywalls.md).
-- **A job killed by the watchdog** - the error says whether the stall window or the absolute ceiling fired; both are tunable under Job timeouts in Settings.
+- **A job killed by the watchdog** - the error says whether the stall window or the absolute ceiling fired; both are tunable under Settings > System > Job timeouts.
 - **The wrapper restarts periodically during a very long job** - that is the memory ladder's hard limit doing its job at a chunk boundary, and the connect budget rides it out. Only worry if jobs fail, or the kernel log shows the OOM killer rather than a `tts_memory_restart` event.
 
 ## Rolling back
@@ -103,7 +103,7 @@ PY
 
 ## Security posture
 
-- Set the admin password (Settings > security) before exposing anything. Until then the app runs in open convenience mode and says so in the UI.
+- Set the admin password (Settings > System > Admin access) before exposing anything. Until then the app runs in open convenience mode and says so in the UI.
 - Login is rate limited (`LOGIN_RATE_LIMIT`) with an IP lockout on repeated failures. Behind a reverse proxy, set `TRUST_PROXY_HEADERS=true` and `TRUSTED_PROXY_HOPS` or every client shares the proxy's IP for lockout purposes; do not enable it without a trusted proxy in front.
 - [Authenticated feeds](feeds-and-podcasting.md#authenticated-feeds) gate the public feed and media. The render sidecar and TTS wrapper are internal-only; never expose them.
 

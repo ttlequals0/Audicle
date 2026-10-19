@@ -89,6 +89,7 @@ The full index is [docs/README.md](docs/README.md). The short version:
 | [How it works](docs/how-it-works.md) | Pipeline from URL to episode, extraction cascade, quality gates |
 | [Installation](docs/installation.md) | Requirements, quick start, CPU-only deployment |
 | [Web interface](docs/web-interface.md) | Home, Feed, and Settings pages |
+| [UI design guide](branding/design-guide.md) | Colors, fonts, controls and UI review checks |
 | [Configuration](docs/configuration.md) | Every settings category, what saves where |
 | [Environment variables](docs/environment-variables.md) | Every variable, runtime-editable ones flagged |
 | [Voices and TTS](docs/voices-and-tts.md) | Voice cloning, running Chatterbox or Whisper on other hosts |
@@ -124,8 +125,14 @@ uv run uvicorn app.main:create_app --factory --reload --app-dir backend
 Frontend:
 
 ```bash
-cd frontend && npm install && npm run dev   # Vite, hot reload
+cd frontend
+npm ci
+npm run dev
 ```
+
+Run `npm test` and `npm run build` from `frontend/` before submitting UI changes. The build checks shared design tokens. Edit `branding/tokens.json`, then run `node scripts/sync_design_tokens.mjs` from the repository root to regenerate CSS. Keep `branding/` and `scripts/` beside `frontend/` in build environments.
+
+Follow the [UI design guide](branding/design-guide.md) and include before/after screenshots. The [browser audit](docs/audits/ui-2026-10-19/README.md#reproduce) documents real-backend checks and screenshot capture.
 
 The `tts-wrapper/` and `render/` packages have their own test suites (`uv run pytest` in each). Lint with `uv run ruff check` from the root; one run covers everything. The OpenAPI schema lives at `openapi.yaml`; regenerate it with `uv run python scripts/dump_openapi.py`.
 
