@@ -6,8 +6,8 @@
 #
 # PYVER single-sources the Python version for the FROM line AND the nvidia
 # wheel paths in LD_LIBRARY_PATH below -- bump it in one place.
-ARG PYVER=3.11
-FROM ghcr.io/astral-sh/uv:0.13.0 AS uv
+ARG PYVER=3.14
+FROM ghcr.io/astral-sh/uv:0.13.1 AS uv
 FROM python:${PYVER}-slim AS runtime
 ARG PYVER
 COPY --from=uv /uv /uvx /bin/
@@ -73,7 +73,13 @@ COPY pyproject.toml uv.lock LICENSE ./
 # ImportError crash-loop after deploy.
 COPY config.py engine.py log_setup.py main.py memory.py chatterbox_engine.py whisper_verify.py install_engine.sh ./
 # install_engine.sh is shared with Dockerfile.cpu.
-RUN sh install_engine.sh
+# spacy-pkuseg (a chatterbox dependency for Chinese segmentation) publishes no
+# cp314 wheel, so it is compiled from the locked sdist; g++ is purged afterwards.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends g++ \
+    && sh install_engine.sh \
+    && apt-get purge -y --auto-remove g++ \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --uid 1000 audicle \
     && mkdir -p /data /tmp/.cache/torch/kernels /tmp/numba_cache /tmp/mpl \
