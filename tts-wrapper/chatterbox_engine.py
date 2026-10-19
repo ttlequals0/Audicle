@@ -30,6 +30,8 @@ import threading
 import time
 from pathlib import Path
 
+import numpy as np
+
 from config import NUM_SLOTS, Config
 from engine import (
     _MAX_GEN_TOKENS,
@@ -123,6 +125,7 @@ class ChatterboxEngine:
         # Trust the model's native output rate (24 kHz) over the config default.
         self.sample_rate = int(self._model.sr)
         self._install_generation_cap()
+        self._install_float32_reference()
         self.model_loaded = True
         logger.info(
             "TTS model loaded",
@@ -295,6 +298,23 @@ class ChatterboxEngine:
         # operator-set seed can't crash inference.
         np.random.seed(seed & 0xFFFFFFFF)
         random.seed(seed)
+
+    def _install_float32_reference(self) -> None:
+        """Keep the reference waveform float32 through loudness normalization.
+
+        Under numpy 2 a float32 array times a numpy float64 scalar promotes to
+        float64, so ``norm_loudness`` hands Chatterbox a double waveform and the
+        S3 tokenizer's float32 mel filters reject it at ``prepare_conditionals``.
+        Cast the result back; a library without ``norm_loudness`` needs nothing."""
+
+        original = getattr(self._model, "norm_loudness", None)
+        if not callable(original):
+            return
+
+        def _float32_loudness(wav, sr, *args, **kwargs):
+            return np.asarray(original(wav, sr, *args, **kwargs), dtype=np.float32)
+
+        self._model.norm_loudness = _float32_loudness
 
     def _install_generation_cap(self) -> None:
         """Wrap ``t3.inference_turbo`` so each call gets a per-piece
