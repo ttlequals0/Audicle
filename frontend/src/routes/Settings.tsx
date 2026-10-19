@@ -2018,36 +2018,36 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
             setRows((rs) => rs.map((r) => (r.id === row.id ? { ...r, ...p } : r)));
           const host = row.host.trim() || "this site";
           return (
-            <div key={row.id} className="space-y-2">
-              <div className="flex flex-wrap items-center gap-2">
+            <div key={row.id} className="rule-card space-y-2">
+              <div className="flex items-center gap-2">
                 <input
-                  className="field flex-1 min-w-[10rem]"
+                  className="field flex-1 min-w-0"
                   placeholder="domain"
                   aria-label="Site domain"
                   value={row.host}
                   onChange={(e) => patch({ host: e.target.value })}
                 />
-                <select
-                  className="field w-48"
-                  aria-label={`Extraction strategy for ${host}`}
-                  value={row.proxy}
-                  onChange={(e) => patch({ proxy: e.target.value })}
-                >
-                  <option value="">use default ({proxyLabel(defaultProxy)})</option>
-                  {proxies.map((p) => (
-                    <option key={p.key} value={p.key}>
-                      {p.label}
-                    </option>
-                  ))}
-                </select>
                 <button
-                  className="text-mute hover:text-danger flex items-center justify-center w-8"
+                  className="btn-ghost btn-danger shrink-0"
                   aria-label={`Remove override for ${host}`}
                   onClick={() => setRows((rs) => rs.filter((r) => r.id !== row.id))}
                 >
-                  &times;
+                  Remove
                 </button>
               </div>
+              <select
+                className="field w-full sm:w-96"
+                aria-label={`Extraction strategy for ${host}`}
+                value={row.proxy}
+                onChange={(e) => patch({ proxy: e.target.value })}
+              >
+                <option value="">use default ({proxyLabel(defaultProxy)})</option>
+                {proxies.map((p) => (
+                  <option key={p.key} value={p.key}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
               {/* Per-rule settings hang off their rule so they never read as a separate rule. */}
               {row.proxy === "custom" && (
                 <label className={RULE_DETAIL}>

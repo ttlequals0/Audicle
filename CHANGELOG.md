@@ -8,6 +8,10 @@ work lives under `[Unreleased]`.
 
 ### Changed
 
+- Show each site override as its own bordered card with a labelled Remove button, so neighbouring rules and their proxy or cookie details read apart.
+
+### Changed
+
 - Show one Settings category at a time, with side navigation on desktop, a category selector on mobile, bookmarkable category URLs and browser Back support. Each section carries a one-line summary.
 - Search Settings across all categories by readable label, technical key or section description. Drafts survive category changes and search, and Escape clears the query.
 - Use Satoshi for all interface text, drop the monospace UI styling on Home and Feed, and define colors once in branding/tokens.json with a build-time drift check. Add the UI design guide.
