@@ -1609,15 +1609,20 @@ function PromptEditor({ initial }: { initial: string }) {
   // gate at the parent on data !== undefined), so in-progress edits are
   // never clobbered.
   const [text, setText] = useState(initial);
+  const [savedSnapshot, setSavedSnapshot] = useState(text);
   const [msg, setMsg] = useState<string | null>(null);
 
   const m = useMutation({
-    mutationFn: () =>
-      api("/api/v1/prompt", {
+    mutationFn: async () => {
+      const submitted = text;
+      await api("/api/v1/prompt", {
         method: "PUT",
-        body: JSON.stringify({ prompt: text }),
-      }),
-    onSuccess: () => {
+        body: JSON.stringify({ prompt: submitted }),
+      });
+      return submitted;
+    },
+    onSuccess: (submitted) => {
+      setSavedSnapshot(submitted);
       setMsg("Saved");
       setTimeout(() => setMsg(null), 2000);
       qc.invalidateQueries({ queryKey: ["prompt"] });
@@ -1631,13 +1636,14 @@ function PromptEditor({ initial }: { initial: string }) {
     mutationFn: () => api<PromptBody>("/api/v1/prompt", { method: "DELETE" }),
     onSuccess: (data) => {
       setText(data.prompt);
+      setSavedSnapshot(data.prompt);
       setMsg("Reset to default");
       setTimeout(() => setMsg(null), 2000);
       qc.invalidateQueries({ queryKey: ["prompt"] });
     },
     onError: () => setMsg("Reset failed. Try again."),
   });
-  useUnsavedChanges(text !== initial || m.isPending);
+  useUnsavedChanges(text !== savedSnapshot || m.isPending);
 
   return (
     <section className="space-y-3">
@@ -1680,6 +1686,12 @@ interface Row {
   caseSensitive: boolean;
 }
 
+const sidecarSnapshot = (draft: Record<string, string>, resetKeys: Iterable<string>) =>
+  JSON.stringify([
+    Object.entries(draft).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+    [...resetKeys].sort(),
+  ]);
+
 const rowsContent = (rows: { id: number }[]) =>
   JSON.stringify(rows.map(({ id: _id, ...rest }) => rest));
 
@@ -1700,10 +1712,12 @@ function CorrectionsTable({ initial }: { initial: Record<string, CorrectionEntry
   const [rows, setRows] = useState<Row[]>(() =>
     Object.entries(initial).map(([k, entry]) => newRow(k, entry))
   );
+  const [savedSnapshot, setSavedSnapshot] = useState(() => rowsContent(rows));
   const [msg, setMsg] = useState<string | null>(null);
 
   const m = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
+      const submitted = rowsContent(rows);
       const obj: Record<string, Partial<CorrectionEntry>> = {};
       for (const row of rows) {
         if (!row.k.trim()) continue;
@@ -1713,12 +1727,14 @@ function CorrectionsTable({ initial }: { initial: Record<string, CorrectionEntry
           case_sensitive: row.caseSensitive,
         };
       }
-      return api("/api/v1/corrections", {
+      await api("/api/v1/corrections", {
         method: "PUT",
         body: JSON.stringify(obj),
       });
+      return submitted;
     },
-    onSuccess: () => {
+    onSuccess: (submitted) => {
+      setSavedSnapshot(submitted);
       setMsg("Saved");
       setTimeout(() => setMsg(null), 2000);
       qc.invalidateQueries({ queryKey: ["corrections"] });
@@ -1731,16 +1747,14 @@ function CorrectionsTable({ initial }: { initial: Record<string, CorrectionEntry
     mutationFn: () => api("/api/v1/corrections", { method: "DELETE" }),
     onSuccess: () => {
       setRows([]);
+      setSavedSnapshot(rowsContent([]));
       setMsg("Cleared");
       setTimeout(() => setMsg(null), 2000);
       qc.invalidateQueries({ queryKey: ["corrections"] });
     },
     onError: () => setMsg("Clear failed. Try again."),
   });
-  useUnsavedChanges(
-    rowsContent(rows) !== rowsContent(Object.entries(initial).map(([k, entry]) => newRow(k, entry))) ||
-      m.isPending
-  );
+  useUnsavedChanges(rowsContent(rows) !== savedSnapshot || m.isPending);
 
   return (
     <section className="space-y-3">
@@ -1877,6 +1891,8 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
   const [rows, setRows] = useState<FallbackRow[]>(() =>
     initial.rules.map((r) => newFallbackRow(r))
   );
+  const fallbacksSnapshot = () => JSON.stringify([defaultProxy, minChars, rowsContent(rows)]);
+  const [savedSnapshot, setSavedSnapshot] = useState(fallbacksSnapshot);
   const [msg, setMsg] = useState<string | null>(null);
 
   const proxies = initial.available_proxies;
@@ -1884,8 +1900,9 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
     proxies.find((p) => p.key === key)?.label ?? key;
 
   const m = useMutation({
-    mutationFn: () =>
-      api("/api/v1/source-fallbacks", {
+    mutationFn: async () => {
+      const submitted = fallbacksSnapshot();
+      await api("/api/v1/source-fallbacks", {
         method: "PUT",
         body: JSON.stringify({
           default_proxy: defaultProxy,
@@ -1901,8 +1918,11 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
               cookies: acceptsCookies(r.proxy) ? r.cookies.trim() : "",
             })),
         }),
-      }),
-    onSuccess: () => {
+      });
+      return submitted;
+    },
+    onSuccess: (submitted) => {
+      setSavedSnapshot(submitted);
       setMsg("Saved");
       setTimeout(() => setMsg(null), 2000);
       qc.invalidateQueries({ queryKey: ["source-fallbacks"] });
@@ -1914,12 +1934,7 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
     },
   });
 
-  useUnsavedChanges(
-    defaultProxy !== initial.default_proxy ||
-      minChars !== String(initial.min_chars) ||
-      rowsContent(rows) !== rowsContent(initial.rules.map((r) => newFallbackRow(r))) ||
-      m.isPending
-  );
+  useUnsavedChanges(fallbacksSnapshot() !== savedSnapshot || m.isPending);
 
   // Run the saved rules against one URL so the operator can confirm a rule (and its
   // cookie jar) actually fetches the article. Never returns the cookie value.
@@ -2640,6 +2655,7 @@ function SidecarSettingsWidget() {
   const [resetKeys, setResetKeys] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [savedSnapshot, setSavedSnapshot] = useState(() => sidecarSnapshot({}, []));
   const baseline = useRef<Record<string, string>>({});
   const draftRef = useRef(draft);
   const resetKeysRef = useRef(resetKeys);
@@ -2651,6 +2667,7 @@ function SidecarSettingsWidget() {
     if (!data) return;
     const next: Record<string, string> = { ...draftRef.current };
     const nextBaseline = { ...baseline.current };
+    const reseeded: Record<string, string> = {};
     let changed = false;
     for (const group of SIDECAR_GROUPS) {
       const state = data[group.key];
@@ -2663,11 +2680,16 @@ function SidecarSettingsWidget() {
         const textValue = value === undefined || value === null ? "" : String(value);
         next[storageKey] = textValue;
         nextBaseline[storageKey] = textValue;
+        reseeded[storageKey] = textValue;
         if (draftRef.current[storageKey] !== textValue) changed = true;
       }
     }
     if (changed) setDraft(next);
     baseline.current = nextBaseline;
+    setSavedSnapshot((prev) => {
+      const [entries, resets] = JSON.parse(prev) as [[string, string][], string[]];
+      return sidecarSnapshot({ ...Object.fromEntries(entries), ...reseeded }, resets);
+    });
   }, [sidecarsQ.data]);
 
   const saveM = useMutation({
@@ -2690,22 +2712,22 @@ function SidecarSettingsWidget() {
           baseline.current[storageKey] = request.draftSnapshot[storageKey] ?? "";
         }
       }
-      setResetKeys((current) => {
-        const next = new Set(current);
-        for (const group of SIDECAR_GROUPS) {
-          const submitted = request.payload[group.key] as Record<string, unknown> | undefined;
-          for (const key of Object.keys(submitted ?? {})) {
-            const storageKey = `${group.key}.${key}`;
-            if (
-              submitted?.[key] === null &&
-              request.resetSnapshot.has(storageKey) &&
-              current.has(storageKey) &&
-              draftRef.current[storageKey] === request.draftSnapshot[storageKey]
-            ) next.delete(storageKey);
-          }
+      const current = resetKeysRef.current;
+      const nextResets = new Set(current);
+      for (const group of SIDECAR_GROUPS) {
+        const submitted = request.payload[group.key] as Record<string, unknown> | undefined;
+        for (const key of Object.keys(submitted ?? {})) {
+          const storageKey = `${group.key}.${key}`;
+          if (
+            submitted?.[key] === null &&
+            request.resetSnapshot.has(storageKey) &&
+            current.has(storageKey) &&
+            draftRef.current[storageKey] === request.draftSnapshot[storageKey]
+          ) nextResets.delete(storageKey);
         }
-        return next;
-      });
+      }
+      setResetKeys(nextResets);
+      setSavedSnapshot(sidecarSnapshot(request.draftSnapshot, nextResets));
       setError(null);
       setMessage("Sidecar settings saved.");
     },
@@ -2716,11 +2738,7 @@ function SidecarSettingsWidget() {
     },
   });
 
-  useUnsavedChanges(
-    saveM.isPending ||
-      resetKeys.size > 0 ||
-      Object.keys(draft).some((key) => draft[key] !== (baseline.current[key] ?? ""))
-  );
+  useUnsavedChanges(sidecarSnapshot(draft, resetKeys) !== savedSnapshot || saveM.isPending);
 
   if (sidecarsQ.isLoading) return <p className="text-mute text-sm" role="status">Loading sidecar settings...</p>;
   if (sidecarsQ.isError && !sidecarsQ.data) {

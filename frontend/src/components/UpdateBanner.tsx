@@ -10,6 +10,7 @@ export default function UpdateBanner({ pageWidth }: { pageWidth: string }) {
 
   return (
     <Banner
+      role="status"
       tone="border-accent/50 bg-accent/10 text-fg"
       pageWidth={pageWidth}
       action={

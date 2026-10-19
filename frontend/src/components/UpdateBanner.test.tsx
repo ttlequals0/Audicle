@@ -5,8 +5,8 @@ import UpdateBanner from "./UpdateBanner";
 import { offerAppUpdate } from "../lib/appUpdate";
 import { useUnsavedChanges } from "../lib/useUnsavedChanges";
 
-function Draft() {
-  useUnsavedChanges(true);
+function Draft({ dirty = true }: { dirty?: boolean }) {
+  useUnsavedChanges(dirty);
   return null;
 }
 
@@ -46,5 +46,26 @@ describe("UpdateBanner", () => {
 
     expect(screen.getByText("Update ready. Save your changes before reloading.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reload to update" })).toBeDisabled();
+  });
+
+  it("re-enables the reload once the draft is clean again", () => {
+    const { rerender } = render(
+      <>
+        <Draft dirty />
+        <UpdateBanner pageWidth="max-w-2xl" />
+      </>
+    );
+    act(() => {
+      offerAppUpdate(vi.fn());
+    });
+    expect(screen.getByRole("button", { name: "Reload to update" })).toBeDisabled();
+
+    rerender(
+      <>
+        <Draft dirty={false} />
+        <UpdateBanner pageWidth="max-w-2xl" />
+      </>
+    );
+    expect(screen.getByRole("button", { name: "Reload to update" })).toBeEnabled();
   });
 });
