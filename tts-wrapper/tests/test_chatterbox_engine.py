@@ -385,6 +385,25 @@ def test_run_inference_trims_piece_silence_tail() -> None:
     assert len(out) < int(model.sr * 3)
 
 
+# --- reference dtype --------------------------------------------------------
+
+
+def test_reference_loudness_stays_float32() -> None:
+    engine = _loaded_engine()
+    engine._model.norm_loudness = lambda wav, sr: wav * np.float64(0.5)
+    engine._install_float32_reference()
+    out = engine._model.norm_loudness(np.ones(8, dtype=np.float32), 24000)
+    assert out.dtype == np.float32
+    assert out[0] == np.float32(0.5)
+
+
+def test_reference_shim_skips_models_without_norm_loudness() -> None:
+    engine = _loaded_engine()
+    assert not hasattr(engine._model, "norm_loudness")
+    engine._install_float32_reference()
+    assert not hasattr(engine._model, "norm_loudness")
+
+
 # --- generation-length cap --------------------------------------------------
 
 

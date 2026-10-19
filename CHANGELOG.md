@@ -6,6 +6,10 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep the reference voice float32 through Chatterbox's loudness normalization. numpy 2 promotes the normalized waveform to float64, which made the Python 3.14 wrapper image reject every reference voice and leave speech generation unavailable.
+
 ### Changed
 
 - Show one Settings category at a time, with side navigation on desktop, a category selector on mobile, bookmarkable category URLs and browser Back support. Each section carries a one-line summary.
