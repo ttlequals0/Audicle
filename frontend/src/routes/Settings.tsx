@@ -240,28 +240,28 @@ const GROUPS: Record<string, string[]> = {
 // The hand-written sections below the generic form. Listed so the search can
 // match them by title; their bodies are widgets, not settings keys.
 const STANDALONE_SECTIONS = [
-  "cleanup prompt",
-  "pronunciation corrections",
-  "site overrides",
-  "voices",
-  "end chime",
-  "authenticated feeds",
+  "Cleanup prompt",
+  "Pronunciation corrections",
+  "Site overrides",
+  "Voices",
+  "End chime",
+  "Authenticated feeds",
   "Admin access",
-  "system info",
-  "sidecar settings",
+  "System info",
+  "Sidecar settings",
 ];
 
 // Settings arranged by the question an operator is answering, not by which
 // mechanism happens to store them. Entries name either a GROUPS key or one of
 // the hand-written widget sections, and both render inline here: leaving the
-// widgets to trail the page was what made "voices" impossible to find under
+// widgets to trail the page was what made "Voices" impossible to find under
 // Voice and turned the last category into a junk drawer.
 const CATEGORIES: { name: string; description: string; entries: string[] }[] = [
   {
     // Getting the article and preparing its text.
     name: "Content",
     description: "Article extraction, cleanup and uploads",
-    entries: ["Extraction", "site overrides", "Cleanup", "cleanup prompt", "Uploads"],
+    entries: ["Extraction", "Site overrides", "Cleanup", "Cleanup prompt", "Uploads"],
   },
   {
     // Everything that shapes how it sounds, in the order you set it up:
@@ -269,15 +269,15 @@ const CATEGORIES: { name: string; description: string; entries: string[] }[] = [
     name: "Voice",
     description: "Narration, pronunciation and audio quality",
     entries: [
-      "voices",
+      "Voices",
       "TTS",
       "TTS backend",
       "TTS generation",
-      "pronunciation corrections",
+      "Pronunciation corrections",
       "Verification",
       "Audio analysis",
       "Audio output",
-      "end chime",
+      "End chime",
       "TTS delivery",
     ],
   },
@@ -285,7 +285,7 @@ const CATEGORIES: { name: string; description: string; entries: string[] }[] = [
     // The podcast as subscribers receive it.
     name: "Publishing",
     description: "Podcast details, artwork and subscribers",
-    entries: ["Feed", "Artwork", "Chapters", "RSS", "authenticated feeds", "Retention"],
+    entries: ["Feed", "Artwork", "Chapters", "RSS", "Authenticated feeds", "Retention"],
   },
   {
     // The services this app talks to. Named "Services" rather than
@@ -295,66 +295,51 @@ const CATEGORIES: { name: string; description: string; entries: string[] }[] = [
     // what a self-hoster already calls these.
     name: "Services",
     description: "AI providers, connections and integrations",
-    entries: ["LLM", "Connections", "Timeouts", "Webhooks", "sidecar settings"],
+    entries: ["LLM", "Connections", "Timeouts", "Webhooks", "Sidecar settings"],
   },
   {
     // Running the app itself. Small on purpose: anything that belongs to a
     // subject above lives there instead.
     name: "System",
     description: "Admin access, job limits and diagnostics",
-    entries: ["Job timeouts", "Operations", "Logging", "Security", "Admin access", "system info"],
+    entries: ["Job timeouts", "Operations", "Logging", "Security", "Admin access", "System info"],
   },
 ];
 
 const SECTION_SUMMARIES: Record<string, string> = {
   Extraction: "Choose how articles are fetched and when to try a fallback.",
-  "site overrides": "Set extraction rules for individual websites.",
+  "Site overrides": "Set extraction rules for individual websites.",
   Cleanup: "Control text cleanup and minimum article length.",
-  "cleanup prompt": "Edit the instructions used to prepare articles for narration.",
+  "Cleanup prompt": "Edit the instructions used to prepare articles for narration.",
   Uploads: "Set file size limits and text recognition for scanned documents.",
   voices: "Upload and preview the reference voices used for narration.",
   TTS: "Choose a speech model, language and chunk size.",
   "TTS backend": "Choose where speech generation and verification run.",
   "TTS generation": "Tune Chatterbox sampling, caching and chunk sizing.",
-  "pronunciation corrections": "Teach the narrator how to say names and acronyms.",
+  "Pronunciation corrections": "Teach the narrator how to say names and acronyms.",
   Verification: "Compare narration with the source text and retry mismatches.",
   "Audio analysis": "Detect noise, silence and pacing problems.",
   "Audio output": "Set MP3 encoding, loudness and silence handling.",
-  "end chime": "Upload or preview the sound at the end of each episode.",
+  "End chime": "Upload or preview the sound at the end of each episode.",
   "TTS delivery": "Set retry budgets and wrapper restart behavior.",
   Feed: "Set your podcast title, description, author and cover image.",
   Artwork: "Configure fallback artwork, image sizes and quality.",
   Chapters: "Control chapter detection and target chapter length.",
   RSS: "Set how long podcast apps can cache the feed.",
-  "authenticated feeds": "Manage the access key used by podcast subscribers.",
+  "Authenticated feeds": "Manage the access key used by podcast subscribers.",
   Retention: "Choose when old episodes and backups are deleted.",
   LLM: "Choose your AI provider, model and API credentials.",
   Connections: "Set public URLs and connect extraction and speech services.",
   Timeouts: "Set request time limits for upstream services.",
   Webhooks: "Send episode notifications to another service.",
-  "sidecar settings": "Configure the browser renderer and speech wrapper.",
+  "Sidecar settings": "Configure the browser renderer and speech wrapper.",
   "Job timeouts": "Set limits for stalled jobs and total processing time.",
   Operations: "Set how often the worker checks the queue.",
   Logging: "Choose the log level and output format.",
   Security: "Configure login limits, trusted proxies and session cookies.",
   "Admin access": "Set or change the password for the admin interface.",
-  "system info": "View the app version, uptime and API documentation.",
+  "System info": "View the app version, uptime and API documentation.",
 };
-
-// Runs once at import. An entry that matches neither a GROUPS key nor a widget
-// section would never render, and a duplicate would render twice. Both are easy
-// to miss by eye and this is the only thing that keeps the two lists in step.
-{
-  const placed = CATEGORIES.flatMap((c) => c.entries);
-  const known = [...Object.keys(GROUPS), ...STANDALONE_SECTIONS];
-  const missing = known.filter((g) => !placed.includes(g));
-  const duplicated = placed.filter((g, i) => placed.indexOf(g) !== i);
-  const unknown = placed.filter((g) => !known.includes(g));
-  if (missing.length || duplicated.length || unknown.length) {
-    console.error("CATEGORIES mismatch", { missing, duplicated, unknown });
-  }
-}
-
 
 // A setting that belongs to the rule row above it: indented, tied to it by an accent line.
 const RULE_DETAIL = "block ml-3 pl-3.5 border-l-2 border-accent/35";
@@ -421,6 +406,12 @@ function feedbackRole(message: string): "alert" | "status" {
   return /failed|error|cannot|incorrect|unable|invalid|must be/i.test(message) ? "alert" : "status";
 }
 
+function FeedbackMsg({ msg, as: Tag = "span" }: { msg: string | null; as?: "span" | "p" }) {
+  if (!msg) return null;
+  const role = feedbackRole(msg);
+  return <Tag className={`text-sm ${role === "alert" ? "text-danger" : "text-accent"}`} role={role}>{msg}</Tag>;
+}
+
 const SIDECAR_GROUPS = [
   {
     key: "render",
@@ -480,14 +471,32 @@ const SIDECAR_LABELS: Record<string, string> = {
 };
 
 const WIDGET_SEARCH_TERMS: Record<string, string[]> = {
-  "sidecar settings": SIDECAR_GROUPS.flatMap(group => [group.title, ...group.keys, ...group.keys.map(key => SIDECAR_LABELS[key])]),
-  "site overrides": ["domain", "default strategy", "teaser threshold", "proxy template", "cookie jar", "subscriber login", "test URL"],
+  "Sidecar settings": SIDECAR_GROUPS.flatMap(group => [group.title, ...group.keys, ...group.keys.map(key => SIDECAR_LABELS[key])]),
+  "Site overrides": ["domain", "default strategy", "teaser threshold", "proxy template", "cookie jar", "subscriber login", "test URL"],
   voices: ["reference voice slots", "audition sample text", "upload", "replace", "rename"],
-  "end chime": ["CHIME_ENABLED", "upload clip", "preview"],
-  "authenticated feeds": ["FEED_AUTH_ENABLED", "FEED_AUTH_KEY", "feed URL", "regenerate key", "copy"],
-  "pronunciation corrections": ["word", "spoken", "override", "spell", "case sensitive", "lexicon", "export"],
+  "End chime": ["CHIME_ENABLED", "upload clip", "preview"],
+  "Authenticated feeds": ["FEED_AUTH_ENABLED", "FEED_AUTH_KEY", "feed URL", "regenerate key", "copy"],
+  "Pronunciation corrections": ["word", "spoken", "override", "spell", "case sensitive", "lexicon", "export"],
   "Admin access": ["current password", "new password", "change password", "remove password"],
 };
+
+// Runs once at import. An entry that matches neither a GROUPS key nor a widget
+// section would never render, and a duplicate would render twice. Both are easy
+// to miss by eye and this is the only thing that keeps the lists in step; the
+// same goes for a section without a summary or search terms for a name that
+// does not exist.
+{
+  const placed = CATEGORIES.flatMap((c) => c.entries);
+  const known = [...Object.keys(GROUPS), ...STANDALONE_SECTIONS];
+  const missing = known.filter((g) => !placed.includes(g));
+  const duplicated = placed.filter((g, i) => placed.indexOf(g) !== i);
+  const unknown = placed.filter((g) => !known.includes(g));
+  const unsummarized = known.filter((g) => !(g in SECTION_SUMMARIES));
+  const strayTerms = Object.keys(WIDGET_SEARCH_TERMS).filter((g) => !known.includes(g));
+  if (missing.length || duplicated.length || unknown.length || unsummarized.length || strayTerms.length) {
+    console.error("CATEGORIES mismatch", { missing, duplicated, unknown, unsummarized, strayTerms });
+  }
+}
 
 const SIDECAR_NUMERIC_KEYS = new Set(
   SIDECAR_GROUPS.flatMap(({ keys }) => keys).filter((key) =>
@@ -924,20 +933,20 @@ export default function SettingsRoute() {
   // alongside the generic groups. null means "nothing to show yet", which keeps
   // an empty shell out of the page while its query is still loading.
   const widgets: Record<string, ReactNode | null> = {
-    "cleanup prompt":
+    "Cleanup prompt":
       promptQ.data !== undefined ? <PromptEditor initial={promptQ.data.prompt} /> : null,
-    "pronunciation corrections":
+    "Pronunciation corrections":
       correctionsQ.data !== undefined ? <CorrectionsTable initial={correctionsQ.data} /> : null,
-    "site overrides":
+    "Site overrides":
       fallbacksQ.data !== undefined ? <SourceFallbacksTable initial={fallbacksQ.data} /> : null,
-    voices: <VoicesWidget />,
-    "end chime": <ChimeWidget />,
-    "authenticated feeds": <AuthenticatedFeedsWidget />,
+    Voices: <VoicesWidget />,
+    "End chime": <ChimeWidget />,
+    "Authenticated feeds": <AuthenticatedFeedsWidget />,
     "Admin access": authStatus ? (
       <SecuritySection passwordSet={authStatus.password_set} onChanged={refreshAuth} />
     ) : null,
-    "sidecar settings": <SidecarSettingsWidget />,
-    "system info": (
+    "Sidecar settings": <SidecarSettingsWidget />,
+    "System info": (
       <>
         <ReadOnlyRow label="Version" value={healthQ.data?.version ?? "loading"} />
         <ReadOnlyRow label="Uptime" value={formatUptime(healthQ.data?.uptime_seconds)} />
@@ -1002,18 +1011,30 @@ export default function SettingsRoute() {
       name in GROUPS ? visibleKeysByGroup[name].length > 0 : widgets[name] != null
     ),
   }));
-  const matchedGroups = new Set<string>();
-  if (q) {
-    const terms = q.replace(/_/g, " ").split(/\s+/);
-    for (const category of presentByCategory) {
-      for (const group of category.entries) {
-        const keys = visibleKeysByGroup[group] ?? [];
-        const hay = [category.name, category.description, group, SECTION_SUMMARIES[group], GROUP_NOTES[group] ?? "", ...keys, ...keys.map(settingLabel), ...(WIDGET_SEARCH_TERMS[group] ?? [])]
-          .join(" ").toLowerCase().replace(/_/g, " ");
-        if (terms.every((term) => hay.includes(term))) matchedGroups.add(group);
-      }
-    }
-  }
+  // Every word of the query must appear somewhere in the section's text:
+  // category, section name and summary, help note, keys, labels, widget terms.
+  const terms = q.replace(/_/g, " ").split(/\s+/);
+  const matchedGroups = new Set(
+    q
+      ? presentByCategory
+          .flatMap((category) => category.entries.map((group) => [category, group] as const))
+          .filter(([category, group]) => {
+            const keys = visibleKeysByGroup[group] ?? [];
+            const hay = [
+              category.name,
+              category.description,
+              group,
+              SECTION_SUMMARIES[group],
+              GROUP_NOTES[group] ?? "",
+              ...keys,
+              ...keys.map(settingLabel),
+              ...(WIDGET_SEARCH_TERMS[group] ?? []),
+            ].join(" ").toLowerCase().replace(/_/g, " ");
+            return terms.every((term) => hay.includes(term));
+          })
+          .map(([, group]) => group)
+      : []
+  );
 
   return (
     <SettingsSearchContext.Provider value={q ? matchedGroups : null}>
@@ -1051,7 +1072,7 @@ export default function SettingsRoute() {
         <aside className="settings-sidebar">
           <nav className="settings-nav" aria-label="Settings categories">
             {CATEGORIES.map((category) => (
-              <button key={category.name} type="button" aria-pressed={!q && activeCategory.name === category.name}
+              <button key={category.name} type="button" aria-current={!q && activeCategory.name === category.name ? "true" : undefined}
                 aria-controls="settings-sections" onClick={() => chooseCategory(category.name)}>
                 <span>{category.name}</span>
                 <span className="settings-nav-description">{category.description}</span>
@@ -1088,12 +1109,12 @@ export default function SettingsRoute() {
                 return (
                   <CollapsibleSection
                     key={name}
-                    title={name[0].toUpperCase() + name.slice(1)}
+                    title={name}
                     description={SECTION_SUMMARIES[name]}
                     active={active}
                     storageKey={name === "Admin access" ? "settings-section-security" : undefined}
                     searchKey={name}
-                    defaultOpen={name === "system info"}
+                    defaultOpen={name === "System info"}
                   >
                     {widgets[name]}
                   </CollapsibleSection>
@@ -1566,7 +1587,7 @@ function SecuritySection({
             Remove password
           </button>
         )}
-      {msg && <span className={`text-sm ${feedbackRole(msg) === "alert" ? "text-danger" : "text-accent"}`} role={feedbackRole(msg)}>{msg}</span>}
+      <FeedbackMsg msg={msg} />
       </div>
     </section>
   );
@@ -1637,7 +1658,7 @@ function PromptEditor({ initial }: { initial: string }) {
         >
           {reset.isPending ? "Resetting..." : "Reset to default"}
         </button>
-        {msg && <span className={`text-sm ${feedbackRole(msg) === "alert" ? "text-danger" : "text-accent"}`} role={feedbackRole(msg)}>{msg}</span>}
+        <FeedbackMsg msg={msg} />
       </div>
     </section>
   );
@@ -1798,7 +1819,7 @@ function CorrectionsTable({ initial }: { initial: Record<string, CorrectionEntry
         >
           {reset.isPending ? "Clearing..." : "Clear all"}
         </button>
-        {msg && <span className={`text-sm ${feedbackRole(msg) === "alert" ? "text-danger" : "text-accent"}`} role={feedbackRole(msg)}>{msg}</span>}
+        <FeedbackMsg msg={msg} />
       </div>
     </section>
   );
@@ -2043,7 +2064,7 @@ function SourceFallbacksTable({ initial }: { initial: SourceFallbacksConfig }) {
         <button className="btn-primary" disabled={m.isPending} onClick={() => m.mutate()}>
           {m.isPending ? "Saving..." : "Save site overrides"}
         </button>
-        {msg && <span className={`text-sm ${feedbackRole(msg) === "alert" ? "text-danger" : "text-accent"}`} role={feedbackRole(msg)}>{msg}</span>}
+        <FeedbackMsg msg={msg} />
       </div>
 
       <div className="space-y-1 pt-2">
@@ -2296,7 +2317,7 @@ function VoicesWidget() {
           onChange={(e) => setSample(e.target.value)}
         />
       </div>
-      {msg && <p className={`text-sm ${feedbackRole(msg) === "alert" ? "text-danger" : "text-accent"}`} role={feedbackRole(msg)}>{msg}</p>}
+      <FeedbackMsg msg={msg} as="p" />
       {auditionUrl && (
         <audio src={auditionUrl} controls autoPlay className="w-full" aria-label="Generated voice audition" />
       )}
@@ -2413,7 +2434,7 @@ function ChimeWidget() {
           The chime is enabled. Upload a clip to hear it at the end of each episode.
         </p>
       )}
-      {msg && <p className={`text-sm ${feedbackRole(msg) === "alert" ? "text-danger" : "text-accent"}`} role={feedbackRole(msg)}>{msg}</p>}
+      <FeedbackMsg msg={msg} as="p" />
       {data?.present && (
         <audio
           src={`/api/v1/chime/preview?v=${bust}`}
@@ -2579,7 +2600,7 @@ function AuthenticatedFeedsWidget() {
           onCopy={() => copy("key", data.key!)}
         />
       )}
-      {msg && <p className={`text-sm ${feedbackRole(msg) === "alert" ? "text-danger" : "text-accent"}`} role={feedbackRole(msg)}>{msg}</p>}
+      <FeedbackMsg msg={msg} as="p" />
       {enabled && (
         <button className="btn-ghost btn-danger" onClick={regenerate} disabled={regenM.isPending}>
           {regenM.isPending ? "Rotating..." : "Regenerate key"}

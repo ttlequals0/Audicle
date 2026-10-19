@@ -45,7 +45,6 @@
   .tab-btn {
     flex: 1;
     padding: 0.875rem 0.5rem;
-    font-family: var(--audicle-font-sans);
     font-size: 0.875rem;
     font-weight: 700;
     color: var(--audicle-color-text-dim);
@@ -152,7 +151,7 @@
   .category-heading {
     font-size: 1.25rem;
     font-weight: 700;
-    letter-spacing: -0.02em;
+    letter-spacing: var(--audicle-letter-spacing-wordmark);
     margin-bottom: 0.25rem;
   }
   .settings-layout {
@@ -181,7 +180,7 @@
     background: var(--audicle-color-paper);
     color: var(--audicle-color-text);
   }
-  .settings-nav button[aria-pressed="true"] {
+  .settings-nav button[aria-current="true"] {
     background: color-mix(in srgb, var(--audicle-color-primary) 8%, var(--audicle-color-background));
     border-color: var(--audicle-color-primary);
     color: var(--audicle-color-primary);
@@ -297,7 +296,6 @@
     border: none;
     padding: 0.125rem 0;
     cursor: pointer;
-    font-family: var(--audicle-font-sans);
     font-size: 0.875rem;
     color: var(--audicle-color-text);
     text-decoration: underline;
@@ -344,7 +342,6 @@
 
   .label {
     display: block;
-    font-family: var(--audicle-font-sans);
     font-size: 0.875rem;
     font-weight: 500;
     color: var(--audicle-color-text);
@@ -466,7 +463,6 @@
     display: inline-flex;
     align-items: center;
     gap: 0.25rem;
-    font-family: var(--audicle-font-sans);
     font-size: 0.75rem;
     letter-spacing: 0.05em;
     text-transform: uppercase;
@@ -518,7 +514,6 @@
     border-left: 2px solid var(--audicle-color-primary);
   }
   .queue-index {
-    font-family: var(--audicle-font-sans);
     font-size: 0.75rem;
     color: var(--audicle-color-text-dim);
     padding-top: 0.125rem;
@@ -564,7 +559,6 @@
     }
   }
   .ptr-label {
-    font-family: var(--audicle-font-sans);
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.08em;
@@ -599,7 +593,6 @@
   }
   .menu-item::before {
     content: ">";
-    font-family: var(--audicle-font-sans);
     font-size: 0.75rem;
     color: transparent;
   }
@@ -630,7 +623,6 @@
     border-radius: var(--audicle-radius-lg);
   }
   .section-title {
-    font-family: var(--audicle-font-sans);
     font-size: 1rem;
     font-weight: 700;
     color: var(--audicle-color-text);
@@ -648,7 +640,6 @@
   }
 
   .wordmark {
-    font-family: var(--audicle-font-sans);
     font-weight: 700;
     letter-spacing: var(--audicle-letter-spacing-wordmark);
   }
@@ -685,7 +676,6 @@
     color: var(--audicle-color-text);
     padding: 1.25rem;
     border-radius: var(--audicle-radius-lg);
-    font-family: var(--audicle-font-sans);
     font-size: 0.875rem;
     width: 100%;
     transition: border-color 0.2s;
@@ -729,7 +719,6 @@
     animation: chip-in 0.18s ease-out;
   }
   .format-badge {
-    font-family: var(--audicle-font-sans);
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.1em;
@@ -774,7 +763,6 @@
     padding: 0.625rem 0.75rem;
   }
   .builtin-note-tag {
-    font-family: var(--audicle-font-sans);
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.1em;
@@ -933,7 +921,6 @@
     border-radius: var(--audicle-radius-sm);
     background: transparent;
     color: var(--audicle-color-text);
-    font-family: var(--audicle-font-sans);
     font-size: 0.75rem;
     cursor: pointer;
   }

@@ -57,10 +57,11 @@ export default function CollapsibleSection({
   const searching = matches !== null;
   const isMatch = !searching || matches.has(resolvedKey);
   const expanded = searching && isMatch ? true : open;
-  const [visited, setVisited] = useState(false);
-  useEffect(() => {
-    if (active && isMatch && expanded) setVisited(true);
-  }, [active, isMatch, expanded]);
+  // Mount children on first open and keep them mounted while hidden so widget
+  // queries and drafts survive category switches and search.
+  const shouldMount = active && isMatch && expanded;
+  const [visited, setVisited] = useState(shouldMount);
+  if (shouldMount && !visited) setVisited(true);
 
   return (
     <section className="section" hidden={!isMatch}>
@@ -92,7 +93,7 @@ export default function CollapsibleSection({
         </button>
       </h3>
       <div id={`${id}-body`} hidden={!expanded} className="px-5 pb-5 space-y-3">
-        {(visited || (active && isMatch && expanded)) && children}
+        {(visited || shouldMount) && children}
       </div>
     </section>
   );
