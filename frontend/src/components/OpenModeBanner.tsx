@@ -22,7 +22,7 @@ function isLocal(baseUrl: string | undefined): boolean {
 // Shown only in convenience mode (no admin password). Dismiss is state-only, so
 // it comes back on the next load until a password is set. Turns red when the
 // server looks internet-facing (non-localhost BASE_URL).
-export default function OpenModeBanner() {
+export default function OpenModeBanner({ pageWidth = "max-w-2xl" }: { pageWidth?: string }) {
   const { status } = useAuth();
   const health = useHealthLive();
   const settings = useQuery({
@@ -44,7 +44,7 @@ export default function OpenModeBanner() {
 
   return (
     <div className={`border-b ${tone}`}>
-      <div className="max-w-2xl mx-auto px-4 py-2 flex items-center justify-between gap-3">
+      <div className={`${pageWidth} mx-auto px-4 py-2 flex items-center justify-between gap-3`}>
         <span className="text-sm">{message}</span>
         <button
           className="text-sm underline shrink-0 hover:opacity-80"

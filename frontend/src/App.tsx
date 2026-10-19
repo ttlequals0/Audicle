@@ -157,7 +157,7 @@ function Shell() {
         <div className="accent-line" />
       </header>
 
-      <OpenModeBanner />
+      <OpenModeBanner pageWidth={pageWidth} />
 
       <main
         ref={mainRef}

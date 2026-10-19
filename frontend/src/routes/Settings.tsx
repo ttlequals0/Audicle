@@ -312,7 +312,7 @@ const SECTION_SUMMARIES: Record<string, string> = {
   Cleanup: "Control text cleanup and minimum article length.",
   "Cleanup prompt": "Edit the instructions used to prepare articles for narration.",
   Uploads: "Set file size limits and text recognition for scanned documents.",
-  voices: "Upload and preview the reference voices used for narration.",
+  Voices: "Upload and preview the reference voices used for narration.",
   TTS: "Choose a speech model, language and chunk size.",
   "TTS backend": "Choose where speech generation and verification run.",
   "TTS generation": "Tune Chatterbox sampling, caching and chunk sizing.",
@@ -473,7 +473,7 @@ const SIDECAR_LABELS: Record<string, string> = {
 const WIDGET_SEARCH_TERMS: Record<string, string[]> = {
   "Sidecar settings": SIDECAR_GROUPS.flatMap(group => [group.title, ...group.keys, ...group.keys.map(key => SIDECAR_LABELS[key])]),
   "Site overrides": ["domain", "default strategy", "teaser threshold", "proxy template", "cookie jar", "subscriber login", "test URL"],
-  voices: ["reference voice slots", "audition sample text", "upload", "replace", "rename"],
+  Voices: ["reference voice slots", "audition sample text", "upload", "replace", "rename"],
   "End chime": ["CHIME_ENABLED", "upload clip", "preview"],
   "Authenticated feeds": ["FEED_AUTH_ENABLED", "FEED_AUTH_KEY", "feed URL", "regenerate key", "copy"],
   "Pronunciation corrections": ["word", "spoken", "override", "spell", "case sensitive", "lexicon", "export"],
@@ -1011,18 +1011,17 @@ export default function SettingsRoute() {
       name in GROUPS ? visibleKeysByGroup[name].length > 0 : widgets[name] != null
     ),
   }));
-  // Every word of the query must appear somewhere in the section's text:
-  // category, section name and summary, help note, keys, labels, widget terms.
+  // Every word of the query must appear somewhere in the section's own text:
+  // name, summary, help note, keys, labels, widget terms. Category names stay
+  // out so "voice" does not light up every Voice section.
   const terms = q.replace(/_/g, " ").split(/\s+/);
   const matchedGroups = new Set(
     q
       ? presentByCategory
-          .flatMap((category) => category.entries.map((group) => [category, group] as const))
-          .filter(([category, group]) => {
+          .flatMap((category) => category.entries)
+          .filter((group) => {
             const keys = visibleKeysByGroup[group] ?? [];
             const hay = [
-              category.name,
-              category.description,
               group,
               SECTION_SUMMARIES[group],
               GROUP_NOTES[group] ?? "",
@@ -1032,7 +1031,6 @@ export default function SettingsRoute() {
             ].join(" ").toLowerCase().replace(/_/g, " ");
             return terms.every((term) => hay.includes(term));
           })
-          .map(([, group]) => group)
       : []
   );
 
