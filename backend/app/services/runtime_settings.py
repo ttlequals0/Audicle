@@ -85,6 +85,9 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "READER_PROXY_TEMPLATE",
         "READER_API_KEY",
         "READER_AUTO_ENABLED",
+        # Wallhop ("wallhop" strategy) endpoint and its automatic-rung switch.
+        "WALLHOP_PROXY_TEMPLATE",
+        "WALLHOP_AUTO_ENABLED",
         # Render sidecar endpoint (empty disables); tunable live so an operator can point
         # at their own sidecar without an env edit. Which hosts use render is a per-host
         # Site-override rule now, not a setting. (RENDER_TIMEOUT_SECONDS was env-only

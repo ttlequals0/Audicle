@@ -36,6 +36,7 @@ from app.services import (
     reader,
     render,
     ssrf,
+    wallhop,
 )
 
 # Re-exported so existing ``extraction.ExtractionResult`` / ``extraction.ExtractionTooShortError``
@@ -74,7 +75,7 @@ async def extract(
     Separately, and for any host, a below-floor scrape escalates automatically: a
     Cloudflare/bot-challenge page goes through FlareSolverr first, a near-empty scrape
     reaches FlareSolverr after the rule's attempts, then the reader proxy
-    (``READER_AUTO_ENABLED``) and a public archive (``ARCHIVE_FALLBACK_ENABLED``) run
+    (``READER_AUTO_ENABLED``), wallhop (``WALLHOP_AUTO_ENABLED``) and a public archive (``ARCHIVE_FALLBACK_ENABLED``) run
     last. The global fallbacks switch gates all of these requests. A plain teaser never
     triggers a browser solve. ``None`` uses the built-ins only.
 
@@ -186,7 +187,7 @@ async def extract(
 
         # Build one ordered bypass plan, cheapest rungs first: the rule's own strategy
         # (googlebot/freedium/custom/flaresolverr/reader/archive), then the automatic
-        # FlareSolverr solve on a hard block, the reader proxy, and a public archive.
+        # FlareSolverr solve on a hard block, the reader proxy, wallhop, and a public archive.
         # A Cloudflare challenge is the exception: the solver goes first, since the
         # edge verifies Googlebot by reverse DNS and a header swap cannot pass it.
         # Every attempt runs through one dispatcher and is judged by the same floor.
@@ -220,6 +221,16 @@ async def extract(
             and not any(a.engine == "reader" for a in attempts)
         ):
             attempts.append(Attempt("auto#reader", "reader", url))
+        # Wallhop returns the upstream HTML, which goes through the normal parser and so
+        # carries its own declared body length. Unlike the reader rung it is NOT skipped on
+        # a declared teaser: a chrome-padded teaser cannot pass on raw length here.
+        if (
+            settings.EXTRACTION_FALLBACKS_ENABLED
+            and settings.WALLHOP_AUTO_ENABLED
+            and settings.WALLHOP_PROXY_TEMPLATE.strip()
+            and not any(a.engine == "wallhop" for a in attempts)
+        ):
+            attempts.append(Attempt("auto#wallhop", "wallhop", url))
         # Last resort: a public archive capture (Wayback, then archive.today via the
         # solver). Fires for a teaser as well as a hard block.
         if (
@@ -336,6 +347,28 @@ async def extract(
                         "Reader proxy attempt failed",
                         extra={
                             "event": "extraction_reader_failed",
+                            "fallback": attempt.label,
+                            "error": str(exc),
+                        },
+                    )
+                    continue
+            elif attempt.engine == "wallhop":
+                logger.info(
+                    "Routing below-floor scrape through wallhop",
+                    extra={
+                        "event": "extraction_wallhop_route",
+                        "host": host,
+                        "rule": rule.name if rule is not None else None,
+                        "primary_chars": len(result.markdown),
+                    },
+                )
+                try:
+                    alt = await wallhop.fetch(attempt.url, settings)
+                except ExtractionError as exc:
+                    logger.warning(
+                        "Wallhop attempt failed",
+                        extra={
+                            "event": "extraction_wallhop_failed",
                             "fallback": attempt.label,
                             "error": str(exc),
                         },

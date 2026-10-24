@@ -6,6 +6,10 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Added
+
+- Add wallhop.io as a paywall-bypass strategy: a `wallhop` per-host strategy, an automatic cascade rung between the reader proxy and the archive (`WALLHOP_AUTO_ENABLED`), a live-tunable `WALLHOP_PROXY_TEMPLATE`, and a built-in 404media.co rule. Wallhop returns full HTML, so it is parsed in-process and judged by the usual length and teaser floors.
+
 ### Changed
 
 - Advance the Chatterbox source baseline to upstream 5de7a54. The three commits since 59bc590 add an opt-in v3 multilingual checkpoint, the Nano model, and remove the multilingual alignment analyzer; none of them is in the 0.1.7 wheel Audicle installs, and none changes a Turbo code path, so no wrapper change is needed.
