@@ -6,6 +6,10 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Added
+
+- Add wallhop.io as a paywall-bypass strategy: a `wallhop` per-host strategy, an automatic cascade rung between the reader proxy and the archive (`WALLHOP_AUTO_ENABLED`), a live-tunable `WALLHOP_PROXY_TEMPLATE`, and a built-in 404media.co rule. Wallhop returns full HTML, so it is parsed in-process and judged by the usual length and teaser floors.
+
 ## [0.61.1] - 2026-10-19
 
 ### Changed

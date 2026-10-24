@@ -81,6 +81,8 @@ The cascade and its budgets. See the paywalls page.
 | `READER_PROXY_TEMPLATE` | `https://r.jina.ai/{url}` | yes |
 | `READER_API_KEY` | `` | yes |
 | `READER_AUTO_ENABLED` | `True` | yes |
+| `WALLHOP_PROXY_TEMPLATE` | `https://wallhop.io/raw/{url}` | yes |
+| `WALLHOP_AUTO_ENABLED` | `True` | yes |
 | `RENDER_URL` | `` | yes |
 | `RENDER_TIMEOUT_SECONDS` | `150.0` | yes |
 | `ARCHIVE_FALLBACK_ENABLED` | `True` | yes |

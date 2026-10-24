@@ -13,6 +13,8 @@ Strategies (``proxy`` key on a rule):
 - ``freedium`` -- rewrite the URL to a Freedium reader proxy (best for Medium).
 - ``reader`` -- fetch through the Jina Reader proxy, which returns clean markdown and
   bypasses DataDome/PerimeterX bot walls (e.g. wsj.com) that FlareSolverr can't solve.
+- ``wallhop`` -- fetch through wallhop.io, which returns the full upstream HTML (via
+  archive.today when the site blocks it); parsed in-process like a direct fetch.
 - ``custom`` -- rewrite to an operator-supplied template (must contain ``{url}``).
 - ``none`` -- no attempt; a sub-threshold teaser fails the job cleanly.
 - ``flaresolverr`` -- fetch the URL through FlareSolverr's real browser (see
@@ -56,7 +58,7 @@ class Attempt:
     """One bypass attempt, engine-tagged so the extractor runs every strategy through
     one loop. ``engine`` is ``"refetch"`` (fetch the same ``url`` again with crawler
     ``headers``: googlebot, via Firecrawl or in-process), ``"firecrawl"`` (scrape a
-    rewritten ``url``: freedium/custom), ``"reader"``, ``"archive"``, or ``"flaresolverr"``
+    rewritten ``url``: freedium/custom), ``"reader"``, ``"wallhop"``, ``"archive"``, or ``"flaresolverr"``
     (fetch ``url`` through the solver's real browser). ``cookies`` is the operator's session for that host, used
     only by the browser engines (a raw ``name=value; ...`` Cookie string)."""
 
@@ -82,6 +84,7 @@ PROXY_KEYS = (
     "archive",
     "render",
     "reader",
+    "wallhop",
 )
 
 _FREEDIUM_TEMPLATES = ("https://freedium.cfd/{url}", "https://freedium-mirror.cfd/{url}")
@@ -122,7 +125,8 @@ _RENDER_BUILTINS: tuple[SourceFallback, ...] = tuple(
     for host in RENDER_BUILTIN_HOSTS
 )
 
-# Built-in seed: Freedium reliably serves the full Medium body; plus the render hosts.
+# Built-in seed: Freedium serves the full Medium body, wallhop the full 404 Media one; plus
+# the render hosts.
 BUILTIN: tuple[SourceFallback, ...] = (
     SourceFallback(
         name="medium",
@@ -131,6 +135,14 @@ BUILTIN: tuple[SourceFallback, ...] = (
         custom_template="",
         # A real Medium article is many KB; the paywall teaser (~1.5 KB) clears the
         # global 500-char floor, so use a higher bar to detect it.
+        min_chars=3000,
+    ),
+    SourceFallback(
+        name="404media",
+        host_suffixes=("404media.co",),
+        proxy="wallhop",
+        custom_template="",
+        # Measured: the anonymous teaser parses to ~1.4 KB, the full article ~10 KB.
         min_chars=3000,
     ),
     *_RENDER_BUILTINS,
@@ -184,6 +196,9 @@ def candidate_attempts(rule: SourceFallback, url: str) -> list[Attempt]:
         # The reader engine wraps ``url`` with the configured proxy template itself, so the
         # attempt carries the original article URL (like flaresolverr/archive).
         return [Attempt(f"{rule.name}#reader", "reader", url, is_host_rule=True)]
+    if rule.proxy == "wallhop":
+        # Like reader, the engine applies WALLHOP_PROXY_TEMPLATE itself.
+        return [Attempt(f"{rule.name}#wallhop", "wallhop", url, is_host_rule=True)]
     if rule.proxy == "flaresolverr":
         # The solver fetches the original URL in a real browser, carrying the rule's cookies.
         return [

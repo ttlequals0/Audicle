@@ -77,6 +77,20 @@ def test_candidate_attempts_archive() -> None:
     ]
 
 
+def test_candidate_attempts_wallhop_passes_article_url_to_wallhop_engine() -> None:
+    rule = sf.SourceFallback("x", ("x.test",), "wallhop", "", 3000)
+    assert sf.candidate_attempts(rule, "https://x.test/a") == [
+        sf.Attempt("x#wallhop", "wallhop", "https://x.test/a", is_host_rule=True)
+    ]
+
+
+def test_builtin_404media_uses_wallhop_for_host_and_subdomains() -> None:
+    for url in ("https://404media.co/a", "https://www.404media.co/a"):
+        rule = sf.match(url)
+        assert rule is not None and rule.name == "404media" and rule.proxy == "wallhop"
+        assert rule.min_chars == 3000
+
+
 def test_candidate_attempts_reader_passes_article_url_to_reader_engine() -> None:
     # The reader engine applies the proxy template itself, so the attempt carries the
     # original article URL (the engine tag routes it to reader.fetch).

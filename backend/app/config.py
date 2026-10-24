@@ -188,6 +188,12 @@ class Settings(BaseSettings):
     # third party by default), so it can be switched off here without touching
     # explicit per-host reader rules.
     READER_AUTO_ENABLED: bool = True
+    # Wallhop ("wallhop" strategy) endpoint: returns the full upstream HTML (falling back to
+    # archive.today when the site blocks it), no key needed. Must contain {url}.
+    WALLHOP_PROXY_TEMPLATE: str = "https://wallhop.io/raw/{url}"
+    # Automatic wallhop rung, after the reader rung. Sends the article URL to wallhop.io, so
+    # it can be switched off without touching explicit per-host wallhop rules.
+    WALLHOP_AUTO_ENABLED: bool = True
     # FlareSolverr endpoint for the "flaresolverr" bypass strategy (a Cloudflare/
     # JS-challenge solver). Include the /v1 path (the client appends it if missing).
     # Empty disables the strategy (a matched host using it fails cleanly). Operators

@@ -68,6 +68,7 @@ const GROUPS: Record<string, string[]> = {
     "RENDER_URL",
     "READER_PROXY_TEMPLATE",
     "READER_API_KEY",
+    "WALLHOP_PROXY_TEMPLATE",
   ],
   // Per-request budgets for the extraction cascade and the webhook. Opened to
   // runtime in 0.55.0: a slow upstream is exactly when these need changing.
@@ -87,6 +88,7 @@ const GROUPS: Record<string, string[]> = {
     "EXTRACTION_ARC_ENABLED",
     "EXTRACTION_FALLBACKS_ENABLED",
     "READER_AUTO_ENABLED",
+    "WALLHOP_AUTO_ENABLED",
     "ARCHIVE_FALLBACK_ENABLED",
     "MIN_EXTRACTION_CHARS",
     "REGISTRATION_EMAIL",
@@ -536,7 +538,7 @@ const GROUP_NOTES: Record<string, string> = {
   Connections:
     "Self-hosted Firecrawl can run without a key. The reader key is for Jina Reader; requests without a key are rate limited.",
   Extraction:
-    "Automatic reader fallback sends the article URL to the reader proxy (Jina by default). Turn it off to keep URLs local. " +
+    "Automatic reader and wallhop fallbacks send the article URL to a third-party proxy (Jina and wallhop.io by default). Turn them off to keep URLs local. " +
     "Registration email lets the render service submit your address to free registration forms. Clear it to stop these submissions.",
   Webhooks:
     "Send episode.processed and episode.failed events to this URL. Leave it blank to disable webhooks. Save before sending a test.",

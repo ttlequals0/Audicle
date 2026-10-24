@@ -43,7 +43,7 @@ async def fetch(article_url: str, settings: Settings) -> ExtractionResult:
     an ``ExtractionResult``. Transient failures are retried with the shared extraction
     policy; 4xx/SSRF blocks are permanent. The caller validates length."""
 
-    reader_url = _build_reader_url(settings.READER_PROXY_TEMPLATE, article_url)
+    reader_url = build_proxy_url(settings.READER_PROXY_TEMPLATE, article_url)
     # Bypass Jina's shared cache, which can serve a stale or wrong snapshot.
     headers = {"User-Agent": _READER_UA, "Accept": _ACCEPT, "X-No-Cache": "true"}
     if settings.READER_API_KEY:
@@ -74,18 +74,18 @@ async def fetch(article_url: str, settings: Settings) -> ExtractionResult:
     return result
 
 
-def _build_reader_url(template: str, article_url: str) -> str:
-    """Apply the proxy template to the article URL. A misconfigured template (missing
+def build_proxy_url(template: str, article_url: str) -> str:
+    """Apply a proxy template (reader or wallhop) to the article URL. A misconfigured template (missing
     ``{url}`` or with a stray placeholder) raises ExtractionPermanentError -- a typed error
     the cascade catches and skips, instead of an uncaught KeyError/ValueError that would
     crash the job. (The article URL itself is a substituted value, so its braces are safe.)"""
 
     if "{url}" not in template:
-        raise ExtractionPermanentError("READER_PROXY_TEMPLATE must contain {url}.")
+        raise ExtractionPermanentError("Proxy template must contain {url}.")
     try:
         return template.format(url=article_url)
     except (KeyError, IndexError, ValueError) as exc:
-        raise ExtractionPermanentError(f"READER_PROXY_TEMPLATE is malformed: {exc}") from exc
+        raise ExtractionPermanentError(f"Proxy template is malformed: {exc}") from exc
 
 
 def _parse(body: str) -> ExtractionResult:

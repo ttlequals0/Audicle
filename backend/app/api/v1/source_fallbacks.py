@@ -35,6 +35,7 @@ _PROXY_LABELS = {
     "archive": "Archive (Wayback / archive.today)",
     "render": "Render (headful browser; clicks expand gates)",
     "reader": "Reader (Jina; bypasses DataDome bot walls, e.g. WSJ)",
+    "wallhop": "Wallhop (free proxy; falls back to archive.today)",
 }
 _AVAILABLE_PROXIES = [
     {"key": key, "label": _PROXY_LABELS[key]} for key in source_fallbacks.PROXY_KEYS
