@@ -1,11 +1,10 @@
-"""Wallhop extraction engine (https://wallhop.io, no key needed).
+"""Wallhop extraction engine (https://wallhop.io, keyless).
 
-Wallhop returns the full upstream HTML of an article as text/plain, falling back to the
-archive.today copy when the site blocks it. The HTML goes through the same in-process
-parser as a direct fetch (markdown, JSON-LD declared body, Arc), so the caller's length
-and teaser floors judge it normally. If wallhop cannot get past the block it returns the
-block page verbatim with a 200; those floors catch that too. Selected per host via the
-``wallhop`` source-fallback strategy and run as an automatic cascade rung.
+Wallhop returns the article's full upstream HTML as text/plain, or the archive.today
+copy when the site blocks it, so the body goes through the same in-process parser as a
+direct fetch and the caller's length and teaser floors judge it (a block page passed
+through with a 200 fails them). Selected per host via the ``wallhop`` strategy and as an
+automatic cascade rung.
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ import logging
 from app.config import Settings
 from app.services import direct_fetch
 from app.services.extraction_types import ExtractionResult
-from app.services.reader import build_proxy_url
+from app.services.proxy_template import build_proxy_url
 
 logger = logging.getLogger("app.services.wallhop")
 
@@ -24,7 +23,9 @@ async def fetch(article_url: str, settings: Settings) -> ExtractionResult:
     """Fetch ``article_url`` through wallhop and return the parsed result. Transient
     failures are retried; 4xx/SSRF blocks are permanent. The caller validates length."""
 
-    proxy_url = build_proxy_url(settings.WALLHOP_PROXY_TEMPLATE, article_url)
+    proxy_url = build_proxy_url(
+        settings.WALLHOP_PROXY_TEMPLATE, article_url, "WALLHOP_PROXY_TEMPLATE"
+    )
     result = await direct_fetch.fetch(proxy_url, settings, detect_teaser=True)
     logger.info(
         "Wallhop responded",

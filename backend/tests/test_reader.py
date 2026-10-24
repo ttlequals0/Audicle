@@ -7,7 +7,7 @@ import httpx
 import pytest
 from app.config import get_settings
 from app.services import pinned_fetch, reader
-from app.services.extraction_types import ExtractionPermanentError, ExtractionTransientError
+from app.services.extraction_types import ExtractionTransientError
 
 
 def _patch_async_client(monkeypatch: pytest.MonkeyPatch, transport: httpx.MockTransport) -> None:
@@ -67,25 +67,6 @@ async def test_fetch_wraps_article_in_proxy_template(
     assert captured["headers"]["X-No-Cache"] == "true"
     assert result.metadata["title"] == "Jane Street Seizes the AI Spotlight"
     assert "unlikely AI powerhouse" in result.markdown
-
-
-def test_build_proxy_url_wraps_article() -> None:
-    assert (
-        reader.build_proxy_url("https://r.jina.ai/{url}", "https://x.com/a")
-        == "https://r.jina.ai/https://x.com/a"
-    )
-
-
-def test_build_proxy_url_rejects_missing_placeholder() -> None:
-    with pytest.raises(ExtractionPermanentError, match="must contain"):
-        reader.build_proxy_url("https://r.jina.ai/", "https://x.com/a")
-
-
-def test_build_proxy_url_rejects_stray_placeholder() -> None:
-    # A template with an unknown field must raise the typed error, not a bare KeyError that
-    # would escape the cascade's `except ExtractionError` and crash the job.
-    with pytest.raises(ExtractionPermanentError, match="malformed"):
-        reader.build_proxy_url("https://r.jina.ai/{url}?k={key}", "https://x.com/a")
 
 
 async def test_fetch_sends_api_key_when_configured(

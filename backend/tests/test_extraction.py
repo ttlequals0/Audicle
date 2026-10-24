@@ -9,6 +9,7 @@ import pytest
 from app.config import get_settings
 from app.services import extraction, flaresolverr, render
 from app.services.extraction_types import ExtractionResult
+from app.services.source_fallbacks import SourceFallback
 
 
 @pytest.fixture(autouse=True)
@@ -23,7 +24,10 @@ def _firecrawl_engine(monkeypatch: pytest.MonkeyPatch) -> None:
     get_settings.cache_clear()
 
 
-class _ReaderStub:
+class _FetchStub:
+    """A proxy engine that never leaves the process: records the URL and returns
+    ``markdown`` (empty unless a test sets it), so stubbed call sequences stay exact."""
+
     def __init__(self) -> None:
         self.calls: list[str] = []
         self.markdown = ""
@@ -34,31 +38,19 @@ class _ReaderStub:
 
 
 @pytest.fixture(autouse=True)
-def reader_stub(monkeypatch: pytest.MonkeyPatch) -> _ReaderStub:
-    """The automatic reader rung stays on (its default) but never leaves the process:
-    it records the URL and returns ``markdown`` (empty unless a test sets it), so
-    stubbed call sequences stay exact."""
+def reader_stub(monkeypatch: pytest.MonkeyPatch) -> _FetchStub:
+    """The automatic reader rung stays on (its default) but is stubbed."""
 
-    stub = _ReaderStub()
+    stub = _FetchStub()
     monkeypatch.setattr(extraction.reader, "fetch", stub.fetch)
     return stub
 
 
-class _WallhopStub:
-    def __init__(self) -> None:
-        self.calls: list[str] = []
-        self.markdown = ""
-
-    async def fetch(self, url: str, _settings) -> extraction.ExtractionResult:
-        self.calls.append(url)
-        return extraction.ExtractionResult(markdown=self.markdown)
-
-
 @pytest.fixture(autouse=True)
-def wallhop_stub(monkeypatch: pytest.MonkeyPatch) -> _WallhopStub:
-    """Same as reader_stub for the automatic wallhop rung: no network, empty unless set."""
+def wallhop_stub(monkeypatch: pytest.MonkeyPatch) -> _FetchStub:
+    """Same for the automatic wallhop rung."""
 
-    stub = _WallhopStub()
+    stub = _FetchStub()
     monkeypatch.setattr(extraction.wallhop, "fetch", stub.fetch)
     return stub
 
@@ -1195,12 +1187,15 @@ async def test_extract_auto_wallhop_rung_disabled_never_calls_wallhop(
 
 
 async def test_extract_auto_wallhop_rung_fires_for_jsonld_teaser(
-    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, no_archive, reader_stub, wallhop_stub
+    env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    no_flaresolverr,
+    no_archive,
+    reader_stub,
+    wallhop_stub,
 ) -> None:
     # The case where the reader rung is skipped: wallhop returns HTML judged by its own
     # declared body, so it still runs.
-    from app.services.source_fallbacks import SourceFallback
-
     wallhop_stub.markdown = "body " * 1000
     transport = _stub_transport(
         _ok_response_with_jsonld("word " * 700, "x" * 176),

@@ -10,7 +10,7 @@ work lives under `[Unreleased]`.
 
 ### Added
 
-- Add wallhop.io as a paywall-bypass strategy: a `wallhop` per-host strategy, an automatic cascade rung between the reader proxy and the archive (`WALLHOP_AUTO_ENABLED`), a live-tunable `WALLHOP_PROXY_TEMPLATE`, and a built-in 404media.co rule. Wallhop returns full HTML, so it is parsed in-process and judged by the usual length and teaser floors.
+- Add wallhop.io as a paywall-bypass strategy: a `wallhop` site-override strategy, an automatic rung between the reader proxy and the archive (`WALLHOP_AUTO_ENABLED`, on by default), a live-tunable `WALLHOP_PROXY_TEMPLATE`, and a built-in rule for 404media.co.
 
 ### Changed
 

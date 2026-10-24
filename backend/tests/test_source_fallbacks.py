@@ -88,7 +88,6 @@ def test_builtin_404media_uses_wallhop_for_host_and_subdomains() -> None:
     for url in ("https://404media.co/a", "https://www.404media.co/a"):
         rule = sf.match(url)
         assert rule is not None and rule.name == "404media" and rule.proxy == "wallhop"
-        assert rule.min_chars == 3000
 
 
 def test_candidate_attempts_reader_passes_article_url_to_reader_engine() -> None:

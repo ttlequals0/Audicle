@@ -75,8 +75,8 @@ async def extract(
     Separately, and for any host, a below-floor scrape escalates automatically: a
     Cloudflare/bot-challenge page goes through FlareSolverr first, a near-empty scrape
     reaches FlareSolverr after the rule's attempts, then the reader proxy
-    (``READER_AUTO_ENABLED``), wallhop (``WALLHOP_AUTO_ENABLED``) and a public archive (``ARCHIVE_FALLBACK_ENABLED``) run
-    last. The global fallbacks switch gates all of these requests. A plain teaser never
+    (``READER_AUTO_ENABLED``), wallhop (``WALLHOP_AUTO_ENABLED``) and a public archive
+    (``ARCHIVE_FALLBACK_ENABLED``) run last. The global fallbacks switch gates all of these requests. A plain teaser never
     triggers a browser solve. ``None`` uses the built-ins only.
 
     Raises:
@@ -221,9 +221,7 @@ async def extract(
             and not any(a.engine == "reader" for a in attempts)
         ):
             attempts.append(Attempt("auto#reader", "reader", url))
-        # Wallhop returns the upstream HTML, which goes through the normal parser and so
-        # carries its own declared body length. Unlike the reader rung it is NOT skipped on
-        # a declared teaser: a chrome-padded teaser cannot pass on raw length here.
+        # Not skipped on a declared teaser: wallhop returns HTML, judged by its own body.
         if (
             settings.EXTRACTION_FALLBACKS_ENABLED
             and settings.WALLHOP_AUTO_ENABLED
@@ -330,45 +328,25 @@ async def extract(
                     email=registration_email or None,
                     cookies=attempt.cookies,
                 )
-            elif attempt.engine == "reader":
+            elif attempt.engine in ("reader", "wallhop"):
+                engine = reader if attempt.engine == "reader" else wallhop
                 logger.info(
-                    "Routing below-floor scrape through the reader proxy",
+                    "Routing below-floor scrape through the %s proxy",
+                    attempt.engine,
                     extra={
-                        "event": "extraction_reader_route",
+                        "event": f"extraction_{attempt.engine}_route",
                         "host": host,
                         "rule": rule.name if rule is not None else None,
                         "primary_chars": len(result.markdown),
                     },
                 )
                 try:
-                    alt = await reader.fetch(attempt.url, settings)
+                    alt = await engine.fetch(attempt.url, settings)
                 except ExtractionError as exc:
                     logger.warning(
-                        "Reader proxy attempt failed",
+                        "Proxy attempt failed",
                         extra={
-                            "event": "extraction_reader_failed",
-                            "fallback": attempt.label,
-                            "error": str(exc),
-                        },
-                    )
-                    continue
-            elif attempt.engine == "wallhop":
-                logger.info(
-                    "Routing below-floor scrape through wallhop",
-                    extra={
-                        "event": "extraction_wallhop_route",
-                        "host": host,
-                        "rule": rule.name if rule is not None else None,
-                        "primary_chars": len(result.markdown),
-                    },
-                )
-                try:
-                    alt = await wallhop.fetch(attempt.url, settings)
-                except ExtractionError as exc:
-                    logger.warning(
-                        "Wallhop attempt failed",
-                        extra={
-                            "event": "extraction_wallhop_failed",
+                            "event": f"extraction_{attempt.engine}_failed",
                             "fallback": attempt.label,
                             "error": str(exc),
                         },

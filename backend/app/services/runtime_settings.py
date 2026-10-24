@@ -85,7 +85,6 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "READER_PROXY_TEMPLATE",
         "READER_API_KEY",
         "READER_AUTO_ENABLED",
-        # Wallhop ("wallhop" strategy) endpoint and its automatic-rung switch.
         "WALLHOP_PROXY_TEMPLATE",
         "WALLHOP_AUTO_ENABLED",
         # Render sidecar endpoint (empty disables); tunable live so an operator can point

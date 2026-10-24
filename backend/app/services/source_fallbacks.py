@@ -58,9 +58,10 @@ class Attempt:
     """One bypass attempt, engine-tagged so the extractor runs every strategy through
     one loop. ``engine`` is ``"refetch"`` (fetch the same ``url`` again with crawler
     ``headers``: googlebot, via Firecrawl or in-process), ``"firecrawl"`` (scrape a
-    rewritten ``url``: freedium/custom), ``"reader"``, ``"wallhop"``, ``"archive"``, or ``"flaresolverr"``
-    (fetch ``url`` through the solver's real browser). ``cookies`` is the operator's session for that host, used
-    only by the browser engines (a raw ``name=value; ...`` Cookie string)."""
+    rewritten ``url``: freedium/custom), ``"reader"``, ``"wallhop"``, ``"archive"``, or
+    ``"flaresolverr"`` (fetch ``url`` through the solver's real browser). ``cookies`` is the
+    operator's session for that host, used only by the browser engines (a raw
+    ``name=value; ...`` Cookie string)."""
 
     label: str
     engine: str
@@ -192,13 +193,10 @@ def candidate_attempts(rule: SourceFallback, url: str) -> list[Attempt]:
                 is_host_rule=True,
             )
         ]
-    if rule.proxy == "reader":
-        # The reader engine wraps ``url`` with the configured proxy template itself, so the
-        # attempt carries the original article URL (like flaresolverr/archive).
-        return [Attempt(f"{rule.name}#reader", "reader", url, is_host_rule=True)]
-    if rule.proxy == "wallhop":
-        # Like reader, the engine applies WALLHOP_PROXY_TEMPLATE itself.
-        return [Attempt(f"{rule.name}#wallhop", "wallhop", url, is_host_rule=True)]
+    if rule.proxy in ("reader", "wallhop"):
+        # These engines apply their proxy template themselves, so the attempt carries the
+        # original article URL (like flaresolverr/archive).
+        return [Attempt(f"{rule.name}#{rule.proxy}", rule.proxy, url, is_host_rule=True)]
     if rule.proxy == "flaresolverr":
         # The solver fetches the original URL in a real browser, carrying the rule's cookies.
         return [
