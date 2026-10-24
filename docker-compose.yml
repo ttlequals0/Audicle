@@ -90,8 +90,9 @@ services:
         max-file: "3"
 
   tts-wrapper:
-    # GPU-pinned, one uvicorn worker. For CPU-only hosts use the
-    # ttlequals0/audicle-tts:*-cpu image and set TTS_DEVICE=cpu (5-10x slower).
+    # GPU-pinned, one uvicorn worker. For CPU-only hosts (including Apple
+    # Silicon) add docker-compose.cpu.yml: it swaps in the -cpu image, sets
+    # TTS_DEVICE=cpu and drops the GPU reservation (5-10x slower).
     image: ttlequals0/audicle-tts:${BUILD_VERSION:?set BUILD_VERSION}
     networks:
       - app-network

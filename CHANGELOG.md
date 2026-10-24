@@ -11,10 +11,14 @@ work lives under `[Unreleased]`.
 ### Added
 
 - Add wallhop.io as a paywall-bypass strategy: a `wallhop` site-override strategy, an automatic rung between the reader proxy and the archive (`WALLHOP_AUTO_ENABLED`, on by default), a live-tunable `WALLHOP_PROXY_TEMPLATE`, and a built-in rule for 404media.co.
+- Publish native linux/arm64 images for the app, render, render-egress and TTS `-cpu` images, so Docker Desktop on Apple Silicon runs them without emulation. The GPU TTS image stays amd64-only. The static ffmpeg is now mirrored per architecture and selected by build platform.
+- Add `docker-compose.cpu.yml`, an override that switches the TTS wrapper to the `-cpu` image, sets `TTS_DEVICE=cpu` and drops the NVIDIA reservation for CPU-only and Apple Silicon hosts.
+- Build all four non-GPU images for linux/arm64 in CI.
 
 ### Changed
 
 - Advance the Chatterbox source baseline to upstream 5de7a54. The three commits since 59bc590 add an opt-in v3 multilingual checkpoint, the Nano model, and remove the multilingual alignment analyzer; none of them is in the 0.1.7 wheel Audicle installs, and none changes a Turbo code path, so no wrapper change is needed.
+- Move the static ffmpeg from n9.0.1-11 to n9.0.2-35 (BtbN autobuild-2026-10-24-13-02) for both amd64 and arm64.
 
 ### Security
 
