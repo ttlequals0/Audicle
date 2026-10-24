@@ -10,12 +10,13 @@ Pick a default strategy and a teaser threshold, then add per-site overrides. The
 - `freedium`: rewrite the URL to a Freedium reader proxy. Best for Medium.
 - `custom`: rewrite to your own reader-proxy template (any URL containing `{url}`).
 - `reader`: fetch through the [Jina Reader](https://jina.ai/reader) proxy, which returns clean markdown and clears DataDome/PerimeterX bot walls that FlareSolverr cannot; those answer a scrape with a 401 challenge, not a real page. Set the endpoint with `READER_PROXY_TEMPLATE` (must contain `{url}`). The keyless public endpoint is rate limited; if it returns empty or truncated bodies, get a free key at jina.ai/reader and set `READER_API_KEY`. Both are live-tunable in Settings > Services > Connections (the key is stored masked). Audicle asks Jina for a live fetch every time, not a copy from its shared cache, which can be stale or belong to a different page.
+- `wallhop`: fetch through [wallhop.io](https://wallhop.io), which returns the full upstream HTML of the article and needs no key. If the site blocks it, wallhop serves the archive.today copy; if that fails too it returns the block page, which the usual length checks then reject. The HTML is parsed in-process like a direct fetch, so teaser detection still applies. Set the endpoint with `WALLHOP_PROXY_TEMPLATE` (must contain `{url}`).
 - `flaresolverr`: fetch through your FlareSolverr (a real browser) instead of the scraper, for hosts that hard-block the scraper's datacenter IP with a 403. Needs `FLARESOLVERR_URL`. Audicle already does this automatically on any hard block (below), so the per-host setting is mainly an explicit override, e.g. to force the solver on a host that returns a teaser rather than an empty page. A `flaresolverr` rule can carry a cookie jar (below) for sites you subscribe to.
 - `render`: load the page in the bundled render sidecar's headful browser, which clicks "EXPAND TO CONTINUE READING" gates until the body stops growing. Some sites hide the second half behind that click (behind DataDome); FlareSolverr clears the challenge but its headless browser cannot click, so it returns only the front half. A render rule tries the render browser first, with its cookie jar if set. Without a rule, render is the last attempt on a hard block, a challenge, or a registration wall, and a page that still looks truncated triggers it as enrichment. Set `RENDER_URL` (empty disables it); the sidecar is internal-only. DataDome is probabilistic, so a render that hits a CAPTCHA falls back to the front-half partial and logs it.
 - `archive`: pull a saved copy from a public archive. Tries the [Wayback Machine](https://web.archive.org) first (a clean API, no bot wall, no cookies), then archive.today through FlareSolverr. Good for a metered or soft wall, or an old article archived while it was still free. Not a way past a hard subscriber wall: if no free copy was ever archived, there is nothing to fetch.
 - `none`: do not try anything. A matched host that comes back short just fails, which is what you want for a hard paywall you would rather skip than narrate.
 
-A Medium-to-Freedium rule ships on by default; your own rules layer on top and win on host collision. The whole feature is gated by `EXTRACTION_FALLBACKS_ENABLED` (set it false for direct scrapes only, no default-proxy retry).
+A Medium-to-Freedium rule and a 404media.co-to-wallhop rule ship on by default; your own rules layer on top and win on host collision. The whole feature is gated by `EXTRACTION_FALLBACKS_ENABLED` (set it false for direct scrapes only, no default-proxy retry).
 
 ## Teaser detection
 
@@ -28,11 +29,14 @@ On top of any per-host strategy, a short scrape escalates on its own. The cheap 
 1. The host's own strategy (for most hosts that is the `googlebot` default).
 2. FlareSolverr, when the scrape came back near-empty (a 403 or IP block) and `FLARESOLVERR_URL` is set. Audicle does not bundle a solver.
 3. The reader proxy (`READER_AUTO_ENABLED`, on by default).
-4. A public archive: the newest Wayback captures, then archive.today through FlareSolverr (`ARCHIVE_FALLBACK_ENABLED`, on by default). This also runs for a teaser, and the capture has to clear the host's teaser threshold.
+4. wallhop (`WALLHOP_AUTO_ENABLED`, on by default). Unlike the reader rung it also runs when the page's declared article body exposed a teaser, because it returns HTML that is judged by its own declared body.
+5. A public archive: the newest Wayback captures, then archive.today through FlareSolverr (`ARCHIVE_FALLBACK_ENABLED`, on by default). This also runs for a teaser, and the capture has to clear the host's teaser threshold.
 
 The exception is a Cloudflare challenge page ("Just a moment...", a Ray ID). That goes straight to FlareSolverr, because Cloudflare checks that a Googlebot request really comes from Google, so the header trick cannot get through.
 
 The automatic reader rung sends the article URL to the reader proxy, which is Jina's hosted service unless you changed `READER_PROXY_TEMPLATE`. Turn it off with the `reader_auto_enabled` toggle in Settings > Content > Extraction, `PUT /api/v1/settings` with `{"READER_AUTO_ENABLED": false}`, or the env var. Hosts with an explicit `reader` rule still use it.
+
+The automatic wallhop rung sends the article URL to wallhop.io unless you changed `WALLHOP_PROXY_TEMPLATE`. Turn it off with the `WALLHOP_AUTO_ENABLED` toggle in Settings > Content > Extraction, `PUT /api/v1/settings` with `{"WALLHOP_AUTO_ENABLED": false}`, or the env var. Hosts with an explicit `wallhop` rule still use it.
 
 ## Registration walls
 

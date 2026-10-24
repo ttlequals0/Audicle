@@ -389,18 +389,18 @@ def _validate_value(key: str, value: Any, settings: Settings) -> None:
         if not valid:
             raise HTTPException(status_code=400, detail=f"{key} must be an absolute HTTP(S) URL")
         return
-    if key == "READER_PROXY_TEMPLATE":
+    if key in ("READER_PROXY_TEMPLATE", "WALLHOP_PROXY_TEMPLATE"):
         if value == "":
             return
         if "{url}" not in str(value):
-            raise HTTPException(status_code=400, detail="READER_PROXY_TEMPLATE must contain {url}")
+            raise HTTPException(status_code=400, detail=f"{key} must contain {{url}}")
         try:
             parsed = urlsplit(str(value).replace("{url}", "article"))
             valid = parsed.scheme in {"http", "https"} and bool(parsed.hostname) and parsed.port != 0
         except ValueError:
             valid = False
         if not valid:
-            raise HTTPException(status_code=400, detail="READER_PROXY_TEMPLATE must use an HTTP(S) URL")
+            raise HTTPException(status_code=400, detail=f"{key} must use an HTTP(S) URL")
         return
     field = settings.__class__.model_fields.get(key)
     if field is None:

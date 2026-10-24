@@ -9,6 +9,7 @@ import pytest
 from app.config import get_settings
 from app.services import extraction, flaresolverr, render
 from app.services.extraction_types import ExtractionResult
+from app.services.source_fallbacks import SourceFallback
 
 
 @pytest.fixture(autouse=True)
@@ -23,7 +24,10 @@ def _firecrawl_engine(monkeypatch: pytest.MonkeyPatch) -> None:
     get_settings.cache_clear()
 
 
-class _ReaderStub:
+class _FetchStub:
+    """A proxy engine that never leaves the process: records the URL and returns
+    ``markdown`` (empty unless a test sets it), so stubbed call sequences stay exact."""
+
     def __init__(self) -> None:
         self.calls: list[str] = []
         self.markdown = ""
@@ -34,13 +38,20 @@ class _ReaderStub:
 
 
 @pytest.fixture(autouse=True)
-def reader_stub(monkeypatch: pytest.MonkeyPatch) -> _ReaderStub:
-    """The automatic reader rung stays on (its default) but never leaves the process:
-    it records the URL and returns ``markdown`` (empty unless a test sets it), so
-    stubbed call sequences stay exact."""
+def reader_stub(monkeypatch: pytest.MonkeyPatch) -> _FetchStub:
+    """The automatic reader rung stays on (its default) but is stubbed."""
 
-    stub = _ReaderStub()
+    stub = _FetchStub()
     monkeypatch.setattr(extraction.reader, "fetch", stub.fetch)
+    return stub
+
+
+@pytest.fixture(autouse=True)
+def wallhop_stub(monkeypatch: pytest.MonkeyPatch) -> _FetchStub:
+    """Same for the automatic wallhop rung."""
+
+    stub = _FetchStub()
+    monkeypatch.setattr(extraction.wallhop, "fetch", stub.fetch)
     return stub
 
 
@@ -1149,6 +1160,74 @@ async def test_extract_auto_reader_rung_skipped_for_jsonld_teaser(
     with pytest.raises(extraction.ExtractionTooShortError):
         await extraction.extract("https://gated.test/post", get_settings(), registry)
     assert reader_stub.calls == []
+
+
+# --- automatic wallhop rung -------------------------------------------------------
+
+
+async def test_extract_auto_wallhop_rung_recovers_hard_block(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, no_archive, wallhop_stub
+) -> None:
+    wallhop_stub.markdown = "body " * 1000
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response("Access Denied")))
+    result = await extraction.extract("https://hardblock.test/a", get_settings())
+    assert result.markdown.startswith("body ")
+    assert wallhop_stub.calls == ["https://hardblock.test/a"]
+
+
+async def test_extract_auto_wallhop_rung_disabled_never_calls_wallhop(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr, no_archive, wallhop_stub
+) -> None:
+    monkeypatch.setenv("WALLHOP_AUTO_ENABLED", "false")
+    get_settings.cache_clear()
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response("Access Denied")))
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://hardblock.test/a", get_settings())
+    assert wallhop_stub.calls == []
+
+
+async def test_extract_auto_wallhop_rung_fires_for_jsonld_teaser(
+    env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    no_flaresolverr,
+    no_archive,
+    reader_stub,
+    wallhop_stub,
+) -> None:
+    # The case where the reader rung is skipped: wallhop returns HTML judged by its own
+    # declared body, so it still runs.
+    wallhop_stub.markdown = "body " * 1000
+    transport = _stub_transport(
+        _ok_response_with_jsonld("word " * 700, "x" * 176),
+        _ok_response_with_jsonld("word " * 700, "x" * 176),
+    )
+    _patch_async_client(monkeypatch, transport)
+    registry = (SourceFallback("op", ("gated.test",), "googlebot", "", 3000),)
+    result = await extraction.extract("https://gated.test/post", get_settings(), registry)
+    assert result.markdown.startswith("body ")
+    assert reader_stub.calls == []
+    assert wallhop_stub.calls == ["https://gated.test/post"]
+
+
+async def test_extract_auto_wallhop_runs_after_reader_and_before_archive(
+    env: Path, monkeypatch: pytest.MonkeyPatch, no_flaresolverr
+) -> None:
+    order: list[str] = []
+
+    def _recorder(name: str):
+        async def _fetch(url: str, _settings) -> extraction.ExtractionResult:
+            order.append(name)
+            return extraction.ExtractionResult(markdown="")
+
+        return _fetch
+
+    monkeypatch.setattr(extraction.reader, "fetch", _recorder("reader"))
+    monkeypatch.setattr(extraction.wallhop, "fetch", _recorder("wallhop"))
+    monkeypatch.setattr(extraction.archive, "fetch", _recorder("archive"))
+    _patch_async_client(monkeypatch, _stub_transport(_ok_response("Access Denied")))
+    with pytest.raises(extraction.ExtractionTooShortError):
+        await extraction.extract("https://hardblock.test/a", get_settings())
+    assert order == ["reader", "wallhop", "archive"]
 
 
 # --- automatic archive on a teaser -------------------------------------------------

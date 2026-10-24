@@ -32,7 +32,7 @@ I read too much, I like my hands free on the go, and the existing article-to-aud
 - uses my own voice (or any voice I have rights to)
 - keeps my reading list private
 
-That's what this is. No GPU? It runs on CPU too, just slower.
+That's what this is. No GPU? It runs on CPU too (including Apple Silicon), just slower.
 
 ## Screenshots
 
@@ -87,7 +87,7 @@ The full index is [docs/README.md](docs/README.md). The short version:
 | Topic | Covers |
 |---|---|
 | [How it works](docs/how-it-works.md) | Pipeline from URL to episode, extraction cascade, quality gates |
-| [Installation](docs/installation.md) | Requirements, quick start, CPU-only deployment |
+| [Installation](docs/installation.md) | Requirements, quick start, CPU-only and Apple Silicon |
 | [Web interface](docs/web-interface.md) | Home, Feed, and Settings pages |
 | [UI design guide](branding/design-guide.md) | Colors, fonts, controls and UI review checks |
 | [Configuration](docs/configuration.md) | Every settings category, what saves where |

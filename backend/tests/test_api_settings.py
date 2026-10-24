@@ -320,6 +320,20 @@ def test_firecrawl_api_key_is_allowlisted_and_masked(env: Path) -> None:
     assert stored["FIRECRAWL_API_KEY"] == "fc-secret-123"
 
 
+@pytest.mark.parametrize("key", ["READER_PROXY_TEMPLATE", "WALLHOP_PROXY_TEMPLATE"])
+@pytest.mark.parametrize(
+    "template", ["https://proxy.example/", "ftp://proxy.example/{url}", "proxy.example/{url}"]
+)
+def test_proxy_templates_are_validated_on_write(env: Path, key: str, template: str) -> None:
+    """Both proxy templates need {url} and an HTTP(S) URL; a bad value is a 400 naming the
+    key, not a runtime failure in the cascade."""
+
+    with _client(env) as client:
+        response = client.put("/api/v1/settings", json={key: template})
+    assert response.status_code == 400
+    assert key in response.text
+
+
 def test_reader_settings_are_allowlisted_and_key_masked(env: Path) -> None:
     """READER_PROXY_TEMPLATE and READER_API_KEY are operator-settable (live UI/API). The
     key is a secret: masked on read and survives a sentinel re-save; the template is plain."""
@@ -328,6 +342,8 @@ def test_reader_settings_are_allowlisted_and_key_masked(env: Path) -> None:
         allowlist = client.get("/api/v1/settings").json()["allowlist"]
         assert "READER_PROXY_TEMPLATE" in allowlist
         assert "READER_API_KEY" in allowlist
+        assert "WALLHOP_PROXY_TEMPLATE" in allowlist
+        assert "WALLHOP_AUTO_ENABLED" in allowlist
         client.put(
             "/api/v1/settings",
             json={

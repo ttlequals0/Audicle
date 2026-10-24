@@ -29,7 +29,7 @@ Every release gets a CHANGELOG.md section. If a branch bumps the version more th
 
 1. Gate locally with all three test suites, `uv run ruff check`, and `cd frontend && npm run build`. The suites are `uv run pytest`, `cd tts-wrapper && uv run pytest`, and `cd render && uv run pytest`. Run `uv run python scripts/dump_openapi.py` after API changes. CI repeats the tests and lint, then builds the app and renderer egress proxy. CodeQL and dependency review run separately.
 2. Check disk before building. Run `df -h /` and `docker system df`. Prune only when the reported usage requires it.
-3. Build all four stack images with `--pull`, sequentially:
+3. Build all four stack images (plus the `-cpu` wrapper) for linux/amd64 with `--pull`, sequentially. These local builds are the gate: trivy and the smoke test run against them.
 
    ```bash
    docker build --pull --platform linux/amd64 -t ttlequals0/audicle:X.Y.Z .
@@ -46,7 +46,17 @@ Every release gets a CHANGELOG.md section. If a branch bumps the version more th
    Never retag an old build as a new version: retagging freezes the apt-upgrade security layer.
 4. Run the CVE gate. `scripts/trivy_gate.sh X.Y.Z` scans all five tags (the four stack images plus the `-cpu` wrapper) with the correct per-image ignorefile. Read the output before treating a failure as a CVE because Trivy also returns a failure for scan errors. This gate runs locally at release time.
 5. Smoke the images as containers, not just the code. Run the app image and hit `/health/live`; confirm `import main` works inside the wrapper image. Tests import from the source tree, so a file missing from a Dockerfile COPY line only surfaces here (0.55.0 shipped that way and could not start; a wrapper test now guards the COPY list, but the principle stands for every image).
-6. Push the version tags for all four stack images, plus `ttlequals0/audicle-tts:X.Y.Z-cpu`. Verify the manifests exist on Docker Hub before deploying. `publish_release.sh` checks the four stack images; the CPU tag is not a stack dependency.
+6. Publish multi-arch manifests for the four non-GPU images (app, render, render-egress, tts `-cpu`); the GPU wrapper is amd64 only. The arm64 half runs under QEMU. A Linux build host needs the emulator registered once (`docker run --privileged --rm tonistiigi/binfmt --install arm64`) and a buildx builder (`docker buildx create --use`). Building and pushing in one step is slow for the torch image, so allow time.
+
+   ```bash
+   docker buildx build --pull --platform linux/amd64,linux/arm64 --push -t ttlequals0/audicle:X.Y.Z .
+   docker buildx build --pull --platform linux/amd64,linux/arm64 --push -t ttlequals0/audicle-render:X.Y.Z render/
+   docker buildx build --pull --platform linux/amd64,linux/arm64 --push -t ttlequals0/audicle-render-egress:X.Y.Z render/egress-proxy/
+   docker buildx build --pull --platform linux/amd64,linux/arm64 --push --build-arg WRAPPER_VERSION=$(cat VERSION) -t ttlequals0/audicle-tts:X.Y.Z-cpu -f tts-wrapper/Dockerfile.cpu tts-wrapper/
+   docker push ttlequals0/audicle-tts:X.Y.Z
+   ```
+
+   Verify the manifests exist on Docker Hub before deploying (`docker buildx imagetools inspect <image>:X.Y.Z` lists both platforms). `publish_release.sh` checks the four stack images with `docker manifest inspect`, which accepts a multi-arch manifest list unchanged; the CPU tag is not a stack dependency.
 7. Deploy by updating the stack's `BUILD_VERSION` to X.Y.Z. Verify the version through `GET /health/live`, podcast delivery through `/health/ready`, and selected processing dependencies through `/health/ingestion`.
 8. Merge the release PR to main, then publish from up-to-date main:
 

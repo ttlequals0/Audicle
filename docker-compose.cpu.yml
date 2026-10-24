@@ -1,0 +1,9 @@
+# Override for hosts without an NVIDIA GPU, including Apple Silicon.
+# Use: docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d
+# Needs Docker Compose 2.24 or newer for `!reset`.
+services:
+  tts-wrapper:
+    image: ttlequals0/audicle-tts:${BUILD_VERSION:?set BUILD_VERSION}-cpu
+    environment:
+      - TTS_DEVICE=cpu
+    deploy: !reset null

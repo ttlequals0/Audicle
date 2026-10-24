@@ -28,7 +28,7 @@ Switching categories, collapsing a section or searching preserves unsaved edits 
 
 ## Content
 
-- **Extraction**: the engine (`direct` or `firecrawl`), fetch timeouts and user agent, the extraction floor (`MIN_EXTRACTION_CHARS`), the automatic reader and archive fallbacks, the registration-wall email, and the Firecrawl content flags.
+- **Extraction**: the engine (`direct` or `firecrawl`), fetch timeouts and user agent, the extraction floor (`MIN_EXTRACTION_CHARS`), the automatic reader, wallhop and archive fallbacks, the registration-wall email, and the Firecrawl content flags.
 - **site overrides**: per-host paywall rules; see [Paywalled articles](paywalls.md).
 - **Cleanup** and **cleanup prompt**: the cleanup window (`LLM_CLEANUP_WINDOW_CHARS`), minimum article length, prompt-size cap and editable cleanup prompt.
 - **Uploads**: the per-file size cap and the `OCR_*` knobs for scanned documents.
@@ -57,7 +57,7 @@ The podcast as subscribers receive it: feed metadata, [artwork](feeds-and-podcas
 ## Services
 
 - **LLM**: the [provider](llm-providers.md), model, keys, and tuning.
-- **Connections**: the URLs of everything the app talks to: Firecrawl, the TTS wrapper, FlareSolverr, the render sidecar, the reader proxy. All live-tunable so you can point at an external service without an env edit and restart.
+- **Connections**: the URLs of everything the app talks to: Firecrawl, the TTS wrapper, FlareSolverr, the render sidecar, the reader proxy, the wallhop proxy. All live-tunable so you can point at an external service without an env edit and restart.
 - **Timeouts**: per-request budgets for the extraction cascade. Raise one when an upstream is slow rather than losing the article.
 - **Webhooks**: the notification URL and a test button; see [API and webhooks](api-and-webhooks.md#webhooks).
 

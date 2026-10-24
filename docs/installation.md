@@ -42,18 +42,25 @@ The first run downloads about 2 GB of model weights, which persist on the `./dat
 
 ## CPU-only deployment
 
-No CUDA GPU? `TTS_DEVICE=cpu` alone is not enough: the stock compose file pins the CUDA image and reserves an NVIDIA device. Three steps get you a CPU deployment (5 to 10 times slower):
+No CUDA GPU? `TTS_DEVICE=cpu` alone is not enough: the stock compose file pins the CUDA image and reserves an NVIDIA device. The `docker-compose.cpu.yml` override swaps in the CPU image (`ttlequals0/audicle-tts:<version>-cpu`, published for every release from 0.56.0 on), sets `TTS_DEVICE=cpu` and drops the GPU reservation. Expect generation to be 5 to 10 times slower.
 
-1. Use the published CPU image `ttlequals0/audicle-tts:<version>-cpu` (available for every release from 0.56.0 on), or build it yourself from the CPU Dockerfile:
+```bash
+docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d
+```
 
-   ```bash
-   docker build -t audicle-tts:cpu -f tts-wrapper/Dockerfile.cpu tts-wrapper/
-   ```
+The override needs Docker Compose 2.24 or newer. To build the CPU image yourself instead of pulling it:
 
-2. Point the `tts-wrapper` service at that image and remove the `deploy.resources` GPU reservation from it.
-3. Set `TTS_DEVICE=cpu` in `.env`.
+```bash
+docker build --build-arg WRAPPER_VERSION=$(cat VERSION) -t ttlequals0/audicle-tts:<version>-cpu -f tts-wrapper/Dockerfile.cpu tts-wrapper/
+```
 
-Then `docker compose up -d` as usual.
+### Apple Silicon
+
+From 0.62.0 the app, render, render-egress and TTS `-cpu` images are published for both linux/amd64 and linux/arm64. Docker Desktop on an M-series Mac pulls the arm64 variants and runs them natively; use the CPU override above. The GPU wrapper image (`ttlequals0/audicle-tts:<version>`) stays amd64-only, so do not use it on a Mac.
+
+Give Docker Desktop enough memory for the TTS wrapper. It starts trimming memory at `TTS_MEMORY_SOFT_LIMIT_MB` (default 8000) and restarts itself at `TTS_MEMORY_HARD_LIMIT_MB` (default 14000). The VM needs to hold at least the soft limit plus the app and render containers. Raise the VM memory in Docker Desktop under Settings > Resources, or lower both limits in `.env`.
+
+The render sidecar is optional. If you leave it out or it is down, the app fails closed to the normal extraction cascade.
 
 ## Required configuration
 

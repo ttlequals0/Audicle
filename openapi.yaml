@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.60.2
+  version: 0.62.0
 paths:
   /health/live:
     get:

@@ -30,8 +30,10 @@ def test_get_defaults_with_available_proxies_and_builtin(client: TestClient) -> 
         "archive",
         "render",
         "reader",
+        "wallhop",
     }
     assert any(b["host"] == "medium.com" for b in body["builtin"])
+    assert any(b["host"] == "404media.co" and b["proxy"] == "wallhop" for b in body["builtin"])
     assert any(b["host"] == "inc.com" and b["proxy"] == "render" for b in body["builtin"])
 
 
