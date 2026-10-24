@@ -6,6 +6,10 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Changed
+
+- Advance the Chatterbox source baseline to upstream 5de7a54. The three commits since 59bc590 add an opt-in v3 multilingual checkpoint, the Nano model, and remove the multilingual alignment analyzer; none of them is in the 0.1.7 wheel Audicle installs, and none changes a Turbo code path, so no wrapper change is needed.
+
 ## [0.61.1] - 2026-10-19
 
 ### Changed

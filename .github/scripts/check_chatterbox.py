@@ -19,8 +19,8 @@ from packaging.version import InvalidVersion, Version
 
 PYPI_JSON = "https://pypi.org/pypi/chatterbox-tts/json"
 LOCKFILE = Path("tts-wrapper/uv.lock")
-# Source of the installed 0.1.7 release; advance after reviewing/adopting upstream changes.
-SOURCE_BASELINE = "59bc590b3cad826e5d5987745bf6844627a21ad5"
+# Last reviewed upstream commit (0.1.7 ships from 59bc590b); advance after each review.
+SOURCE_BASELINE = "5de7a54aa4e5e2baadb0182dde554908b48b85c2"
 UPSTREAM = "resemble-ai/chatterbox"
 WATCH = ("numpy", "torch", "torchaudio", "transformers", "diffusers", "gradio")
 LABEL = "chatterbox-update"
