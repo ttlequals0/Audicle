@@ -23,7 +23,7 @@ FROM ghcr.io/astral-sh/uv:0.13.1 AS uv
 
 # ---- Stage 2b: static ffmpeg ----
 # Pinned BtbN GPL static build per arch, sha256-verified. Audicle only
-# subprocesses the ffmpeg binary, so a static binary is a drop-in -- and it
+# subprocesses the ffmpeg binary, so a static binary is a drop-in, and it
 # removes apt ffmpeg's mesa/GL/SDL/pango/mbedcrypto dependency tree. ffprobe/
 # ffplay are not shipped (nothing uses them). The tarballs (BtbN
 # autobuild-2026-10-24-13-02, linux64 and linuxarm64) are mirrored to this

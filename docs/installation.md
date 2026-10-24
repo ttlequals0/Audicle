@@ -58,7 +58,7 @@ docker build --build-arg WRAPPER_VERSION=$(cat VERSION) -t ttlequals0/audicle-tt
 
 From 0.62.0 the app, render, render-egress and TTS `-cpu` images are published for both linux/amd64 and linux/arm64. Docker Desktop on an M-series Mac pulls the arm64 variants and runs them natively; use the CPU override above. The GPU wrapper image (`ttlequals0/audicle-tts:<version>`) stays amd64-only, so do not use it on a Mac.
 
-Give Docker Desktop enough memory for the TTS wrapper. It starts trimming memory at `TTS_MEMORY_SOFT_LIMIT_MB` (default 8000) and restarts itself at `TTS_MEMORY_HARD_LIMIT_MB` (default 14000), so the VM needs to hold at least the soft limit plus the app and render containers. Raise the VM memory in Docker Desktop under Settings > Resources, or lower both limits in `.env`.
+Give Docker Desktop enough memory for the TTS wrapper. It starts trimming memory at `TTS_MEMORY_SOFT_LIMIT_MB` (default 8000) and restarts itself at `TTS_MEMORY_HARD_LIMIT_MB` (default 14000). The VM needs to hold at least the soft limit plus the app and render containers. Raise the VM memory in Docker Desktop under Settings > Resources, or lower both limits in `.env`.
 
 The render sidecar is optional. If you leave it out or it is down, the app fails closed to the normal extraction cascade.
 
