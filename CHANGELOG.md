@@ -6,6 +6,11 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Security
+
+- Clear the open Dependabot alerts. Python lockfiles: pillow 13.0.0 (root and TTS wrapper), pypdf 6.21.2, filelock 4.2.4, setuptools 84.2.1, certifi 2026.10.23 (all three), virtualenv 21.14.13 (TTS wrapper). Frontend: vite 8.3.5 (direct range raised to ^8.3.5), fast-uri 3.1.9, @vitest/mocker 5.0.5, undici 8.12.3, serialize-javascript 7.1.4.
+- Allow the MIT-CMU license in dependency review. Pillow 13 relabelled its permissive PIL license with that SPDX id, which failed the gate.
+
 ## [0.61.1] - 2026-10-19
 
 ### Changed

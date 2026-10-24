@@ -41,7 +41,9 @@ jobs:
           # BSL-1.0 (Boost) added for pyclipper (BSL-1.0 AND MIT), pulled in by
           # the rapidocr OCR stack; Boost is permissive with no obligations on
           # this project's source.
-          allow-licenses: MIT, BSD-2-Clause, BSD-3-Clause, Apache-2.0, ISC, MPL-2.0, PSF-2.0, Python-2.0, Unlicense, CC0-1.0, BlueOak-1.0.0, LGPL-2.1-only, LGPL-3.0-or-later, ZPL-2.1, BSL-1.0
+          # MIT-CMU added for Pillow 13, which relabelled the historic PIL (HPND)
+          # license with that SPDX id; permissive, no obligations on this project's source.
+          allow-licenses: MIT, BSD-2-Clause, BSD-3-Clause, Apache-2.0, ISC, MPL-2.0, PSF-2.0, Python-2.0, Unlicense, CC0-1.0, BlueOak-1.0.0, LGPL-2.1-only, LGPL-3.0-or-later, ZPL-2.1, BSL-1.0, MIT-CMU
           # Packages whose license metadata is absent/NOASSERTION on the registry
           # but is permissive in the project (pysle MIT; hf-xet/praatio/regex are
           # Apache/MIT-family; trafilatura is Apache-2.0) -- exempted by package so
