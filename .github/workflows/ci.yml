@@ -127,6 +127,9 @@ jobs:
           - name: tts-cpu
             context: tts-wrapper
             file: tts-wrapper/Dockerfile.cpu
+            # Only the wrapper reads WRAPPER_VERSION; passing it to the others
+            # would just log an unused-build-arg warning.
+            wrapper_version: true
           - name: render-egress
             context: render/egress-proxy
             file: render/egress-proxy/Dockerfile
@@ -143,8 +146,7 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
           platforms: linux/arm64
-          build-args: |
-            WRAPPER_VERSION=${{ steps.version.outputs.value }}
+          build-args: ${{ matrix.wrapper_version && format('WRAPPER_VERSION={0}', steps.version.outputs.value) || '' }}
           tags: audicle-${{ matrix.name }}-arm64-ci
           push: false
           cache-from: type=gha,scope=arm64-${{ matrix.name }}
