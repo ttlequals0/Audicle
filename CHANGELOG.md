@@ -6,6 +6,18 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.62.0] - 2026-10-24
+
+### Added
+
+- Publish native linux/arm64 images for the app, render, render-egress and TTS `-cpu` images, so Docker Desktop on Apple Silicon runs them without emulation. The GPU TTS image stays amd64-only. The static ffmpeg is now mirrored per architecture and selected by build platform.
+- Add `docker-compose.cpu.yml`, an override that switches the TTS wrapper to the `-cpu` image, sets `TTS_DEVICE=cpu` and drops the NVIDIA reservation for CPU-only and Apple Silicon hosts.
+- Build all four non-GPU images for linux/arm64 in CI.
+
+### Changed
+
+- Move the static ffmpeg from n9.0.1-11 to n9.0.2-35 (BtbN autobuild-2026-10-24-13-02) for both amd64 and arm64.
+
 ## [0.61.1] - 2026-10-19
 
 ### Changed

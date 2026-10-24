@@ -109,6 +109,47 @@ jobs:
           cache-from: type=gha,scope=render-egress
           cache-to: type=gha,mode=max,scope=render-egress
 
+  # Native arm64 build of every non-GPU image under QEMU. push: false, so this
+  # only proves the images build for linux/arm64 (Apple Silicon, ARM servers).
+  docker-build-arm64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: app
+            context: .
+            file: Dockerfile
+          - name: render
+            context: render
+            file: render/Dockerfile
+          - name: tts-cpu
+            context: tts-wrapper
+            file: tts-wrapper/Dockerfile.cpu
+          - name: render-egress
+            context: render/egress-proxy
+            file: render/egress-proxy/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        run: echo "value=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: linux/arm64
+          build-args: |
+            WRAPPER_VERSION=${{ steps.version.outputs.value }}
+          tags: audicle-${{ matrix.name }}-arm64-ci
+          push: false
+          cache-from: type=gha,scope=arm64-${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=arm64-${{ matrix.name }}
+
   # Runs the renderer behind the egress proxy, so a container that exits on start
   # (0.58.1: tinyproxy could not reopen /dev/stderr) fails CI, not the deploy.
   render-egress-integration:

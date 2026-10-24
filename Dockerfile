@@ -1,5 +1,9 @@
 # syntax=docker/dockerfile:1.7
 
+# Global arg for the ffmpeg stages below (see Stage 2b). TARGETARCH is a
+# BuildKit built-in; declaring it here would blank it in FROM lines.
+ARG FFMPEG_MIRROR_BASE=https://github.com/ttlequals0/Audicle/releases/download/ffmpeg-static-n9.0.2-35-g9a9b70bb8c
+
 # ---- Stage 1: frontend builder (Vite + React + Tailwind). ----
 FROM node:26-alpine AS frontend
 WORKDIR /build/frontend
@@ -18,24 +22,28 @@ RUN npm run build
 FROM ghcr.io/astral-sh/uv:0.13.1 AS uv
 
 # ---- Stage 2b: static ffmpeg ----
-# Pinned BtbN GPL static build, sha256-verified. Audicle only subprocesses the
-# ffmpeg binary, so a static binary is a drop-in -- and it removes apt ffmpeg's
-# mesa/GL/SDL/pango/mbedcrypto dependency tree. ffprobe/ffplay are not shipped
-# (nothing uses them). The tarball (BtbN autobuild-2026-09-01-13-13) is mirrored
-# to this repo's releases: BtbN deletes daily autobuilds after ~14 days. To
-# bump: mirror the new BtbN asset to a new release tag, update URL + sha256 together.
-FROM debian:trixie-slim AS ffmpeg
-# The mirrored tarball is amd64-only (apt ffmpeg was arch-native). Fail fast
-# with a clear message on other arches instead of an exec-format error later
-# or a silently mixed-arch image under qemu emulation.
-ARG TARGETARCH
-RUN [ "$TARGETARCH" = "amd64" ] || { \
-      echo "ERROR: the pinned static ffmpeg is amd64-only; build with --platform linux/amd64" >&2; \
-      exit 1; \
-    }
-ADD --checksum=sha256:6f180db3c615393bb7e4a1b25d4a63395f97c850ee93244bb5428b8b15080ddc \
-    https://github.com/ttlequals0/Audicle/releases/download/ffmpeg-static-n9.0.1-11-ge47273f4d9/ffmpeg-n9.0.1-11-ge47273f4d9-linux64-gpl-9.0.tar.xz \
+# Pinned BtbN GPL static build per arch, sha256-verified. Audicle only
+# subprocesses the ffmpeg binary, so a static binary is a drop-in -- and it
+# removes apt ffmpeg's mesa/GL/SDL/pango/mbedcrypto dependency tree. ffprobe/
+# ffplay are not shipped (nothing uses them). The tarballs (BtbN
+# autobuild-2026-10-24-13-02, linux64 and linuxarm64) are mirrored to this
+# repo's releases: BtbN deletes daily autobuilds after ~14 days. To bump:
+# mirror both new BtbN assets to a new release tag, update the tag/version in
+# FFMPEG_MIRROR_BASE and both URLs and both sha256s together.
+FROM debian:trixie-slim AS ffmpeg-amd64
+ARG FFMPEG_MIRROR_BASE
+ADD --checksum=sha256:ddffcf6e3d537dd9e0039f0635261be40dd9bfdafb2ea85970173e928e024e50 \
+    ${FFMPEG_MIRROR_BASE}/ffmpeg-n9.0.2-35-g9a9b70bb8c-linux64-gpl-9.0.tar.xz \
     /tmp/ffmpeg.tar.xz
+
+FROM debian:trixie-slim AS ffmpeg-arm64
+ARG FFMPEG_MIRROR_BASE
+ADD --checksum=sha256:710ac178fffa266d6b197a9e3cca4d2c62f35bed70d5cf99762d40aa8a5791f9 \
+    ${FFMPEG_MIRROR_BASE}/ffmpeg-n9.0.2-35-g9a9b70bb8c-linuxarm64-gpl-9.0.tar.xz \
+    /tmp/ffmpeg.tar.xz
+
+# An arch with no ffmpeg-<arch> stage fails here ("ffmpeg-<arch>: not found").
+FROM ffmpeg-${TARGETARCH} AS ffmpeg
 RUN apt-get update && apt-get install -y --no-install-recommends xz-utils \
     && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp \
     && mv /tmp/ffmpeg-*/bin/ffmpeg /ffmpeg \

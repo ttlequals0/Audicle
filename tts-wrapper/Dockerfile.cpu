@@ -4,6 +4,8 @@
 # slower runtime (5-10x per build plan). Set TTS_DEVICE=cpu in .env when using
 # this image.
 #
+# Multi-arch (linux/amd64 and linux/arm64); the GPU Dockerfile is amd64-only.
+#
 # There is no published ``pytorch/pytorch:*-cpu`` tag, so this builds on a plain
 # Python base (PYVER, as in Dockerfile) and installs the CPU-only torch
 # wheel from PyTorch's CPU index before the rest of the deps, so chatterbox-tts
