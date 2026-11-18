@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse
 
 from app.api.deps import get_conn, require_feed_key
 from app.config import Settings, get_settings
-from app.core.paths import media_dir
+from app.core.paths import default_artwork_path, media_dir
 from app.services import episodes, feed_auth
 
 # require_feed_key gates every asset when FEED_AUTH_ENABLED (no-op otherwise).
@@ -85,7 +85,7 @@ async def get_jpg(
     episode_id, generation_token = feed_auth.split_cover_generation(episode_id)
     _validate_episode_id(episode_id)
     if episode_id == _DEFAULT_ARTWORK_ID:
-        path = _stored_media_path(settings, str(media_dir(settings) / "default.jpg"))
+        path = _stored_media_path(settings, str(default_artwork_path(settings)))
     else:
         artwork_path = episodes.generation_value(
             conn, episode_id, generation_token or v, "artwork_path"
