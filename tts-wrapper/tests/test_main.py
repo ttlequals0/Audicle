@@ -1205,3 +1205,25 @@ def test_dockerfiles_copy_every_local_module_main_imports() -> None:
         copied = " ".join(line for line in text.splitlines() if line.startswith("COPY"))
         missing = sorted(f"{m}.py" for m in needed if f"{m}.py" not in copied)
         assert not missing, f"{dockerfile} does not COPY: {missing}"
+
+
+def test_dockerfiles_purge_git_in_the_layer_that_installs_the_engine() -> None:
+    """git is only needed to fetch resemble-perth during the engine install and
+    carries unpatched CVEs, so the engine-install RUN must purge it (the GPU image
+    also installs it there, so no layer ships it)."""
+
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    for dockerfile in ("Dockerfile", "Dockerfile.cpu"):
+        lines = (root / dockerfile).read_text().splitlines()
+        text = "\n".join(line for line in lines if not line.lstrip().startswith("#"))
+        text = text.replace("\\\n", " ")
+        runs = [line for line in text.splitlines() if line.startswith("RUN")]
+        engine = [r for r in runs if "install_engine.sh" in r]
+        assert len(engine) == 1, dockerfile
+        assert re.search(r"apt-get purge[^&]*\bgit\b", engine[0]), f"{dockerfile} keeps git"
+        others = [r for r in runs if r is not engine[0] and re.search(r"\bgit\b", r)]
+        # The CPU file still installs git in its OS-deps layer; only the GPU one is strict.
+        assert dockerfile != "Dockerfile" or not others, f"{dockerfile} installs git earlier"

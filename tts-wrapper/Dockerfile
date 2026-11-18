@@ -51,12 +51,12 @@ ENV PYTHONUNBUFFERED=1 \
     NVIDIA_REQUIRE_CUDA="cuda>=12.6" \
     LD_LIBRARY_PATH=/usr/local/lib/python${PYVER}/site-packages/nvidia/cudnn/lib:/usr/local/lib/python${PYVER}/site-packages/nvidia/cublas/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 
-# OS deps: curl for healthchecks; libsndfile for soundfile WAV IO; git so the
-# chatterbox backend can install resemble-perth (a git+https dependency).
+# OS deps: curl for healthchecks; libsndfile for soundfile WAV IO. git is
+# installed later, only for the engine install, and removed in the same layer.
 # ``apt-get upgrade`` pulls every available base-image security patch.
 RUN apt-get update \
     && apt-get upgrade -y \
-    && apt-get install -y --no-install-recommends curl ca-certificates libsndfile1 git \
+    && apt-get install -y --no-install-recommends curl ca-certificates libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install torch first so the CUDA wheel only downloads when its pin changes.
@@ -74,11 +74,15 @@ COPY pyproject.toml uv.lock LICENSE ./
 COPY config.py engine.py log_setup.py main.py memory.py chatterbox_engine.py whisper_verify.py install_engine.sh ./
 # install_engine.sh is shared with Dockerfile.cpu.
 # spacy-pkuseg (a chatterbox dependency for Chinese segmentation) publishes no
-# cp314 wheel, so it is compiled from the locked sdist; g++ is purged afterwards.
+# cp314 wheel, so it is compiled from the locked sdist. git is needed so the
+# engine install can fetch resemble-perth (a git+https dependency). Both g++ and
+# git are purged in this same layer; git carries unpatched CVEs and is not needed
+# at runtime. The runtime packages are pinned manual so autoremove keeps them.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends g++ \
+    && apt-get install -y --no-install-recommends g++ git \
     && sh install_engine.sh \
-    && apt-get purge -y --auto-remove g++ \
+    && apt-mark manual libstdc++6 libgcc-s1 curl ca-certificates libsndfile1 \
+    && apt-get purge -y --auto-remove g++ git \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --uid 1000 audicle \

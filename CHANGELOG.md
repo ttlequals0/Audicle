@@ -25,6 +25,7 @@ work lives under `[Unreleased]`.
 
 ### Security
 
+- The GPU TTS image no longer ships git, which removes its unpatched findings. git is installed only for the engine install and purged in the same layer.
 - Raise pypdf to 6.21.4 (minimum raised to `>=6.21.4`), and update msgpack to 1.2.4 in the TTS wrapper and opentelemetry-api to 1.45.2 in all three Python lockfiles.
 - Override glob to 14.0.6 for workbox-build in the frontend so it resolves minimatch 11.0.9, outside the vulnerable range. A minimatch-only override on glob 11.1.0 left the service worker with 4 precache entries instead of 8.
 
