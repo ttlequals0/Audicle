@@ -6,7 +6,7 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
-## [0.62.1] - 2026-11-17
+## [0.62.1] - 2026-11-18
 
 ### Changed
 
@@ -25,9 +25,9 @@ work lives under `[Unreleased]`.
 
 ### Security
 
-- The TTS images no longer ship git or, in the CPU image, the build toolchain, which removes their unpatched findings. Both are installed and purged in the engine install layer.
+- The TTS images no longer ship git, and the CPU image no longer ships the build toolchain, which removes their unpatched findings. Both are installed and purged in the engine install layer.
 - The app, TTS and render images no longer ship curl, and their health checks use Python. This removes the Kerberos client libraries from the images where nothing else needs them.
-- Install libsqlite3-0 from Debian sid in the app, TTS, render and egress images, and libexpat1, xvfb, xserver-common and libxi6 in the render image, until trixie ships the fixes. The build checks the fixed versions and fails if the install changes any other package. Scanner ignore entries cover the 15 findings Trivy still reports, because it has no trixie fixed version for them.
+- Install libsqlite3-0 from Debian sid in the app, TTS, render and egress images until trixie ships the fix. The render image also takes libexpat1, xvfb, xserver-common and libxi6 from sid. The build checks the fixed versions and fails if the install changes any other package. Scanner ignore entries cover the 15 findings Trivy still reports, because it has no trixie fixed version for them.
 - Replace libcups2t64 in the render image with an empty stand-in package that keeps the package database consistent. This frees the Kerberos, Avahi and GnuTLS client libraries, and the build fails if any survive.
 - Add a Trivy secret-scan allow rule, used for the render image only, for the third-party blocklists bundled with Camoufox's uBlock Origin. A malicious URL in one list matched the Azure SAS token rule, so the rule matches only that text.
 - Drop the ignore entries for CVE-2026-12064, CVE-2026-8458, CVE-2026-34980 and CVE-2026-55453, which no longer match any image, and move the remaining recheck dates to 2026-12-17.
