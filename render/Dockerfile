@@ -3,6 +3,16 @@
 # Slim Python base (no GPU -- the browser is CPU-only). Camoufox + a headful
 # Firefox run under xvfb.
 FROM ghcr.io/astral-sh/uv:0.13.5 AS uv
+
+# Empty stand-in for libcups2t64 (see the CUPS note below). Architecture: all, so one
+# .deb serves amd64 and arm64. Built here so equivs never reaches the final image.
+FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS cups-stub
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends equivs \
+    && mkdir /stub && cd /stub \
+    && printf 'Package: audicle-libcups-stub\nVersion: 1.0\nArchitecture: all\nMaintainer: Audicle <noreply@example.invalid>\nProvides: libcups2t64 (= 2.4.99)\nConflicts: libcups2t64\nReplaces: libcups2t64\nDescription: empty stand-in for libcups2t64\n GTK depends on CUPS for printing only; this package ships no files.\n' > control \
+    && equivs-build control
+
 FROM python:3.14-slim AS runtime
 COPY --from=uv /uv /bin/
 
@@ -50,14 +60,16 @@ RUN printf 'Types: deb\nURIs: http://deb.debian.org/debian\nSuites: sid\nCompone
          dpkg --compare-versions "$(dpkg-query -W -f='${Version}' "$1")" ge "$2" || exit 1; \
        done
 
-# GTK depends on libcups2t64 only for its print dialog backend, a runtime module the
-# renderer never uses (it never prints), and cups is the sole user of the Kerberos, Avahi and
-# GnuTLS client libraries (unpatched HIGH CVEs). dpkg --force-depends is needed because
-# libgtk-3-0t64 declares the dependency; a full render through the sidecar was verified
-# without them. Nothing runs apt after this point.
-RUN dpkg --purge --force-depends libcups2t64 libgssapi-krb5-2 libkrb5-3 libk5crypto3 \
-        libkrb5support0 libkeyutils1 libcom-err2 libavahi-client3 libavahi-common3 \
-        libgnutls30t64 libtasn1-6
+# GTK depends on libcups2t64 only for printing, which the renderer never does. The
+# stub satisfies that dependency with no files, so the real libcups and the Kerberos,
+# Avahi and GnuTLS libraries only it needed can be autoremoved with a consistent
+# package database.
+COPY --from=cups-stub /stub/audicle-libcups-stub_1.0_all.deb /tmp/audicle-libcups-stub.deb
+RUN apt-get install -y --no-install-recommends /tmp/audicle-libcups-stub.deb \
+    && dpkg --purge libcups2t64 \
+    && apt-get autoremove -y --purge \
+    && rm -f /tmp/audicle-libcups-stub.deb \
+    && rm -rf /var/lib/apt/lists/*
 
 # Run the browser as a non-root user (Firefox is happier non-root) and bake the
 # Camoufox browser into that user's home so it ships in the image.
