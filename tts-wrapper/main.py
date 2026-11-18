@@ -25,7 +25,7 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict, replace
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -235,6 +235,18 @@ class RuntimeConfigRequest(BaseModel):
     values: dict[str, Any]
 
 
+def get_engine(request: Request) -> Engine:
+    return request.app.state.engine
+
+
+def get_lock(request: Request) -> asyncio.Lock:
+    return request.app.state.lock
+
+
+EngineDep = Annotated[Engine, Depends(get_engine)]
+LockDep = Annotated[asyncio.Lock, Depends(get_lock)]
+
+
 def create_app(
     *,
     engine: Engine | None = None,
@@ -277,10 +289,8 @@ def create_app(
         task = app.state.active_gpu_task
         if task is None or task.done():
             return
-        try:
+        with suppress(Exception):
             await asyncio.shield(task)
-        except Exception:
-            pass
 
     async def gpu_await(app: FastAPI, operation: Any) -> Any:
         await wait_for_gpu(app)
@@ -400,12 +410,6 @@ def create_app(
     app.state.active_gpu_task = None
     app.state.runtime_overrides = initial_runtime_overrides
 
-    def get_engine(request: Request) -> Engine:
-        return request.app.state.engine
-
-    def get_lock(request: Request) -> asyncio.Lock:
-        return request.app.state.lock
-
     @app.get("/runtime-config")
     async def get_runtime_config() -> dict[str, Any]:
         defaults = Config.from_env()
@@ -419,7 +423,7 @@ def create_app(
     async def put_runtime_config(
         body: RuntimeConfigRequest,
         request: Request,
-        lock: asyncio.Lock = Depends(get_lock),
+        lock: LockDep,
     ) -> dict[str, Any]:
         nonlocal cfg, chosen_verifier
         unknown = set(body.values) - set(_RUNTIME_CONFIG_MAP)
@@ -477,7 +481,7 @@ def create_app(
         }
 
     @app.get("/health/live")
-    async def health_live(engine: Engine = Depends(get_engine)) -> JSONResponse:
+    async def health_live(engine: EngineDep) -> JSONResponse:
         # Liveness for orchestration (docker healthcheck, compose
         # depends_on). The wrapper is "up" once the model is loaded, even with
         # no reference voice -- otherwise the app would never start (its
@@ -491,7 +495,7 @@ def create_app(
         )
 
     @app.get("/health")
-    async def health(engine: Engine = Depends(get_engine)) -> JSONResponse:
+    async def health(engine: EngineDep) -> JSONResponse:
         model_loaded = bool(engine.model_loaded)
         reference_loaded = bool(engine.reference_loaded)
         intentionally_idle = bool(getattr(app.state, "intentionally_idle", False))
@@ -535,7 +539,7 @@ def create_app(
     @app.post("/maintenance/restart")
     async def maintenance_restart(
         background_tasks: BackgroundTasks,
-        lock: asyncio.Lock = Depends(get_lock),
+        lock: LockDep,
     ) -> dict[str, Any]:
         """Opportunistic restart requested by the worker between jobs (queue
         empty, /health reported restart_recommended). Rejects while inference
@@ -560,7 +564,7 @@ def create_app(
         body: GenerateRequest,
         request: Request,
         background_tasks: BackgroundTasks,
-        lock: asyncio.Lock = Depends(get_lock),
+        lock: LockDep,
     ) -> GenerateResponse:
         logger.info(
             "Generate request received",
@@ -786,7 +790,7 @@ def create_app(
     async def transcribe_existing(
         body: TranscribeRequest,
         request: Request,
-        lock: asyncio.Lock = Depends(get_lock),
+        lock: LockDep,
     ) -> TranscribeResponse:
         media_root = os.path.realpath(chosen_data_dir / "media")
         wav_real = os.path.realpath(body.wav_path)
@@ -822,7 +826,7 @@ def create_app(
     @app.post("/reload")
     async def reload(
         request: Request,
-        lock: asyncio.Lock = Depends(get_lock),
+        lock: LockDep,
     ) -> dict[str, Any]:
         async with lock:
             # Re-resolve under the lock: /select-model may have swapped the
@@ -846,7 +850,7 @@ def create_app(
         return {"ok": True}
 
     @app.get("/models")
-    async def models(engine: Engine = Depends(get_engine)) -> dict[str, Any]:
+    async def models(engine: EngineDep) -> dict[str, Any]:
         active = getattr(engine, "name", None)
         listed: list[dict[str, Any]] = []
         for name, languages in registry_languages.items():
@@ -865,7 +869,7 @@ def create_app(
     async def select_model(
         body: SelectModelRequest,
         request: Request,
-        lock: asyncio.Lock = Depends(get_lock),
+        lock: LockDep,
     ) -> dict[str, Any]:
         async with lock:
             await wait_for_gpu(request.app)
@@ -921,7 +925,7 @@ def create_app(
     async def select_voice(
         body: SelectVoiceRequest,
         request: Request,
-        lock: asyncio.Lock = Depends(get_lock),
+        lock: LockDep,
     ) -> dict[str, Any]:
         # Slots live under voices/ next to reference_path, mounted read-only.
         ref_path = cfg.slot_path(body.slot)
@@ -1019,8 +1023,6 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
             os.fsync(fh.fileno())
         os.replace(tmp_name, path)
     except Exception:
-        try:
+        with suppress(OSError):
             os.unlink(tmp_name)
-        except OSError:
-            pass
         raise

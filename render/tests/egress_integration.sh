@@ -88,9 +88,17 @@ docker run -d --name "$renderer" --network "$control" --ip 172.31.0.2 \
 
 # The internal network publishes no ports, so talk to the renderer from inside it as
 # uid 1001, the only local client its firewall admits (as its healthcheck does).
-renderer_curl() {
+# The image has no curl; args are timeout, url and an optional JSON body (POST). timeout is the
+# total deadline (urlopen's own timeout is per socket operation, so a trickle could outlast it).
+renderer_req() {
     docker exec "$renderer" setpriv --reuid=1001 --regid=1001 --clear-groups \
-        --inh-caps=-all --bounding-set=-all --no-new-privs curl -fsS "$@"
+        --inh-caps=-all --bounding-set=-all --no-new-privs timeout -k 2 "$1" python -I -c '
+import sys, urllib.request
+timeout, url, *body = sys.argv[1:]
+data = body[0].encode() if body else None
+request = urllib.request.Request(url, data=data, headers={"content-type": "application/json"})
+sys.stdout.write(urllib.request.urlopen(request, timeout=float(timeout)).read().decode())
+' "$@"
 }
 
 ready=0
@@ -99,7 +107,7 @@ for _ in $(seq 1 60); do
         test "$(docker inspect -f '{{.State.Running}}' "$container")" = true \
             || { echo "$container exited during startup" >&2; exit 1; }
     done
-    if renderer_curl --max-time 2 http://127.0.0.1:8000/health/live >/dev/null 2>&1; then
+    if renderer_req 2 http://127.0.0.1:8000/health/live >/dev/null 2>&1; then
         ready=1
         break
     fi
@@ -107,12 +115,11 @@ for _ in $(seq 1 60); do
 done
 test "$ready" -eq 1 || { echo "renderer not ready after 60s" >&2; exit 1; }
 for url in http://11.77.0.10/redirect http://11.77.0.10/subresources http://rebound.test/; do
-    renderer_curl --max-time 30 -X POST http://127.0.0.1:8000/render \
-        -H 'content-type: application/json' --data "{\"url\":\"$url\",\"expand\":false}" >/dev/null
+    renderer_req 30 http://127.0.0.1:8000/render "{\"url\":\"$url\",\"expand\":false}" >/dev/null
 done
 # A public page must actually render through the proxy, with its name resolved there.
-public_render="$(renderer_curl --max-time 60 -X POST http://127.0.0.1:8000/render \
-    -H 'content-type: application/json' --data '{"url":"https://example.com","expand":false}')"
+public_render="$(renderer_req 60 http://127.0.0.1:8000/render \
+    '{"url":"https://example.com","expand":false}')"
 echo "$public_render" | grep -q '"status":"ok"' \
     || { echo "public render failed: $public_render" >&2; exit 1; }
 

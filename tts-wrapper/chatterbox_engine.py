@@ -46,6 +46,7 @@ from engine import (
     pcm16_wav_bytes,
     trim_edge_silence,
 )
+from log_setup import capture_stdout
 
 logger = logging.getLogger("tts.chatterbox")
 
@@ -90,7 +91,7 @@ class ChatterboxEngine:
         return self._torch
 
     def _load_model(self, device: str):
-        from chatterbox.tts_turbo import ChatterboxTurboTTS  # noqa: PLC0415
+        from chatterbox.tts_turbo import ChatterboxTurboTTS
 
         return ChatterboxTurboTTS.from_pretrained(device=device)
 
@@ -112,7 +113,7 @@ class ChatterboxEngine:
             self._gpu_lock.release()
 
     def load(self) -> None:
-        import torch  # noqa: PLC0415  (intentional lazy import)
+        import torch  # intentional lazy import
 
         self._torch = torch
         device = self.config.device
@@ -121,7 +122,8 @@ class ChatterboxEngine:
             extra={"event": "tts_model_loading", "engine": self.name, "device": device},
         )
         load_started = time.perf_counter()
-        self._model = self._load_model(device)
+        with capture_stdout():
+            self._model = self._load_model(device)
         # Trust the model's native output rate (24 kHz) over the config default.
         self.sample_rate = int(self._model.sr)
         self._install_generation_cap()
@@ -183,14 +185,15 @@ class ChatterboxEngine:
             # per-call value ("CFG, min_p and exaggeration are not supported by
             # Turbo version"). Pin the neutral 0.0 (the library default is 0.5)
             # rather than expose a knob the model would ignore.
-            self._model.prepare_conditionals(str(ref_path), exaggeration=0.0)
+            with capture_stdout():
+                self._model.prepare_conditionals(str(ref_path), exaggeration=0.0)
             self.reference_loaded = True
             self._current_ref = ref_path
         finally:
             self._gpu_lock.release()
 
     async def _swap_reference(self, ref_path: Path) -> None:
-        import asyncio  # noqa: PLC0415
+        import asyncio
 
         if not ref_path.exists():
             raise FileNotFoundError(f"reference voice not found at {ref_path}")
@@ -238,7 +241,7 @@ class ChatterboxEngine:
         await self._swap_reference(ref_path)
 
     async def synthesize(self, text: str, params: GenerationParams) -> bytes:
-        import asyncio  # noqa: PLC0415
+        import asyncio
 
         assert self._model is not None
         assert self._torch is not None
@@ -250,7 +253,7 @@ class ChatterboxEngine:
         return pcm16_wav_bytes(wav_array, self.sample_rate)
 
     def _run_inference(self, text: str, params: GenerationParams):
-        import numpy as np  # noqa: PLC0415  (lazy: numpy comes from torch's wheel)
+        import numpy as np  # lazy: numpy comes from torch's wheel
 
         assert self._model is not None
         # Reject an overlapping GPU operation rather than running it concurrently.
@@ -272,23 +275,25 @@ class ChatterboxEngine:
             # ~40 s token cap with silence, both trailing (edge trim) and strewn
             # through the speech as multi-second pauses (internal compression).
             # The quality gate + whisper verify run on the WAV this produces.
-            wavs = [
-                compress_internal_silence_np(
-                    trim_edge_silence(
-                        np.asarray(self._infer_piece(piece, params), dtype=np.float32),
+            with capture_stdout():
+                wavs = [
+                    compress_internal_silence_np(
+                        trim_edge_silence(
+                            np.asarray(self._infer_piece(piece, params), dtype=np.float32),
+                            self.sample_rate,
+                        ),
                         self.sample_rate,
-                    ),
-                    self.sample_rate,
-                )
-                for piece in pieces
-            ]
+                    )
+                    for piece in pieces
+                ]
             return join_with_silence(wavs, self.sample_rate)
         finally:
             self._gpu_lock.release()
 
     def _set_seed(self, seed: int) -> None:
-        import random  # noqa: PLC0415
-        import numpy as np  # noqa: PLC0415  (lazy: numpy comes from torch's wheel)
+        import random
+
+        import numpy as np  # lazy: numpy comes from torch's wheel
 
         assert self._torch is not None
         self._torch.manual_seed(seed)
@@ -412,10 +417,10 @@ class ChatterboxMultilingualEngine(ChatterboxEngine):
     )
 
     def _load_model(self, device: str):
-        from chatterbox.mtl_tts import ChatterboxMultilingualTTS  # noqa: PLC0415
+        from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 
         try:
-            from chatterbox.mtl_tts import SUPPORTED_LANGUAGES  # noqa: PLC0415
+            from chatterbox.mtl_tts import SUPPORTED_LANGUAGES
 
             self.languages = tuple(sorted(SUPPORTED_LANGUAGES))
         except ImportError:

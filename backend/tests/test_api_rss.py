@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import logging
 from email.utils import format_datetime, parsedate_to_datetime
 from pathlib import Path
 
 import defusedxml.ElementTree as DET
+import pytest
 from app.config import get_settings
 from app.core import database
 from app.main import create_app
@@ -258,3 +260,21 @@ def test_get_rss_excludes_episodes_with_null_audio(env: Path) -> None:
     # Only the complete "ep" episode appears (the audio-less "half" is excluded);
     # the guid carries the updated_at version token, so compare the base id.
     assert len(guids) == 1 and guids[0].split("-v")[0] == "ep"
+
+
+def test_cache_miss_logs_one_feed_rendered_record_and_hit_logs_none(
+    env: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    _seed(env)
+    client = TestClient(create_app())  # no lifespan: startup logging setup drops caplog's handler
+    with caplog.at_level(logging.INFO, logger="app.api.rss"):
+        first = client.get("/rss/test_feed.xml")
+        second = client.get("/rss/test_feed.xml")
+    assert first.status_code == second.status_code == 200
+    records = [r for r in caplog.records if getattr(r, "event", None) == "feed_rendered"]
+    assert len(records) == 1
+    record = records[0]
+    assert record.episodes == 1
+    assert record.bytes == len(first.content)
+    for key in ("snapshot_ms", "list_ms", "render_ms"):
+        assert isinstance(getattr(record, key), float)

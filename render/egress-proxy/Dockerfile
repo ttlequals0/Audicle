@@ -10,6 +10,25 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends tinyproxy-bin iptables ca-certificates netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
+# libsqlite3-0 from Debian sid clears CVE-2026-119373, CVE-2026-119374 and CVE-2026-119379.
+# Drop this block when trixie ships the fix.
+# The build enforces the fixed versions and fails if the sid install adds, removes or changes any other package.
+RUN pkgs='libsqlite3-0=3.54.1-2' \
+    && printf 'Types: deb\nURIs: http://deb.debian.org/debian\nSuites: sid\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.pgp\n' > /etc/apt/sources.list.d/sid.sources \
+    && printf 'Package: *\nPin: release a=unstable\nPin-Priority: 100\n' > /etc/apt/preferences.d/sid \
+    && apt-get update \
+    && dpkg-query -W -f='${Package} ${Version}\n' > /tmp/pkgs.before \
+    && apt-get install -y --no-install-recommends $(for e in $pkgs; do printf '%s/sid ' "${e%%=*}"; done) \
+    && dpkg-query -W -f='${Package} ${Version}\n' > /tmp/pkgs.after \
+    && rm -f /etc/apt/sources.list.d/sid.sources /etc/apt/preferences.d/sid \
+    && rm -rf /var/lib/apt/lists/* \
+    && for e in $pkgs; do \
+         dpkg --compare-versions "$(dpkg-query -W -f='${Version}' "${e%%=*}")" ge "${e#*=}" || exit 1; \
+       done \
+    && unexpected="$(diff /tmp/pkgs.before /tmp/pkgs.after | sed -n 's/^[<>] \([^ ]*\) .*/\1/p' | sort -u | grep -vxF $(for e in $pkgs; do printf -- '-e %s ' "${e%%=*}"; done) || true)" \
+    && if [ -n "$unexpected" ]; then echo "ERROR: the sid install changed other packages: $unexpected" >&2; exit 1; fi \
+    && rm -f /tmp/pkgs.before /tmp/pkgs.after
+
 COPY --from=tools /usr/bin/setpriv /usr/bin/setpriv
 COPY tinyproxy.conf /etc/tinyproxy/tinyproxy.conf
 COPY entrypoint.sh /entrypoint.sh

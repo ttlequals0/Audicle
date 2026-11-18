@@ -163,7 +163,7 @@ def trim_edge_silence(wav, sample_rate: int):
     ``_TRIM_BUFFER_MS`` margin on each end. All-silent input returns a
     ``_ALL_SILENT_KEEP_MS`` remnant (never grows shorter input)."""
 
-    import numpy as np  # noqa: PLC0415  (lazy: numpy comes from torch's wheel)
+    import numpy as np  # lazy: numpy comes from torch's wheel
 
     above = np.abs(wav) > _TRIM_SILENCE_THRESHOLD
     indices = np.nonzero(above)[0]
@@ -182,7 +182,7 @@ def compress_internal_silence_np(wav, sample_rate: int):
     mirror of the backend's ``compress_internal_silence``; an all-silent piece is
     returned unchanged (``trim_edge_silence`` owns that case)."""
 
-    import numpy as np  # noqa: PLC0415  (lazy: numpy comes from torch's wheel)
+    import numpy as np  # lazy: numpy comes from torch's wheel
 
     silent = np.abs(wav) <= _TRIM_SILENCE_THRESHOLD
     if silent.all() or not silent.any():
@@ -219,7 +219,7 @@ def pcm16_wav_bytes(wav_array, sample_rate: int) -> bytes:
     which model produced the samples.
     """
 
-    import numpy as np  # noqa: PLC0415  (lazy: numpy comes from torch's wheel)
+    import numpy as np  # lazy: numpy comes from torch's wheel
 
     clamped = np.clip(wav_array, -1.0, 1.0)
     int16 = (clamped * 32767.0).astype(np.int16)
@@ -239,7 +239,7 @@ def join_with_silence(wavs, sample_rate: int, gap_secs: float = 0.12):
     gap keeps sentence pieces from slurring together when a chunk was split.
     """
 
-    import numpy as np  # noqa: PLC0415  (lazy: numpy comes from torch's wheel)
+    import numpy as np  # lazy: numpy comes from torch's wheel
 
     if len(wavs) == 1:
         return wavs[0]

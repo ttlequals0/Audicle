@@ -5,7 +5,6 @@ import logging
 from fastapi.testclient import TestClient
 
 from camoufox_renderer import CamoufoxRenderer
-
 from log_config import TextFormatter
 from main import create_app
 from renderer import RenderOptions, RenderResult

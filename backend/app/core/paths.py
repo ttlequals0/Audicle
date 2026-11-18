@@ -16,6 +16,10 @@ def media_dir(settings: Settings) -> Path:
     return settings.DATA_DIR / "media"
 
 
+def default_artwork_path(settings: Settings) -> Path:
+    return media_dir(settings) / "default.jpg"
+
+
 def file_size_or_zero(path_str: str | None) -> int:
     """Best-effort byte size of ``path_str``; 0 when missing/unreadable.
 

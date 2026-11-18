@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 
-from log_config import JSONFormatter, TextFormatter, setup_logging
+from log_config import JSONFormatter, TextFormatter, apply_logging, setup_logging
 
 
 def _record(**extra) -> logging.LogRecord:
@@ -61,3 +61,16 @@ def test_bad_level_falls_back_to_info() -> None:
     setup_logging(level="not-a-level", fmt="text")
 
     assert logging.getLogger().level == logging.INFO
+
+
+def test_uvicorn_access_is_muted_but_render_events_still_log(capsys) -> None:
+    setup_logging(level="INFO", fmt="json")
+    apply_logging("DEBUG", "json")  # a runtime level change must not re-enable access lines
+
+    logging.getLogger("uvicorn.access").info(
+        '%s - "%s %s HTTP/%s" %d', "127.0.0.1:5000", "GET", "/health/live", "1.1", 200
+    )
+    logging.getLogger("render.main").info("render ok", extra={"event": "render_ok"})
+
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert [line["event"] for line in lines] == ["render_ok"]

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import re
 import threading
 import time
 import wave
@@ -19,9 +20,9 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 import main
+from config import Config
 from engine import Engine, GenerationParams, GPUOutOfMemoryError, InferenceBusyError
 from main import create_app
-from config import Config
 
 
 def _silent_wav(duration_secs: float = 0.5, sample_rate: int = 24000) -> bytes:
@@ -1047,16 +1048,15 @@ def test_generate_logs_rss_per_chunk(
 
     monkeypatch.setattr(main, "rss_mb", lambda: 128)
     engine = FakeEngine(synthesize_returns=_silent_wav(duration_secs=0.5))
-    with caplog.at_level("INFO"):
-        with _client(engine, tmp_path) as client:
-            response = client.post(
-                "/generate",
-                json={"text": "hi", "episode_id": "ep-1", "chunk_index": 0},
-            )
+    with caplog.at_level("INFO"), _client(engine, tmp_path) as client:
+        response = client.post(
+            "/generate",
+            json={"text": "hi", "episode_id": "ep-1", "chunk_index": 0},
+        )
     assert response.status_code == 200
     done = [r for r in caplog.records if getattr(r, "event", None) == "tts_chunk_done"]
     assert done, "no tts_chunk_done record"
-    assert getattr(done[0], "rss_mb") > 0
+    assert done[0].rss_mb > 0
 
 
 def test_generate_restarts_when_over_the_hard_limit(
@@ -1074,12 +1074,11 @@ def test_generate_restarts_when_over_the_hard_limit(
     monkeypatch.setenv("TTS_MEMORY_SOFT_LIMIT_MB", "1")
 
     engine = FakeEngine(synthesize_returns=_silent_wav(duration_secs=0.5))
-    with caplog.at_level("WARNING"):
-        with _client(engine, tmp_path) as client:
-            response = client.post(
-                "/generate",
-                json={"text": "hi", "episode_id": "ep-1", "chunk_index": 0},
-            )
+    with caplog.at_level("WARNING"), _client(engine, tmp_path) as client:
+        response = client.post(
+            "/generate",
+            json={"text": "hi", "episode_id": "ep-1", "chunk_index": 0},
+        )
 
     # The chunk the client asked for is delivered; that is the whole point of
     # restarting on our own terms rather than being killed mid-request.
@@ -1121,9 +1120,8 @@ def test_maintenance_restart_queues_restart_and_logs(
     monkeypatch.setattr(main, "_request_restart", lambda: restarts.append("restart"))
 
     engine = FakeEngine()
-    with caplog.at_level("INFO"):
-        with _client(engine, tmp_path) as client:
-            response = client.post("/maintenance/restart")
+    with caplog.at_level("INFO"), _client(engine, tmp_path) as client:
+        response = client.post("/maintenance/restart")
 
     assert response.status_code == 200
     assert response.json() == {"restarting": True}
@@ -1208,3 +1206,23 @@ def test_dockerfiles_copy_every_local_module_main_imports() -> None:
         copied = " ".join(line for line in text.splitlines() if line.startswith("COPY"))
         missing = sorted(f"{m}.py" for m in needed if f"{m}.py" not in copied)
         assert not missing, f"{dockerfile} does not COPY: {missing}"
+
+
+def test_dockerfiles_purge_git_in_the_layer_that_installs_the_engine() -> None:
+    """git is only needed to fetch resemble-perth during the engine install and
+    carries unpatched CVEs, so each Dockerfile installs and purges it in that one RUN
+    and no earlier layer ships it."""
+
+    root = Path(__file__).resolve().parent.parent
+    for dockerfile in ("Dockerfile", "Dockerfile.cpu"):
+        lines = (root / dockerfile).read_text().splitlines()
+        text = "\n".join(line for line in lines if not line.lstrip().startswith("#"))
+        text = text.replace("\\\n", " ")
+        runs = [line for line in text.splitlines() if line.startswith("RUN")]
+        engine_indexes = [i for i, r in enumerate(runs) if "install_engine.sh" in r]
+        assert len(engine_indexes) == 1, dockerfile
+        engine = runs[engine_indexes[0]]
+        assert re.search(r"apt-get install[^&]*\bgit\b", engine), f"{dockerfile} lacks git"
+        assert re.search(r"apt-get purge[^&]*\bgit\b", engine), f"{dockerfile} keeps git"
+        others = [r for i, r in enumerate(runs) if i != engine_indexes[0] and re.search(r"\bgit\b", r)]
+        assert not others, f"{dockerfile} installs git outside the engine layer"

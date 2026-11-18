@@ -18,10 +18,12 @@ from camoufox.async_api import AsyncCamoufox
 
 from renderer import (
     EMAIL_INPUT_SELECTOR as _EMAIL_INPUT_SELECTOR,
+)
+from renderer import (
     EXPAND_CLICK_CAP,
     MAX_HTML_CHARS,
-    RenderResult,
     RenderOptions,
+    RenderResult,
     default_runtime_config,
     expandable_targets,
     is_captcha_wall,
@@ -253,7 +255,7 @@ class CamoufoxRenderer:
                     budget_seconds if budget_seconds is not None else configured_budget,
                 ),
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("render exceeded its time budget", extra={"event": "render_timeout"})
             return RenderResult(status="captcha")
 

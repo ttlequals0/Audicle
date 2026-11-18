@@ -78,6 +78,7 @@ logger = logging.getLogger("app.services.pipeline")
 # A topic-level blurb doesn't need the whole body; this bounds the input tokens
 # while leaving typical articles (under the cap) summarized in full.
 _SUMMARY_MAX_INPUT_CHARS = 16000
+_ASR_LOG_WORDS = 25  # cap on divergent-run words per side in chunk QA logs
 
 
 @contextmanager
@@ -1468,6 +1469,7 @@ async def _generate_chunk_quality_checked(
 
     result = None
     last_reasons: list[str] = []
+    last_asr_words: dict[str, str | None] = {}
     # Closest-to-reference pitch attempt so far, kept in a sidecar because each
     # regen overwrites the canonical WAV. Restored on exhaustion.
     best_pitch: tuple[float, tts.GenerateResult] | None = None
@@ -1529,6 +1531,7 @@ async def _generate_chunk_quality_checked(
 
         asr_div: float | None = None
         asr_run: int | None = None
+        asr_words: dict[str, str | None] = {}
         if verify_enabled:
             if result.transcript is None:
                 # The check silently not running looks identical to it passing;
@@ -1538,7 +1541,13 @@ async def _generate_chunk_quality_checked(
                     extra={"event": "asr_transcript_missing", "chunk_index": index},
                 )
             else:
-                asr_div, asr_run = asr_verify.analyze(text, result.transcript)
+                asr_div, asr_run, run_expected, run_heard = asr_verify.analyze(
+                    text, result.transcript
+                )
+                asr_words = {
+                    "asr_run_expected": " ".join(run_expected[:_ASR_LOG_WORDS]),
+                    "asr_run_heard": " ".join(run_heard[:_ASR_LOG_WORDS]),
+                }
                 threshold = (
                     settings.WHISPER_SHORT_CHUNK_DIVERGENCE
                     if short_chunk
@@ -1550,6 +1559,7 @@ async def _generate_chunk_quality_checked(
                     reasons.append("asr_divergent_run")
 
         last_reasons = reasons
+        last_asr_words = asr_words
         if not reasons:
             if pitch_tracker is not None and verdict is not None:
                 pitch_tracker.accept(verdict.metrics.median_f0_hz)
@@ -1595,6 +1605,7 @@ async def _generate_chunk_quality_checked(
             "reasons": reasons,
             "asr_divergence": asr_div,
             "asr_run": asr_run,
+            **asr_words,
             # None on the baseline take; the escalated values on a regen, so a
             # log sweep can tell whether escalation is buying recoveries.
             "max_chars": max_chars,
@@ -1643,6 +1654,8 @@ async def _generate_chunk_quality_checked(
             "chunk_index": index,
             "attempts": max_extra + 1,
             "reasons": last_reasons,
+            "asr_run_expected": last_asr_words.get("asr_run_expected"),
+            "asr_run_heard": last_asr_words.get("asr_run_heard"),
             "kept": kept,
         },
     )

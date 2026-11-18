@@ -123,6 +123,9 @@ def setup_logging(level: str | None = None, fmt: str | None = None) -> None:
         uvicorn_logger = logging.getLogger(name)
         uvicorn_logger.handlers.clear()
         uvicorn_logger.propagate = True
+    # Muted like the TTS wrapper: the main app polls /health/live and /runtime-config
+    # every ~30 s, and the render_* events already record real work.
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
 
 def apply_logging(level: str, fmt: str) -> None:

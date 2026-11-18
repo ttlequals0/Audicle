@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse
 
 from app.api.deps import get_conn, require_feed_key
 from app.config import Settings, get_settings
-from app.core.paths import media_dir
+from app.core.paths import default_artwork_path, media_dir
 from app.services import episodes, feed_auth
 
 # require_feed_key gates every asset when FEED_AUTH_ENABLED (no-op otherwise).
@@ -32,6 +32,7 @@ router = APIRouter(prefix="/media", tags=["media"], dependencies=[Depends(requir
 # NOTE: the default podcast artwork is served as ``/media/default.jpg`` (seeded
 # to DATA_DIR/media on startup); "default" must remain matchable by this pattern.
 _EPISODE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_DEFAULT_ARTWORK_ID = "default"
 
 
 def _validate_episode_id(episode_id: str) -> None:
@@ -83,10 +84,13 @@ async def get_jpg(
     episode_id, _ = feed_auth.split_cover_token(episode_id)
     episode_id, generation_token = feed_auth.split_cover_generation(episode_id)
     _validate_episode_id(episode_id)
-    artwork_path = episodes.generation_value(
-        conn, episode_id, generation_token or v, "artwork_path"
-    )
-    path = _stored_media_path(settings, artwork_path)
+    if episode_id == _DEFAULT_ARTWORK_ID:
+        path = _stored_media_path(settings, str(default_artwork_path(settings)))
+    else:
+        artwork_path = episodes.generation_value(
+            conn, episode_id, generation_token or v, "artwork_path"
+        )
+        path = _stored_media_path(settings, artwork_path)
     return FileResponse(
         path,
         media_type="image/jpeg",

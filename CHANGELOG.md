@@ -6,6 +6,34 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.62.1] - 2026-11-18
+
+### Changed
+
+- Update ruff to 0.17.2 in all three Python lockfiles. tts-wrapper and render now inherit the root lint rule set and target Python 3.14 instead of floating on ruff's defaults. The `<0.16` cap on ruff in tts-wrapper is gone. Fix the resulting findings: FastAPI `Depends` defaults in the TTS wrapper become `Annotated` parameters, unused `noqa` directives are removed, and `try`/`except`/`pass` blocks use `contextlib.suppress`.
+- Update pydantic to 2.14.1, pydantic-core to 2.50.1 and numpy to 2.5.4 in all three Python lockfiles, trafilatura to 2.3.1 and huggingface-hub to 2.2.0 in the root lockfile.
+- Move the uv build image and the CI uv version to 0.13.5, and docker/setup-qemu-action to v4.
+- Advance the Chatterbox source baseline to upstream ab55923. The one commit since 5de7a54 changes only the README.
+- Log one `feed_rendered` record each time the RSS feed is rendered on a cache miss, with `snapshot_ms`, `list_ms`, `render_ms`, `episodes` and `bytes`. It shows where the slow first fetch after a publish spends its time. Cache hits and HEAD requests log nothing.
+- Log which words diverged when a chunk fails the ASR check. `chunk_quality_bad` and `chunk_quality_unresolved` now carry `asr_run_expected` and `asr_run_heard` (up to 25 words each) for the worst divergent run. A systematic text-vs-transcript mismatch can now be told apart from bad audio. No threshold or regeneration decision changed.
+
+### Fixed
+
+- Serve the default podcast artwork at `/media/default.jpg` (and the keyed `/media/default-<key>.jpg`). It returned 404, which broke the channel fallback image and the Feed and Settings previews. Feed-key gating is unchanged.
+- Keep the TTS wrapper log as structured JSON. Python warnings (the diffusers `LoRACompatibleLinear` deprecation) now arrive as one `py.warnings` record, and tqdm progress bars are off. Library `print()` output during model load and inference is logged at DEBUG as `tts.engine.lib` instead of reaching stdout raw.
+- Stop the render sidecar writing uvicorn access lines, matching the TTS wrapper. The `/health/live` and `/runtime-config` polls were its only output; the `render_*` events still log.
+
+### Security
+
+- The TTS images no longer ship git, and the CPU image no longer ships the build toolchain, which removes their unpatched findings. Both are installed and purged in the engine install layer.
+- The app, TTS and render images no longer ship curl, and their health checks use Python. This removes the Kerberos client libraries from the images where nothing else needs them.
+- Install libsqlite3-0 from Debian sid in the app, TTS, render and egress images until trixie ships the fix. The render image also takes libexpat1, xvfb, xserver-common and libxi6 from sid. The build checks the fixed versions and fails if the install changes any other package. Scanner ignore entries cover the 15 findings Trivy still reports, because it has no trixie fixed version for them.
+- Replace libcups2t64 in the render image with an empty stand-in package that keeps the package database consistent. This frees the Kerberos, Avahi and GnuTLS client libraries, and the build fails if any survive.
+- Add a Trivy secret-scan allow rule, used for the render image only, for the third-party blocklists bundled with Camoufox's uBlock Origin. A malicious URL in one list matched the Azure SAS token rule, so the rule matches only that text.
+- Drop the ignore entries for CVE-2026-12064, CVE-2026-8458, CVE-2026-34980 and CVE-2026-55453, which no longer match any image, and move the remaining recheck dates to 2026-12-17.
+- Raise pypdf to 6.21.4 (minimum raised to `>=6.21.4`), and update msgpack to 1.2.4 in the TTS wrapper and opentelemetry-api to 1.45.2 in all three Python lockfiles.
+- Override glob to 14.0.6 for workbox-build in the frontend so it resolves minimatch 11.0.9, outside the vulnerable range. A minimatch-only override on glob 11.1.0 left the service worker with 4 precache entries instead of 8.
+
 ## [0.62.0] - 2026-10-24
 
 ### Added

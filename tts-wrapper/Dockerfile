@@ -7,7 +7,7 @@
 # PYVER single-sources the Python version for the FROM line AND the nvidia
 # wheel paths in LD_LIBRARY_PATH below -- bump it in one place.
 ARG PYVER=3.14
-FROM ghcr.io/astral-sh/uv:0.13.1 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.5 AS uv
 FROM python:${PYVER}-slim AS runtime
 ARG PYVER
 COPY --from=uv /uv /uvx /bin/
@@ -51,13 +51,32 @@ ENV PYTHONUNBUFFERED=1 \
     NVIDIA_REQUIRE_CUDA="cuda>=12.6" \
     LD_LIBRARY_PATH=/usr/local/lib/python${PYVER}/site-packages/nvidia/cudnn/lib:/usr/local/lib/python${PYVER}/site-packages/nvidia/cublas/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 
-# OS deps: curl for healthchecks; libsndfile for soundfile WAV IO; git so the
-# chatterbox backend can install resemble-perth (a git+https dependency).
+# OS deps: libsndfile for soundfile WAV IO (the healthcheck uses Python, not curl). git is
+# installed later, only for the engine install, and removed in the same layer.
 # ``apt-get upgrade`` pulls every available base-image security patch.
 RUN apt-get update \
     && apt-get upgrade -y \
-    && apt-get install -y --no-install-recommends curl ca-certificates libsndfile1 git \
+    && apt-get install -y --no-install-recommends ca-certificates libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
+
+# libsqlite3-0 from Debian sid clears CVE-2026-119373, CVE-2026-119374 and CVE-2026-119379.
+# Drop this block when trixie ships the fix.
+# The build enforces the fixed versions and fails if the sid install adds, removes or changes any other package.
+RUN pkgs='libsqlite3-0=3.54.1-2' \
+    && printf 'Types: deb\nURIs: http://deb.debian.org/debian\nSuites: sid\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.pgp\n' > /etc/apt/sources.list.d/sid.sources \
+    && printf 'Package: *\nPin: release a=unstable\nPin-Priority: 100\n' > /etc/apt/preferences.d/sid \
+    && apt-get update \
+    && dpkg-query -W -f='${Package} ${Version}\n' > /tmp/pkgs.before \
+    && apt-get install -y --no-install-recommends $(for e in $pkgs; do printf '%s/sid ' "${e%%=*}"; done) \
+    && dpkg-query -W -f='${Package} ${Version}\n' > /tmp/pkgs.after \
+    && rm -f /etc/apt/sources.list.d/sid.sources /etc/apt/preferences.d/sid \
+    && rm -rf /var/lib/apt/lists/* \
+    && for e in $pkgs; do \
+         dpkg --compare-versions "$(dpkg-query -W -f='${Version}' "${e%%=*}")" ge "${e#*=}" || exit 1; \
+       done \
+    && unexpected="$(diff /tmp/pkgs.before /tmp/pkgs.after | sed -n 's/^[<>] \([^ ]*\) .*/\1/p' | sort -u | grep -vxF $(for e in $pkgs; do printf -- '-e %s ' "${e%%=*}"; done) || true)" \
+    && if [ -n "$unexpected" ]; then echo "ERROR: the sid install changed other packages: $unexpected" >&2; exit 1; fi \
+    && rm -f /tmp/pkgs.before /tmp/pkgs.after
 
 # Install torch first so the CUDA wheel only downloads when its pin changes.
 RUN pip install --no-cache-dir torch==2.13.0 torchaudio==2.11.0 \
@@ -74,11 +93,15 @@ COPY pyproject.toml uv.lock LICENSE ./
 COPY config.py engine.py log_setup.py main.py memory.py chatterbox_engine.py whisper_verify.py install_engine.sh ./
 # install_engine.sh is shared with Dockerfile.cpu.
 # spacy-pkuseg (a chatterbox dependency for Chinese segmentation) publishes no
-# cp314 wheel, so it is compiled from the locked sdist; g++ is purged afterwards.
+# cp314 wheel, so it is compiled from the locked sdist. git is needed so the
+# engine install can fetch resemble-perth (a git+https dependency). Both g++ and
+# git are purged in this same layer; git carries unpatched CVEs and is not needed
+# at runtime. The runtime packages are pinned manual so autoremove keeps them.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends g++ \
+    && apt-get install -y --no-install-recommends g++ git \
     && sh install_engine.sh \
-    && apt-get purge -y --auto-remove g++ \
+    && apt-mark manual libstdc++6 libgcc-s1 ca-certificates libsndfile1 \
+    && apt-get purge -y --auto-remove g++ git \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --uid 1000 audicle \
@@ -97,7 +120,7 @@ ENV AUDICLE_WRAPPER_VERSION=${WRAPPER_VERSION}
 # start-period is generous: the first boot downloads multi-GB model weights from
 # HuggingFace before the model loads and /health/live turns 200.
 HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=300s \
-    CMD curl -fsS http://localhost:8000/health/live || exit 1
+    CMD python -I -c "import urllib.request,sys; sys.exit(0 if 200 <= urllib.request.urlopen('http://localhost:8000/health/live', timeout=4).status < 300 else 1)"
 
 # ``--factory`` so create_app() is called once with the configured engine.
 # ``--workers 1`` because the model holds GPU resources that don't survive

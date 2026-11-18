@@ -156,6 +156,19 @@ def test_enabled_feed_rejects_missing_and_wrong_key(env: Path) -> None:
         assert client.head("/rss/test_feed.xml").status_code == 401
 
 
+def test_default_cover_requires_the_feed_key(env: Path) -> None:
+    media = _seed_episode(env)
+    (media / "default.jpg").write_bytes(b"\xff\xd8\xffDEFAULT")
+    _enable(env)
+    with _client(env) as client:
+        # startup re-seeds only when missing, so the test bytes survive
+        assert client.get("/media/default.jpg").status_code == 401
+        assert client.get(f"/media/default-{_KEY2}.jpg").status_code == 401
+        keyed = client.get(f"/media/default-{_KEY}.jpg")
+    assert keyed.status_code == 200
+    assert keyed.content == b"\xff\xd8\xffDEFAULT"
+
+
 def test_enabled_feed_accepts_correct_key(env: Path) -> None:
     _seed_episode(env)
     _enable(env)

@@ -141,3 +141,59 @@ def test_worst_run_identical_is_zero() -> None:
     assert _run(text, text) == 0
     assert _run("", "") == 0
     assert _run("two words", "two words") == 0
+
+
+def test_analysis_names_the_worst_runs_words_for_a_replace() -> None:
+    expected = " ".join(f"word{i}" for i in range(30))
+    garbled = [f"word{i}" for i in range(30)]
+    garbled[10:16] = [f"garble{i}" for i in range(6)]
+    result = asr_verify.analyze(expected, " ".join(garbled))
+    assert result.worst_run == 6
+    assert result.run_expected == [f"word{i}" for i in range(10, 16)]
+    assert result.run_heard == [f"garble{i}" for i in range(6)]
+
+
+def test_analysis_dropout_has_expected_words_and_nothing_heard() -> None:
+    expected = " ".join(f"word{i}" for i in range(60))
+    transcript = " ".join(f"word{i}" for i in range(60) if not 40 <= i < 53)
+    result = asr_verify.analyze(expected, transcript)
+    assert result.run_expected == [f"word{i}" for i in range(40, 53)]
+    assert result.run_heard == []
+
+
+def test_analysis_inserted_babble_has_heard_words_and_nothing_expected() -> None:
+    expected = " ".join(f"word{i}" for i in range(20))
+    garbled = [f"word{i}" for i in range(10)] + [f"babble{i}" for i in range(9)]
+    garbled += [f"word{i}" for i in range(10, 20)]
+    result = asr_verify.analyze(expected, " ".join(garbled))
+    assert result.worst_run == 9
+    assert result.run_expected == []
+    assert result.run_heard == [f"babble{i}" for i in range(9)]
+
+
+def test_analysis_bridged_run_joins_both_sides_without_the_bridge_word() -> None:
+    expected = " ".join(f"word{i}" for i in range(40))
+    garbled = (
+        [f"word{i}" for i in range(20)]
+        + ["junk0", "junk1", "junk2", "junk3", "word24", "junk4", "junk5", "junk6", "junk7"]
+        + [f"word{i}" for i in range(29, 40)]
+    )
+    result = asr_verify.analyze(expected, " ".join(garbled))
+    assert result.run_expected == [f"word{i}" for i in (20, 21, 22, 23, 25, 26, 27, 28)]
+    assert result.run_heard == [f"junk{i}" for i in range(8)]
+    assert max(len(result.run_expected), len(result.run_heard)) == result.worst_run
+
+
+def test_analysis_reports_the_longest_of_several_runs() -> None:
+    expected = " ".join(f"word{i}" for i in range(60))
+    garbled = [f"word{i}" for i in range(60)]
+    garbled[5:7] = ["a", "b"]
+    garbled[30:38] = [f"bad{i}" for i in range(8)]
+    result = asr_verify.analyze(expected, " ".join(garbled))
+    assert result.worst_run == 8
+    assert result.run_heard == [f"bad{i}" for i in range(8)]
+
+
+def test_analysis_identical_text_has_no_run_words() -> None:
+    result = asr_verify.analyze("two words", "two words")
+    assert (result.run_expected, result.run_heard) == ([], [])

@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 
 from app.config import Settings
 from app.core import database
+from app.core.paths import default_artwork_path
 from app.services import runtime_settings
 from app.utils.logging import apply_format, apply_level, setup_logging
 from app.version import __version__
@@ -142,7 +143,7 @@ def _seed_defaults(settings: Settings, logger: logging.Logger) -> None:
         (defaults / "script.txt", _APP_DIR / "prompts" / "script.txt"),
         (defaults / "summary.txt", _APP_DIR / "prompts" / "summary.txt"),
         (defaults / "pronunciation.json", _APP_DIR / "corrections" / "pronunciation.json"),
-        (_APP_DIR / "assets" / "default-artwork.jpg", settings.DATA_DIR / "media" / "default.jpg"),
+        (_APP_DIR / "assets" / "default-artwork.jpg", default_artwork_path(settings)),
     ):
         _seed_if_missing(src, dst, logger)
 

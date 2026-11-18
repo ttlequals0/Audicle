@@ -71,11 +71,11 @@ def test_split_oversize_sentence_cut_at_clause_boundary() -> None:
 # --- trim_edge_silence ------------------------------------------------------
 
 
-def _speech(secs: float, rate: int = 24000, level: float = 0.5) -> "np.ndarray":
+def _speech(secs: float, rate: int = 24000, level: float = 0.5) -> np.ndarray:
     return np.full(int(rate * secs), level, dtype=np.float32)
 
 
-def _silence(secs: float, rate: int = 24000) -> "np.ndarray":
+def _silence(secs: float, rate: int = 24000) -> np.ndarray:
     return np.zeros(int(rate * secs), dtype=np.float32)
 
 
