@@ -12,6 +12,7 @@ RUN apt-get update \
 
 # libsqlite3-0 from Debian sid clears CVE-2026-119373, CVE-2026-119374 and CVE-2026-119379.
 # Drop this block when trixie ships the fix.
+# A rebuild fails closed if a newer sid package needs a newer libc than trixie ships.
 RUN printf 'Types: deb\nURIs: http://deb.debian.org/debian\nSuites: sid\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.pgp\n' > /etc/apt/sources.list.d/sid.sources \
     && printf 'Package: *\nPin: release a=unstable\nPin-Priority: 100\n' > /etc/apt/preferences.d/sid \
     && apt-get update \
