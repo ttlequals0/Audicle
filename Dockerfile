@@ -111,6 +111,6 @@ USER audicle
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=20s \
-    CMD python -I -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health/live', timeout=4).status == 200 else 1)"
+    CMD python -I -c "import urllib.request,sys; sys.exit(0 if 200 <= urllib.request.urlopen('http://localhost:8000/health/live', timeout=4).status < 300 else 1)"
 
 ENTRYPOINT ["/app/entrypoint.sh"]

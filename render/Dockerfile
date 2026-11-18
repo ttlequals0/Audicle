@@ -105,7 +105,7 @@ EXPOSE 8000
 # Generous start-period: the first request still pays browser spin-up, but the
 # browser is already baked, so liveness comes up quickly.
 HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=60s \
-    CMD setpriv --reuid=1001 --regid=1001 --clear-groups --inh-caps=-all --bounding-set=-all --no-new-privs python -I -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health/live', timeout=4).status == 200 else 1)"
+    CMD setpriv --reuid=1001 --regid=1001 --clear-groups --inh-caps=-all --bounding-set=-all --no-new-privs python -I -c "import urllib.request,sys; sys.exit(0 if 200 <= urllib.request.urlopen('http://localhost:8000/health/live', timeout=4).status < 300 else 1)"
 
 # entrypoint.sh starts Xvfb then exec's uvicorn (one worker -> one browser context
 # at a time, bounded memory). See the script for why xvfb-run is not used here.
