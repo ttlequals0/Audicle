@@ -27,6 +27,10 @@ work lives under `[Unreleased]`.
 
 - The GPU TTS image no longer ships git, which removes its unpatched findings. git is installed only for the engine install and purged in the same layer.
 - The app, TTS and render images no longer ship curl, and their health checks use Python. This removes the Kerberos client libraries from the images where nothing else needs them.
+- Install libsqlite3-0 from Debian sid in the app, TTS, render and egress images until trixie ships the fix. The render image also takes libexpat1, xvfb, xserver-common and libxi6 from sid. Trivy still reports these CVEs because trixie lists no fixed version.
+- Remove libcups2t64 and the Kerberos, Avahi and GnuTLS client libraries from the render image. GTK only uses CUPS for printing, and a full render passes without them.
+- Add a Trivy secret-scan allow rule, used for the render image only, for the third-party blocklists bundled with Camoufox's uBlock Origin. A malicious URL in one list matched the Azure SAS token rule.
+- Drop the ignore entries for CVE-2026-12064, CVE-2026-8458, CVE-2026-34980 and CVE-2026-55453, which no longer match any image, and move the remaining recheck dates to 2026-12-17.
 - Raise pypdf to 6.21.4 (minimum raised to `>=6.21.4`), and update msgpack to 1.2.4 in the TTS wrapper and opentelemetry-api to 1.45.2 in all three Python lockfiles.
 - Override glob to 14.0.6 for workbox-build in the frontend so it resolves minimatch 11.0.9, outside the vulnerable range. A minimatch-only override on glob 11.1.0 left the service worker with 4 precache entries instead of 8.
 
