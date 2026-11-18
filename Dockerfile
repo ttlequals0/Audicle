@@ -71,6 +71,19 @@ RUN apt-get update \
     && rm -rf /usr/local/lib/python3.14/site-packages/pip* \
        /usr/local/lib/python3.14/ensurepip
 
+# libsqlite3-0 from Debian sid clears CVE-2026-119373, CVE-2026-119374 and CVE-2026-119379.
+# Drop this block when trixie ships the fix.
+RUN printf 'Types: deb\nURIs: http://deb.debian.org/debian\nSuites: sid\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.pgp\n' > /etc/apt/sources.list.d/sid.sources \
+    && printf 'Package: *\nPin: release a=unstable\nPin-Priority: 100\n' > /etc/apt/preferences.d/sid \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends libsqlite3-0/sid \
+    && rm -f /etc/apt/sources.list.d/sid.sources /etc/apt/preferences.d/sid \
+    && rm -rf /var/lib/apt/lists/* \
+    && for entry in 'libsqlite3-0 3.54.1-2'; do \
+         set -- $entry; \
+         dpkg --compare-versions "$(dpkg-query -W -f='${Version}' "$1")" ge "$2" || exit 1; \
+       done
+
 COPY --from=ffmpeg /ffmpeg /usr/local/bin/ffmpeg
 COPY --from=uv /uv /usr/local/bin/uv
 

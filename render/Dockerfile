@@ -34,6 +34,31 @@ RUN uv export --locked --no-dev --extra render --no-emit-project --output-file /
     && python -c 'import shutil, sysconfig; from pathlib import Path; shutil.rmtree(Path(sysconfig.get_path("stdlib")) / "ensurepip")' \
     && rm -rf /var/lib/apt/lists/*
 
+# From Debian sid until trixie ships the fixes. libsqlite3-0: CVE-2026-119373,
+# CVE-2026-119374, CVE-2026-119379. libexpat1: CVE-2026-113351, CVE-2026-115506,
+# CVE-2026-117610, CVE-2026-118370. xvfb and xserver-common: CVE-2026-109091,
+# CVE-2026-109092, CVE-2026-109093, CVE-2026-109095, CVE-2026-109096,
+# CVE-2026-109903, CVE-2026-93516. libxi6: CVE-2026-109089, CVE-2026-109090.
+RUN printf 'Types: deb\nURIs: http://deb.debian.org/debian\nSuites: sid\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.pgp\n' > /etc/apt/sources.list.d/sid.sources \
+    && printf 'Package: *\nPin: release a=unstable\nPin-Priority: 100\n' > /etc/apt/preferences.d/sid \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends libsqlite3-0/sid libexpat1/sid xvfb/sid xserver-common/sid libxi6/sid \
+    && rm -f /etc/apt/sources.list.d/sid.sources /etc/apt/preferences.d/sid \
+    && rm -rf /var/lib/apt/lists/* \
+    && for entry in 'libsqlite3-0 3.54.1-2' 'libexpat1 2.10.0-1' 'xvfb 2:21.1.26-1' 'xserver-common 2:21.1.26-1' 'libxi6 2:1.8.4-1'; do \
+         set -- $entry; \
+         dpkg --compare-versions "$(dpkg-query -W -f='${Version}' "$1")" ge "$2" || exit 1; \
+       done
+
+# GTK depends on libcups2t64 only for its print dialog backend, a runtime module the
+# renderer never uses (it never prints), and cups is the sole user of the Kerberos, Avahi and
+# GnuTLS client libraries (unpatched HIGH CVEs). dpkg --force-depends is needed because
+# libgtk-3-0t64 declares the dependency; a full render through the sidecar was verified
+# without them. Nothing runs apt after this point.
+RUN dpkg --purge --force-depends libcups2t64 libgssapi-krb5-2 libkrb5-3 libk5crypto3 \
+        libkrb5support0 libkeyutils1 libcom-err2 libavahi-client3 libavahi-common3 \
+        libgnutls30t64 libtasn1-6
+
 # Run the browser as a non-root user (Firefox is happier non-root) and bake the
 # Camoufox browser into that user's home so it ships in the image.
 RUN useradd --create-home --uid 1000 render \

@@ -32,3 +32,13 @@ def test_render_healthcheck_keeps_the_privilege_drop() -> None:
     (healthcheck,) = [i for i in _instructions("render/Dockerfile") if i.startswith("HEALTHCHECK")]
     assert "setpriv --reuid=1001" in healthcheck
     assert healthcheck.index("setpriv") < healthcheck.index("python -I -c")
+
+
+@pytest.mark.parametrize("name", (*_DOCKERFILES, "render/egress-proxy/Dockerfile"))
+def test_sid_package_blocks_pin_clean_up_and_verify(name: str) -> None:
+    sid_runs = [i for i in _instructions(name) if "sid.sources" in i and i.startswith("RUN")]
+    assert len(sid_runs) == 1, name
+    run = sid_runs[0]
+    assert "Pin-Priority: 100" in run
+    assert "rm -f /etc/apt/sources.list.d/sid.sources /etc/apt/preferences.d/sid" in run
+    assert "dpkg --compare-versions" in run
