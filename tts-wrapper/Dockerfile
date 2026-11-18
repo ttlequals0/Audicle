@@ -51,12 +51,12 @@ ENV PYTHONUNBUFFERED=1 \
     NVIDIA_REQUIRE_CUDA="cuda>=12.6" \
     LD_LIBRARY_PATH=/usr/local/lib/python${PYVER}/site-packages/nvidia/cudnn/lib:/usr/local/lib/python${PYVER}/site-packages/nvidia/cublas/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 
-# OS deps: curl for healthchecks; libsndfile for soundfile WAV IO. git is
+# OS deps: libsndfile for soundfile WAV IO (the healthcheck uses Python, not curl). git is
 # installed later, only for the engine install, and removed in the same layer.
 # ``apt-get upgrade`` pulls every available base-image security patch.
 RUN apt-get update \
     && apt-get upgrade -y \
-    && apt-get install -y --no-install-recommends curl ca-certificates libsndfile1 \
+    && apt-get install -y --no-install-recommends ca-certificates libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install torch first so the CUDA wheel only downloads when its pin changes.
@@ -81,7 +81,7 @@ COPY config.py engine.py log_setup.py main.py memory.py chatterbox_engine.py whi
 RUN apt-get update \
     && apt-get install -y --no-install-recommends g++ git \
     && sh install_engine.sh \
-    && apt-mark manual libstdc++6 libgcc-s1 curl ca-certificates libsndfile1 \
+    && apt-mark manual libstdc++6 libgcc-s1 ca-certificates libsndfile1 \
     && apt-get purge -y --auto-remove g++ git \
     && rm -rf /var/lib/apt/lists/*
 
@@ -101,7 +101,7 @@ ENV AUDICLE_WRAPPER_VERSION=${WRAPPER_VERSION}
 # start-period is generous: the first boot downloads multi-GB model weights from
 # HuggingFace before the model loads and /health/live turns 200.
 HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=300s \
-    CMD curl -fsS http://localhost:8000/health/live || exit 1
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health/live', timeout=4).status == 200 else 1)"
 
 # ``--factory`` so create_app() is called once with the configured engine.
 # ``--workers 1`` because the model holds GPU resources that don't survive

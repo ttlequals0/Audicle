@@ -30,12 +30,12 @@ ENV PYTHONUNBUFFERED=1 \
     MPLCONFIGDIR=/tmp/mpl
 
 # build-essential: spacy-pkuseg publishes no cp314 wheel and is compiled from
-# its locked sdist. libsndfile for soundfile WAV IO; curl for healthchecks; git so the
+# its locked sdist. libsndfile for soundfile WAV IO; git so the
 # chatterbox backend can install resemble-perth (a git+https dependency).
 RUN apt-get update \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
-         curl ca-certificates libsndfile1 build-essential git \
+         ca-certificates libsndfile1 build-essential git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -51,7 +51,7 @@ RUN pip install --no-cache-dir torch==2.13.0 torchaudio==2.11.0 \
     # kernel-header CVEs) is only needed to compile native extensions above.
     # Purge it from the shipped image; the compiled wheels need only the
     # runtime shared libs, which are pinned manual so autoremove keeps them.
-    && apt-mark manual libstdc++6 libgomp1 libgcc-s1 curl ca-certificates libsndfile1 \
+    && apt-mark manual libstdc++6 libgomp1 libgcc-s1 ca-certificates libsndfile1 \
     && apt-get purge -y build-essential git \
     && apt-get autoremove -y --purge
 
@@ -70,5 +70,5 @@ ENV AUDICLE_WRAPPER_VERSION=${WRAPPER_VERSION}
 # start-period is generous: the first boot downloads multi-GB model weights from
 # HuggingFace before the model loads and /health/live turns 200.
 HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=300s \
-    CMD curl -fsS http://localhost:8000/health/live || exit 1
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health/live', timeout=4).status == 200 else 1)"
 CMD ["uvicorn", "main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--timeout-keep-alive", "300"]
