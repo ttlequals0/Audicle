@@ -68,6 +68,14 @@ COPY --from=cups-stub /stub/audicle-libcups-stub_1.0_all.deb /tmp/audicle-libcup
 RUN apt-get install -y --no-install-recommends /tmp/audicle-libcups-stub.deb \
     && dpkg --purge libcups2t64 \
     && apt-get autoremove -y --purge \
+    && for pkg in libgssapi-krb5-2 libkrb5-3 libk5crypto3 libkrb5support0 libkeyutils1 \
+         libcom-err2 libavahi-client3 libavahi-common3 libavahi-common-data \
+         libgnutls30t64 libp11-kit0 libtasn1-6; do \
+         case "$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null)" in \
+           *'install ok installed') echo "ERROR: $pkg survived the CUPS removal" >&2; exit 1 ;; \
+         esac; \
+       done \
+    && if find / -xdev -name 'libcups.so*' | grep -q .; then echo "ERROR: libcups files remain" >&2; exit 1; fi \
     && rm -f /tmp/audicle-libcups-stub.deb \
     && rm -rf /var/lib/apt/lists/*
 
