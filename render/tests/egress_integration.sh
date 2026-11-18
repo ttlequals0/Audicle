@@ -88,10 +88,11 @@ docker run -d --name "$renderer" --network "$control" --ip 172.31.0.2 \
 
 # The internal network publishes no ports, so talk to the renderer from inside it as
 # uid 1001, the only local client its firewall admits (as its healthcheck does).
-# The image has no curl; args are timeout, url and an optional JSON body (POST).
+# The image has no curl; args are timeout, url and an optional JSON body (POST). timeout is the
+# total deadline (urlopen's own timeout is per socket operation, so a trickle could outlast it).
 renderer_req() {
     docker exec "$renderer" setpriv --reuid=1001 --regid=1001 --clear-groups \
-        --inh-caps=-all --bounding-set=-all --no-new-privs python -I -c '
+        --inh-caps=-all --bounding-set=-all --no-new-privs timeout -k 2 "$1" python -I -c '
 import sys, urllib.request
 timeout, url, *body = sys.argv[1:]
 data = body[0].encode() if body else None
