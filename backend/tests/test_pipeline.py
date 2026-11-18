@@ -2051,7 +2051,7 @@ async def test_chunk_asr_divergent_run_regenerates_despite_low_global(
     garbled[10:20] = [f"garble{i}" for i in range(10)]
     bad_transcript = " ".join(garbled)
     settings = get_settings()
-    assert asr_verify.analyze(text, bad_transcript)[0] <= settings.WHISPER_DIVERGENCE_THRESHOLD
+    assert asr_verify.analyze(text, bad_transcript).divergence <= settings.WHISPER_DIVERGENCE_THRESHOLD
 
     calls = {"n": 0}
 
@@ -2069,6 +2069,66 @@ async def test_chunk_asr_divergent_run_regenerates_despite_low_global(
     result, _attempts = await pipeline._generate_chunk_quality_checked(job, text, 0, settings)
     assert calls["n"] == 2  # run check flagged attempt 1, regen matched
     assert result.transcript == text
+
+
+async def test_chunk_asr_logs_the_divergent_words_capped_at_25(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("AUDIO_ANALYSIS_ENABLED", "false")
+    monkeypatch.setenv("WHISPER_VERIFY_ENABLED", "true")
+    get_settings.cache_clear()
+    database.run_migrations(env)
+    from app.services import tts
+
+    text = " ".join(f"tok{i}" for i in range(80))
+    garbled = [f"tok{i}" for i in range(80)]
+    garbled[20:60] = [f"garble{i}" for i in range(40)]
+    bad_transcript = " ".join(garbled)
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        return tts.GenerateResult(
+            wav_path=str(tmp_path / "ep_chunk_0.wav"),
+            duration_secs=1.0,
+            sample_rate=24000,
+            transcript=bad_transcript,  # every attempt diverges
+        )
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    job = _seed_job(env)
+    with caplog.at_level(logging.WARNING, logger="app.services.pipeline"):
+        await pipeline._generate_chunk_quality_checked(job, text, 0, get_settings())
+
+    expected_run = " ".join(f"tok{i}" for i in range(20, 45))
+    heard_run = " ".join(f"garble{i}" for i in range(25))
+    for event in ("chunk_quality_bad", "chunk_quality_unresolved"):
+        records = [r for r in caplog.records if getattr(r, "event", None) == event]
+        assert records, event
+        for record in records:
+            assert record.asr_run_expected == expected_run
+            assert record.asr_run_heard == heard_run
+    assert all(r.asr_run == 40 for r in caplog.records if r.event == "chunk_quality_bad")
+
+
+async def test_chunk_asr_log_has_no_run_words_when_audio_only_failure(
+    env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    database.run_migrations(env)
+    from app.services import tts
+
+    wav = tmp_path / "ep_chunk_0.wav"
+
+    async def _fake_tts(text, episode_id, chunk_index, settings, seed=None, verify=False, **_kw):
+        _write_drone_wav(wav)
+        return tts.GenerateResult(wav_path=str(wav), duration_secs=1.0, sample_rate=24000)
+
+    monkeypatch.setattr(tts, "generate_chunk_with_retry", _fake_tts)
+    job = _seed_job(env)
+    with caplog.at_level(logging.WARNING, logger="app.services.pipeline"):
+        await pipeline._generate_chunk_quality_checked(job, "two words here now", 0, get_settings())
+    unresolved = [r for r in caplog.records if getattr(r, "event", None) == "chunk_quality_unresolved"]
+    assert unresolved
+    assert unresolved[0].asr_run_expected is None
+    assert unresolved[0].asr_run_heard is None
 
 
 async def test_chunk_asr_short_chunk_regenerates_on_gross_mismatch(

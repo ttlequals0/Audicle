@@ -21,6 +21,7 @@ from __future__ import annotations
 import re
 from difflib import SequenceMatcher
 from itertools import groupby
+from typing import NamedTuple
 
 # Keep word-internal apostrophes (don't, it's) but drop every other punctuation
 # mark so "U.S." vs "us" and "end." vs "end" do not register as differences.
@@ -64,8 +65,15 @@ def normalize_words(text: str) -> list[str]:
     return _collapse_single_letter_runs(cleaned.split())
 
 
-def analyze(expected: str, transcript: str) -> tuple[float, int]:
-    """Return ``(divergence, worst_divergent_run)`` from a single word diff.
+class AsrAnalysis(NamedTuple):
+    divergence: float
+    worst_run: int
+    run_expected: list[str]  # expected-side words of the worst run
+    run_heard: list[str]  # transcript-side words of the worst run
+
+
+def analyze(expected: str, transcript: str) -> AsrAnalysis:
+    """Return divergence, worst divergent run length and that run's words, from one diff.
 
     Divergence is ``1 - SequenceMatcher.ratio`` over the normalized word lists:
     0.0 for identical wording (including both sides empty), 1.0 when nothing
@@ -75,7 +83,8 @@ def analyze(expected: str, transcript: str) -> tuple[float, int]:
     blocks around it (without itself counting) when at least one of them has
     >= _RUN_MERGE_MIN_BLOCK words, and a run's length is the max of its
     expected-side and transcript-side word counts so dropout (delete) and
-    inserted babble (insert) both count.
+    inserted babble (insert) both count. ``run_expected`` / ``run_heard`` are
+    the diverging words of that run on each side (bridge words excluded).
     """
 
     expected_words = normalize_words(expected)
@@ -87,23 +96,35 @@ def analyze(expected: str, transcript: str) -> tuple[float, int]:
     # single changed word in a 250-word chunk scored ~0.6 with it on. Off, the
     # ratio is a faithful word-level similarity regardless of chunk length.
     matcher = SequenceMatcher(None, expected_words, transcript_words, autojunk=False)
-    worst = run_exp = run_tr = 0
+    worst = 0
+    worst_exp: list[str] = []
+    worst_tr: list[str] = []
+    run_exp: list[str] = []
+    run_tr: list[str] = []
     last_block = 0  # size of the current run's most recent mismatch block
     bridged = False  # a short equal block sits between the run and the next mismatch
+
+    def close_run() -> None:
+        nonlocal worst, worst_exp, worst_tr, run_exp, run_tr, last_block
+        length = max(len(run_exp), len(run_tr))
+        if length > worst:
+            worst, worst_exp, worst_tr = length, run_exp, run_tr
+        run_exp, run_tr, last_block = [], [], 0
+
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         exp_len, tr_len = i2 - i1, j2 - j1
         if tag == "equal":
             bridged = bool(run_exp or run_tr) and exp_len <= _RUN_BRIDGE_WORDS
             if not bridged:
-                worst = max(worst, run_exp, run_tr)
-                run_exp = run_tr = last_block = 0
+                close_run()
             continue
         size = max(exp_len, tr_len)
         if bridged and max(last_block, size) < _RUN_MERGE_MIN_BLOCK:
-            worst = max(worst, run_exp, run_tr)
-            run_exp = run_tr = 0
-        run_exp += exp_len
-        run_tr += tr_len
+            last_block = 0
+            close_run()
+        run_exp = run_exp + expected_words[i1:i2]
+        run_tr = run_tr + transcript_words[j1:j2]
         last_block = size
         bridged = False
-    return 1.0 - matcher.ratio(), max(worst, run_exp, run_tr)
+    close_run()
+    return AsrAnalysis(1.0 - matcher.ratio(), worst, worst_exp, worst_tr)
