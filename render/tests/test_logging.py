@@ -61,3 +61,26 @@ def test_bad_level_falls_back_to_info() -> None:
     setup_logging(level="not-a-level", fmt="text")
 
     assert logging.getLogger().level == logging.INFO
+
+
+def _access(path: str, status: int) -> logging.LogRecord:
+    args = ("127.0.0.1:5000", "GET", path, "1.1", status)
+    return logging.LogRecord("uvicorn.access", logging.INFO, __file__, 1, '%s - "%s %s HTTP/%s" %d', args, None)
+
+
+def test_successful_polls_are_not_logged_but_failures_and_other_paths_are() -> None:
+    setup_logging(level="INFO", fmt="json")
+    access = logging.getLogger("uvicorn.access")
+
+    assert not access.filter(_access("/health/live", 200))
+    assert not access.filter(_access("/runtime-config", 200))
+    assert access.filter(_access("/health/live", 503))
+    assert access.filter(_access("/runtime-config", 500))
+    assert access.filter(_access("/render", 200))
+
+
+def test_setup_twice_installs_the_poll_filter_once() -> None:
+    setup_logging(level="INFO", fmt="json")
+    setup_logging(level="INFO", fmt="json")
+
+    assert len(logging.getLogger("uvicorn.access").filters) == 1

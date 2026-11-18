@@ -51,6 +51,8 @@ _STANDARD_RECORD_ATTRS = frozenset(
 # uvicorn installs its own handlers; folding them into the root logger keeps the
 # access lines in the same format as ours.
 _UVICORN_LOGGERS = ("uvicorn", "uvicorn.error", "uvicorn.access")
+# The main app polls these every ~30 s; their 200s were the sidecar's only output.
+_POLL_PATHS = frozenset({"/health/live", "/runtime-config"})
 
 
 @cache
@@ -64,6 +66,19 @@ def _extras(record: logging.LogRecord) -> dict[str, Any]:
         for key, value in record.__dict__.items()
         if key not in _STANDARD_RECORD_ATTRS and not key.startswith("_") and value is not None
     }
+
+
+class _QuietPollFilter(logging.Filter):
+    """Drop successful access records for the health and config polls."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # uvicorn.access args: (client, method, path, http_version, status_code)
+        args = record.args
+        if not isinstance(args, tuple) or len(args) != 5:
+            return True
+        path = str(args[2]).partition("?")[0]
+        status = args[4]
+        return not (path in _POLL_PATHS and isinstance(status, int) and 200 <= status < 300)
 
 
 class JSONFormatter(logging.Formatter):
@@ -123,6 +138,9 @@ def setup_logging(level: str | None = None, fmt: str | None = None) -> None:
         uvicorn_logger = logging.getLogger(name)
         uvicorn_logger.handlers.clear()
         uvicorn_logger.propagate = True
+    access = logging.getLogger("uvicorn.access")
+    access.filters = [f for f in access.filters if not isinstance(f, _QuietPollFilter)]
+    access.addFilter(_QuietPollFilter())
 
 
 def apply_logging(level: str, fmt: str) -> None:
