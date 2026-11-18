@@ -120,10 +120,9 @@ def analyze(expected: str, transcript: str) -> AsrAnalysis:
             continue
         size = max(exp_len, tr_len)
         if bridged and max(last_block, size) < _RUN_MERGE_MIN_BLOCK:
-            last_block = 0
             close_run()
-        run_exp = run_exp + expected_words[i1:i2]
-        run_tr = run_tr + transcript_words[j1:j2]
+        run_exp.extend(expected_words[i1:i2])
+        run_tr.extend(transcript_words[j1:j2])
         last_block = size
         bridged = False
     close_run()
