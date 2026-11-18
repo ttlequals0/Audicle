@@ -10,13 +10,24 @@ startup errors and per-request events structured too.
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
+import re
 import socket
 import sys
+import threading
+from contextlib import contextmanager
 from functools import cache
 from typing import Any
+
+# tqdm reads this at import, so set it before chatterbox/whisper pull tqdm in; the
+# bars would otherwise write carriage-return noise to the container log per chunk.
+os.environ.setdefault("TQDM_DISABLE", "1")
+
+LIB_LOGGER = "tts.engine.lib"
+_LINE_BREAKS = re.compile(r"[\r\n]+")
 
 _SERVICE = "tts-wrapper"
 
@@ -90,6 +101,62 @@ class TextFormatter(logging.Formatter):
         return line
 
 
+class _LineLogger(io.TextIOBase):
+    """File-like sink that logs each non-empty line at DEBUG."""
+
+    def __init__(self, logger: logging.Logger) -> None:
+        self._logger = logger
+        self._pending = ""
+        self._lock = threading.Lock()
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, text: str) -> int:
+        with self._lock:
+            *lines, self._pending = _LINE_BREAKS.split(self._pending + text)
+        for line in lines:
+            if line.strip():
+                self._logger.debug(line.strip())
+        return len(text)
+
+    def flush(self) -> None:
+        with self._lock:
+            line, self._pending = self._pending.strip(), ""
+        if line:
+            self._logger.debug(line)
+
+
+_capture_lock = threading.Lock()
+_capture_depth = 0
+_capture_saved: Any = None
+
+
+@contextmanager
+def capture_stdout(logger_name: str = LIB_LOGGER):
+    """Route library ``print()`` output to a DEBUG logger.
+
+    ``sys.stdout`` is process-global, so overlapping captures (load vs inference
+    threads) share one sink and the last one out restores it. The JSON handler
+    holds the original stream object, so log records still reach the real stdout.
+    """
+
+    global _capture_depth, _capture_saved
+    with _capture_lock:
+        if _capture_depth == 0:
+            _capture_saved = sys.stdout
+            sys.stdout = _LineLogger(logging.getLogger(logger_name))
+        _capture_depth += 1
+    try:
+        yield
+    finally:
+        with _capture_lock:
+            _capture_depth -= 1
+            if _capture_depth == 0:
+                sys.stdout.flush()
+                sys.stdout = _capture_saved
+
+
 def apply_logging(level: str, fmt: str) -> None:
     resolved = getattr(logging, level.upper(), None)
     if not isinstance(resolved, int) or fmt not in {"json", "text"}:
@@ -119,6 +186,8 @@ def setup_logging(level: str | None = None, fmt: str | None = None) -> None:
     handler = logging.StreamHandler(stream=sys.stdout)
     handler.setFormatter(JSONFormatter() if format_name == "json" else TextFormatter())
     root.addHandler(handler)
+    # Library warnings (e.g. the diffusers LoRA FutureWarning) become py.warnings records.
+    logging.captureWarnings(True)
     try:
         root.setLevel(resolved)
     except ValueError:

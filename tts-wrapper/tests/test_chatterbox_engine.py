@@ -8,6 +8,7 @@ model. Real clone fidelity and inference are validated on the GPU host.
 from __future__ import annotations
 
 import io
+import logging
 import sys
 import types
 import wave
@@ -440,3 +441,31 @@ def test_run_inference_sets_cap_from_piece_text() -> None:
     engine = _loaded_engine()
     engine._run_inference("One two three four five.", GenerationParams())
     assert engine._piece_max_gen_len == max_gen_tokens("One two three four five.")
+
+
+def test_library_prints_during_inference_are_logged_not_printed(capsys, caplog) -> None:
+    class Chatty(FakeChatterboxModel):
+        def generate(self, text, **kwargs):
+            print("S3 Token -> Mel Inference...")
+            return super().generate(text, **kwargs)
+
+    engine = _loaded_engine(Chatty())
+    with caplog.at_level(logging.DEBUG, logger="tts.engine.lib"):
+        engine._run_inference("Hello world.", GenerationParams())
+    assert "S3 Token" not in capsys.readouterr().out
+    assert [r.getMessage() for r in caplog.records if r.name == "tts.engine.lib"] == [
+        "S3 Token -> Mel Inference..."
+    ]
+
+
+def test_library_prints_during_load_are_logged_not_printed(capsys, caplog) -> None:
+    class Chatty(FakeChatterboxModel):
+        def prepare_conditionals(self, wav_fpath, exaggeration=0.5):
+            print("loaded PerthNet (Implicit) at step 250,000")
+            super().prepare_conditionals(wav_fpath, exaggeration)
+
+    engine = _loaded_engine(Chatty())
+    with caplog.at_level(logging.DEBUG, logger="tts.engine.lib"):
+        engine._prepare_reference(Path("ref.wav"))
+    assert "PerthNet" not in capsys.readouterr().out
+    assert any("PerthNet" in r.getMessage() for r in caplog.records)

@@ -46,6 +46,7 @@ from engine import (
     pcm16_wav_bytes,
     trim_edge_silence,
 )
+from log_setup import capture_stdout
 
 logger = logging.getLogger("tts.chatterbox")
 
@@ -121,7 +122,8 @@ class ChatterboxEngine:
             extra={"event": "tts_model_loading", "engine": self.name, "device": device},
         )
         load_started = time.perf_counter()
-        self._model = self._load_model(device)
+        with capture_stdout():
+            self._model = self._load_model(device)
         # Trust the model's native output rate (24 kHz) over the config default.
         self.sample_rate = int(self._model.sr)
         self._install_generation_cap()
@@ -183,7 +185,8 @@ class ChatterboxEngine:
             # per-call value ("CFG, min_p and exaggeration are not supported by
             # Turbo version"). Pin the neutral 0.0 (the library default is 0.5)
             # rather than expose a knob the model would ignore.
-            self._model.prepare_conditionals(str(ref_path), exaggeration=0.0)
+            with capture_stdout():
+                self._model.prepare_conditionals(str(ref_path), exaggeration=0.0)
             self.reference_loaded = True
             self._current_ref = ref_path
         finally:
@@ -272,16 +275,17 @@ class ChatterboxEngine:
             # ~40 s token cap with silence, both trailing (edge trim) and strewn
             # through the speech as multi-second pauses (internal compression).
             # The quality gate + whisper verify run on the WAV this produces.
-            wavs = [
-                compress_internal_silence_np(
-                    trim_edge_silence(
-                        np.asarray(self._infer_piece(piece, params), dtype=np.float32),
+            with capture_stdout():
+                wavs = [
+                    compress_internal_silence_np(
+                        trim_edge_silence(
+                            np.asarray(self._infer_piece(piece, params), dtype=np.float32),
+                            self.sample_rate,
+                        ),
                         self.sample_rate,
-                    ),
-                    self.sample_rate,
-                )
-                for piece in pieces
-            ]
+                    )
+                    for piece in pieces
+                ]
             return join_with_silence(wavs, self.sample_rate)
         finally:
             self._gpu_lock.release()
