@@ -10,6 +10,11 @@
 #   render -- .trivyignore except app-only entries + .trivyignore.render
 #   render egress -- .trivyignore.egress only
 #
+# The render image also gets scripts/trivy-secret-render.yaml (--secret-config), an
+# allow rule for the third-party blocklists bundled with Camoufox's uBlock Origin
+# addon (a listed malicious URL matches the Azure SAS token rule). It is scoped to
+# that one directory; secret scanning stays on for every other path and image.
+#
 # Per-image concatenation exists because trivy's --ignorefile applies globally:
 # a single shared file silently suppresses CVEs across images that do not trigger
 # them, hiding real findings in future scans. Each image gets only the suppressions
@@ -49,6 +54,7 @@ FAILED=0
 scan() {
     ref="$1"
     ignorefile="$2"
+    secret_config="${3:-}"
     tag="ttlequals0/${ref}"
     out="$(mktemp)"
     echo "Scanning $tag ..."
@@ -58,7 +64,8 @@ scan() {
     # secret scan, which also covers secrets arriving via build args or base
     # images that the pre-build repo scan never sees.
     if trivy image --timeout 30m --severity HIGH,CRITICAL --exit-code 1 --quiet \
-            --ignorefile "$ignorefile" "$tag" >"$out" 2>&1; then
+            --ignorefile "$ignorefile" ${secret_config:+--secret-config "$secret_config"} \
+            "$tag" >"$out" 2>&1; then
         cat "$out"
         echo "$tag PASS (reviewed suppressions applied)"
     # trivy exits 1 for findings AND for fatal errors (cache lock held by a
@@ -81,7 +88,7 @@ scan() {
 scan "audicle:${VERSION}"         "$SHARED"
 scan "audicle-tts:${VERSION}"     "$TMP_TTS"
 scan "audicle-tts:${VERSION}-cpu" "$TMP_TTS"
-scan "audicle-render:${VERSION}"  "$TMP_RENDER"
+scan "audicle-render:${VERSION}"  "$TMP_RENDER" "$REPO_ROOT/scripts/trivy-secret-render.yaml"
 scan "audicle-render-egress:${VERSION}" "$IGNORE_EGRESS"
 
 if [ "$FAILED" -ne 0 ]; then
