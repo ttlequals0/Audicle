@@ -15,6 +15,13 @@ work lives under `[Unreleased]`.
 - Move the uv build image and the CI uv version to 0.13.5, and docker/setup-qemu-action to v4.
 - Advance the Chatterbox source baseline to upstream ab55923. The one commit since 5de7a54 changes only the README.
 
+### Fixed
+
+- Serve the default podcast artwork at `/media/default.jpg` (and the keyed `/media/default-<key>.jpg`). It returned 404, which broke the channel fallback image and the Feed and Settings previews. Feed-key gating is unchanged.
+- Keep the TTS wrapper log as structured JSON. Python warnings (the diffusers `LoRACompatibleLinear` deprecation) now arrive as one `py.warnings` record, tqdm progress bars are off, and library `print()` output during model load and inference is logged at DEBUG as `tts.engine.lib` instead of reaching stdout raw.
+- Stop the render sidecar logging every successful `/health/live` and `/runtime-config` poll. Failed polls and all other requests still log.
+- Log which words diverged when a chunk fails the ASR check. `chunk_quality_bad` and `chunk_quality_unresolved` now carry `asr_run_expected` and `asr_run_heard` (up to 25 words each) for the worst divergent run, so a systematic text-vs-transcript mismatch can be told apart from bad audio. No threshold or regeneration decision changed.
+
 ### Security
 
 - Raise pypdf to 6.21.4 (minimum raised to `>=6.21.4`), and update msgpack to 1.2.4 in the TTS wrapper and opentelemetry-api to 1.45.2 in all three Python lockfiles.
