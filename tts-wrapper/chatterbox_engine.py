@@ -90,7 +90,7 @@ class ChatterboxEngine:
         return self._torch
 
     def _load_model(self, device: str):
-        from chatterbox.tts_turbo import ChatterboxTurboTTS  # noqa: PLC0415
+        from chatterbox.tts_turbo import ChatterboxTurboTTS
 
         return ChatterboxTurboTTS.from_pretrained(device=device)
 
@@ -112,7 +112,7 @@ class ChatterboxEngine:
             self._gpu_lock.release()
 
     def load(self) -> None:
-        import torch  # noqa: PLC0415  (intentional lazy import)
+        import torch
 
         self._torch = torch
         device = self.config.device
@@ -190,7 +190,7 @@ class ChatterboxEngine:
             self._gpu_lock.release()
 
     async def _swap_reference(self, ref_path: Path) -> None:
-        import asyncio  # noqa: PLC0415
+        import asyncio
 
         if not ref_path.exists():
             raise FileNotFoundError(f"reference voice not found at {ref_path}")
@@ -238,7 +238,7 @@ class ChatterboxEngine:
         await self._swap_reference(ref_path)
 
     async def synthesize(self, text: str, params: GenerationParams) -> bytes:
-        import asyncio  # noqa: PLC0415
+        import asyncio
 
         assert self._model is not None
         assert self._torch is not None
@@ -250,7 +250,7 @@ class ChatterboxEngine:
         return pcm16_wav_bytes(wav_array, self.sample_rate)
 
     def _run_inference(self, text: str, params: GenerationParams):
-        import numpy as np  # noqa: PLC0415  (lazy: numpy comes from torch's wheel)
+        import numpy as np
 
         assert self._model is not None
         # Reject an overlapping GPU operation rather than running it concurrently.
@@ -287,8 +287,9 @@ class ChatterboxEngine:
             self._gpu_lock.release()
 
     def _set_seed(self, seed: int) -> None:
-        import random  # noqa: PLC0415
-        import numpy as np  # noqa: PLC0415  (lazy: numpy comes from torch's wheel)
+        import random
+
+        import numpy as np
 
         assert self._torch is not None
         self._torch.manual_seed(seed)
@@ -412,10 +413,10 @@ class ChatterboxMultilingualEngine(ChatterboxEngine):
     )
 
     def _load_model(self, device: str):
-        from chatterbox.mtl_tts import ChatterboxMultilingualTTS  # noqa: PLC0415
+        from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 
         try:
-            from chatterbox.mtl_tts import SUPPORTED_LANGUAGES  # noqa: PLC0415
+            from chatterbox.mtl_tts import SUPPORTED_LANGUAGES
 
             self.languages = tuple(sorted(SUPPORTED_LANGUAGES))
         except ImportError:

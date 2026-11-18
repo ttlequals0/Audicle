@@ -11,10 +11,10 @@ detector, and the word estimate.
 from __future__ import annotations
 
 import ipaddress
+import os
 import re
 import socket
 from dataclasses import dataclass
-import os
 from typing import Protocol
 from urllib.parse import urlsplit
 
@@ -236,7 +236,7 @@ def is_public_url(url: str, proxied: bool = False) -> bool:
 
     try:
         parts = urlsplit(url)
-        parts.port
+        _ = parts.port  # raises ValueError on a bad port
     except ValueError:
         return False
     if parts.scheme.lower() not in {"http", "https"}:

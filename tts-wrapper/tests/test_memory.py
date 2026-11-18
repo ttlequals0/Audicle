@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import memory
 import pytest
+
+import memory
 
 
 def test_rss_mb_reports_a_plausible_size() -> None:
@@ -65,7 +66,7 @@ def test_cleanup_tolerates_a_torch_module_that_raises(monkeypatch: pytest.Monkey
     already synthesized successfully."""
 
     class Exploding:
-        class cuda:  # noqa: N801 - mirrors torch's attribute layout
+        class cuda:
             @staticmethod
             def is_available():
                 raise RuntimeError("driver gone")
@@ -79,7 +80,7 @@ def test_cleanup_calls_empty_cache_when_cuda_is_available() -> None:
     calls: list[str] = []
 
     class FakeTorch:
-        class cuda:  # noqa: N801
+        class cuda:
             @staticmethod
             def is_available():
                 return True
@@ -96,7 +97,7 @@ def test_cleanup_skips_empty_cache_without_cuda() -> None:
     calls: list[str] = []
 
     class FakeTorch:
-        class cuda:  # noqa: N801
+        class cuda:
             @staticmethod
             def is_available():
                 return False

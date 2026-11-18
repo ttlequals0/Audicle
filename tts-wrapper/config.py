@@ -102,7 +102,7 @@ class Config:
             raise ValueError("LOG_FORMAT must be json or text")
 
     @classmethod
-    def from_env(cls) -> "Config":
+    def from_env(cls) -> Config:
         # ASR device defaults to the TTS device; compute_type then follows it
         # (float16 on GPU, int8 on CPU). Resolve once so the two can't drift.
         whisper_device = _str_env("WHISPER_DEVICE", _str_env("TTS_DEVICE", "cuda"))

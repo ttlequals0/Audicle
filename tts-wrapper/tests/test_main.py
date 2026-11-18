@@ -19,9 +19,9 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 import main
+from config import Config
 from engine import Engine, GenerationParams, GPUOutOfMemoryError, InferenceBusyError
 from main import create_app
-from config import Config
 
 
 def _silent_wav(duration_secs: float = 0.5, sample_rate: int = 24000) -> bytes:
@@ -1047,16 +1047,15 @@ def test_generate_logs_rss_per_chunk(
 
     monkeypatch.setattr(main, "rss_mb", lambda: 128)
     engine = FakeEngine(synthesize_returns=_silent_wav(duration_secs=0.5))
-    with caplog.at_level("INFO"):
-        with _client(engine, tmp_path) as client:
-            response = client.post(
-                "/generate",
-                json={"text": "hi", "episode_id": "ep-1", "chunk_index": 0},
-            )
+    with caplog.at_level("INFO"), _client(engine, tmp_path) as client:
+        response = client.post(
+            "/generate",
+            json={"text": "hi", "episode_id": "ep-1", "chunk_index": 0},
+        )
     assert response.status_code == 200
     done = [r for r in caplog.records if getattr(r, "event", None) == "tts_chunk_done"]
     assert done, "no tts_chunk_done record"
-    assert getattr(done[0], "rss_mb") > 0
+    assert done[0].rss_mb > 0
 
 
 def test_generate_restarts_when_over_the_hard_limit(
@@ -1074,12 +1073,11 @@ def test_generate_restarts_when_over_the_hard_limit(
     monkeypatch.setenv("TTS_MEMORY_SOFT_LIMIT_MB", "1")
 
     engine = FakeEngine(synthesize_returns=_silent_wav(duration_secs=0.5))
-    with caplog.at_level("WARNING"):
-        with _client(engine, tmp_path) as client:
-            response = client.post(
-                "/generate",
-                json={"text": "hi", "episode_id": "ep-1", "chunk_index": 0},
-            )
+    with caplog.at_level("WARNING"), _client(engine, tmp_path) as client:
+        response = client.post(
+            "/generate",
+            json={"text": "hi", "episode_id": "ep-1", "chunk_index": 0},
+        )
 
     # The chunk the client asked for is delivered; that is the whole point of
     # restarting on our own terms rather than being killed mid-request.
@@ -1121,9 +1119,8 @@ def test_maintenance_restart_queues_restart_and_logs(
     monkeypatch.setattr(main, "_request_restart", lambda: restarts.append("restart"))
 
     engine = FakeEngine()
-    with caplog.at_level("INFO"):
-        with _client(engine, tmp_path) as client:
-            response = client.post("/maintenance/restart")
+    with caplog.at_level("INFO"), _client(engine, tmp_path) as client:
+        response = client.post("/maintenance/restart")
 
     assert response.status_code == 200
     assert response.json() == {"restarting": True}

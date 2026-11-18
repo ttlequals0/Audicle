@@ -9,8 +9,8 @@ so the diff stays meaningful) and never decides quality itself.
 
 from __future__ import annotations
 
-import io
 import gc
+import io
 import logging
 import threading
 

@@ -21,7 +21,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, ConfigDict, Field
 
 from log_config import apply_logging, setup_logging
-from renderer import RenderOptions, Renderer, RenderResult, default_runtime_config
+from renderer import Renderer, RenderOptions, RenderResult, default_runtime_config
 
 setup_logging()
 logger = logging.getLogger("render.main")
