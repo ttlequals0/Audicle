@@ -5,6 +5,7 @@ from email.utils import format_datetime, parsedate_to_datetime
 from pathlib import Path
 
 import defusedxml.ElementTree as DET
+import pytest
 from app.config import get_settings
 from app.core import database
 from app.main import create_app
@@ -261,29 +262,16 @@ def test_get_rss_excludes_episodes_with_null_audio(env: Path) -> None:
     assert len(guids) == 1 and guids[0].split("-v")[0] == "ep"
 
 
-class _ListHandler(logging.Handler):
-    def __init__(self) -> None:
-        super().__init__(logging.INFO)
-        self.records: list[logging.LogRecord] = []
-
-    def emit(self, record: logging.LogRecord) -> None:
-        self.records.append(record)
-
-
-def test_cache_miss_logs_one_feed_rendered_record_and_hit_logs_none(env: Path) -> None:
+def test_cache_miss_logs_one_feed_rendered_record_and_hit_logs_none(
+    env: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     _seed(env)
-    handler = _ListHandler()
-    with _client(env) as client:
-        # app startup reinstalls root handlers, so attach straight to the logger
-        rss_logger = logging.getLogger("app.api.rss")
-        rss_logger.addHandler(handler)
-        try:
-            first = client.get("/rss/test_feed.xml")
-            second = client.get("/rss/test_feed.xml")
-        finally:
-            rss_logger.removeHandler(handler)
+    client = TestClient(create_app())  # no lifespan: startup logging setup drops caplog's handler
+    with caplog.at_level(logging.INFO, logger="app.api.rss"):
+        first = client.get("/rss/test_feed.xml")
+        second = client.get("/rss/test_feed.xml")
     assert first.status_code == second.status_code == 200
-    records = [r for r in handler.records if getattr(r, "event", None) == "feed_rendered"]
+    records = [r for r in caplog.records if getattr(r, "event", None) == "feed_rendered"]
     assert len(records) == 1
     record = records[0]
     assert record.episodes == 1
