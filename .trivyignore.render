@@ -81,10 +81,28 @@ CVE-2026-88812
 CVE-2026-93521
 CVE-2026-93523
 
-# Owner: Audicle maintainers. Recheck: 2026-12-17. Added 0.61.0.
-# xserver-common / xvfb (HIGH, "affected"): CVE-2026-93516 is a use-after-free
-# when a local X client holds a passive grab and an input device is removed.
-# Xvfb here has no physical input devices, serves only the render process over a
-# local socket with TCP disabled, and runs as the browser's nonroot uid. No fixed
-# trixie package yet. Remove when Debian ships a fix.
+# Owner: Audicle maintainers. Recheck: 2026-12-17. Added 0.62.1.
+# The entries below are fixed in the image: it installs the named package from
+# Debian sid at the version the Debian security tracker lists as fixed, and the
+# Dockerfile build fails below that version. Trivy still reports them because
+# its trixie advisory has no fixed version. Remove each block with its sid
+# install when trixie ships the fix.
+
+# xserver-common / xvfb 2:21.1.26-1 (CVE-2026-93516 added 0.61.0).
 CVE-2026-93516
+CVE-2026-109091
+CVE-2026-109092
+CVE-2026-109093
+CVE-2026-109095
+CVE-2026-109096
+CVE-2026-109903
+
+# libxi6 2:1.8.4-1.
+CVE-2026-109089
+CVE-2026-109090
+
+# libexpat1 2.10.0-1.
+CVE-2026-113351
+CVE-2026-115506
+CVE-2026-117610
+CVE-2026-118370

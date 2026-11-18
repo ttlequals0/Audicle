@@ -33,6 +33,7 @@ work lives under `[Unreleased]`.
 - Drop the ignore entries for CVE-2026-12064, CVE-2026-8458, CVE-2026-34980 and CVE-2026-55453, which no longer match any image, and move the remaining recheck dates to 2026-12-17.
 - Raise pypdf to 6.21.4 (minimum raised to `>=6.21.4`), and update msgpack to 1.2.4 in the TTS wrapper and opentelemetry-api to 1.45.2 in all three Python lockfiles.
 - Override glob to 14.0.6 for workbox-build in the frontend so it resolves minimatch 11.0.9, outside the vulnerable range. A minimatch-only override on glob 11.1.0 left the service worker with 4 precache entries instead of 8.
+- Add scanner ignore entries for the 15 SQLite, expat, libXi and Xvfb findings that the sid packages fix. Trivy has no trixie fixed version for them, so it cannot clear them.
 
 ## [0.62.0] - 2026-10-24
 

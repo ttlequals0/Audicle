@@ -42,3 +42,12 @@ CVE-2026-76642
 CVE-2026-78408
 CVE-2026-78409
 CVE-2026-78410
+
+# Owner: Audicle maintainers. Recheck: 2026-12-17. Added 0.62.1.
+# libsqlite3-0 (HIGH x3): the images install 3.54.1-2 from Debian sid, which the
+# Debian security tracker lists as the fixed version, and the Dockerfile build
+# fails below it. Trivy still reports these because its trixie advisory has no
+# fixed version. Remove with the sid install when trixie ships the fix.
+CVE-2026-119373
+CVE-2026-119374
+CVE-2026-119379
