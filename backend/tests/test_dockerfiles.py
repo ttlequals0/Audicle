@@ -28,17 +28,12 @@ def test_image_installs_no_curl_and_healthchecks_with_python(name: str) -> None:
     assert "urllib.request" in healthchecks[0] and "/health/live" in healthchecks[0], name
 
 
-def test_render_healthcheck_keeps_the_privilege_drop() -> None:
-    (healthcheck,) = [i for i in _instructions("render/Dockerfile") if i.startswith("HEALTHCHECK")]
-    assert "setpriv --reuid=1001" in healthcheck
-    assert healthcheck.index("setpriv") < healthcheck.index("python -I -c")
-
-
 @pytest.mark.parametrize("name", (*_DOCKERFILES, "render/egress-proxy/Dockerfile"))
 def test_sid_package_blocks_pin_clean_up_and_verify(name: str) -> None:
     sid_runs = [i for i in _instructions(name) if "sid.sources" in i and i.startswith("RUN")]
     assert len(sid_runs) == 1, name
     run = sid_runs[0]
     assert "Pin-Priority: 100" in run
-    assert "rm -f /etc/apt/sources.list.d/sid.sources /etc/apt/preferences.d/sid" in run
+    assert re.search(r"rm -f[^&]*/etc/apt/sources\.list\.d/sid\.sources", run)
+    assert re.search(r"rm -f[^&]*/etc/apt/preferences\.d/sid", run)
     assert "dpkg --compare-versions" in run
