@@ -49,17 +49,22 @@ RUN uv export --locked --no-dev --extra render --no-emit-project --output-file /
 # CVE-2026-117610, CVE-2026-118370. xvfb and xserver-common: CVE-2026-109091,
 # CVE-2026-109092, CVE-2026-109093, CVE-2026-109095, CVE-2026-109096,
 # CVE-2026-109903, CVE-2026-93516. libxi6: CVE-2026-109089, CVE-2026-109090.
-# A rebuild fails closed if a newer sid package needs a newer libc than trixie ships.
-RUN printf 'Types: deb\nURIs: http://deb.debian.org/debian\nSuites: sid\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.pgp\n' > /etc/apt/sources.list.d/sid.sources \
+# The build enforces the fixed versions and fails if the sid install adds, removes or changes any other package.
+RUN pkgs='libsqlite3-0=3.54.1-2 libexpat1=2.10.0-1 xvfb=2:21.1.26-1 xserver-common=2:21.1.26-1 libxi6=2:1.8.4-1' \
+    && printf 'Types: deb\nURIs: http://deb.debian.org/debian\nSuites: sid\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.pgp\n' > /etc/apt/sources.list.d/sid.sources \
     && printf 'Package: *\nPin: release a=unstable\nPin-Priority: 100\n' > /etc/apt/preferences.d/sid \
     && apt-get update \
-    && apt-get install -y --no-install-recommends libsqlite3-0/sid libexpat1/sid xvfb/sid xserver-common/sid libxi6/sid \
+    && dpkg-query -W -f='${Package} ${Version}\n' > /tmp/pkgs.before \
+    && apt-get install -y --no-install-recommends $(for e in $pkgs; do printf '%s/sid ' "${e%%=*}"; done) \
+    && dpkg-query -W -f='${Package} ${Version}\n' > /tmp/pkgs.after \
     && rm -f /etc/apt/sources.list.d/sid.sources /etc/apt/preferences.d/sid \
     && rm -rf /var/lib/apt/lists/* \
-    && for entry in 'libsqlite3-0 3.54.1-2' 'libexpat1 2.10.0-1' 'xvfb 2:21.1.26-1' 'xserver-common 2:21.1.26-1' 'libxi6 2:1.8.4-1'; do \
-         set -- $entry; \
-         dpkg --compare-versions "$(dpkg-query -W -f='${Version}' "$1")" ge "$2" || exit 1; \
-       done
+    && for e in $pkgs; do \
+         dpkg --compare-versions "$(dpkg-query -W -f='${Version}' "${e%%=*}")" ge "${e#*=}" || exit 1; \
+       done \
+    && unexpected="$(diff /tmp/pkgs.before /tmp/pkgs.after | sed -n 's/^[<>] \([^ ]*\) .*/\1/p' | sort -u | grep -vxF $(for e in $pkgs; do printf -- '-e %s ' "${e%%=*}"; done) || true)" \
+    && if [ -n "$unexpected" ]; then echo "ERROR: the sid install changed other packages: $unexpected" >&2; exit 1; fi \
+    && rm -f /tmp/pkgs.before /tmp/pkgs.after
 
 # GTK depends on libcups2t64 only for printing, which the renderer never does. The
 # stub satisfies that dependency with no files, so the real libcups and the Kerberos,

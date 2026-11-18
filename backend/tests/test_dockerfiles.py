@@ -37,3 +37,23 @@ def test_sid_package_blocks_pin_clean_up_and_verify(name: str) -> None:
     assert re.search(r"rm -f[^&]*/etc/apt/sources\.list\.d/sid\.sources", run)
     assert re.search(r"rm -f[^&]*/etc/apt/preferences\.d/sid", run)
     assert "dpkg --compare-versions" in run
+    # the guard: snapshot installed packages around the sid install and fail on other changes
+    assert run.count("dpkg-query -W -f='${Package} ${Version}") == 2
+    assert "the sid install changed other packages" in run
+
+
+def _sid_floors(name: str) -> dict[str, str]:
+    (run,) = [i for i in _instructions(name) if "sid.sources" in i and i.startswith("RUN")]
+    match = re.search(r"pkgs='([^']*)'", run)
+    assert match, name
+    return dict(entry.split("=", 1) for entry in match.group(1).split())
+
+
+def test_shared_sid_packages_use_the_same_floor_version_everywhere() -> None:
+    names = (*_DOCKERFILES, "render/egress-proxy/Dockerfile")
+    seen: dict[str, dict[str, str]] = {}
+    for name in names:
+        for package, version in _sid_floors(name).items():
+            seen.setdefault(package, {})[name] = version
+    for package, versions in seen.items():
+        assert len(set(versions.values())) == 1, f"{package} floors disagree: {versions}"
