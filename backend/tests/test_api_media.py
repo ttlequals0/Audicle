@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.config import get_settings
 from app.core import database
 from app.core.paths import media_dir
 from app.main import create_app
@@ -18,8 +19,6 @@ def _seed_episode(
     env: Path, *, id_: str, transcript_vtt: str | None, cleaned_text: str | None = None
 ) -> Path:
     database.run_migrations(env)
-    from app.config import get_settings
-
     media = media_dir(get_settings())
     conn = database.connect(database.db_path(env))
     try:
@@ -244,4 +243,27 @@ def test_get_chapters_json_404_when_absent(env: Path) -> None:
     _seed_episode(env, id_="abc", transcript_vtt=None)
     with _client(env) as client:
         response = client.get("/media/abc.chapters.json")
+    assert response.status_code == 404
+
+
+def test_default_jpg_serves_seeded_artwork(env: Path) -> None:
+    database.run_migrations(env)
+    media = media_dir(get_settings())
+    media.mkdir(parents=True, exist_ok=True)
+    (media / "default.jpg").write_bytes(b"DEFAULT_JPG")
+    with _client(env) as client:
+        response = client.get("/media/default.jpg")
+        head = client.head("/media/default.jpg")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/jpeg"
+    assert "max-age" in response.headers["cache-control"]
+    assert response.content == b"DEFAULT_JPG"
+    assert head.status_code == 200
+    assert head.content == b""
+
+
+def test_default_jpg_returns_404_when_file_missing(env: Path) -> None:
+    with _client(env) as client:
+        (media_dir(get_settings()) / "default.jpg").unlink(missing_ok=True)
+        response = client.get("/media/default.jpg")
     assert response.status_code == 404
