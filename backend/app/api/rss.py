@@ -16,7 +16,9 @@ rows, and rendered bytes are cached by the same complete identity.
 from __future__ import annotations
 
 import hashlib
+import logging
 import sqlite3
+import time
 from collections import OrderedDict
 from datetime import UTC, datetime
 from email.utils import format_datetime, parsedate_to_datetime
@@ -28,6 +30,8 @@ from app.api.deps import get_conn, require_feed_key
 from app.config import Settings, get_settings
 from app.services import episodes, feed, feed_auth, feed_revision, runtime_settings, settings_store
 from app.services import slug as slug_module
+
+logger = logging.getLogger("app.api.rss")
 
 # require_feed_key gates the whole feed when FEED_AUTH_ENABLED (no-op otherwise).
 router = APIRouter(prefix="/rss", tags=["rss"], dependencies=[Depends(require_feed_key)])
@@ -54,7 +58,9 @@ async def get_rss(
     # The feed lives at exactly one slug -- the current FEED_TITLE's. Any other
     # slug (the old /rss/rss.xml, or a pre-rename name) is a different feed and
     # 404s, per the "rename = new feed" contract.
+    snapshot_started = time.perf_counter()
     settings, identity = _feed_snapshot(conn, settings)
+    snapshot_ms = (time.perf_counter() - snapshot_started) * 1000
     settings_store.get_or_init_podcast_guid(conn, settings.BASE_URL)
     require_feed_key(request, conn, settings)
     if slug != slug_module.feed_slug(settings.FEED_TITLE):
@@ -98,7 +104,9 @@ async def get_rss(
     )
     body = _rendered_feeds.get(cache_key)
     if body is None:
+        list_started = time.perf_counter()
         rows = episodes.list_for_feed(conn)
+        render_started = time.perf_counter()
         body = feed.render(
             rows,
             settings=settings,
@@ -106,6 +114,18 @@ async def get_rss(
             last_build=last_build,
             feed_guid_epoch=guid_epoch,
             feed_auth_key=key,
+        )
+        rendered_at = time.perf_counter()
+        logger.info(
+            "Feed rendered",
+            extra={
+                "event": "feed_rendered",
+                "snapshot_ms": round(snapshot_ms, 1),
+                "list_ms": round((render_started - list_started) * 1000, 1),
+                "render_ms": round((rendered_at - render_started) * 1000, 1),
+                "episodes": len(rows),
+                "bytes": len(body),
+            },
         )
         if len(body) <= _RENDERED_FEED_CACHE_BYTES:
             _rendered_feeds[cache_key] = body
