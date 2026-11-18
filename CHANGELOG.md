@@ -15,7 +15,6 @@ work lives under `[Unreleased]`.
 - Move the uv build image and the CI uv version to 0.13.5, and docker/setup-qemu-action to v4.
 - Advance the Chatterbox source baseline to upstream ab55923. The one commit since 5de7a54 changes only the README.
 - Log one `feed_rendered` record each time the RSS feed is rendered on a cache miss, with `snapshot_ms`, `list_ms`, `render_ms`, `episodes` and `bytes`, to show where the slow first fetch after a publish spends its time. Cache hits and HEAD requests log nothing.
-- Restore the comments explaining the lazy `torch` and `numpy` imports in the TTS wrapper.
 
 ### Fixed
 
