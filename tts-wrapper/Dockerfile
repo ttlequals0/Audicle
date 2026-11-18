@@ -101,7 +101,7 @@ ENV AUDICLE_WRAPPER_VERSION=${WRAPPER_VERSION}
 # start-period is generous: the first boot downloads multi-GB model weights from
 # HuggingFace before the model loads and /health/live turns 200.
 HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=300s \
-    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health/live', timeout=4).status == 200 else 1)"
+    CMD python -I -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health/live', timeout=4).status == 200 else 1)"
 
 # ``--factory`` so create_app() is called once with the configured engine.
 # ``--workers 1`` because the model holds GPU resources that don't survive

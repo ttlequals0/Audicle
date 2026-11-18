@@ -24,11 +24,11 @@ def test_image_installs_no_curl_and_healthchecks_with_python(name: str) -> None:
     assert not [i for i in instructions if re.search(r"\bcurl\b", i)], f"{name} still uses curl"
     healthchecks = [i for i in instructions if i.startswith("HEALTHCHECK")]
     assert len(healthchecks) == 1, name
-    assert "CMD " in healthchecks[0] and "python -c" in healthchecks[0], name
+    assert "CMD " in healthchecks[0] and "python -I -c" in healthchecks[0], name
     assert "urllib.request" in healthchecks[0] and "/health/live" in healthchecks[0], name
 
 
 def test_render_healthcheck_keeps_the_privilege_drop() -> None:
     (healthcheck,) = [i for i in _instructions("render/Dockerfile") if i.startswith("HEALTHCHECK")]
     assert "setpriv --reuid=1001" in healthcheck
-    assert healthcheck.index("setpriv") < healthcheck.index("python -c")
+    assert healthcheck.index("setpriv") < healthcheck.index("python -I -c")

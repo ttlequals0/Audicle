@@ -91,7 +91,7 @@ docker run -d --name "$renderer" --network "$control" --ip 172.31.0.2 \
 # The image has no curl; args are timeout, url and an optional JSON body (POST).
 renderer_req() {
     docker exec "$renderer" setpriv --reuid=1001 --regid=1001 --clear-groups \
-        --inh-caps=-all --bounding-set=-all --no-new-privs python -c '
+        --inh-caps=-all --bounding-set=-all --no-new-privs python -I -c '
 import sys, urllib.request
 timeout, url, *body = sys.argv[1:]
 data = body[0].encode() if body else None
