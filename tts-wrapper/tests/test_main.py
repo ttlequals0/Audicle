@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import re
 import threading
 import time
 import wave
@@ -1209,11 +1210,8 @@ def test_dockerfiles_copy_every_local_module_main_imports() -> None:
 
 def test_dockerfiles_purge_git_in_the_layer_that_installs_the_engine() -> None:
     """git is only needed to fetch resemble-perth during the engine install and
-    carries unpatched CVEs, so the engine-install RUN must purge it (the GPU image
-    also installs it there, so no layer ships it)."""
-
-    import re
-    from pathlib import Path
+    carries unpatched CVEs, so each Dockerfile installs and purges it in that one RUN
+    and no earlier layer ships it."""
 
     root = Path(__file__).resolve().parent.parent
     for dockerfile in ("Dockerfile", "Dockerfile.cpu"):
@@ -1221,9 +1219,10 @@ def test_dockerfiles_purge_git_in_the_layer_that_installs_the_engine() -> None:
         text = "\n".join(line for line in lines if not line.lstrip().startswith("#"))
         text = text.replace("\\\n", " ")
         runs = [line for line in text.splitlines() if line.startswith("RUN")]
-        engine = [r for r in runs if "install_engine.sh" in r]
-        assert len(engine) == 1, dockerfile
-        assert re.search(r"apt-get purge[^&]*\bgit\b", engine[0]), f"{dockerfile} keeps git"
-        others = [r for r in runs if r is not engine[0] and re.search(r"\bgit\b", r)]
-        # The CPU file still installs git in its OS-deps layer; only the GPU one is strict.
-        assert dockerfile != "Dockerfile" or not others, f"{dockerfile} installs git earlier"
+        engine_indexes = [i for i, r in enumerate(runs) if "install_engine.sh" in r]
+        assert len(engine_indexes) == 1, dockerfile
+        engine = runs[engine_indexes[0]]
+        assert re.search(r"apt-get install[^&]*\bgit\b", engine), f"{dockerfile} lacks git"
+        assert re.search(r"apt-get purge[^&]*\bgit\b", engine), f"{dockerfile} keeps git"
+        others = [r for i, r in enumerate(runs) if i != engine_indexes[0] and re.search(r"\bgit\b", r)]
+        assert not others, f"{dockerfile} installs git outside the engine layer"
