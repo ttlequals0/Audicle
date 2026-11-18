@@ -27,13 +27,12 @@ work lives under `[Unreleased]`.
 
 - The TTS images no longer ship git or, in the CPU image, the build toolchain, which removes their unpatched findings. Both are installed and purged in the engine install layer.
 - The app, TTS and render images no longer ship curl, and their health checks use Python. This removes the Kerberos client libraries from the images where nothing else needs them.
-- Install libsqlite3-0 from Debian sid in the app, TTS, render and egress images until trixie ships the fix. The render image also takes libexpat1, xvfb, xserver-common and libxi6 from sid. Trivy still reports these CVEs because trixie lists no fixed version.
+- Install libsqlite3-0 from Debian sid in the app, TTS, render and egress images, and libexpat1, xvfb, xserver-common and libxi6 in the render image, until trixie ships the fixes. The build checks the fixed versions and fails if the install changes any other package. Scanner ignore entries cover the 15 findings Trivy still reports, because it has no trixie fixed version for them.
 - Replace libcups2t64 in the render image with an empty stand-in package that keeps the package database consistent. This frees the Kerberos, Avahi and GnuTLS client libraries, and the build fails if any survive.
 - Add a Trivy secret-scan allow rule, used for the render image only, for the third-party blocklists bundled with Camoufox's uBlock Origin. A malicious URL in one list matched the Azure SAS token rule, so the rule matches only that text.
 - Drop the ignore entries for CVE-2026-12064, CVE-2026-8458, CVE-2026-34980 and CVE-2026-55453, which no longer match any image, and move the remaining recheck dates to 2026-12-17.
 - Raise pypdf to 6.21.4 (minimum raised to `>=6.21.4`), and update msgpack to 1.2.4 in the TTS wrapper and opentelemetry-api to 1.45.2 in all three Python lockfiles.
 - Override glob to 14.0.6 for workbox-build in the frontend so it resolves minimatch 11.0.9, outside the vulnerable range. A minimatch-only override on glob 11.1.0 left the service worker with 4 precache entries instead of 8.
-- Add scanner ignore entries for the 15 SQLite, expat, libXi and Xvfb findings that the sid packages fix. Trivy has no trixie fixed version for them, so it cannot clear them.
 
 ## [0.62.0] - 2026-10-24
 
