@@ -113,7 +113,7 @@ class ChatterboxEngine:
             self._gpu_lock.release()
 
     def load(self) -> None:
-        import torch
+        import torch  # intentional lazy import
 
         self._torch = torch
         device = self.config.device
@@ -253,7 +253,7 @@ class ChatterboxEngine:
         return pcm16_wav_bytes(wav_array, self.sample_rate)
 
     def _run_inference(self, text: str, params: GenerationParams):
-        import numpy as np
+        import numpy as np  # lazy: numpy comes from torch's wheel
 
         assert self._model is not None
         # Reject an overlapping GPU operation rather than running it concurrently.
@@ -293,7 +293,7 @@ class ChatterboxEngine:
     def _set_seed(self, seed: int) -> None:
         import random
 
-        import numpy as np
+        import numpy as np  # lazy: numpy comes from torch's wheel
 
         assert self._torch is not None
         self._torch.manual_seed(seed)
