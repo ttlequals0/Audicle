@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 
-from log_config import JSONFormatter, TextFormatter, setup_logging
+from log_config import JSONFormatter, TextFormatter, apply_logging, setup_logging
 
 
 def _record(**extra) -> logging.LogRecord:
@@ -63,24 +63,14 @@ def test_bad_level_falls_back_to_info() -> None:
     assert logging.getLogger().level == logging.INFO
 
 
-def _access(path: str, status: int) -> logging.LogRecord:
-    args = ("127.0.0.1:5000", "GET", path, "1.1", status)
-    return logging.LogRecord("uvicorn.access", logging.INFO, __file__, 1, '%s - "%s %s HTTP/%s" %d', args, None)
-
-
-def test_successful_polls_are_not_logged_but_failures_and_other_paths_are() -> None:
+def test_uvicorn_access_is_muted_but_render_events_still_log(capsys) -> None:
     setup_logging(level="INFO", fmt="json")
-    access = logging.getLogger("uvicorn.access")
+    apply_logging("DEBUG", "json")  # a runtime level change must not re-enable access lines
 
-    assert not access.filter(_access("/health/live", 200))
-    assert not access.filter(_access("/runtime-config", 200))
-    assert access.filter(_access("/health/live", 503))
-    assert access.filter(_access("/runtime-config", 500))
-    assert access.filter(_access("/render", 200))
+    logging.getLogger("uvicorn.access").info(
+        '%s - "%s %s HTTP/%s" %d', "127.0.0.1:5000", "GET", "/health/live", "1.1", 200
+    )
+    logging.getLogger("render.main").info("render ok", extra={"event": "render_ok"})
 
-
-def test_setup_twice_installs_the_poll_filter_once() -> None:
-    setup_logging(level="INFO", fmt="json")
-    setup_logging(level="INFO", fmt="json")
-
-    assert len(logging.getLogger("uvicorn.access").filters) == 1
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert [line["event"] for line in lines] == ["render_ok"]
