@@ -102,10 +102,12 @@ class TextFormatter(logging.Formatter):
 
 
 class _LineLogger(io.TextIOBase):
-    """File-like sink that logs each non-empty line at DEBUG."""
+    """Stdout stand-in: threads inside ``capture_stdout`` log each non-empty line at
+    DEBUG; every other thread, and stream probes, go to the original stream."""
 
-    def __init__(self, logger: logging.Logger) -> None:
+    def __init__(self, logger: logging.Logger, original: Any) -> None:
         self._logger = logger
+        self._original = original
         self._pending = ""
         self._lock = threading.Lock()
 
@@ -113,6 +115,8 @@ class _LineLogger(io.TextIOBase):
         return True
 
     def write(self, text: str) -> int:
+        if threading.get_ident() not in _capturing_threads:
+            return self._original.write(text)
         with self._lock:
             *lines, self._pending = _LINE_BREAKS.split(self._pending + text)
         for line in lines:
@@ -121,40 +125,61 @@ class _LineLogger(io.TextIOBase):
         return len(text)
 
     def flush(self) -> None:
+        if threading.get_ident() not in _capturing_threads:
+            self._original.flush()
+            return
         with self._lock:
             line, self._pending = self._pending.strip(), ""
         if line:
             self._logger.debug(line)
 
+    def fileno(self) -> int:
+        return self._original.fileno()
+
+    def isatty(self) -> bool:
+        return self._original.isatty()
+
+    @property
+    def encoding(self) -> str:
+        return self._original.encoding
+
+    @property
+    def errors(self) -> str | None:
+        return self._original.errors
+
 
 _capture_lock = threading.Lock()
-_capture_depth = 0
+_capturing_threads: dict[int, int] = {}  # thread ident -> nesting depth
 _capture_saved: Any = None
 
 
 @contextmanager
-def capture_stdout(logger_name: str = LIB_LOGGER):
-    """Route library ``print()`` output to a DEBUG logger.
+def capture_stdout():
+    """Route the calling thread's library ``print()`` output to a DEBUG logger.
 
     ``sys.stdout`` is process-global, so overlapping captures (load vs inference
-    threads) share one sink and the last one out restores it. The JSON handler
-    holds the original stream object, so log records still reach the real stdout.
+    threads) share one sink and the last one out restores it; threads that are not
+    inside a capture still write to the real stream. The JSON handler holds the
+    original stream object, so log records reach the real stdout either way.
     """
 
-    global _capture_depth, _capture_saved
+    global _capture_saved
+    ident = threading.get_ident()
     with _capture_lock:
-        if _capture_depth == 0:
+        if not _capturing_threads:
             _capture_saved = sys.stdout
-            sys.stdout = _LineLogger(logging.getLogger(logger_name))
-        _capture_depth += 1
+            sys.stdout = _LineLogger(logging.getLogger(LIB_LOGGER), _capture_saved)
+        _capturing_threads[ident] = _capturing_threads.get(ident, 0) + 1
     try:
         yield
     finally:
         with _capture_lock:
-            _capture_depth -= 1
-            if _capture_depth == 0:
-                sys.stdout.flush()
+            if _capturing_threads[ident] == 1 and len(_capturing_threads) == 1:
+                sys.stdout.flush()  # last one out: emit any partial line while still captured
                 sys.stdout = _capture_saved
+            _capturing_threads[ident] -= 1
+            if not _capturing_threads[ident]:
+                del _capturing_threads[ident]
 
 
 def apply_logging(level: str, fmt: str) -> None:

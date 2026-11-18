@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import subprocess
@@ -60,7 +61,7 @@ def test_warning_becomes_one_json_record(json_logging) -> None:
 
 def test_captured_print_becomes_debug_record_not_stdout(json_logging) -> None:
     _configure()
-    with capture_stdout("tts.engine.lib"):
+    with capture_stdout():
         print("S3 Token -> Mel Inference...")
         sys.stdout.write("loaded PerthNet (Implicit) at step 250,000\n\n")
         sys.stdout.write("partial line without newline")
@@ -81,19 +82,67 @@ def test_capture_restores_stdout_and_survives_overlap(json_logging) -> None:
     release = threading.Event()
 
     def other() -> None:
-        with capture_stdout("tts.engine.lib"):
+        with capture_stdout():
             entered.set()
             release.wait(5)
 
     thread = threading.Thread(target=other)
     thread.start()
     entered.wait(5)
-    with capture_stdout("tts.engine.lib"):
+    with capture_stdout():
         pass
     assert sys.stdout is not original  # still captured while the other holds it
     release.set()
     thread.join()
     assert sys.stdout is original
+
+
+class _FakeTty(io.StringIO):
+    encoding = "utf-8"
+    errors = "strict"
+
+    def fileno(self) -> int:
+        return 7
+
+    def isatty(self) -> bool:
+        return True
+
+
+def test_other_threads_print_to_the_real_stream_during_a_capture(json_logging, monkeypatch) -> None:
+    real = _FakeTty()
+    monkeypatch.setattr(sys, "stdout", real)
+    _configure()
+    entered = threading.Event()
+    release = threading.Event()
+
+    def capturing() -> None:
+        with capture_stdout():
+            print("from capturing thread")
+            entered.set()
+            release.wait(5)
+
+    thread = threading.Thread(target=capturing)
+    thread.start()
+    entered.wait(5)
+    print("from event loop thread")
+    release.set()
+    thread.join()
+    lines = real.getvalue().splitlines()
+    assert "from event loop thread" in lines
+    records = [json.loads(line) for line in lines if line.startswith("{")]
+    assert [r["message"] for r in records] == ["from capturing thread"]
+    assert records[0]["level"] == "DEBUG"
+
+
+def test_capture_delegates_stream_probes_to_the_original(json_logging, monkeypatch) -> None:
+    real = _FakeTty()
+    monkeypatch.setattr(sys, "stdout", real)
+    _configure()
+    with capture_stdout():
+        assert sys.stdout.fileno() == 7
+        assert sys.stdout.isatty() is True
+        assert sys.stdout.encoding == "utf-8"
+        assert sys.stdout.errors == "strict"
 
 
 def test_progress_bars_are_disabled_before_tqdm_can_import() -> None:
