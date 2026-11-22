@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends
 
 from app.api.deps import require_admin
 from app.api.v1 import auth as auth_routes
+from app.api.v1 import books as books_routes
 from app.api.v1 import chime as chime_routes
 from app.api.v1 import corrections as corrections_routes
 from app.api.v1 import episodes as episodes_routes
@@ -43,6 +44,7 @@ router.include_router(auth_routes.router)
 admin = APIRouter(dependencies=[Depends(require_admin)])
 admin.include_router(submit_routes.router)
 admin.include_router(uploads_routes.router)
+admin.include_router(books_routes.router)
 admin.include_router(status_routes.router)
 admin.include_router(prompt_routes.router)
 admin.include_router(corrections_routes.router)

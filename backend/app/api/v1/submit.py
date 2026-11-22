@@ -59,6 +59,10 @@ class SubmitResponse(BaseModel):
         default=False,
         description="True if reprocess=true and a prior episode for this URL existed.",
     )
+    chapters_detected: bool | None = Field(
+        default=None,
+        description="False only when split_chapters was requested and no chapters were found.",
+    )
 
 
 @router.post(

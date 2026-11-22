@@ -5,7 +5,7 @@ from pathlib import Path
 
 from app.config import get_settings
 from app.core import database
-from app.core.paths import media_dir
+from app.core.paths import book_dir, media_dir
 from app.services import episodes, jobs, retention
 
 
@@ -143,3 +143,15 @@ def test_orphan_sweep_keeps_a_live_episodes_narration_and_reaps_a_dead_jobs(env:
     assert removed == 1
     assert (media / "live.narration.txt").exists()
     assert not (media / "dead.narration.txt").exists()
+
+
+def test_orphan_sweep_ignores_book_directory(env: Path) -> None:
+    database.run_migrations(env)
+    media_dir(get_settings()).mkdir(parents=True, exist_ok=True)
+    source = book_dir(get_settings(), "bk1") / "source.epub"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"EPUB")
+
+    retention.sweep_orphan_media(get_settings())
+
+    assert source.read_bytes() == b"EPUB"

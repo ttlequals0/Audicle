@@ -5,7 +5,7 @@ from pathlib import Path
 
 from app.config import get_settings
 from app.core import database
-from app.core.paths import media_dir
+from app.core.paths import book_dir, media_dir
 from app.services import episodes, retention
 
 
@@ -252,3 +252,14 @@ def test_purge_huge_older_than_days_rejected_before_overflow(env: Path) -> None:
 
     with pytest.raises(ValueError, match="older_than_days"):
         retention.purge_older_than(get_settings(), older_than_days=1_000_000)
+
+
+def test_retention_purge_keeps_book_source(env: Path) -> None:
+    _seed(env, id_="old", pub_date="2020-01-01T00:00:00Z")
+    source = book_dir(get_settings(), "bk1") / "source.epub"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"EPUB")
+
+    retention.purge_older_than(get_settings(), older_than_days=30)
+
+    assert source.read_bytes() == b"EPUB"

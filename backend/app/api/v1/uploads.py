@@ -12,23 +12,31 @@ stored original with no re-upload -- the reason the original is kept on disk.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import io
 import re
+import shutil
 import sqlite3
+import warnings
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
+from PIL import Image, UnidentifiedImageError
 
 from app.api.deps import get_conn, require_voice_loaded
+from app.api.v1.books import BookResponse, book_response, queue_selection
 from app.api.v1.submit import SubmitResponse
 from app.config import Settings, get_settings
 from app.core import database
+from app.core.paths import book_dir
+from app.services import book_chapters, books, file_extraction, jobs, runtime_settings, voices
 from app.services import episodes as episodes_service
-from app.services import file_extraction, jobs, runtime_settings, voices
 from app.services.atomic_write import write_bytes_atomic
 
 router = APIRouter(tags=["jobs"])
 _EPISODE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_SPLIT_EXTENSIONS = (".epub", ".pdf")
 
 
 async def read_upload_capped(upload: UploadFile, cap: int) -> bytes:
@@ -48,20 +56,79 @@ async def read_upload_capped(upload: UploadFile, cap: int) -> bytes:
     return b"".join(chunks)
 
 
+def _prepare_book(
+    data: bytes, ext: str, min_chars: int
+) -> tuple[book_chapters.DetectedBook, bytes | None] | None:
+    """CPU-bound: detect chapters and re-encode the cover as JPEG (None when unreadable)."""
+
+    detected = book_chapters.detect(data, ext, min_chars=min_chars)
+    if detected is None:
+        return None
+    cover: bytes | None = None
+    if detected.cover:
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", Image.DecompressionBombWarning)
+                out = io.BytesIO()
+                Image.open(io.BytesIO(detected.cover)).convert("RGB").save(out, format="JPEG")
+                cover = out.getvalue()
+        except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombWarning):
+            cover = None
+    return detected, cover
+
+
+def _create_book(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    *,
+    data: bytes,
+    ext: str,
+    source_uri: str,
+    filename: str,
+    detected: book_chapters.DetectedBook,
+    cover: bytes | None,
+) -> books.Book:
+    book_id = books.book_id_for(source_uri)
+    try:
+        write_bytes_atomic(books.source_file(settings, book_id, ext), data)
+        if cover is not None:
+            write_bytes_atomic(books.cover_file(settings, book_id), cover)
+        return books.create_book(
+            conn,
+            source_uri=source_uri,
+            filename=filename,
+            detected=detected,
+            has_cover=cover is not None,
+        )
+    except Exception:
+        shutil.rmtree(book_dir(settings, book_id), ignore_errors=True)
+        raise
+
+
 @router.post(
     "/upload",
     status_code=201,
-    response_model=SubmitResponse,
+    response_model=SubmitResponse | BookResponse,
     summary="Upload a document (PDF/DOCX/Markdown/text/HTML) for processing",
     dependencies=[Depends(require_voice_loaded)],
 )
 async def upload(
     conn: Annotated[sqlite3.Connection, Depends(get_conn)],
     settings: Annotated[Settings, Depends(get_settings)],
+    response: Response,
     file: Annotated[UploadFile, File(description="The document to ingest.")],
     reprocess: Annotated[bool, Form()] = False,
     voice: Annotated[str | None, Form()] = None,
-) -> SubmitResponse:
+    split_chapters: Annotated[
+        bool, Form(description="Split an EPUB or PDF into one episode per chapter.")
+    ] = False,
+    chapters: Annotated[
+        str | None,
+        Form(description="With split_chapters: all, default, or a list such as 1,3,5-9."),
+    ] = None,
+) -> SubmitResponse | BookResponse:
+    if chapters is not None and not split_chapters:
+        raise HTTPException(status_code=400, detail="chapters requires split_chapters")
     filename = file_extraction.sanitize_filename(file.filename or "")
     ext = file_extraction.extension_of(filename)
     if ext not in file_extraction.ALLOWED_EXTENSIONS:
@@ -71,8 +138,12 @@ async def upload(
             detail=f"unsupported file type {ext or '(none)'}; allowed: {allowed}",
         )
 
+    if split_chapters and ext not in _SPLIT_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="split_chapters supports only EPUB and PDF")
+
     # UPLOAD_MAX_MB is operator-tunable (megabytes); resolve the runtime overlay.
-    cap = runtime_settings.overlay(settings).UPLOAD_MAX_MB * 1024 * 1024
+    effective = runtime_settings.overlay(settings)
+    cap = effective.UPLOAD_MAX_MB * 1024 * 1024
     data = await read_upload_capped(file, cap)
     if not data:
         raise HTTPException(status_code=400, detail="uploaded file is empty")
@@ -83,7 +154,45 @@ async def upload(
     source_uri = file_extraction.build_source_uri(content_hash, filename)
     episode_id = jobs.compute_episode_id(source_uri)
 
+    # Detection runs before the flock: a blocking flock held across an await would
+    # stall the event loop for a second request on the same file.
+    prepared = None
+    chapters_detected = None
+    if split_chapters and books.get_book(conn, episode_id) is None:
+        try:
+            prepared = await asyncio.to_thread(
+                _prepare_book, data, ext, effective.MIN_EXTRACTION_CHARS
+            )
+        except book_chapters.BookFormatError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if prepared is None:
+            chapters_detected = False
+
     with database.upload_staging_lock(settings.DATA_DIR, episode_id):
+        if split_chapters and chapters_detected is None:
+            book = books.get_book(conn, episode_id)
+            created = book is None
+            if book is None:
+                detected, cover = prepared  # type: ignore[misc]
+                book = _create_book(
+                    conn,
+                    settings,
+                    data=data,
+                    ext=ext,
+                    source_uri=source_uri,
+                    filename=filename,
+                    detected=detected,
+                    cover=cover,
+                )
+            response.status_code = 201 if created else 200
+            if chapters is None:
+                return book_response(conn, book)
+            try:
+                return queue_selection(conn, book, chapters, voice)
+            except ValueError as exc:
+                if created:
+                    books.delete_book(conn, settings, book.id)
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
         voice_id = voices.resolve(conn, voice)
         try:
             result = jobs.create_job(
@@ -112,6 +221,7 @@ async def upload(
         episode_id=job.episode_id,
         status=job.status,
         replaced_previous=result.replaced_previous,
+        chapters_detected=chapters_detected,
     )
 
 
