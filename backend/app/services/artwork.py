@@ -60,12 +60,12 @@ async def process_artwork(
     the reason and returns ``None``.
     """
 
+    if local_cover is not None:
+        return _process_local_cover(local_cover, episode_id, output_dir, settings)
+
     if not isinstance(metadata, dict):
         _log_fallback("missing_og_image", episode_id, None)
         return None
-
-    if local_cover is not None:
-        return _process_local_cover(local_cover, episode_id, output_dir, settings)
 
     source_url = _extract_og_image(metadata)
     if not source_url:

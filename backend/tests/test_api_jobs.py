@@ -46,6 +46,13 @@ def test_list_jobs_identifies_chapter_jobs(env: Path) -> None:
     assert items["https://example.test/a"]["chapter"] is None
 
 
+def test_list_jobs_reports_no_chapter_for_url_with_chapter_fragment(env: Path) -> None:
+    _seed_job(env, url="https://example.test/post#chapter=3")
+    with _client(env) as client:
+        items = client.get("/api/v1/jobs").json()
+    assert items[0]["chapter"] is None
+
+
 def test_list_jobs_filters_by_status(env: Path) -> None:
     job = _seed_job(env, url="https://example.test/b")
     conn = database.connect(database.db_path(env))

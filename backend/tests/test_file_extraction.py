@@ -590,6 +590,14 @@ def test_source_ref_for_a_web_url() -> None:
     assert (ref.is_upload, ref.filename, ref.chapter, ref.book_id) == (False, None, None, None)
 
 
+def test_source_ref_ignores_chapter_fragment_on_web_urls() -> None:
+    url = "https://example.test/post#chapter=3"
+    ref = file_extraction.SourceRef.parse(url, "abc")
+    assert ref.is_upload is False
+    assert (ref.chapter, ref.book_id, ref.filename) == (None, None, None)
+    assert ref.base_uri == url
+
+
 async def test_unsplit_corrupt_epub_is_permanent_error(env: Path) -> None:
     with pytest.raises(ExtractionPermanentError, match="could not read EPUB"):
         await _run(env, "broken.epub", b"this is not a zip")

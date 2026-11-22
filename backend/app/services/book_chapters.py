@@ -594,7 +594,7 @@ def _detect_pdf(data: bytes, min_chars: int) -> DetectedBook | None:
         for i, (title, first) in enumerate(kept):
             last = (kept[i + 1][1] if i + 1 < len(kept) else total) - 1
             pages = [reader.pages[n] for n in range(first, last + 1)]
-            text = "\n\n".join(t for t in (p.extract_text().strip() for p in pages) if t)
+            text = "\n\n".join(t for t in ((p.extract_text() or "").strip() for p in pages) if t)
             chars += len(text)
             if chars > MAX_EXTRACTED_CHARS:
                 raise BookFormatError("The PDF contains too much text.")

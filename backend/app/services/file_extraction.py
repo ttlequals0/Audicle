@@ -128,8 +128,8 @@ class SourceRef:
 
     @classmethod
     def parse(cls, url: str, episode_id: str) -> SourceRef:
-        base_uri, chapter = books.split_chapter_uri(url)
         is_upload = is_upload_source(url)
+        base_uri, chapter = books.split_chapter_uri(url) if is_upload else (url, None)
         return cls(
             is_upload=is_upload,
             filename=parse_source_uri(base_uri)[1] if is_upload else None,

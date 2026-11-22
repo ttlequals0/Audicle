@@ -165,6 +165,19 @@ async def test_local_cover_is_processed_without_network(
         assert img.size == (get_settings().ARTWORK_SIZE_PX,) * 2
 
 
+async def test_local_cover_used_when_metadata_is_not_a_dict(env: Path, tmp_path: Path) -> None:
+    cover = get_settings().DATA_DIR / "books" / "b1" / "cover.jpg"
+    cover.parent.mkdir(parents=True)
+    cover.write_bytes(_jpeg_with_exif(800, 1000))
+
+    result = await artwork.process_artwork(
+        None, "chap1", tmp_path, get_settings(), local_cover=cover
+    )
+
+    assert result is not None
+    assert result.jpg_path.is_file()
+
+
 async def _render_local_cover(tmp_path: Path, data: bytes):
     cover = get_settings().DATA_DIR / "books" / "b1" / "cover.png"
     cover.parent.mkdir(parents=True, exist_ok=True)

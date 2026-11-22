@@ -648,6 +648,20 @@ def test_pdf_malformed_page_raises_book_format_error(monkeypatch: pytest.MonkeyP
         book_chapters.detect(data, ".pdf", min_chars=10)
 
 
+def test_pdf_page_with_no_text_is_treated_as_empty(monkeypatch: pytest.MonkeyPatch):
+    data = make_pdf(4, [("One", 0), ("Two", 2)])
+    real = PageObject.extract_text
+    calls = {"n": 0}
+
+    def fake(self, *args, **kwargs):
+        calls["n"] += 1
+        return None if calls["n"] == 1 else real(self, *args, **kwargs)
+
+    monkeypatch.setattr(PageObject, "extract_text", fake)
+    book = book_chapters.detect(data, ".pdf", min_chars=10)
+    assert [c.title for c in book.chapters] == ["One", "Two"]
+
+
 def test_corrupt_pdf_raises_book_format_error():
     with pytest.raises(BookFormatError):
         book_chapters.detect(b"%PDF-1.4 not really a pdf", ".pdf", min_chars=10)
