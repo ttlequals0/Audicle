@@ -38,7 +38,16 @@ _RETENTION_SWEEP_DAY_KEY = "retention_sweep_day"
 async def _crash_recovery(data_dir) -> None:
     conn = database.connect(database.db_path(data_dir))
     try:
+        abandoned = conn.execute(
+            "SELECT COUNT(*) FROM jobs WHERE status = 'processing' AND recovery_count >= ?",
+            (database.MAX_CRASH_RECOVERIES,),
+        ).fetchone()[0]
         reset = database.reset_processing_to_queued(conn)
+        if abandoned:
+            logger.warning(
+                "Failed jobs that repeatedly stopped the worker",
+                extra={"event": "crash_recovery_abandoned", "failed": abandoned},
+            )
         staged = 0
         for row in conn.execute("SELECT id, episode_id FROM jobs WHERE status = 'staging'"):
             with database.upload_staging_lock(

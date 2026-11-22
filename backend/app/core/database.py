@@ -837,6 +837,13 @@ def _m031_books(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE episodes ADD COLUMN {column} INTEGER")
 
 
+MAX_CRASH_RECOVERIES = 3
+
+
+def _m032_job_recovery_count(conn: sqlite3.Connection) -> None:
+    conn.execute("ALTER TABLE jobs ADD COLUMN recovery_count INTEGER NOT NULL DEFAULT 0")
+
+
 MIGRATIONS: list[tuple[str, Migration]] = [
     ("001_initial_schema", _m001_initial_schema),
     ("002_settings_kv", _m002_settings_kv),
@@ -869,6 +876,7 @@ MIGRATIONS: list[tuple[str, Migration]] = [
     ("029_feed_revision", _m029_feed_revision),
     ("030_episode_audio_generation", _m030_episode_audio_generation),
     ("031_books", _m031_books),
+    ("032_job_recovery_count", _m032_job_recovery_count),
 ]
 
 
@@ -983,8 +991,8 @@ def _apply_pending(
 def reset_processing_to_queued(conn: sqlite3.Connection) -> int:
     """Crash recovery: jobs that died mid-pipeline get picked up again.
 
-    Build plan dictates an unconditional reset (single in-flight job, no race).
-    Returns the row count affected.
+    A job already recovered ``MAX_CRASH_RECOVERIES`` times is failed instead, so an
+    input that kills the worker cannot loop forever. Returns the number requeued.
 
     Preserves any prior `error` text by only stamping "reset on restart" when
     the column is NULL. A job that hit a real failure right before the worker
@@ -992,11 +1000,25 @@ def reset_processing_to_queued(conn: sqlite3.Connection) -> int:
     distinguish a clean restart from a recurring upstream problem.
     """
 
+    conn.execute(
+        """
+        UPDATE jobs
+        SET status = 'failed',
+            error = ?,
+            updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+        WHERE status = 'processing' AND recovery_count >= ?
+        """,
+        (
+            f"worker stopped {MAX_CRASH_RECOVERIES} times while processing this job; not retried",
+            MAX_CRASH_RECOVERIES,
+        ),
+    )
     cursor = conn.execute(
         """
         UPDATE jobs
         SET status = 'queued',
             error = COALESCE(error, 'reset on restart'),
+            recovery_count = recovery_count + 1,
             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
         WHERE status = 'processing'
         """
