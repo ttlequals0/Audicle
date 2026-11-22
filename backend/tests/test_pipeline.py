@@ -3438,78 +3438,86 @@ def test_title_echo_tolerates_punctuation_and_case_drift() -> None:
     assert pipeline._strip_title_echo(body, title) == "Real content here."
 
 
-def test_title_echo_after_a_leading_label() -> None:
-    title = "A Made Up Headline About Widgets"
-    para = "First paragraph of the story continues here with enough words to be a real paragraph."
-    body = f"Technology\n\nA Made Up Headline About Widgets\n\n{para}"
-    out = pipeline._strip_title_echo(body, title)
-    assert out.startswith("Technology")
-    assert "Made Up Headline" not in out
-    assert para in out
+_ECHO_PARA = "A paragraph that is long enough to be body text and goes on for a while."
+_ECHO_LONG = (
+    "The first real paragraph of the chapter goes here and it is long enough to count as body text."
+)
+_ECHO_BODY = "Body paragraph that is clearly longer than the headline and carries on for a while."
+_ECHO_HEAD = "A Made Up Headline About Widgets"
 
 
-def test_title_echo_matches_a_title_segment_for_book_chapters() -> None:
-    title = "The Widget Book: Prologue"
-    body = (
-        "Prologue\n\nIt began on a cold morning in the factory, long before anyone "
-        "knew what the widgets were for."
-    )
-    assert pipeline._strip_title_echo(body, title).startswith("It began")
+@pytest.mark.parametrize(
+    "title,body,expected",
+    [
+        (
+            _ECHO_HEAD,
+            f"Technology\n\n{_ECHO_HEAD}\n\n{_ECHO_PARA}",
+            f"Technology\n\n{_ECHO_PARA}",
+        ),
+        (
+            "The Widget Book: Prologue",
+            f"Prologue\n\n{_ECHO_PARA}",
+            _ECHO_PARA,
+        ),
+        (
+            "The Widget Book: 1. A Quiet Start",
+            f"ONE\n\nA Quiet Start\n\n{_ECHO_LONG}",
+            f"ONE\n\n{_ECHO_LONG}",
+        ),
+        (
+            f"{_ECHO_HEAD} | Example Site",
+            f"{_ECHO_HEAD}\n\n{_ECHO_BODY}",
+            _ECHO_BODY,
+        ),
+        (
+            _ECHO_HEAD,
+            f"{_ECHO_HEAD}\nA subtitle that says something else entirely\n\n{_ECHO_BODY}",
+            f"A subtitle that says something else entirely\n\n{_ECHO_BODY}",
+        ),
+        ("AI", f"AI\n\n{_ECHO_PARA}", _ECHO_PARA),
+    ],
+    ids=[
+        "after_leading_label",
+        "title_segment_for_book_chapter",
+        "numbered_chapter_without_number",
+        "headline_before_site_suffix",
+        "headline_sharing_block_with_subtitle",
+        "short_full_title",
+    ],
+)
+def test_title_echo_strips_heading_shaped_echoes(title: str, body: str, expected: str) -> None:
+    assert pipeline._strip_title_echo(body, title) == expected
 
 
-def test_title_echo_matches_numbered_chapter_without_its_number() -> None:
-    title = "The Widget Book: 1. A Quiet Start"
-    para = (
-        "The first real paragraph of the chapter goes here and it is long enough "
-        "to count as body text."
-    )
-    out = pipeline._strip_title_echo(f"ONE\n\nA Quiet Start\n\n{para}", title)
-    assert "A Quiet Start" not in out
-    assert out.startswith("ONE")
-    assert para in out
-
-
-def test_title_echo_matches_headline_before_site_suffix() -> None:
-    title = "A Made Up Headline About Widgets | Example Site"
-    body = (
-        "A Made Up Headline About Widgets\n\nBody paragraph that is clearly longer "
-        "than the headline and carries on for a while."
-    )
-    out = pipeline._strip_title_echo(body, title)
-    assert out.startswith("Body paragraph")
-
-
-def test_title_echo_drops_headline_sharing_a_block_with_its_subtitle() -> None:
-    title = "A Made Up Headline About Widgets"
-    body = (
-        "A Made Up Headline About Widgets\nA subtitle that says something else entirely\n\n"
-        "Body paragraph that is clearly longer than the headline and carries on for a while."
-    )
-    out = pipeline._strip_title_echo(body, title)
-    assert "Made Up Headline" not in out
-    assert out.startswith("A subtitle that says something else entirely")
-
-
-def test_title_echo_does_not_reach_into_the_body() -> None:
-    body = (
-        "This opening paragraph is deliberately long so that it is plainly body text and "
-        "not a heading, running well past two hundred characters to make sure the walk "
-        "stops here and never looks at anything further down the page.\n\nWidgets\n\nMore."
-    )
-    assert len(body.split("\n\n")[0]) > 200
-    assert pipeline._strip_title_echo(body, "Widgets") == body
-
-
-def test_title_echo_never_empties_the_text() -> None:
-    assert pipeline._strip_title_echo("Prologue", "Prologue") == "Prologue"
-
-
-def test_title_echo_ignores_short_title_segments() -> None:
-    title = "AI: The Made Up Headline About Widgets"
-    body = (
-        "AI\n\nA paragraph that is long enough to be body text and does not repeat the "
-        "headline at all, going on for a while."
-    )
+@pytest.mark.parametrize(
+    "title,body",
+    [
+        (
+            "Widgets",
+            "This opening paragraph is deliberately long so that it is plainly body text and "
+            "not a heading, running well past two hundred characters to make sure the walk "
+            "stops here and never looks at anything further down the page.\n\nWidgets\n\nMore.",
+        ),
+        ("Prologue", "Prologue"),
+        (
+            "AI: The Made Up Headline About Widgets",
+            "AI\n\nA paragraph that is long enough to be body text and does not repeat the "
+            "headline at all, going on for a while.",
+        ),
+        (
+            "AI",
+            "Notes\n\nA paragraph that is long enough to be body text and goes on for a while "
+            "without repeating anything.",
+        ),
+    ],
+    ids=[
+        "does_not_reach_into_body",
+        "never_empties_the_text",
+        "short_title_segments_ignored",
+        "short_full_title_segment_only",
+    ],
+)
+def test_title_echo_leaves_text_unchanged(title: str, body: str) -> None:
     assert pipeline._strip_title_echo(body, title) == body
 
 

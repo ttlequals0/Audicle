@@ -625,31 +625,17 @@ _TITLE_ENUMERATOR = re.compile(r"^(?:chapter\s+)?\d+[.):]?\s+", re.IGNORECASE)
 
 
 def _title_echo_keys(title: str) -> set[str]:
-    """Keys a body heading may match: the title, its segments, and each without
-    a leading chapter number."""
+    """Keys a body heading may match: the title, its segments, each minus a chapter number."""
 
-    keys = {_title_key(title)}
-    for part in _TITLE_SEPARATORS.split(title.translate(_TITLE_PUNCT)):
-        key = _title_key(part)
-        if len(key) >= 4:
-            keys.add(key)
-    for key in list(keys):
-        bare = _TITLE_ENUMERATOR.sub("", key)
-        if bare != key and len(bare) >= 4:
-            keys.add(bare)
-    keys.discard("")
-    return keys
+    full = _title_key(title)
+    keys = {_title_key(p) for p in _TITLE_SEPARATORS.split(title.translate(_TITLE_PUNCT))} | {full}
+    keys |= {_TITLE_ENUMERATOR.sub("", k) for k in keys}
+    return {k for k in keys if len(k) >= 4 or (k and k == full)}
 
 
 def _strip_title_echo(cleaned: str, title: str | None) -> str:
-    """Drop leading lines that just repeat the article's own headline.
-
-    Substack and similar render headline + subtitle, so the body opens with the
-    same words the intro read is about to announce and the episode says the title
-    twice. The echo may follow a label or chapter number, may be only one segment
-    of the title, and may share a block with its subtitle. Only heading-shaped
-    lines among the first few are dropped: a real opening paragraph that happens
-    to begin with the headline stays, and the walk never looks past body text."""
+    """Drop leading heading-shaped lines that repeat the headline; a paragraph that merely
+    starts with it stays."""
 
     if not title:
         return cleaned
@@ -667,14 +653,7 @@ def _strip_title_echo(cleaned: str, title: str | None) -> str:
         key = _title_key(line)
         if seen > 5 or len(key) > longest * 1.3:
             break
-        if any(
-            key == tk
-            or (
-                len(key) <= len(tk) * 1.3
-                and SequenceMatcher(None, key, tk).ratio() >= 0.9
-            )
-            for tk in title_keys
-        ):
+        if any(key == tk or SequenceMatcher(None, key, tk).ratio() >= 0.9 for tk in title_keys):
             echoes.add(i)
     if not echoes:
         return cleaned
