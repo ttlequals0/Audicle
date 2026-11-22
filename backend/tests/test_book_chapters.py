@@ -427,3 +427,114 @@ def test_markdown_walk_drops_noise_and_keeps_blocks():
     }
     text, _ = book_chapters.epub_full_markdown(make_epub(files))
     assert text == "## Head\n\npara one\n\nquoted\n\nitem a\n\nitem b\n\nloose text"
+
+
+def _two_chapter_files() -> dict[str, bytes | str]:
+    files: dict[str, bytes | str] = {}
+    for i in (1, 2):
+        files[f"ch{i}.xhtml"] = page(f"<p>chapter {i} text text</p>")
+    files["toc.ncx"] = ncx([("One", "ch1.xhtml"), ("Two", "ch2.xhtml")])
+    return files
+
+
+_TWO_ITEMS = [
+    ("ncx", "toc.ncx", NCX_TYPE, ""),
+    ("c1", "ch1.xhtml", XHTML, ""),
+    ("c2", "ch2.xhtml", XHTML, ""),
+]
+
+
+def test_duplicate_spine_itemrefs_are_deduplicated():
+    files = {"a.xhtml": page("<p>only once</p>")}
+    files["content.opf"] = opf([("a", "a.xhtml", XHTML, "")], ["a", "a", "a"])
+    text, _ = book_chapters.epub_full_markdown(make_epub(files))
+    assert text == "only once"
+
+
+def test_oversize_spine_rejected(monkeypatch):
+    files = {"a.xhtml": page("<p>x</p>")}
+    files["content.opf"] = opf([("a", "a.xhtml", XHTML, "")], ["a"] * 6)
+    data = make_epub(files)
+    monkeypatch.setattr(book_chapters, "MAX_ARCHIVE_ENTRIES", 6)
+    assert book_chapters.epub_full_markdown(data)[0] == "x"
+    monkeypatch.setattr(book_chapters, "MAX_ARCHIVE_ENTRIES", 5)
+    with pytest.raises(BookFormatError, match="spine"):
+        book_chapters.epub_full_markdown(data)
+
+
+def test_oversize_toc_rejected(monkeypatch):
+    nested = [(f"n{i}", "ch1.xhtml") for i in range(5)]
+    data = simple_book(3, nested=nested)  # 7 archive entries, 8 navPoints
+    monkeypatch.setattr(book_chapters, "MAX_ARCHIVE_ENTRIES", 8)
+    assert len(detect_epub(data).chapters) == 3
+    monkeypatch.setattr(book_chapters, "MAX_ARCHIVE_ENTRIES", 7)
+    with pytest.raises(BookFormatError, match="table of contents"):
+        detect_epub(data)
+
+
+def test_extracted_text_cap_rejected(monkeypatch):
+    data = simple_book(3, words=30)
+    monkeypatch.setattr(book_chapters, "MAX_EXTRACTED_CHARS", 100)
+    with pytest.raises(BookFormatError, match="too much text"):
+        detect_epub(data)
+    with pytest.raises(BookFormatError, match="too much text"):
+        book_chapters.epub_full_markdown(data)
+    locator = {"start_spine": 0, "start_anchor": None, "end_spine": 3, "end_anchor": None}
+    with pytest.raises(BookFormatError, match="too much text"):
+        book_chapters.epub_chapter_markdown(data, locator)
+
+
+def test_truncated_member_raises_book_format_error(monkeypatch):
+    data = simple_book(2)
+
+    def boom(self, *a, **k):
+        raise EOFError("truncated")
+
+    monkeypatch.setattr(zipfile.ZipFile, "open", boom)
+    with pytest.raises(BookFormatError):
+        detect_epub(data)
+
+
+def test_image_spine_item_is_not_read(monkeypatch):
+    files: dict[str, bytes | str] = {"cover.jpg": b"\xff\xd8", **_two_chapter_files()}
+    items = [("img", "cover.jpg", "image/jpeg", ""), *_TWO_ITEMS]
+    files["content.opf"] = opf(items, ["img", "c1", "c2"], toc="ncx")
+    data = make_epub(files)
+    reads: list[str] = []
+    original = book_chapters._Epub._read
+
+    def spy(self, name):
+        reads.append(name)
+        return original(self, name)
+
+    monkeypatch.setattr(book_chapters._Epub, "_read", spy)
+    assert len(detect_epub(data).chapters) == 2
+    assert "cover.jpg" not in reads
+
+
+def test_malformed_ncx_falls_back_to_spine_documents():
+    files = _two_chapter_files()
+    files["toc.ncx"] = "<ncx><navMap>"
+    files["content.opf"] = opf(_TWO_ITEMS, ["c1", "c2"], toc="ncx")
+    book = detect_epub(make_epub(files))
+    assert [c.title for c in book.chapters] == ["Section 1", "Section 2"]
+
+
+def test_cover_falls_back_to_cover_image_property():
+    files = {"cover.jpg": b"\xff\xd8COVER", **_two_chapter_files()}
+    items = [*_TWO_ITEMS, ("img", "cover.jpg", "image/jpeg", "cover-image")]
+    meta = '<meta name="cover" content="c1"/>'
+    files["content.opf"] = opf(items, ["c1", "c2"], meta=meta, toc="ncx")
+    assert detect_epub(make_epub(files)).cover == b"\xff\xd8COVER"
+
+
+def test_non_epub_type_attribute_is_not_dropped():
+    doc = (
+        '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:x="urn:other"><body>'
+        '<p x:type="pagebreak">kept text</p></body></html>'
+    )
+    files: dict[str, bytes | str] = {
+        "a.xhtml": doc,
+        "content.opf": opf([("a", "a.xhtml", XHTML, "")], ["a"]),
+    }
+    assert book_chapters.epub_full_markdown(make_epub(files))[0] == "kept text"

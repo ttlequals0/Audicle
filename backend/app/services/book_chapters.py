@@ -7,6 +7,7 @@ read with zipfile, defusedxml (container, OPF, NCX) and lxml (XHTML, nav).
 from __future__ import annotations
 
 import io
+import lzma
 import posixpath
 import re
 import zipfile
@@ -22,6 +23,7 @@ from lxml import html as lxml_html
 
 MAX_UNCOMPRESSED_BYTES = 200 * 1024 * 1024
 MAX_ARCHIVE_ENTRIES = 5000
+MAX_EXTRACTED_CHARS = 50 * 1024 * 1024
 
 _MATTER_TITLES = frozenset(
     {
@@ -82,6 +84,7 @@ _BLOCKS = frozenset(
 )
 _DROPPED = frozenset({"script", "style", "nav", "aside"})
 _DROPPED_EPUB_TYPES = frozenset({"pagebreak", "noteref"})
+_OPS_TYPE_ATTR = "{http://www.idpf.org/2007/ops}type"
 _NCX_MEDIA_TYPE = "application/x-dtbncx+xml"
 _XML_PARSE_ERRORS = (DET.ParseError, DefusedXmlException)
 
@@ -126,7 +129,7 @@ def _clean(text: str) -> str:
 
 def _epub_types(el: Any) -> set[str]:
     for key, value in el.attrib.items():
-        if key == "epub:type" or (isinstance(key, str) and key.endswith("}type")):
+        if key in ("epub:type", _OPS_TYPE_ATTR):
             return set(value.split())
     return set()
 
@@ -241,7 +244,8 @@ class _Epub:
         except zipfile.BadZipFile as exc:
             raise BookFormatError("The file is not a valid EPUB archive.") from exc
         self._check_archive()
-        self._docs: dict[int, tuple[list[str], dict[str, int]]] = {}
+        self._docs: dict[str, tuple[list[str], dict[str, int]]] = {}
+        self._chars = 0
         self._read_package()
         self._check_encryption()
 
@@ -264,7 +268,15 @@ class _Epub:
         try:
             with self._zf.open(name) as fh:
                 buf = fh.read(size + 1)
-        except (zipfile.BadZipFile, NotImplementedError, RuntimeError, zlib.error) as exc:
+        except (
+            zipfile.BadZipFile,
+            NotImplementedError,
+            RuntimeError,
+            EOFError,
+            OSError,
+            lzma.LZMAError,
+            zlib.error,
+        ) as exc:
             raise BookFormatError("The EPUB archive could not be read.") from exc
         if len(buf) > size:
             raise BookFormatError("The EPUB archive has an inconsistent entry size.")
@@ -309,37 +321,39 @@ class _Epub:
                     cover_id = node.get("content")
 
         self._manifest: dict[str, dict[str, str]] = {}
+        self._by_path: dict[str, dict[str, str]] = {}
         manifest = _xml_find(opf, "manifest")
         for item in _xml_children(manifest, "item") if manifest is not None else []:
             item_id, href = item.get("id"), item.get("href")
             if item_id and href:
                 path, _ = _split_href(self._opf_path, href)
-                self._manifest[item_id] = {
+                entry = {
                     "path": path,
                     "type": item.get("media-type", ""),
                     "props": item.get("properties", ""),
                 }
+                self._manifest[item_id] = entry
+                self._by_path.setdefault(path, entry)
 
         spine = _xml_find(opf, "spine")
         self._ncx_id = spine.get("toc") if spine is not None else None
         self.spine: list[str] = []
-        for ref in _xml_children(spine, "itemref") if spine is not None else []:
+        refs = _xml_children(spine, "itemref") if spine is not None else []
+        if len(refs) > MAX_ARCHIVE_ENTRIES:
+            raise BookFormatError("The EPUB spine has too many entries.")
+        for ref in refs:
             entry = self._manifest.get(ref.get("idref", ""))
-            if entry is not None:
+            if entry is not None and entry["path"] not in self.spine:
                 self.spine.append(entry["path"])
         if not self.spine:
             raise BookFormatError("The EPUB has no readable content.")
         self._spine_index = {path: i for i, path in enumerate(self.spine)}
 
-        if cover_id is None:
-            for item_id, entry in self._manifest.items():
-                if "cover-image" in entry["props"].split():
-                    cover_id = item_id
-                    break
-        cover = self._manifest.get(cover_id or "")
-        self.cover = (
-            self._read(cover["path"]) if cover and cover["type"].startswith("image/") else None
-        )
+        candidates = [self._manifest.get(cover_id or "")] + [
+            m for m in self._manifest.values() if "cover-image" in m["props"].split()
+        ]
+        cover = next((c for c in candidates if c and c["type"].startswith("image/")), None)
+        self.cover = self._read(cover["path"]) if cover else None
 
     def _check_encryption(self) -> None:
         enc = self._read_xml("META-INF/encryption.xml")
@@ -352,15 +366,17 @@ class _Epub:
                     raise BookFormatError("This EPUB is DRM-protected and cannot be read.")
 
     def doc(self, spine_idx: int) -> tuple[list[str], dict[str, int]]:
-        if spine_idx not in self._docs:
-            self._docs[spine_idx] = self._parse_doc(spine_idx)
-        return self._docs[spine_idx]
-
-    def _parse_doc(self, spine_idx: int) -> tuple[list[str], dict[str, int]]:
         path = self.spine[spine_idx]
-        entry = next((m for m in self._manifest.values() if m["path"] == path), None)
+        if path not in self._docs:
+            self._docs[path] = self._parse_doc(path)
+        return self._docs[path]
+
+    def _parse_doc(self, path: str) -> tuple[list[str], dict[str, int]]:
+        entry = self._by_path.get(path)
+        if entry and entry["type"].startswith("image/"):
+            return [], {}
         raw = self._read(path)
-        if raw is None or (entry and entry["type"].startswith("image/")):
+        if raw is None:
             return [], {}
         root = _parse_xhtml(raw)
         body = _find_body(root) if root is not None else None
@@ -370,6 +386,9 @@ class _Epub:
         marks: dict[str, int] = {}
         _note_anchors(body, out, marks)
         _walk(body, out, marks)
+        self._chars += sum(len(p) for p in out)
+        if self._chars > MAX_EXTRACTED_CHARS:
+            raise BookFormatError("The EPUB contains too much text.")
         return out, marks
 
     def anchor_pos(self, spine_idx: int, anchor: str | None) -> int | None:
@@ -413,6 +432,11 @@ class _Epub:
         navs = [n for n in root.iter() if _local(n.tag) == "nav"]
         nav = next((n for n in navs if "toc" in _epub_types(n)), navs[0] if navs else None)
         top = _xml_find(nav, "ol") if nav is not None else None
+        if (
+            nav is not None
+            and sum(1 for n in nav.iter() if _local(n.tag) == "li") > MAX_ARCHIVE_ENTRIES
+        ):
+            raise BookFormatError("The EPUB table of contents has too many entries.")
         entries = []
         for li in _xml_children(top, "li") if top is not None else []:
             link = next((c for c in li if _local(c.tag) in ("a", "span")), None)
@@ -429,8 +453,17 @@ class _Epub:
         return entries
 
     def _ncx_entries(self, path: str) -> list[tuple[str, str, str]]:
-        root = self._read_xml(path)
-        nav_map = _xml_find(root, "navMap".lower()) if root is not None else None
+        raw = self._read(path)
+        try:
+            root = DET.fromstring(raw) if raw is not None else None
+        except _XML_PARSE_ERRORS:
+            return []
+        nav_map = _xml_find(root, "navmap") if root is not None else None
+        if (
+            nav_map is not None
+            and sum(1 for n in nav_map.iter() if _local(n.tag) == "navpoint") > MAX_ARCHIVE_ENTRIES
+        ):
+            raise BookFormatError("The EPUB table of contents has too many entries.")
         entries = []
         for point in _xml_children(nav_map, "navpoint") if nav_map is not None else []:
             label = _xml_find(point, "navlabel")
