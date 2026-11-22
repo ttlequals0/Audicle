@@ -22,7 +22,13 @@ from app.services.book_chapters import DetectedBook
 CHAPTER_FRAGMENT = "#chapter="
 IN_FLIGHT = ("staging", "queued", "processing")
 
-_SEASON_KEY = "book_season_high_water"
+SEASON_HIGH_WATER_KEY = "book_season_high_water"
+NEWEST_JOB_SQL = (
+    "SELECT j.episode_id, j.status FROM ("
+    "SELECT episode_id, MAX(rowid) AS rid FROM jobs "
+    "WHERE episode_id IN (SELECT episode_id FROM book_chapters WHERE book_id = ?) "
+    "GROUP BY episode_id) n JOIN jobs j ON j.rowid = n.rid"
+)
 _IN_FLIGHT_SQL = ",".join(f"'{s}'" for s in IN_FLIGHT)
 _BOOK_COLUMNS = "id, source_uri, filename, format, title, author, season_number, has_cover, created_at, voice_id"
 _CHAPTER_COLUMNS = (
@@ -132,13 +138,15 @@ def create_book(
     conn.execute("BEGIN IMMEDIATE")
     try:
         # High-water mark in settings so a deleted book's season is never reused.
-        mark = conn.execute("SELECT value FROM settings WHERE key = ?", (_SEASON_KEY,)).fetchone()
+        mark = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", (SEASON_HIGH_WATER_KEY,)
+        ).fetchone()
         live = conn.execute("SELECT COALESCE(MAX(season_number), 0) FROM books").fetchone()[0]
         season = max(live, int(mark["value"]) if mark else 0) + 1
         conn.execute(
             "INSERT INTO settings (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            (_SEASON_KEY, str(season)),
+            (SEASON_HIGH_WATER_KEY, str(season)),
         )
         conn.execute(
             "INSERT INTO books (id, source_uri, filename, format, title, author, "
@@ -178,7 +186,8 @@ def create_book(
             conn.execute("ROLLBACK")
         raise
     book = get_book(conn, book_id)
-    assert book is not None  # just inserted
+    if book is None:
+        raise RuntimeError(f"book {book_id} missing after insert")
     return book
 
 
@@ -224,15 +233,7 @@ def chapter_statuses(conn: sqlite3.Connection, book_id: str) -> dict[int, str]:
         (book_id,),
     ):
         (processing if row["status"] == "processing" else queued).add(row["episode_id"])
-    newest = {
-        row["episode_id"]: row["status"]
-        for row in conn.execute(
-            "SELECT j.episode_id, j.status FROM jobs j "
-            "WHERE j.rowid = (SELECT MAX(rowid) FROM jobs WHERE episode_id = j.episode_id) "
-            f"AND j.episode_id IN ({scope})",
-            (book_id,),
-        )
-    }
+    newest = {row["episode_id"]: row["status"] for row in conn.execute(NEWEST_JOB_SQL, (book_id,))}
     published = {
         row["id"]
         for row in conn.execute(f"SELECT id FROM episodes WHERE id IN ({scope})", (book_id,))
@@ -256,7 +257,7 @@ def chapter_statuses(conn: sqlite3.Connection, book_id: str) -> dict[int, str]:
     return statuses
 
 
-def _parse_index_list(value: str) -> list[int]:
+def _parse_index_list(value: str, max_idx: int) -> list[int]:
     idxs: list[int] = []
     for token in value.split(","):
         token = token.strip()
@@ -266,6 +267,8 @@ def _parse_index_list(value: str) -> list[int]:
         start, end = int(lo), int(hi) if sep else int(lo)
         if end < start:
             raise ValueError(f"reversed chapter range: {token!r}")
+        if start < 1 or end > max_idx:
+            raise ValueError(f"unknown chapter index in {token!r}")
         idxs.extend(range(start, end + 1))
     return idxs
 
@@ -283,11 +286,12 @@ def parse_selection(
             c.idx
             for c in chapters
             if c.requested
+            and c.selectable
             and c.completed_at is None
-            and statuses.get(c.idx) not in ("queued", "processing")
+            and statuses.get(c.idx) not in ("queued", "processing", "done")
         ]
     if isinstance(value, str):
-        requested = _parse_index_list(value)
+        requested = _parse_index_list(value, max((c.idx for c in chapters), default=0))
     else:
         if not all(isinstance(i, int) and not isinstance(i, bool) for i in value):
             raise ValueError("chapter indexes must be integers")
@@ -306,21 +310,23 @@ def queue_chapters(
     conn: sqlite3.Connection, book: Book, idxs: list[int], voice_id: str | None
 ) -> QueueResult:
     statuses = chapter_statuses(conn, book.id)
+    selectable = {c.idx for c in get_chapters(conn, book.id) if c.selectable}
     queued: list[jobs.Job] = []
     skipped: list[int] = []
     for idx in sorted(set(idxs)):
-        if statuses.get(idx, "not_queued") in ("done", "queued", "processing"):
+        if idx not in selectable or statuses[idx] in ("done", "queued", "processing"):
             skipped.append(idx)
             continue
+        # Set before the job exists so a crash cannot leave a queued job unrequested.
+        conn.execute(
+            "UPDATE book_chapters SET requested = 1 WHERE book_id = ? AND idx = ?",
+            (book.id, idx),
+        )
         try:
             result = jobs.create_job(conn, chapter_uri(book.source_uri, idx), voice_id=voice_id)
         except jobs.DuplicateSubmissionError:
             skipped.append(idx)
             continue
-        conn.execute(
-            "UPDATE book_chapters SET requested = 1 WHERE book_id = ? AND idx = ?",
-            (book.id, idx),
-        )
         queued.append(result.job)
     return QueueResult(queued=queued, skipped=skipped)
 

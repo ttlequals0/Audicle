@@ -622,6 +622,10 @@ def test_m031_is_additive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
         assert after_ep.pop("season_number") is None
         assert after_ep.pop("episode_number") is None
         assert after_ep == before_ep
+        index = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_jobs_episode_id'"
+        ).fetchone()
+        assert index is not None
         database._m031_books(conn)  # idempotent re-run
     finally:
         conn.close()

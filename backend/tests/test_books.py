@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -132,8 +133,8 @@ def test_parse_selection_forms(conn) -> None:
 
 
 def test_remaining_excludes_completed_and_in_flight(conn) -> None:
-    book = _make(conn, n=6)
-    books.queue_chapters(conn, book, [1, 2, 3, 4, 5, 6], None)
+    book = _make(conn, n=8)
+    books.queue_chapters(conn, book, [1, 2, 3, 4, 5, 6, 7], None)
     conn.execute("DELETE FROM jobs")
     eps = {c.idx: c.episode_id for c in books.get_chapters(conn, book.id)}
     _job(conn, book, 1, "failed")
@@ -143,6 +144,9 @@ def test_remaining_excludes_completed_and_in_flight(conn) -> None:
     books.mark_completed(conn, eps[4])
     books.mark_completed(conn, eps[5])  # removed: completed, episode gone
     _job(conn, book, 6, "queued")
+    _episode(conn, book, 7)  # done with completed_at NULL
+    conn.execute("UPDATE book_chapters SET requested = 1 WHERE idx = 8")
+    conn.execute("UPDATE book_chapters SET selectable = 0 WHERE idx = 8")
     chapters = books.get_chapters(conn, book.id)
     statuses = books.chapter_statuses(conn, book.id)
     assert books.parse_selection("remaining", chapters, statuses) == [1, 2, 3]
@@ -197,3 +201,42 @@ def test_delete_book_removes_rows_and_directory_but_keeps_episodes(conn) -> None
     assert not directory.exists()
     assert conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0] == 1
     books.delete_book(conn, settings, book.id)  # missing directory is tolerated
+
+
+def test_parse_selection_rejects_huge_range_without_expanding(conn) -> None:
+    book = _make(conn, n=3)
+    chapters = books.get_chapters(conn, book.id)
+    start = time.monotonic()
+    with pytest.raises(ValueError, match="1-99999999999"):
+        books.parse_selection("1-99999999999", chapters, {})
+    assert time.monotonic() - start < 0.5
+
+
+def test_newest_job_query_uses_episode_index(conn) -> None:
+    plan = " ".join(
+        row["detail"] for row in conn.execute("EXPLAIN QUERY PLAN " + books.NEWEST_JOB_SQL, ("b",))
+    )
+    assert "idx_jobs_episode_id" in plan
+    assert "SCAN jobs" not in plan
+
+
+def test_queue_chapters_skips_unknown_and_unselectable(conn) -> None:
+    book = _make(conn, n=3, short=(2,))
+    result = books.queue_chapters(conn, book, [1, 2, 9], None)
+    assert [j.url for j in result.queued] == [books.chapter_uri(book.source_uri, 1)]
+    assert result.skipped == [2, 9]
+    assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+
+
+def test_queue_chapters_marks_requested_before_job_creation(
+    conn, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    book = _make(conn, n=2)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("crash")
+
+    monkeypatch.setattr(jobs, "create_job", boom)
+    with pytest.raises(RuntimeError):
+        books.queue_chapters(conn, book, [1, 2], None)
+    assert {c.idx: c.requested for c in books.get_chapters(conn, book.id)} == {1: True, 2: False}
