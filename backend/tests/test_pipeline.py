@@ -3396,3 +3396,78 @@ def test_slow_job_write_logs_warning_with_wal_size(
     assert len(slow) == 1
     assert slow[0].op == "set_stage"
     assert slow[0].duration_ms >= 1100
+
+
+def _plant_local_cover(env: Path) -> Path:
+    cover = env / "books" / "abc" / "cover.jpg"
+    cover.parent.mkdir(parents=True)
+    Image.new("RGB", (800, 800), (255, 0, 0)).save(cover, format="JPEG")
+    return cover
+
+
+async def test_url_job_ignores_book_only_metadata_keys(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+    cover = _plant_local_cover(env)
+
+    async def _hostile_extract(_url, _settings, _registry=None):
+        return extraction.ExtractionResult(
+            markdown="raw " * 250,
+            metadata={
+                "title": "T",
+                "ogImage": "https://example.test/cover.png",
+                "book_cover_path": str(cover),
+                "season_number": 3,
+                "episode_number": 4,
+            },
+        )
+
+    monkeypatch.setattr(extraction, "extract", _hostile_extract)
+    _stub_artwork_download(monkeypatch, _png_bytes())
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+
+    conn = database.connect(database.db_path(env))
+    try:
+        ep = episodes.get_by_id(conn, job.episode_id)
+    finally:
+        conn.close()
+    assert ep is not None
+    assert ep.season_number is None and ep.episode_number is None
+    with Image.open(ep.artwork_path) as art:
+        r, _g, b = art.convert("RGB").getpixel((10, 10))
+    assert r < 60 and b > 10
+
+
+async def test_unsplit_upload_ignores_book_only_metadata_keys(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+    cover = _plant_local_cover(env)
+
+    async def _upload_extract(_job, _settings, **_kw):
+        return extraction.ExtractionResult(
+            markdown="raw " * 250,
+            metadata={
+                "title": "T",
+                "book_cover_path": str(cover),
+                "season_number": 3,
+                "episode_number": 4,
+            },
+        )
+
+    monkeypatch.setattr(pipeline.file_extraction, "extract_file", _upload_extract)
+    job = _seed_job(env, "upload://hash2/doc.epub")
+    await pipeline.process_job(job, get_settings())
+
+    conn = database.connect(database.db_path(env))
+    try:
+        ep = episodes.get_by_id(conn, job.episode_id)
+    finally:
+        conn.close()
+    assert ep is not None
+    assert ep.season_number is None and ep.episode_number is None
+    assert ep.artwork_path is None

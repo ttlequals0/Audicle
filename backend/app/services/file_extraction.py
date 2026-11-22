@@ -215,7 +215,7 @@ def _chapter_metadata(
     settings: Settings, book: books.Book, chapter: books.Chapter
 ) -> dict[str, Any]:
     metadata: dict[str, Any] = {
-        "title": f"{book.title}: {chapter.title}" if book.title else chapter.title,
+        "title": f"{book.title}: {chapter.title}",
         "author": book.author,
         "season_number": book.season_number,
         "episode_number": chapter.idx,

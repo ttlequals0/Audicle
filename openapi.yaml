@@ -2360,9 +2360,7 @@ components:
           type: string
           title: Book Id
         title:
-          anyOf:
-          - type: string
-          - type: 'null'
+          type: string
           title: Title
         author:
           anyOf:

@@ -81,6 +81,27 @@ def test_create_book_allocates_increasing_seasons(conn, env: Path) -> None:
     assert _make(conn, "c").season_number == 3
 
 
+@pytest.mark.parametrize("title", [None, "   "])
+def test_create_book_falls_back_to_filename_stem(conn, title) -> None:
+    detected = _detected()
+    detected = DetectedBook(
+        format=detected.format,
+        title=title,
+        author=detected.author,
+        cover=None,
+        chapters=detected.chapters,
+    )
+    book = books.create_book(
+        conn,
+        source_uri="upload://h/My Novel.epub",
+        filename="My Novel.epub",
+        detected=detected,
+        has_cover=False,
+    )
+    assert book.title == "My Novel"
+    assert books.get_book(conn, book.id).title == "My Novel"
+
+
 def test_chapter_episode_ids_are_deterministic_and_distinct(conn) -> None:
     book = _make(conn, n=3)
     ids = [c.episode_id for c in books.get_chapters(conn, book.id)]

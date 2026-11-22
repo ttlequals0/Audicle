@@ -726,3 +726,41 @@ def test_selectable_pdf_image_only_chapter():
     book = book_chapters.detect(buf.getvalue(), ".pdf", min_chars=200)
     flags = {c.title: (c.selectable, c.default_selected) for c in book.chapters}
     assert flags == {"Scan": (True, True), "Empty": (False, False)}
+
+
+XHTML11_DOCTYPE = (
+    '<?xml version="1.0" encoding="utf-8"?>'
+    '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" '
+    '"http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">'
+)
+
+
+def _single_doc_markdown(doc: str) -> str:
+    files: dict[str, bytes | str] = {
+        "a.xhtml": doc,
+        "content.opf": opf([("a", "a.xhtml", XHTML, "")], ["a"]),
+    }
+    return book_chapters.epub_full_markdown(make_epub(files))[0]
+
+
+def test_named_entities_survive_with_doctype():
+    body = "<p>He said&nbsp;no. Don&rsquo;t go&mdash;stay at the caf&eacute;.</p>"
+    text = _single_doc_markdown(
+        XHTML11_DOCTYPE
+        + '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title></head>'
+        + f"<body>{body}</body></html>"
+    )
+    # _clean folds the non-breaking space into a plain space
+    assert text == "He said no. Don\u2019t go\u2014stay at the caf\u00e9."
+
+
+def test_unknown_entity_is_dropped_not_expanded():
+    doc = (
+        '<?xml version="1.0"?><!DOCTYPE html [<!ENTITY secret "EXPANDED">]>'
+        '<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+        "<p>before &secret; after</p></body></html>"
+    )
+    text = _single_doc_markdown(doc)
+    assert "EXPANDED" not in text
+    assert "before" in text
+    assert "after" in text

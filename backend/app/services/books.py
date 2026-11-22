@@ -44,7 +44,7 @@ class Book:
     source_uri: str
     filename: str
     format: str
-    title: str | None
+    title: str
     author: str | None
     season_number: int
     has_cover: bool
@@ -136,6 +136,7 @@ def create_book(
     has_cover: bool,
 ) -> Book:
     book_id = book_id_for(source_uri)
+    title = (detected.title or "").strip() or Path(filename).stem
     conn.execute("BEGIN IMMEDIATE")
     try:
         # High-water mark in settings so a deleted book's season is never reused.
@@ -157,7 +158,7 @@ def create_book(
                 source_uri,
                 filename,
                 detected.format,
-                detected.title,
+                title,
                 detected.author,
                 season,
                 int(has_cover),

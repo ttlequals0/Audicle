@@ -581,7 +581,7 @@ async def test_extract_pdf_chapter_reads_only_its_pages(env: Path) -> None:
     assert "Marker3" in result.markdown
     for n in (0, 1, 4, 5):
         assert f"Marker{n}" not in result.markdown
-    assert result.metadata["title"] == "B"
+    assert result.metadata["title"] == "tome: B"
 
 
 async def test_extract_pdf_chapter_ocr_limited_to_range(

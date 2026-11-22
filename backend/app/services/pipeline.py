@@ -652,16 +652,29 @@ def _intro_read_line(metadata: dict[str, Any] | None, settings: Settings) -> str
     return f"{title} By {author}." if author else title
 
 
+_BOOK_ONLY_METADATA_KEYS = ("book_cover_path", "season_number", "episode_number")
+
+
+def _drop_book_only_metadata(job: jobs.Job, result: extraction.ExtractionResult) -> None:
+    # Only chapter jobs may set these; a page's own meta must not reach the cover or season.
+    if books.split_chapter_uri(job.url)[1] is None:
+        for key in _BOOK_ONLY_METADATA_KEYS:
+            result.metadata.pop(key, None)
+
+
 async def _stage_extract(job: jobs.Job, settings: Settings) -> extraction.ExtractionResult:
     # Uploaded documents carry a synthetic ``upload://`` source: read and parse the
     # stored file instead of fetching a URL. Everything downstream is identical.
     if file_extraction.is_upload_source(job.url):
-        return await file_extraction.extract_file(job, settings, beat=_beat)
+        result = await file_extraction.extract_file(job, settings, beat=_beat)
+        _drop_book_only_metadata(job, result)
+        return result
     # Build the effective paywall-fallback registry (operator rules over built-ins, plus
     # a global-default catch-all) so extraction routes known paywall hosts through the
     # configured bypass. Shared with the /source-fallbacks/test endpoint.
     registry = source_fallbacks_store.load_registry(settings)
     result = await extraction.extract(job.url, settings, registry)
+    _drop_book_only_metadata(job, result)
     logger.info(
         "Extraction succeeded",
         extra={

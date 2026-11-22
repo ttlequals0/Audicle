@@ -33,7 +33,7 @@ class BookChapterOut(BaseModel):
 
 class BookResponse(BaseModel):
     book_id: str
-    title: str | None
+    title: str
     author: str | None
     filename: str
     format: str

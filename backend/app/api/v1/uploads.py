@@ -296,8 +296,10 @@ async def reprocess_upload(
                 status_code=409,
                 detail="the stored original is no longer on disk; re-upload the document to reprocess",
             )
+        chapter = books.chapter_for_episode(conn, episode_id)
+        voice_id = chapter[0].voice_id if chapter else None
         try:
-            result = jobs.create_job(conn, episode.original_url, reprocess=True)
+            result = jobs.create_job(conn, episode.original_url, reprocess=True, voice_id=voice_id)
         except jobs.DuplicateSubmissionError as exc:
             raise HTTPException(
                 status_code=409,

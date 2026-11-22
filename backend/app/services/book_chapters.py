@@ -14,6 +14,7 @@ import re
 import zipfile
 import zlib
 from dataclasses import dataclass
+from html.entities import html5
 from typing import Any
 from urllib.parse import unquote
 
@@ -168,11 +169,18 @@ def _is_dropped(el: Any, tag: str) -> bool:
     return tag == "" or tag in _DROPPED or bool(_epub_types(el) & _DROPPED_EPUB_TYPES)
 
 
+def _entity_text(el: Any) -> str:
+    # Only standard HTML names resolve; custom DTD entities stay dropped.
+    return html5.get(str(el.text or "").strip("&;") + ";", "")
+
+
 def _inline(el: Any) -> str:
     parts = [el.text or ""]
     for child in el:
         tag = _local(child.tag)
-        if not _is_dropped(child, tag):
+        if child.tag is etree.Entity:
+            parts.append(_entity_text(child))
+        elif not _is_dropped(child, tag):
             parts.append(" " if tag == "br" else _inline(child))
         parts.append(child.tail or "")
     return "".join(parts)
@@ -195,7 +203,9 @@ def _walk(el: Any, out: list[str], marks: dict[str, int]) -> None:
 
     for child in el:
         tag = _local(child.tag)
-        if _is_dropped(child, tag):
+        if child.tag is etree.Entity:
+            buf.append(_entity_text(child))
+        elif _is_dropped(child, tag):
             pass
         elif tag in _HEADINGS:
             flush()

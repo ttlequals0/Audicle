@@ -294,7 +294,7 @@ def test_feed_render_upload_episode_has_no_synthetic_link(env: Path) -> None:
     assert b"My Report.pdf" in body
 
 
-def test_reprocess_chapter_episode_uses_book_source(env: Path) -> None:
+def _seed_chapter_episode(env: Path) -> tuple[books.Book, str]:
     database.run_migrations(env)
     detected = DetectedBook(
         format="epub",
@@ -340,6 +340,12 @@ def test_reprocess_chapter_episode_uses_book_source(env: Path) -> None:
     path = books.source_file(get_settings(), book.id, ".epub")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"EPUB")
+    return book, episode_id
+
+
+def test_reprocess_chapter_episode_uses_book_source(env: Path) -> None:
+    book, episode_id = _seed_chapter_episode(env)
+    path = books.source_file(get_settings(), book.id, ".epub")
     with _client(env) as client:
         ok = client.post(f"/api/v1/upload/{episode_id}/reprocess")
         path.unlink()
@@ -348,10 +354,28 @@ def test_reprocess_chapter_episode_uses_book_source(env: Path) -> None:
     assert gone.status_code == 409
 
 
+def test_reprocess_chapter_episode_keeps_book_voice(env: Path) -> None:
+    book, episode_id = _seed_chapter_episode(env)
+    conn = database.connect(database.db_path(env))
+    try:
+        books.set_voice(conn, book.id, "2")
+    finally:
+        conn.close()
+    with _client(env) as client:
+        r = client.post(f"/api/v1/upload/{episode_id}/reprocess")
+    assert r.status_code == 201
+    conn = database.connect(database.db_path(env))
+    try:
+        row = conn.execute("SELECT voice_id FROM jobs WHERE id = ?", (r.json()["job_id"],)).fetchone()
+    finally:
+        conn.close()
+    assert row["voice_id"] == "2"
+
+
 # --- POST /upload with split_chapters -----------------------------------------
 
 
-def _epub(n: int = 3, *, encrypted: bool = False) -> bytes:
+def _epub(n: int = 3, *, encrypted: bool = False, title: str | None = "Test Book") -> bytes:
     items = ['<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>']
     points = ""
     files: dict[str, str] = {}
@@ -372,8 +396,8 @@ def _epub(n: int = 3, *, encrypted: bool = False) -> bytes:
     spine = "".join(f'<itemref idref="c{i}"/>' for i in range(1, n + 1))
     files["content.opf"] = (
         '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0">'
-        '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Test Book</dc:title>'
-        f'</metadata><manifest>{"".join(items)}</manifest><spine toc="ncx">{spine}</spine></package>'
+        '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        f'{f"<dc:title>{title}</dc:title>" if title else ""}</metadata><manifest>{"".join(items)}</manifest><spine toc="ncx">{spine}</spine></package>'
     )
     if encrypted:
         files["META-INF/encryption.xml"] = (
@@ -486,6 +510,13 @@ def test_upload_split_epub_creates_book_and_no_jobs(env: Path) -> None:
     assert (Path(get_settings().DATA_DIR) / "books" / body["book_id"] / "source.epub").is_file()
 
 
+def test_upload_split_epub_without_title_uses_filename_stem(env: Path) -> None:
+    with _client(env) as client:
+        r = _post_epub(client, _epub(title=None), split_chapters="true")
+    assert r.status_code == 201
+    assert r.json()["title"] == "book"
+
+
 def test_upload_split_with_chapters_queues_in_order(env: Path) -> None:
     with _client(env) as client:
         r = _post_epub(client, split_chapters="true", chapters="2-3")
@@ -594,7 +625,7 @@ def test_split_upload_survives_book_deleted_between_check_and_lock(
                 source_uri="x",
                 filename="book.epub",
                 format="epub",
-                title=None,
+                title="book",
                 author=None,
                 season_number=1,
                 has_cover=False,

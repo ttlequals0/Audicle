@@ -114,7 +114,7 @@ async def get_rss(
     if body is None:
         list_started = time.perf_counter()
         rows = episodes.list_for_feed(conn)
-        season_names = {b.season_number: b.title for b in books.list_books(conn) if b.title}
+        season_names = {b.season_number: b.title for b in books.list_books(conn)}
         render_started = time.perf_counter()
         body = feed.render(
             rows,
