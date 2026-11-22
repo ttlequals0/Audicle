@@ -17,6 +17,7 @@ from app.services import books, feed_revision, voices
 
 router = APIRouter(prefix="/books", tags=["books"])
 _BOOK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_STATUSES = ("not_queued", "queued", "processing", "done", "failed", "cancelled", "removed")
 
 
 class BookChapterOut(BaseModel):
@@ -72,7 +73,7 @@ def book_response(
         season_number=book.season_number,
         has_cover=book.has_cover,
         created_at=book.created_at,
-        counts=dict(Counter(statuses.values())),
+        counts={s: Counter(statuses.values())[s] for s in _STATUSES},
         can_resume=bool(books.parse_selection("remaining", chapters, statuses)),
         chapters=[
             BookChapterOut(

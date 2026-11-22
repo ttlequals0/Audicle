@@ -8,7 +8,7 @@ import pytest
 from app.config import get_settings
 from app.core import database
 from app.main import create_app
-from app.services import books, jobs, voices
+from app.services import books, jobs, runtime_settings, voices
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -16,14 +16,20 @@ NCX_TYPE = "application/x-dtbncx+xml"
 XHTML = "application/xhtml+xml"
 
 
-def _epub(n: int = 3, *, cover: bytes | None = None, encrypted: bool = False) -> bytes:
+def _epub(
+    n: int = 3,
+    *,
+    cover: bytes | None = None,
+    encrypted: bool = False,
+    words: tuple[int, ...] = (),
+) -> bytes:
     items = [f'<item id="ncx" href="toc.ncx" media-type="{NCX_TYPE}"/>']
     points = ""
     files: dict[str, bytes | str] = {}
     for i in range(1, n + 1):
         files[f"ch{i}.xhtml"] = (
             '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title></head>'
-            f"<body><h1>Chapter {i}</h1><p>{'word ' * 60}</p></body></html>"
+            f"<body><h1>Chapter {i}</h1><p>{'word ' * (words[i - 1] if words else 60)}</p></body></html>"
         )
         items.append(f'<item id="c{i}" href="ch{i}.xhtml" media-type="{XHTML}"/>')
         points += (
@@ -68,9 +74,9 @@ def _epub(n: int = 3, *, cover: bytes | None = None, encrypted: bool = False) ->
     return buf.getvalue()
 
 
-def _png() -> bytes:
+def _png(side: int = 8) -> bytes:
     buf = io.BytesIO()
-    Image.new("RGBA", (8, 8), (200, 10, 10, 255)).save(buf, format="PNG")
+    Image.new("RGBA", (side, side), (200, 10, 10, 255)).save(buf, format="PNG")
     return buf.getvalue()
 
 
@@ -138,7 +144,15 @@ def test_list_books_reports_counts(env: Path) -> None:
         rows = client.get("/api/v1/books").json()
     assert [r["book_id"] for r in rows] == [book_id]
     assert rows[0]["chapters"] == []
-    assert rows[0]["counts"] == {"queued": 2, "not_queued": 1}
+    assert rows[0]["counts"] == {
+        "not_queued": 1,
+        "queued": 2,
+        "processing": 0,
+        "done": 0,
+        "failed": 0,
+        "cancelled": 0,
+        "removed": 0,
+    }
     assert rows[0]["can_resume"] is False
     _set_job(env, _chapter_episode(env, book_id, 1), "failed")
     with _client(env) as client:
@@ -316,3 +330,37 @@ def test_book_routes_404(env: Path) -> None:
             assert client.delete(f"/api/v1/books/{bad}").status_code == 404
             r = client.post(f"/api/v1/books/{bad}/chapters", json={"chapters": "all"})
             assert r.status_code == 404
+
+
+def test_book_chapter_out_reports_unselectable_short_chapter(env: Path) -> None:
+    with _client(env) as client:
+        book_id = _split(client, _epub(words=(60, 1, 60))).json()["book_id"]
+        chapters = client.get(f"/api/v1/books/{book_id}").json()["chapters"]
+    short = chapters[1]
+    assert short["selectable"] is False
+    assert short["default_selected"] is False
+    assert chapters[0]["selectable"] is True
+
+
+def test_split_upload_uses_overlay_min_extraction_chars(env: Path) -> None:
+    database.run_migrations(env)
+    conn = _db(env)
+    try:
+        runtime_settings.set_value(conn, "MIN_EXTRACTION_CHARS", 400)
+    finally:
+        conn.close()
+    with TestClient(create_app()) as client:
+        # 60 words is ~300 chars: above the 150 default, below the 400 overlay
+        body = _split(client, _epub(words=(60, 120, 60))).json()
+    assert {c["index"]: c["selectable"] for c in body["chapters"]} == {1: False, 2: True, 3: False}
+
+
+@pytest.mark.filterwarnings("ignore::PIL.Image.DecompressionBombWarning")
+def test_split_upload_drops_oversized_cover(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 100)
+    with _client(env) as client:
+        for side in (12, 15):  # 1x-2x the limit (warns), above 2x (raises)
+            r = _split(client, _epub(cover=_png(side)))
+            assert r.status_code == 201, side
+            assert r.json()["has_cover"] is False
+            assert not books.cover_file(get_settings(), r.json()["book_id"]).exists()

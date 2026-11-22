@@ -566,3 +566,46 @@ def test_upload_split_removes_book_directory_when_create_fails(
     with _client(env) as client, pytest.raises(RuntimeError):
         _post_epub(client, split_chapters="true")
     assert list((Path(get_settings().DATA_DIR) / "books").iterdir()) == []
+
+
+def test_split_upload_with_bad_chapters_writes_nothing_and_keeps_season(env: Path) -> None:
+    data = _epub()
+    with _client(env) as client:
+        bad = _post_epub(client, data, split_chapters="true", chapters="99")
+        assert bad.status_code == 400
+        assert _row_counts(env) == (0, 0, 0)
+        assert list((Path(get_settings().DATA_DIR) / "books").glob("*")) == []
+        good = _post_epub(client, data, split_chapters="true", chapters="1")
+    assert good.status_code == 201
+    assert good.json()["season_number"] == 1
+
+
+def test_split_upload_survives_book_deleted_between_check_and_lock(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = books.get_book
+    calls = {"n": 0}
+
+    def _flaky(conn, book_id):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return books.Book(
+                id=book_id,
+                source_uri="x",
+                filename="book.epub",
+                format="epub",
+                title=None,
+                author=None,
+                season_number=1,
+                has_cover=False,
+                created_at="",
+                voice_id=None,
+            )
+        return real(conn, book_id)
+
+    monkeypatch.setattr(uploads.books, "get_book", _flaky)
+    with _client(env) as client:
+        r = _post_epub(client, split_chapters="true")
+    assert r.status_code == 201
+    assert len(r.json()["chapters"]) == 3
+    assert _row_counts(env) == (1, 3, 0)

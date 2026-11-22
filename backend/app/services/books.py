@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import shutil
 import sqlite3
+from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,7 +18,7 @@ from typing import Any
 from app.config import Settings
 from app.core.paths import book_dir
 from app.services import jobs
-from app.services.book_chapters import DetectedBook
+from app.services.book_chapters import DetectedBook, DetectedChapter
 
 CHAPTER_FRAGMENT = "#chapter="
 IN_FLIGHT = ("staging", "queued", "processing")
@@ -273,6 +274,38 @@ def _parse_index_list(value: str, max_idx: int) -> list[int]:
     return idxs
 
 
+_KEYWORDS = ("all", "default", "remaining")
+
+
+def _explicit_selection(
+    value: str | list[int], chapters: Sequence[Chapter] | Sequence[DetectedChapter]
+) -> list[int]:
+    if isinstance(value, str):
+        requested = _parse_index_list(value, max((c.idx for c in chapters), default=0))
+    else:
+        if not all(isinstance(i, int) and not isinstance(i, bool) for i in value):
+            raise ValueError("chapter indexes must be integers")
+        requested = list(value)
+    by_idx = {c.idx: c for c in chapters}
+    for idx in requested:
+        chapter = by_idx.get(idx)
+        if chapter is None:
+            raise ValueError(f"unknown chapter index: {idx}")
+        if not chapter.selectable:
+            raise ValueError(f"chapter {idx} is too short to narrate")
+    return sorted(set(requested))
+
+
+def validate_selection(
+    value: str | list[int], chapters: Sequence[Chapter] | Sequence[DetectedChapter]
+) -> None:
+    """Raise ValueError for a bad explicit selection; usable before any rows exist."""
+
+    keyword = value.strip().lower() if isinstance(value, str) else None
+    if keyword not in _KEYWORDS:
+        _explicit_selection(value, chapters)
+
+
 def parse_selection(
     value: str | list[int], chapters: list[Chapter], statuses: dict[int, str]
 ) -> list[int]:
@@ -290,20 +323,7 @@ def parse_selection(
             and c.completed_at is None
             and statuses.get(c.idx) not in ("queued", "processing", "done")
         ]
-    if isinstance(value, str):
-        requested = _parse_index_list(value, max((c.idx for c in chapters), default=0))
-    else:
-        if not all(isinstance(i, int) and not isinstance(i, bool) for i in value):
-            raise ValueError("chapter indexes must be integers")
-        requested = list(value)
-    by_idx = {c.idx: c for c in chapters}
-    for idx in requested:
-        chapter = by_idx.get(idx)
-        if chapter is None:
-            raise ValueError(f"unknown chapter index: {idx}")
-        if not chapter.selectable:
-            raise ValueError(f"chapter {idx} is too short to narrate")
-    return sorted(set(requested))
+    return _explicit_selection(value, chapters)
 
 
 def queue_chapters(

@@ -240,3 +240,14 @@ def test_queue_chapters_marks_requested_before_job_creation(
     with pytest.raises(RuntimeError):
         books.queue_chapters(conn, book, [1, 2], None)
     assert {c.idx: c.requested for c in books.get_chapters(conn, book.id)} == {1: True, 2: False}
+
+
+def test_validate_selection_checks_detected_chapters_before_rows_exist() -> None:
+    detected = _detected(3, short=(2,)).chapters
+    books.validate_selection("all", detected)
+    books.validate_selection("default", detected)
+    books.validate_selection("1,3", detected)
+    books.validate_selection([1, 3], detected)
+    for bad in ("99", "0", "3-1", "x", "2", [2], [99], ["1"], [True]):
+        with pytest.raises(ValueError):
+            books.validate_selection(bad, detected)

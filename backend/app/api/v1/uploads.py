@@ -18,7 +18,6 @@ import io
 import re
 import shutil
 import sqlite3
-import warnings
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
@@ -67,12 +66,13 @@ def _prepare_book(
     cover: bytes | None = None
     if detected.cover:
         try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("error", Image.DecompressionBombWarning)
+            image = Image.open(io.BytesIO(detected.cover))
+            limit = Image.MAX_IMAGE_PIXELS
+            if not limit or image.width * image.height <= limit:
                 out = io.BytesIO()
-                Image.open(io.BytesIO(detected.cover)).convert("RGB").save(out, format="JPEG")
+                image.convert("RGB").save(out, format="JPEG")
                 cover = out.getvalue()
-        except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombWarning):
+        except (UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError):
             cover = None
     return detected, cover
 
@@ -103,6 +103,67 @@ def _create_book(
     except Exception:
         shutil.rmtree(book_dir(settings, book_id), ignore_errors=True)
         raise
+
+
+async def _split_upload(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    response: Response,
+    *,
+    data: bytes,
+    ext: str,
+    filename: str,
+    source_uri: str,
+    chapters: str | None,
+    voice: str | None,
+    min_chars: int,
+) -> BookResponse | None:
+    """Create or fetch the book and queue ``chapters``. None means no chapters were found.
+
+    Detection runs off the event loop and never while the flock is held (a blocking
+    flock across an await would stall the loop for a second request on the same file).
+    """
+
+    book_id = books.book_id_for(source_uri)
+    prepared = None
+    for _attempt in range(2):
+        if prepared is None and books.get_book(conn, book_id) is None:
+            try:
+                prepared = await asyncio.to_thread(_prepare_book, data, ext, min_chars)
+            except book_chapters.BookFormatError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if prepared is None:
+                return None
+            try:
+                if chapters is not None:
+                    books.validate_selection(chapters, prepared[0].chapters)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        with database.upload_staging_lock(settings.DATA_DIR, book_id):
+            book = books.get_book(conn, book_id)
+            if book is None and prepared is None:
+                continue  # deleted since the pre-check: prepare, then retry under the lock
+            created = book is None
+            if book is None:
+                detected, cover = prepared
+                book = _create_book(
+                    conn,
+                    settings,
+                    data=data,
+                    ext=ext,
+                    source_uri=source_uri,
+                    filename=filename,
+                    detected=detected,
+                    cover=cover,
+                )
+            response.status_code = 201 if created else 200
+            if chapters is None:
+                return book_response(conn, book)
+            try:
+                return queue_selection(conn, book, chapters, voice)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+    raise HTTPException(status_code=409, detail="the book changed during upload; retry")
 
 
 @router.post(
@@ -154,45 +215,26 @@ async def upload(
     source_uri = file_extraction.build_source_uri(content_hash, filename)
     episode_id = jobs.compute_episode_id(source_uri)
 
-    # Detection runs before the flock: a blocking flock held across an await would
-    # stall the event loop for a second request on the same file.
-    prepared = None
     chapters_detected = None
-    if split_chapters and books.get_book(conn, episode_id) is None:
-        try:
-            prepared = await asyncio.to_thread(
-                _prepare_book, data, ext, effective.MIN_EXTRACTION_CHARS
-            )
-        except book_chapters.BookFormatError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if prepared is None:
-            chapters_detected = False
+    if split_chapters:
+        book_result = await _split_upload(
+            conn,
+            settings,
+            response,
+            data=data,
+            ext=ext,
+            filename=filename,
+            source_uri=source_uri,
+            chapters=chapters,
+            voice=voice,
+            min_chars=effective.MIN_EXTRACTION_CHARS,
+        )
+        if book_result is not None:
+            return book_result
+        # No chapters found: the `chapters` value is ignored and the file is one episode.
+        chapters_detected = False
 
     with database.upload_staging_lock(settings.DATA_DIR, episode_id):
-        if split_chapters and chapters_detected is None:
-            book = books.get_book(conn, episode_id)
-            created = book is None
-            if book is None:
-                detected, cover = prepared  # type: ignore[misc]
-                book = _create_book(
-                    conn,
-                    settings,
-                    data=data,
-                    ext=ext,
-                    source_uri=source_uri,
-                    filename=filename,
-                    detected=detected,
-                    cover=cover,
-                )
-            response.status_code = 201 if created else 200
-            if chapters is None:
-                return book_response(conn, book)
-            try:
-                return queue_selection(conn, book, chapters, voice)
-            except ValueError as exc:
-                if created:
-                    books.delete_book(conn, settings, book.id)
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
         voice_id = voices.resolve(conn, voice)
         try:
             result = jobs.create_job(
