@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, DragEvent, FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, Book, JobRow, JobStatus, postForm, SettingsPayload, VoiceSlot } from "../lib/api";
-import { fileExt, formatBytes, formatDateTime } from "../lib/format";
+import { fileExt, formatBytes, formatDateTime, statusTag } from "../lib/format";
 import { usePersistentOpen } from "../components/CollapsibleSection";
 import ActionMenu from "../components/ActionMenu";
 import BooksSection from "../components/BooksSection";
@@ -794,21 +794,6 @@ function uploadTag(state: UploadState): string {
       return "tag-failed";
     default:
       return "tag-done"; // queued
-  }
-}
-
-function statusTag(status: JobStatus): string {
-  switch (status) {
-    case "done":
-      return "tag-done";
-    case "failed":
-      return "tag-failed";
-    case "cancelled":
-      return "tag-cancelled";
-    case "processing":
-      return "tag-processing";
-    default:
-      return "tag-queued";
   }
 }
 

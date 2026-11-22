@@ -33,3 +33,19 @@ export function formatDateTime(value: string): string {
 export function fileExt(filename: string): string {
   return filename.split(".").pop()?.toLowerCase() ?? "";
 }
+
+export function statusTag(status: string): string {
+  switch (status) {
+    case "done":
+      return "tag-done";
+    case "failed":
+      return "tag-failed";
+    case "cancelled":
+    case "removed":
+      return "tag-cancelled";
+    case "processing":
+      return "tag-processing";
+    default:
+      return "tag-queued";
+  }
+}

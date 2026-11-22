@@ -150,12 +150,7 @@ def create_book(
         mark = settings_store.get(conn, SEASON_HIGH_WATER_KEY)
         live = conn.execute("SELECT COALESCE(MAX(season_number), 0) FROM books").fetchone()[0]
         season = max(live, int(mark) if mark else 0) + 1
-        # settings_store.set_ commits, which would end this transaction early.
-        conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            (SEASON_HIGH_WATER_KEY, str(season)),
-        )
+        settings_store.set_without_commit(conn, SEASON_HIGH_WATER_KEY, str(season))
         conn.execute(
             "INSERT INTO books (id, source_uri, filename, format, title, author, "
             "season_number, has_cover) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",

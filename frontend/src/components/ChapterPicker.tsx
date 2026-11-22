@@ -1,6 +1,7 @@
 import { KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, Book, BookChapter } from "../lib/api";
+import { statusTag } from "../lib/format";
 import { isBookBusy, useBookPollMs } from "../lib/polling";
 
 const LOCKED = ["done", "queued", "processing"];
@@ -8,22 +9,6 @@ const LOCKED = ["done", "queued", "processing"];
 const isEnabled = (c: BookChapter) => c.selectable && !LOCKED.includes(c.status);
 const defaultTicks = (chapters: BookChapter[]) =>
   new Set(chapters.filter((c) => isEnabled(c) && c.default_selected).map((c) => c.index));
-
-function statusTag(status: string): string {
-  switch (status) {
-    case "done":
-      return "tag-done";
-    case "failed":
-      return "tag-failed";
-    case "cancelled":
-    case "removed":
-      return "tag-cancelled";
-    case "processing":
-      return "tag-processing";
-    default:
-      return "tag-queued";
-  }
-}
 
 interface Props {
   bookId: string;
