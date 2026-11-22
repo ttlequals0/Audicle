@@ -104,6 +104,7 @@ class DetectedChapter:
     word_count: int
     char_count: int
     default_selected: bool
+    selectable: bool
 
 
 @dataclass(frozen=True)
@@ -549,8 +550,10 @@ def _locator(
     }
 
 
-def _default_selected(title: str, char_count: int, has_image: bool, min_chars: int) -> bool:
-    return not is_front_or_back_matter(title) and (char_count >= min_chars or has_image)
+def _flags(title: str, char_count: int, has_image: bool, min_chars: int) -> tuple[bool, bool]:
+    """(default_selected, selectable)."""
+    selectable = char_count >= min_chars or has_image
+    return selectable and not is_front_or_back_matter(title), selectable
 
 
 def _detect_pdf(data: bytes, min_chars: int) -> DetectedBook | None:
@@ -586,6 +589,7 @@ def _detect_pdf(data: bytes, min_chars: int) -> DetectedBook | None:
                 raise BookFormatError("The PDF contains too much text.")
             title = title or f"Section {i + 1}"
             has_image = any(page_has_image(p) for p in pages)
+            flags = _flags(title, len(text), has_image, min_chars)
             chapters.append(
                 DetectedChapter(
                     idx=i + 1,
@@ -593,7 +597,8 @@ def _detect_pdf(data: bytes, min_chars: int) -> DetectedBook | None:
                     locator={"first_page": first, "last_page": last},
                     word_count=len(text.split()),
                     char_count=len(text),
-                    default_selected=_default_selected(title, len(text), has_image, min_chars),
+                    default_selected=flags[0],
+                    selectable=flags[1],
                 )
             )
         info = reader.metadata
@@ -619,6 +624,7 @@ def detect(data: bytes, ext: str, *, min_chars: int) -> DetectedBook | None:
             continue
         idx = len(chapters) + 1
         title = title or f"Section {idx}"
+        flags = _flags(title, len(text), False, min_chars)
         chapters.append(
             DetectedChapter(
                 idx=idx,
@@ -626,7 +632,8 @@ def detect(data: bytes, ext: str, *, min_chars: int) -> DetectedBook | None:
                 locator=locator,
                 word_count=len(text.split()),
                 char_count=len(text),
-                default_selected=_default_selected(title, len(text), False, min_chars),
+                default_selected=flags[0],
+                selectable=flags[1],
             )
         )
     if len(chapters) < 2:

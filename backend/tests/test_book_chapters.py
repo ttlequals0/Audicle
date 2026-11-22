@@ -227,6 +227,9 @@ def test_default_selection():
         assert selected[t] is False, t
     for t in ("Prologue", "1. A Purposeful Life", "Epilogue", "Author's Note"):
         assert selected[t] is True, t
+    copyright_ = next(c for c in book.chapters if c.title == "Copyright")
+    assert copyright_.selectable is True
+    assert copyright_.default_selected is False
 
 
 def _with_encryption(xml: str) -> bytes:
@@ -664,3 +667,37 @@ def test_pdf_metadata_title_and_author():
     writer.write(buf)
     book = book_chapters.detect(buf.getvalue(), ".pdf", min_chars=10)
     assert (book.title, book.author) == ("The Book", "A. Writer")
+
+
+def test_selectable_epub_follows_min_chars():
+    files: dict[str, bytes | str] = {
+        "a.xhtml": page("<p>abcde</p>"),
+        "b.xhtml": page("<p>a perfectly ordinary chapter body</p>"),
+        "toc.ncx": ncx([("Short", "a.xhtml"), ("Normal", "b.xhtml")]),
+        "content.opf": opf(
+            [
+                ("ncx", "toc.ncx", NCX_TYPE, ""),
+                ("a", "a.xhtml", XHTML, ""),
+                ("b", "b.xhtml", XHTML, ""),
+            ],
+            ["a", "b"],
+            toc="ncx",
+        ),
+    }
+    book = detect_epub(make_epub(files), min_chars=10)
+    flags = {c.title: (c.selectable, c.default_selected) for c in book.chapters}
+    assert flags == {"Short": (False, False), "Normal": (True, True)}
+
+
+def test_selectable_pdf_image_only_chapter():
+    texts = {n: "" for n in range(6)}
+    data = make_pdf(6, [("Scan", 0), ("Empty", 3)], texts=texts)
+    writer = PdfWriter(clone_from=PdfReader(io.BytesIO(data)))
+    image = DictionaryObject({NameObject("/Subtype"): NameObject("/Image")})
+    xobjects = DictionaryObject({NameObject("/Im0"): writer._add_object(image)})
+    writer.pages[1]["/Resources"][NameObject("/XObject")] = xobjects
+    buf = io.BytesIO()
+    writer.write(buf)
+    book = book_chapters.detect(buf.getvalue(), ".pdf", min_chars=200)
+    flags = {c.title: (c.selectable, c.default_selected) for c in book.chapters}
+    assert flags == {"Scan": (True, True), "Empty": (False, False)}
