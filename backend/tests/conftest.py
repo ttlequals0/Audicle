@@ -157,8 +157,13 @@ def make_epub(files: dict[str, bytes | str], *, opf_path: str = "content.opf") -
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("mimetype", "application/epub+zip")
-        zf.writestr(
+
+        def put(name: str, content: bytes | str) -> None:
+            # Fixed timestamp: the same inputs must give the same bytes (and book id).
+            zf.writestr(zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0)), content)
+
+        put("mimetype", "application/epub+zip")
+        put(
             "META-INF/container.xml",
             '<?xml version="1.0"?><container version="1.0" '
             'xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>'
@@ -166,7 +171,7 @@ def make_epub(files: dict[str, bytes | str], *, opf_path: str = "content.opf") -
             "</rootfiles></container>",
         )
         for name, content in files.items():
-            zf.writestr(name, content)
+            put(name, content)
     return buf.getvalue()
 
 
