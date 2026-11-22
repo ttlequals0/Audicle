@@ -376,9 +376,8 @@ def _encode_jpeg(img: Image.Image, quality: int) -> bytes:
 
 
 def _decode_and_render(data: bytes, settings: Settings, *, pad_square: bool) -> _RenderedImage:
-    """Decode ``data``, validate, EXIF-rotate, flatten, crop (or pad, for a book
-    cover), resize, encode JPG. Raises typed exceptions; the caller maps each to a
-    fallback reason.
+    """Decode ``data``, validate, EXIF-rotate, flatten, crop, resize, encode
+    JPG. Raises typed exceptions; the caller maps each to a fallback reason.
     """
 
     with Image.open(io.BytesIO(data)) as opened:
@@ -395,10 +394,9 @@ def _decode_and_render(data: bytes, settings: Settings, *, pad_square: bool) -> 
         # ``exif=b""`` strips the only hint clients have.
         oriented = ImageOps.exif_transpose(opened)
         width, height = oriented.size
-        too_small = (
+        if not pad_square and (
             width < settings.ARTWORK_MIN_SOURCE_PX or height < settings.ARTWORK_MIN_SOURCE_PX
-        )
-        if too_small and not pad_square:
+        ):
             raise _SourceTooSmallError(width, height)
 
         flat = _flatten_to_rgb(oriented)

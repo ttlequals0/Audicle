@@ -7,7 +7,7 @@ import ChapterPicker from "./ChapterPicker";
 const SUMMARY_ORDER = ["done", "processing", "queued", "failed", "cancelled", "removed"];
 
 function summary(b: Book): string {
-  const parts = SUMMARY_ORDER.filter((s) => (b.counts[s] ?? 0) > 0).map((s) => `${b.counts[s]} ${s}`);
+  const parts = SUMMARY_ORDER.filter((s) => b.counts[s] > 0).map((s) => `${b.counts[s]} ${s}`);
   return parts.length ? parts.join(", ") : "not started";
 }
 

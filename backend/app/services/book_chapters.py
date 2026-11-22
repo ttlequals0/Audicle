@@ -253,13 +253,6 @@ def _parse_xhtml(data: bytes) -> Any | None:
         return None
 
 
-def _find_body(root: Any) -> Any | None:
-    for el in root.iter():
-        if _local(el.tag) == "body":
-            return el
-    return None
-
-
 def _xml_children(el: Any, name: str) -> list[Any]:
     return [c for c in el if _local(c.tag) == name]
 
@@ -424,7 +417,7 @@ class _Epub:
         if raw is None:
             return [], {}
         root = _parse_xhtml(raw)
-        body = _find_body(root) if root is not None else None
+        body = _xml_find(root, "body") if root is not None else None
         if body is None:
             return [], {}
         out: list[str] = []
@@ -437,7 +430,7 @@ class _Epub:
         return out, marks
 
     def anchor_pos(self, spine_idx: int, anchor: str | None) -> int | None:
-        return self.doc(spine_idx)[1].get(anchor) if anchor else None
+        return self.doc(spine_idx)[1].get(anchor)
 
     def markdown(self, locator: dict[str, Any]) -> str:
         start, end = int(locator["start_spine"]), int(locator["end_spine"])
@@ -446,30 +439,33 @@ class _Epub:
         paras: list[str] = []
         for s in range(max(start, 0), min(last, len(self.spine) - 1) + 1):
             doc, marks = self.doc(s)
-            lo = marks.get(start_anchor, 0) if s == start and start_anchor else 0
-            hi = marks.get(end_anchor, len(doc)) if s == end and end_anchor else len(doc)
+            lo = marks.get(start_anchor, 0) if s == start else 0
+            hi = marks.get(end_anchor, len(doc)) if s == end else len(doc)
             paras.extend(doc[lo:hi])
         return "\n\n".join(paras)
 
     def _toc_entries(self) -> list[tuple[str, int, str | None]]:
         nav = next((m for m in self._manifest.values() if "nav" in m["props"].split()), None)
-        raw: list[tuple[str, str, str]] = []
+        raw: list[tuple[str, str]] = []
+        base = ""
         if nav is not None:
-            raw = self._nav_entries(nav["path"])
+            base = nav["path"]
+            raw = self._nav_entries(base)
         if not raw:
             ncx = self._manifest.get(self._ncx_id or "") or next(
                 (m for m in self._manifest.values() if m["type"] == _NCX_MEDIA_TYPE), None
             )
             if ncx is not None:
-                raw = self._ncx_entries(ncx["path"])
+                base = ncx["path"]
+                raw = self._ncx_entries(base)
         entries = []
-        for title, base, href in raw:
+        for title, href in raw:
             path, frag = _split_href(base, href)
             if path in self._spine_index and title:
                 entries.append((title, self._spine_index[path], frag))
         return entries
 
-    def _nav_entries(self, path: str) -> list[tuple[str, str, str]]:
+    def _nav_entries(self, path: str) -> list[tuple[str, str]]:
         data = self._read(path)
         root = _parse_xhtml(data) if data is not None else None
         if root is None:
@@ -494,10 +490,10 @@ class _Epub:
             )
             if anchor is None or not anchor.get("href"):
                 continue
-            entries.append((_clean(_inline(link)), path, anchor.get("href", "")))
+            entries.append((_clean(_inline(link)), anchor.get("href", "")))
         return entries
 
-    def _ncx_entries(self, path: str) -> list[tuple[str, str, str]]:
+    def _ncx_entries(self, path: str) -> list[tuple[str, str]]:
         raw = self._read(path)
         try:
             root = DET.fromstring(raw) if raw is not None else None
@@ -515,7 +511,7 @@ class _Epub:
             content = next((c for c in point if _local(c.tag) == "content"), None)
             if label is None or content is None or not content.get("src"):
                 continue
-            entries.append((_clean("".join(label.itertext())), path, content.get("src", "")))
+            entries.append((_clean("".join(label.itertext())), content.get("src", "")))
         return entries
 
     def chapter_ranges(self) -> list[tuple[str | None, dict[str, Any]]]:

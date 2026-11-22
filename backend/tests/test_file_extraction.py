@@ -145,7 +145,9 @@ def test_extract_mixed_pdf_ocr_recovers_sparse_page_in_order(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     native = "Native text from page one. " * 40
-    monkeypatch.setattr(file_extraction, "_parse_pdf", lambda _data: ([native, ""], {1}, {}))
+    monkeypatch.setattr(
+        file_extraction, "_parse_pdf", lambda _data, _first, _last: ([native, ""], {1}, {})
+    )
     seen: dict[str, list[int]] = {}
 
     def _fake_ocr(_data, _settings, _beat, page_indices):
@@ -162,7 +164,9 @@ def test_mixed_pdf_ocr_failure_fails_extraction_instead_of_publishing_partial(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     native = "Native page text. " * 40
-    monkeypatch.setattr(file_extraction, "_parse_pdf", lambda _data: ([native, ""], {1}, {}))
+    monkeypatch.setattr(
+        file_extraction, "_parse_pdf", lambda _data, _first, _last: ([native, ""], {1}, {})
+    )
 
     def _fail(*_args):
         raise ocr.OcrLowConfidenceError("OCR found no readable text on PDF page 2")
@@ -173,7 +177,9 @@ def test_mixed_pdf_ocr_failure_fails_extraction_instead_of_publishing_partial(
 
 
 def test_blank_pdf_page_is_not_sent_to_ocr(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(file_extraction, "_parse_pdf", lambda _data: ([""], set(), {}))
+    monkeypatch.setattr(
+        file_extraction, "_parse_pdf", lambda _data, _first, _last: ([""], set(), {})
+    )
 
     def _fail(*_args):
         raise AssertionError("a blank page must not trigger OCR")
@@ -283,7 +289,9 @@ async def test_extract_scanned_pdf_falls_back_to_ocr(env: Path, monkeypatch) -> 
         beat()
         return {0: "Recovered by OCR. " * 40}
 
-    monkeypatch.setattr(file_extraction, "_parse_pdf", lambda _data: (["tiny"], {0}, {}))
+    monkeypatch.setattr(
+        file_extraction, "_parse_pdf", lambda _data, _first, _last: (["tiny"], {0}, {})
+    )
     monkeypatch.setattr(ocr, "ocr_pdf_pages", _fake_ocr_pdf_pages)
     result = await _run(env, "scan.pdf", text_page_pdf("tiny"))
     assert called.get("n")
@@ -305,7 +313,9 @@ async def test_ocr_beat_is_called_off_the_event_loop(env: Path, monkeypatch) -> 
         beat()
         return {0: "Recovered by OCR. " * 40}
 
-    monkeypatch.setattr(file_extraction, "_parse_pdf", lambda _data: (["tiny"], {0}, {}))
+    monkeypatch.setattr(
+        file_extraction, "_parse_pdf", lambda _data, _first, _last: (["tiny"], {0}, {})
+    )
     monkeypatch.setattr(ocr, "ocr_pdf_pages", _fake_ocr_pdf_pages)
     await _run(env, "scan.pdf", text_page_pdf("tiny"))
     assert seen.get("off_loop"), "OCR ran on the loop; the per-page beat would be loop-bound"
@@ -420,7 +430,9 @@ def test_ocr_fails_when_selected_scanned_page_has_no_readable_text(
 def test_mixed_pdf_with_ocr_disabled_fails_instead_of_omitting_scans(env, monkeypatch):
     monkeypatch.setenv("OCR_ENABLED", "false")
     get_settings.cache_clear()
-    monkeypatch.setattr(file_extraction, "_parse_pdf", lambda data: ([_LONG, ""], {1}, {}))
+    monkeypatch.setattr(
+        file_extraction, "_parse_pdf", lambda _data, _first, _last: ([_LONG, ""], {1}, {})
+    )
     with pytest.raises(ExtractionPermanentError, match="Enable OCR_ENABLED"):
         file_extraction._parse(b"pdf", ".pdf", get_settings(), lambda: None)
 

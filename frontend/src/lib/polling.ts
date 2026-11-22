@@ -23,4 +23,4 @@ export function useBookPollMs(): number {
 }
 
 export const isBookBusy = (b: Pick<Book, "counts">) =>
-  (b.counts.queued ?? 0) > 0 || (b.counts.processing ?? 0) > 0;
+  b.counts.queued > 0 || b.counts.processing > 0;

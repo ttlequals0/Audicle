@@ -21,6 +21,17 @@ vi.mock("../lib/api", () => ({
   },
 }));
 
+const counts = (over: Record<string, number> = {}) => ({
+  not_queued: 0,
+  queued: 0,
+  processing: 0,
+  done: 0,
+  failed: 0,
+  cancelled: 0,
+  removed: 0,
+  ...over,
+});
+
 const makeBook = (over: Record<string, unknown> = {}) => ({
   book_id: "b1",
   title: "Bad Blood",
@@ -31,7 +42,7 @@ const makeBook = (over: Record<string, unknown> = {}) => ({
   has_cover: false,
   voice_id: null,
   created_at: "2026-01-01T00:00:00Z",
-  counts: { done: 12, queued: 2, failed: 1 },
+  counts: counts({ done: 12, queued: 2, failed: 1 }),
   can_resume: true,
   chapters: [],
   queued: [],
@@ -108,7 +119,7 @@ describe("BooksSection", () => {
   });
 
   it("shows not started when nothing is requested", async () => {
-    books = [makeBook({ counts: {}, can_resume: false })];
+    books = [makeBook({ counts: counts(), can_resume: false })];
     renderSection();
     expect(await screen.findByText("not started")).toBeInTheDocument();
   });
@@ -159,7 +170,7 @@ describe("BooksSection", () => {
 
   it("does not poll when no chapters are queued or processing", async () => {
     settings = fastPoll;
-    books = [makeBook({ counts: { done: 3 }, can_resume: false })];
+    books = [makeBook({ counts: counts({ done: 3 }), can_resume: false })];
     renderSection();
     await screen.findByText("Bad Blood");
     const before = booksFetches();
@@ -176,7 +187,7 @@ describe("BooksSection", () => {
 
   it("reflects open state in aria-expanded and returns focus on close", async () => {
     const user = userEvent.setup();
-    books = [makeBook({ counts: { done: 3 }, can_resume: false })];
+    books = [makeBook({ counts: counts({ done: 3 }), can_resume: false })];
     renderSection();
     const toggle = await screen.findByRole("button", { name: /Choose chapters/ });
     expect(toggle).toHaveAttribute("aria-expanded", "false");

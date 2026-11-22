@@ -203,7 +203,7 @@ def render(
         episodes=episodes,
         settings=settings,
         feed_auth_key=feed_auth_key,
-        season_names=season_names or {},
+        season_names=season_names,
     )
 
 
@@ -340,10 +340,10 @@ def _inject_pc2_tags(
     # transcripts.
     for item_el, ep in zip(items, episodes, strict=True):
         if ep.season_number is not None:
-            season_attrib = {}
-            if season_names and ep.season_number in season_names:
-                season_attrib["name"] = season_names[ep.season_number]
-            season_el = ET.SubElement(item_el, f"{{{_PODCAST_NS}}}season", attrib=season_attrib)
+            name = (season_names or {}).get(ep.season_number)
+            season_el = ET.SubElement(
+                item_el, f"{{{_PODCAST_NS}}}season", attrib={"name": name} if name else {}
+            )
             season_el.text = str(ep.season_number)
             episode_el = ET.SubElement(item_el, f"{{{_PODCAST_NS}}}episode")
             episode_el.text = str(ep.episode_number)

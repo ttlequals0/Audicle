@@ -33,12 +33,9 @@ export default function ChapterPicker({ bookId, voice, onClose }: Props) {
 
   const book = bookQ.data;
   const chapters = book?.chapters ?? [];
-  const byIndex = new Map(chapters.map((c) => [c.index, c]));
+  const enabledIndexes = new Set(chapters.filter(isEnabled).map((c) => c.index));
   // Drop ticks on chapters that became locked while the picker was open.
-  const ticked = [...(edited ?? defaultTicks(chapters))].filter((i) => {
-    const c = byIndex.get(i);
-    return c !== undefined && isEnabled(c);
-  });
+  const ticked = [...(edited ?? defaultTicks(chapters))].filter((i) => enabledIndexes.has(i));
 
   const queueM = useMutation({
     mutationFn: (indexes: number[]) =>
@@ -68,7 +65,7 @@ export default function ChapterPicker({ bookId, voice, onClose }: Props) {
     if (e.key === "Escape") onClose();
   };
 
-  const selectAll = () => setEdited(new Set(chapters.filter(isEnabled).map((c) => c.index)));
+  const selectAll = () => setEdited(new Set(enabledIndexes));
   const selectDefaults = () => setEdited(defaultTicks(chapters));
   const selectNone = () => setEdited(new Set());
   const submitSelection = () => queueM.mutate([...ticked].sort((a, b) => a - b));

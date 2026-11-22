@@ -22,7 +22,6 @@ from app.services import jobs, settings_store
 from app.services.book_chapters import DetectedBook, DetectedChapter
 
 CHAPTER_FRAGMENT = "#chapter="
-IN_FLIGHT = ("staging", "queued", "processing")
 
 SEASON_HIGH_WATER_KEY = "book_season_high_water"
 _ONE_BOOK_SCOPE = "SELECT episode_id FROM book_chapters WHERE book_id = ?"
@@ -39,7 +38,8 @@ def _newest_job_sql(scope: str) -> str:
 
 
 NEWEST_JOB_SQL = _newest_job_sql(_ONE_BOOK_SCOPE)
-_IN_FLIGHT_SQL = ",".join(f"'{s}'" for s in IN_FLIGHT)
+_IN_FLIGHT_SQL = "'staging','queued','processing'"
+_KEYWORDS = ("all", "default", "remaining")
 _BOOK_COLUMNS = "id, source_uri, filename, format, title, author, season_number, has_cover, created_at, voice_id"
 _CHAPTER_COLUMNS = (
     "book_id, idx, title, locator, word_count, char_count, default_selected, "
@@ -335,9 +335,6 @@ def _parse_index_list(value: str, max_idx: int) -> list[int]:
     return idxs
 
 
-_KEYWORDS = ("all", "default", "remaining")
-
-
 def _explicit_selection(
     value: str | list[int], chapters: Sequence[Chapter] | Sequence[DetectedChapter]
 ) -> list[int]:
@@ -357,20 +354,24 @@ def _explicit_selection(
     return sorted(set(requested))
 
 
+def _keyword(value: str | list[int]) -> str | None:
+    keyword = value.strip().lower() if isinstance(value, str) else None
+    return keyword if keyword in _KEYWORDS else None
+
+
 def validate_selection(
     value: str | list[int], chapters: Sequence[Chapter] | Sequence[DetectedChapter]
 ) -> None:
     """Raise ValueError for a bad explicit selection; usable before any rows exist."""
 
-    keyword = value.strip().lower() if isinstance(value, str) else None
-    if keyword not in _KEYWORDS:
+    if _keyword(value) is None:
         _explicit_selection(value, chapters)
 
 
 def parse_selection(
     value: str | list[int], chapters: list[Chapter], statuses: dict[int, str]
 ) -> list[int]:
-    keyword = value.strip().lower() if isinstance(value, str) else None
+    keyword = _keyword(value)
     if keyword == "all":
         return [c.idx for c in chapters if c.selectable]
     if keyword == "default":

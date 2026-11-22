@@ -43,7 +43,7 @@ const book = {
   has_cover: false,
   voice_id: null,
   created_at: "2026-01-01T00:00:00Z",
-  counts: {},
+  counts: { not_queued: 0, queued: 0, processing: 0, done: 0, failed: 0, cancelled: 0, removed: 0 },
   can_resume: false,
   queued: [],
   skipped: [],

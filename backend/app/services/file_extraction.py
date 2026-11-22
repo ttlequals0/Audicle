@@ -210,8 +210,9 @@ async def extract_file(
     # Read + parse off the event loop so a large file on slow storage can't block
     # it. asyncio.to_thread copies the context, so the per-page OCR beat reaches
     # the running job's watchdog.
+    locator = found[1].locator if found else None
     markdown, metadata = await asyncio.to_thread(
-        lambda: _parse(path.read_bytes(), ext, settings, beat, found[1].locator if found else None)
+        lambda: _parse(path.read_bytes(), ext, settings, beat, locator)
     )
     markdown = markdown.strip()
     if found:
@@ -259,10 +260,7 @@ def _parse(
     beat: Callable[[], None],
     locator: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    """Dispatch raw bytes to the per-format parser. Returns ``(markdown, metadata)``.
-
-    ``locator`` restricts a book source to one chapter (EPUB spine range or PDF page range).
-    """
+    """Dispatch raw bytes to the per-format parser. Returns ``(markdown, metadata)``."""
 
     if ext == ".epub":
         try:
@@ -272,11 +270,10 @@ def _parse(
         except BookFormatError as exc:
             raise ExtractionPermanentError(f"could not read EPUB: {exc}") from exc
     if ext == ".pdf":
-        # Page indexes below are relative to the range; ``first`` maps them back for OCR.
+        # Page indexes are relative to the range; add ``first`` for OCR.
         first = locator["first_page"] if locator is not None else 0
-        pages, image_pages, metadata = (
-            _parse_pdf(data) if locator is None else _parse_pdf(data, first, locator["last_page"])
-        )
+        last = locator["last_page"] if locator is not None else None
+        pages, image_pages, metadata = _parse_pdf(data, first, last)
         markdown = "\n\n".join(page for page in pages if page)
         sparse_image_pages = [
             index
