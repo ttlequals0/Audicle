@@ -134,13 +134,6 @@ def book_id_for(source_uri: str) -> str:
     return jobs.compute_episode_id(source_uri)
 
 
-def staging_lock_key(url: str, episode_id: str) -> str:
-    """Chapter jobs serialize on their book (as book delete and queue do); other uploads on the episode."""
-
-    base, idx = split_chapter_uri(url)
-    return episode_id if idx is None else book_id_for(base)
-
-
 def source_file(settings: Settings, book_id: str, ext: str) -> Path:
     return book_dir(settings, book_id) / f"source{ext}"
 

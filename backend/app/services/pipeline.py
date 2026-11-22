@@ -442,6 +442,13 @@ async def _run_stages(
         conn.close()
     expected_token = previous.generation_token if previous else None
     create_episode = previous is None
+    chapter = None
+    if file_extraction.SourceRef.parse(job.url, job.episode_id).chapter is not None:
+        conn = database.connect(database.db_path(settings.DATA_DIR))
+        try:
+            chapter = books.chapter_for_episode(conn, job.episode_id)
+        finally:
+            conn.close()
     staged_paths = [
         media_dir(settings) / f"{job.episode_id}.{publication_token}.mp3",
         media_dir(settings) / f"{job.episode_id}.{publication_token}.jpg",
@@ -499,7 +506,9 @@ async def _run_stages(
         )
         artwork_result = await _run_stage(
             "artwork",
-            lambda: _stage_artwork(job, extraction_result.metadata, publication_token, settings),
+            lambda: _stage_artwork(
+                job, extraction_result.metadata, publication_token, settings, chapter
+            ),
             job.id,
             settings,
         )
@@ -541,6 +550,7 @@ async def _run_stages(
                 publication_token=publication_token,
                 expected_token=expected_token,
                 create_episode=create_episode,
+                chapter=chapter,
                 settings=settings,
             ),
             job.id,
@@ -1862,6 +1872,7 @@ async def _stage_artwork(
     metadata: dict[str, Any],
     publication_token: str,
     settings: Settings,
+    chapter: tuple[books.Book, books.Chapter] | None,
 ) -> artwork.ArtworkResult | None:
     """Download + process the article's og:image.
 
@@ -1871,12 +1882,7 @@ async def _stage_artwork(
     """
 
     generation_id = f"{job.episode_id}.{publication_token}"
-    conn = database.connect(database.db_path(settings.DATA_DIR))
-    try:
-        found = books.chapter_for_episode(conn, job.episode_id)
-    finally:
-        conn.close()
-    book = found[0] if found else None
+    book = chapter[0] if chapter else None
     local_cover = books.cover_file(settings, book.id) if book and book.has_cover else None
     result = await artwork.process_artwork(
         metadata, generation_id, media_dir(settings), settings, local_cover=local_cover
@@ -2087,6 +2093,7 @@ async def _stage_finalize(
     publication_token: str,
     expected_token: str | None,
     create_episode: bool,
+    chapter: tuple[books.Book, books.Chapter] | None,
     settings: Settings,
 ) -> None:
     """Upsert the ``episodes`` row that the RSS feed and media handlers read.
@@ -2119,9 +2126,8 @@ async def _stage_finalize(
 
     conn = database.connect(database.db_path(settings.DATA_DIR))
     try:
-        found = books.chapter_for_episode(conn, job.episode_id)
         season_number, episode_number = (
-            (found[0].season_number, found[1].idx) if found is not None else (None, None)
+            (chapter[0].season_number, chapter[1].idx) if chapter is not None else (None, None)
         )
         # Snapshot the voice this job used (slot label, "Slot N", or "Default")
         # so the API, feed UI, and RSS description can show which voice narrated it.

@@ -13,6 +13,7 @@ import pytest
 from app.config import get_settings
 from app.core import database
 from app.services import (
+    audio,
     books,
     cleanup_output,
     episodes,
@@ -877,6 +878,65 @@ async def test_finalize_leaves_numbers_null_for_articles(
         conn.close()
     assert ep is not None
     assert ep.season_number is None and ep.episode_number is None
+
+
+async def test_finalize_does_not_mark_chapter_completed_when_publish_loses_the_race(
+    env: Path, tmp_path: Path
+) -> None:
+    database.run_migrations(env)
+    source_uri = "upload://hash4/book.epub"
+    book = _make_chapter_book(env, source_uri)
+    job = _seed_job(env, books.chapter_uri(source_uri, 7))
+    mp3 = tmp_path / "out.mp3"
+    mp3.write_bytes(b"mp3")
+    conn = database.connect(database.db_path(env))
+    try:
+        conn.execute(
+            "INSERT INTO episodes (id, original_url, generation_token) VALUES (?, ?, ?)",
+            (job.episode_id, job.url, "winner"),
+        )
+    finally:
+        conn.close()
+
+    with pytest.raises(RuntimeError, match="episode generation changed"):
+        await pipeline._stage_finalize(
+            job,
+            metadata={"title": "T"},
+            audio_result=audio.EncodeResult(mp3_path=mp3, duration_secs=2.5),
+            artwork_result=None,
+            vtt="WEBVTT",
+            summary=None,
+            cleaned_text="text",
+            chapters_json=None,
+            publication_token="loser",
+            expected_token="stale",
+            create_episode=False,
+            chapter=None,
+            settings=get_settings(),
+        )
+
+    conn = database.connect(database.db_path(env))
+    try:
+        assert books.get_chapters(conn, book.id)[0].completed_at is None
+    finally:
+        conn.close()
+
+
+async def test_non_chapter_job_does_not_look_up_a_chapter(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+    _stub_chapter_extract(monkeypatch)
+
+    def _forbidden(*_a, **_kw):
+        raise AssertionError("chapter lookup for a non-chapter job")
+
+    monkeypatch.setattr(books, "chapter_for_episode", _forbidden)
+    for url in ("https://example.test/article", "upload://hash5/plain.md"):
+        job = _seed_job(env, url)
+        await pipeline.process_job(job, get_settings())
+        assert _job_after(env, job.id).status == "done"
 
 
 async def test_failed_first_publication_is_not_servable(
