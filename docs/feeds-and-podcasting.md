@@ -15,7 +15,7 @@ Each chapter of a chapter-split book is an ordinary episode in the same feed. Ch
 | season | one number per book, assigned in the order books are added and never reused |
 | episode | the chapter's position in the book's full table of contents, so numbers stay stable whichever chapters you narrate |
 
-Apps that read season tags can group a book's chapters together and order them by chapter number. In an app that ignores them, chapters sort by publish date like any episode. Chapter episodes follow the normal [retention](#retention) rules. The season and episode numbers are stored on the episode, so they survive deleting the book.
+Apps that read season tags can group a book's chapters and order them by episode number; apps that ignore them list chapters like any other episode. Chapter episodes follow the normal [retention](#retention) rules. The season and episode numbers are stored on the episode, so they survive deleting the book.
 
 ## Authenticated feeds
 
