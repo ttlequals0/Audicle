@@ -614,10 +614,10 @@ _TITLE_PUNCT = str.maketrans(
 
 def _title_key(text: str) -> str:
     """Comparison form of a title: punctuation unified, case folded, spaces
-    collapsed, trailing punctuation dropped."""
+    collapsed, edge punctuation and markdown heading/emphasis markers dropped."""
 
     flat = " ".join(text.translate(_TITLE_PUNCT).split()).casefold()
-    return flat.strip(" .:;,-!?\"'")
+    return flat.strip(" .:;,-!?\"'#*_|>")
 
 
 _TITLE_SEPARATORS = re.compile(r": | \| | [-\u2013\u2014] ")

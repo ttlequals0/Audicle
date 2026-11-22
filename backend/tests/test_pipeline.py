@@ -3518,6 +3518,33 @@ _ECHO_BOOK = "The Widget Book: 6. A Quiet Start"
             f"A Field Guide\n\n{_ECHO_BODY}",
             _ECHO_BODY,
         ),
+        (
+            "The Widget Book: 6. Sunny",
+            f"# SIX\n\n# Sunny\n\n{_ECHO_BODY}",
+            f"# SIX\n\n{_ECHO_BODY}",
+        ),
+        (
+            "The Widget Book: 6. Sunny",
+            f"SIX\n\n## Sunny\n\n{_ECHO_BODY}",
+            f"SIX\n\n{_ECHO_BODY}",
+        ),
+        (
+            "The Widget Book: 6. Sunny",
+            f"SIX\n\n**Sunny**\n\n{_ECHO_BODY}",
+            f"SIX\n\n{_ECHO_BODY}",
+        ),
+        (_ECHO_BOOK, f"_A Quiet Start_\n\n{_ECHO_BODY}", _ECHO_BODY),
+        (_ECHO_HEAD, f"**{_ECHO_HEAD}**\n\n{_ECHO_BODY}", _ECHO_BODY),
+        (
+            _ECHO_BOOK,
+            f"# Chapter Six. A Quiet Start.\n\n{_ECHO_BODY}",
+            f"# Chapter Six.\n\n{_ECHO_BODY}",
+        ),
+        (
+            "The Widget Book: 6. Sunny",
+            f"| SIX |\n\nSunny\n\n{_ECHO_BODY}",
+            f"| SIX |\n\n{_ECHO_BODY}",
+        ),
     ],
     ids=[
         "after_leading_label",
@@ -3536,6 +3563,13 @@ _ECHO_BOOK = "The Widget Book: 6. A Quiet Start"
         "title_between_two_other_parts",
         "en_dash_between_label_and_headline",
         "em_dash_title_separator_segment",
+        "short_title_with_h1_marker",
+        "short_title_with_h2_marker",
+        "short_title_in_bold",
+        "title_in_italics",
+        "headline_in_bold",
+        "marked_chapter_number_and_title_on_one_line",
+        "number_between_pipes_then_title",
     ],
 )
 def test_title_echo_strips_heading_shaped_echoes(title: str, body: str, expected: str) -> None:
@@ -3579,6 +3613,8 @@ def test_title_echo_strips_heading_shaped_echoes(title: str, body: str, expected
         ),
         (_ECHO_HEAD, f"It rained all week. Nobody minded at first.\n\n{_ECHO_BODY}"),
         ("Widgets \u2014 A Field Guide", f"Introduction\n\n{_ECHO_BODY}"),
+        ("The Widget Book: 6. Sunny", f"# SIX\n\n## Cloudy\n\n{_ECHO_BODY}"),
+        (_ECHO_HEAD, f"**Technology**\n\n{_ECHO_BODY}"),
     ],
     ids=[
         "does_not_reach_into_body",
@@ -3591,6 +3627,8 @@ def test_title_echo_strips_heading_shaped_echoes(title: str, body: str, expected
         "opening_sentences_are_not_split",
         "short_paragraph_under_the_wider_gate",
         "em_dash_title_separator_segments_still_match_nothing_here",
+        "marked_heading_that_is_not_the_title",
+        "bold_label_that_is_not_the_title",
     ],
 )
 def test_title_echo_leaves_text_unchanged(title: str, body: str) -> None:
