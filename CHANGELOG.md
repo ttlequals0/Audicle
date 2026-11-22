@@ -29,6 +29,7 @@ work lives under `[Unreleased]`.
 
 - The queue claims jobs created in the same second in insertion order, so chapters queued together are narrated in chapter order.
 - A book narrates in one voice. The voice is stored the first time chapters are queued and reused on later calls unless `voice` is given, so a `random` default does not change voice between chapters.
+- Bump pydantic to 2.14.3 and ruff to 0.17.5 in all three packages, huggingface-hub to 2.2.0, and the uv build image and CI uv to 0.13.9.
 
 ## [0.62.1] - 2026-11-18
 
