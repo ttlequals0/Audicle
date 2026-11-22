@@ -589,7 +589,7 @@ def _detect_pdf(data: bytes, min_chars: int) -> DetectedBook | None:
                 raise BookFormatError("The PDF contains too much text.")
             title = title or f"Section {i + 1}"
             has_image = any(page_has_image(p) for p in pages)
-            flags = _flags(title, len(text), has_image, min_chars)
+            default_selected, selectable = _flags(title, len(text), has_image, min_chars)
             chapters.append(
                 DetectedChapter(
                     idx=i + 1,
@@ -597,18 +597,26 @@ def _detect_pdf(data: bytes, min_chars: int) -> DetectedBook | None:
                     locator={"first_page": first, "last_page": last},
                     word_count=len(text.split()),
                     char_count=len(text),
-                    default_selected=flags[0],
-                    selectable=flags[1],
+                    default_selected=default_selected,
+                    selectable=selectable,
                 )
             )
         info = reader.metadata
-    except (PyPdfError, ValueError, OSError, RecursionError) as exc:
-        if isinstance(exc, BookFormatError):
-            raise
-        raise BookFormatError("The PDF could not be read.") from exc
-    title = str(info.title) if info is not None and info.title else None
-    author = str(info.author) if info is not None and info.author else None
-    return DetectedBook("pdf", title, author, None, chapters)
+        book_title = str(info.title) if info is not None and info.title else None
+        author = str(info.author) if info is not None and info.author else None
+    except BookFormatError:
+        raise
+    except (
+        PyPdfError,
+        ValueError,
+        OSError,
+        RecursionError,
+        KeyError,
+        TypeError,
+        AttributeError,
+    ) as exc:
+        raise BookFormatError(f"could not read PDF: {exc}") from exc
+    return DetectedBook("pdf", book_title, author, None, chapters)
 
 
 def detect(data: bytes, ext: str, *, min_chars: int) -> DetectedBook | None:
@@ -624,7 +632,7 @@ def detect(data: bytes, ext: str, *, min_chars: int) -> DetectedBook | None:
             continue
         idx = len(chapters) + 1
         title = title or f"Section {idx}"
-        flags = _flags(title, len(text), False, min_chars)
+        default_selected, selectable = _flags(title, len(text), False, min_chars)
         chapters.append(
             DetectedChapter(
                 idx=idx,
@@ -632,8 +640,8 @@ def detect(data: bytes, ext: str, *, min_chars: int) -> DetectedBook | None:
                 locator=locator,
                 word_count=len(text.split()),
                 char_count=len(text),
-                default_selected=flags[0],
-                selectable=flags[1],
+                default_selected=default_selected,
+                selectable=selectable,
             )
         )
     if len(chapters) < 2:

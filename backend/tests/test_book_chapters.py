@@ -6,7 +6,7 @@ import zipfile
 import pytest
 from app.services import book_chapters
 from app.services.book_chapters import BookFormatError
-from pypdf import PdfReader, PdfWriter
+from pypdf import PageObject, PdfReader, PdfWriter
 from pypdf.generic import DictionaryObject, NameObject
 
 NCX_TYPE = "application/x-dtbncx+xml"
@@ -618,17 +618,42 @@ def test_pdf_single_outline_item_detects_none():
 
 
 def test_pdf_unresolvable_and_out_of_order_items_skipped():
-    data = make_pdf(8, [("One", 0), ("Dup", 0), ("Two", 4), ("Back", 2), ("Three", 6)])
-    reader = PdfReader(io.BytesIO(data))
-    writer = PdfWriter(clone_from=reader)
-    writer.add_outline_item("Nowhere", 0)
-    broken = writer.outline[-1]
-    del broken[NameObject("/Page")]
+    writer = PdfWriter()
+    for _ in range(8):
+        writer.add_blank_page(100, 100)
+    for title, page in [("One", 0), ("Gone", 2), ("Two", 4), ("Back", 2), ("Three", 6)]:
+        item = writer.add_outline_item(title, page)
+        if title == "Gone":
+            del item.get_object()[NameObject("/A")]
     buf = io.BytesIO()
     writer.write(buf)
-    book = book_chapters.detect(buf.getvalue(), ".pdf", min_chars=10)
+    book = book_chapters.detect(buf.getvalue(), ".pdf", min_chars=0)
     assert [c.title for c in book.chapters] == ["One", "Two", "Three"]
     assert ranges(book) == [(0, 3), (4, 5), (6, 7)]
+
+
+def test_pdf_out_of_range_page_item_skipped(monkeypatch: pytest.MonkeyPatch):
+    data = make_pdf(6, [("One", 0), ("Far", 2), ("Two", 3)])
+    real = PdfReader.get_destination_page_number
+
+    def fake(self, outline_item):
+        return 99 if outline_item.title == "Far" else real(self, outline_item)
+
+    monkeypatch.setattr(PdfReader, "get_destination_page_number", fake)
+    book = book_chapters.detect(data, ".pdf", min_chars=10)
+    assert [c.title for c in book.chapters] == ["One", "Two"]
+    assert ranges(book) == [(0, 2), (3, 5)]
+
+
+def test_pdf_malformed_page_raises_book_format_error(monkeypatch: pytest.MonkeyPatch):
+    data = make_pdf(4, [("One", 0), ("Two", 2)])
+
+    def boom(self, *args, **kwargs):
+        raise KeyError("/Resources")
+
+    monkeypatch.setattr(PageObject, "extract_text", boom)
+    with pytest.raises(BookFormatError):
+        book_chapters.detect(data, ".pdf", min_chars=10)
 
 
 def test_corrupt_pdf_raises_book_format_error():
