@@ -14,6 +14,7 @@ import re
 import zipfile
 import zlib
 from dataclasses import dataclass
+from functools import cached_property
 from html.entities import html5
 from typing import Any
 from urllib.parse import unquote
@@ -389,11 +390,15 @@ class _Epub:
             raise BookFormatError("The EPUB has no readable content.")
         self._spine_index = {path: i for i, path in enumerate(self.spine)}
 
-        candidates = [self._manifest.get(cover_id or "")] + [
+        self._cover_id = cover_id
+
+    @cached_property
+    def cover(self) -> bytes | None:
+        candidates = [self._manifest.get(self._cover_id or "")] + [
             m for m in self._manifest.values() if "cover-image" in m["props"].split()
         ]
         cover = next((c for c in candidates if c and c["type"].startswith("image/")), None)
-        self.cover = self._read(cover["path"]) if cover else None
+        return self._read(cover["path"]) if cover else None
 
     def _check_encryption(self) -> None:
         enc = self._read_xml("META-INF/encryption.xml")

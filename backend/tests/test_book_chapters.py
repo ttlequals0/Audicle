@@ -511,6 +511,36 @@ def test_malformed_ncx_falls_back_to_spine_documents():
     assert [c.title for c in book.chapters] == ["Section 1", "Section 2"]
 
 
+def test_chapter_markdown_does_not_read_the_cover(monkeypatch):
+    files: dict[str, bytes | str] = {"cover.jpg": b"\xff\xd8\xffJPEGDATA"}
+    for i in (1, 2):
+        files[f"ch{i}.xhtml"] = page(f"<p>chapter {i} text</p>")
+    files["toc.ncx"] = ncx([("One", "ch1.xhtml"), ("Two", "ch2.xhtml")])
+    items = [
+        ("ncx", "toc.ncx", NCX_TYPE, ""),
+        ("c1", "ch1.xhtml", XHTML, ""),
+        ("c2", "ch2.xhtml", XHTML, ""),
+        ("img", "cover.jpg", "image/jpeg", ""),
+    ]
+    files["content.opf"] = opf(
+        items, ["c1", "c2"], meta='<meta name="cover" content="img"/>', toc="ncx"
+    )
+    data = make_epub(files)
+    book = detect_epub(data)
+    reads: list[str] = []
+    real = book_chapters._Epub._read
+
+    def _spy(self, name):
+        reads.append(name)
+        return real(self, name)
+
+    monkeypatch.setattr(book_chapters._Epub, "_read", _spy)
+    assert "chapter 1 text" in book_chapters.epub_chapter_markdown(data, book.chapters[0].locator)
+    assert "cover.jpg" not in reads
+    assert detect_epub(data).cover == b"\xff\xd8\xffJPEGDATA"
+    assert "cover.jpg" in reads
+
+
 def test_cover_falls_back_to_cover_image_property():
     files = {"cover.jpg": b"\xff\xd8COVER", **_two_chapter_files()}
     items = [*_TWO_ITEMS, ("img", "cover.jpg", "image/jpeg", "cover-image")]

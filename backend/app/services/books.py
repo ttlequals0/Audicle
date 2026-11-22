@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import shutil
 import sqlite3
+from collections import Counter
 from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass
@@ -24,12 +25,20 @@ CHAPTER_FRAGMENT = "#chapter="
 IN_FLIGHT = ("staging", "queued", "processing")
 
 SEASON_HIGH_WATER_KEY = "book_season_high_water"
-NEWEST_JOB_SQL = (
-    "SELECT j.episode_id, j.status FROM ("
-    "SELECT episode_id, MAX(rowid) AS rid FROM jobs "
-    "WHERE episode_id IN (SELECT episode_id FROM book_chapters WHERE book_id = ?) "
-    "GROUP BY episode_id) n JOIN jobs j ON j.rowid = n.rid"
-)
+_ONE_BOOK_SCOPE = "SELECT episode_id FROM book_chapters WHERE book_id = ?"
+_ALL_BOOKS_SCOPE = "SELECT episode_id FROM book_chapters"
+
+
+def _newest_job_sql(scope: str) -> str:
+    return (
+        "SELECT j.episode_id, j.status FROM ("
+        "SELECT episode_id, MAX(rowid) AS rid FROM jobs "
+        f"WHERE episode_id IN ({scope}) "
+        "GROUP BY episode_id) n JOIN jobs j ON j.rowid = n.rid"
+    )
+
+
+NEWEST_JOB_SQL = _newest_job_sql(_ONE_BOOK_SCOPE)
 _IN_FLIGHT_SQL = ",".join(f"'{s}'" for s in IN_FLIGHT)
 _BOOK_COLUMNS = "id, source_uri, filename, format, title, author, season_number, has_cover, created_at, voice_id"
 _CHAPTER_COLUMNS = (
@@ -65,6 +74,12 @@ class Chapter:
     requested: bool
     episode_id: str
     completed_at: str | None
+
+
+@dataclass(frozen=True)
+class BookSummary:
+    counts: dict[str, int]
+    can_resume: bool
 
 
 @dataclass(frozen=True)
@@ -223,41 +238,85 @@ def chapter_for_episode(conn: sqlite3.Connection, episode_id: str) -> tuple[Book
     return (book, chapter) if book else None
 
 
-def chapter_statuses(conn: sqlite3.Connection, book_id: str) -> dict[int, str]:
-    chapters = conn.execute(
-        "SELECT idx, episode_id, completed_at FROM book_chapters WHERE book_id = ?", (book_id,)
-    ).fetchall()
-    scope = "SELECT episode_id FROM book_chapters WHERE book_id = ?"
+@dataclass(frozen=True)
+class _JobState:
+    processing: set[str]
+    queued: set[str]
+    newest: dict[str, str]
+    published: set[str]
+
+
+def _job_state(conn: sqlite3.Connection, scope: str, params: tuple[str, ...]) -> _JobState:
     processing: set[str] = set()
     queued: set[str] = set()
     for row in conn.execute(
         f"SELECT episode_id, status FROM jobs WHERE status IN ({_IN_FLIGHT_SQL}) "
         f"AND episode_id IN ({scope})",
-        (book_id,),
+        params,
     ):
         (processing if row["status"] == "processing" else queued).add(row["episode_id"])
-    newest = {row["episode_id"]: row["status"] for row in conn.execute(NEWEST_JOB_SQL, (book_id,))}
-    published = {
-        row["id"]
-        for row in conn.execute(f"SELECT id FROM episodes WHERE id IN ({scope})", (book_id,))
+    newest = {
+        row["episode_id"]: row["status"] for row in conn.execute(_newest_job_sql(scope), params)
     }
-    statuses: dict[int, str] = {}
-    for ch in chapters:
-        episode_id = ch["episode_id"]
-        if episode_id in processing:
-            status = "processing"
-        elif episode_id in queued:
-            status = "queued"
-        elif episode_id in published:
-            status = "done"
-        elif ch["completed_at"]:
-            status = "removed"
-        elif newest.get(episode_id) in ("failed", "cancelled"):
-            status = newest[episode_id]
-        else:
-            status = "not_queued"
-        statuses[ch["idx"]] = status
-    return statuses
+    published = {
+        row["id"] for row in conn.execute(f"SELECT id FROM episodes WHERE id IN ({scope})", params)
+    }
+    return _JobState(processing, queued, newest, published)
+
+
+def _status(state: _JobState, episode_id: str, completed_at: str | None) -> str:
+    if episode_id in state.processing:
+        return "processing"
+    if episode_id in state.queued:
+        return "queued"
+    if episode_id in state.published:
+        return "done"
+    if completed_at:
+        return "removed"
+    if state.newest.get(episode_id) in ("failed", "cancelled"):
+        return state.newest[episode_id]
+    return "not_queued"
+
+
+def chapter_statuses(conn: sqlite3.Connection, book_id: str) -> dict[int, str]:
+    chapters = conn.execute(
+        "SELECT idx, episode_id, completed_at FROM book_chapters WHERE book_id = ?", (book_id,)
+    ).fetchall()
+    state = _job_state(conn, _ONE_BOOK_SCOPE, (book_id,))
+    return {ch["idx"]: _status(state, ch["episode_id"], ch["completed_at"]) for ch in chapters}
+
+
+def _is_remaining(
+    requested: bool, selectable: bool, completed_at: str | None, status: str | None
+) -> bool:
+    return (
+        requested
+        and selectable
+        and completed_at is None
+        and status not in ("queued", "processing", "done")
+    )
+
+
+def book_summaries(conn: sqlite3.Connection) -> dict[str, BookSummary]:
+    """Per-status counts and resumability for every book, in a fixed number of queries."""
+
+    rows = conn.execute(
+        "SELECT book_id, idx, selectable, requested, completed_at, episode_id FROM book_chapters"
+    ).fetchall()
+    state = _job_state(conn, _ALL_BOOKS_SCOPE, ())
+    counts: dict[str, Counter[str]] = {}
+    resumable: set[str] = set()
+    for row in rows:
+        status = _status(state, row["episode_id"], row["completed_at"])
+        counts.setdefault(row["book_id"], Counter())[status] += 1
+        if _is_remaining(
+            bool(row["requested"]), bool(row["selectable"]), row["completed_at"], status
+        ):
+            resumable.add(row["book_id"])
+    return {
+        book_id: BookSummary(counts=dict(book_counts), can_resume=book_id in resumable)
+        for book_id, book_counts in counts.items()
+    }
 
 
 def _parse_index_list(value: str, max_idx: int) -> list[int]:
@@ -320,19 +379,20 @@ def parse_selection(
         return [
             c.idx
             for c in chapters
-            if c.requested
-            and c.selectable
-            and c.completed_at is None
-            and statuses.get(c.idx) not in ("queued", "processing", "done")
+            if _is_remaining(c.requested, c.selectable, c.completed_at, statuses.get(c.idx))
         ]
     return _explicit_selection(value, chapters)
 
 
 def queue_chapters(
-    conn: sqlite3.Connection, book: Book, idxs: list[int], voice_id: str | None
+    conn: sqlite3.Connection,
+    book: Book,
+    idxs: list[int],
+    voice_id: str | None,
+    chapters: list[Chapter],
+    statuses: dict[int, str],
 ) -> QueueResult:
-    statuses = chapter_statuses(conn, book.id)
-    selectable = {c.idx for c in get_chapters(conn, book.id) if c.selectable}
+    selectable = {c.idx for c in chapters if c.selectable}
     queued: list[jobs.Job] = []
     skipped: list[int] = []
     for idx in sorted(set(idxs)):
@@ -370,6 +430,13 @@ def has_in_flight(conn: sqlite3.Connection, book_id: str) -> bool:
         f"SELECT 1 FROM jobs WHERE status IN ({_IN_FLIGHT_SQL}) AND episode_id IN "
         "(SELECT episode_id FROM book_chapters WHERE book_id = ?) LIMIT 1",
         (book_id,),
+    ).fetchone()
+    return row is not None
+
+
+def has_published_chapter(conn: sqlite3.Connection, book_id: str) -> bool:
+    row = conn.execute(
+        f"SELECT 1 FROM episodes WHERE id IN ({_ONE_BOOK_SCOPE}) LIMIT 1", (book_id,)
     ).fetchone()
     return row is not None
 

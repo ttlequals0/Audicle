@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import io
 from pathlib import Path
 
 import pytest
+from app.api.v1 import books as books_api
 from app.config import get_settings
 from app.core import database
 from app.main import create_app
@@ -97,6 +99,45 @@ def test_list_books_reports_counts(env: Path) -> None:
     _set_job(env, _chapter_episode(env, book_id, 1), "failed")
     with _client(env) as client:
         assert client.get("/api/v1/books").json()[0]["can_resume"] is True
+
+
+def test_list_summaries_match_each_book_detail(env: Path) -> None:
+    with _client(env) as client:
+        ids = [
+            _split(client, simple_epub(title=f"Book {i}"), chapters="1-2").json()["book_id"]
+            for i in range(3)
+        ]
+    _set_job(env, _chapter_episode(env, ids[0], 1), "failed")
+    _publish(env, _chapter_episode(env, ids[1], 2))
+    _set_job(env, _chapter_episode(env, ids[1], 1), "processing")
+    with _client(env) as client:
+        rows = {r["book_id"]: r for r in client.get("/api/v1/books").json()}
+        for book_id in ids:
+            detail = client.get(f"/api/v1/books/{book_id}").json()
+            assert rows[book_id]["counts"] == detail["counts"]
+            assert rows[book_id]["can_resume"] == detail["can_resume"]
+    assert rows[ids[0]]["can_resume"] is True
+    assert rows[ids[1]]["can_resume"] is False
+
+
+def test_list_books_statement_count_does_not_grow_with_books(env: Path) -> None:
+    def statements() -> int:
+        seen: list[str] = []
+        conn = _db(env)
+        conn.set_trace_callback(seen.append)
+        try:
+            asyncio.run(books_api.list_books(conn))
+        finally:
+            conn.close()
+        return len(seen)
+
+    with _client(env) as client:
+        _split(client, simple_epub(title="Book 0"), chapters="1")
+        one = statements()
+        for i in range(1, 5):
+            _split(client, simple_epub(title=f"Book {i}"), chapters="1")
+        five = statements()
+    assert one == five
 
 
 def test_get_book_reports_chapter_status(env: Path) -> None:

@@ -54,17 +54,13 @@ class QueueChaptersRequest(BaseModel):
     voice: str | None = None
 
 
-def book_response(
-    conn: sqlite3.Connection,
+def _response(
     book: books.Book,
-    *,
-    with_chapters: bool = True,
+    summary: books.BookSummary,
+    chapters: list[BookChapterOut],
     queued: list[int] | None = None,
     skipped: list[int] | None = None,
 ) -> BookResponse:
-    chapters = books.get_chapters(conn, book.id)
-    statuses = books.chapter_statuses(conn, book.id)
-    status_counts = Counter(statuses.values())
     return BookResponse(
         book_id=book.id,
         title=book.title,
@@ -75,26 +71,41 @@ def book_response(
         has_cover=book.has_cover,
         voice_id=book.voice_id,
         created_at=book.created_at,
-        counts={s: status_counts[s] for s in _STATUSES},
-        can_resume=bool(books.parse_selection("remaining", chapters, statuses)),
-        chapters=[
-            BookChapterOut(
-                index=c.idx,
-                title=c.title,
-                word_count=c.word_count,
-                default_selected=c.default_selected,
-                selectable=c.selectable,
-                requested=c.requested,
-                status=statuses[c.idx],
-                episode_id=c.episode_id,
-            )
-            for c in chapters
-        ]
-        if with_chapters
-        else [],
+        counts={s: summary.counts.get(s, 0) for s in _STATUSES},
+        can_resume=summary.can_resume,
+        chapters=chapters,
         queued=queued or [],
         skipped=skipped or [],
     )
+
+
+def book_response(
+    conn: sqlite3.Connection,
+    book: books.Book,
+    *,
+    queued: list[int] | None = None,
+    skipped: list[int] | None = None,
+) -> BookResponse:
+    chapters = books.get_chapters(conn, book.id)
+    statuses = books.chapter_statuses(conn, book.id)
+    summary = books.BookSummary(
+        counts=dict(Counter(statuses.values())),
+        can_resume=bool(books.parse_selection("remaining", chapters, statuses)),
+    )
+    outs = [
+        BookChapterOut(
+            index=c.idx,
+            title=c.title,
+            word_count=c.word_count,
+            default_selected=c.default_selected,
+            selectable=c.selectable,
+            requested=c.requested,
+            status=statuses[c.idx],
+            episode_id=c.episode_id,
+        )
+        for c in chapters
+    ]
+    return _response(book, summary, outs, queued, skipped)
 
 
 def queue_selection(
@@ -104,13 +115,14 @@ def queue_selection(
     Raises ValueError for a bad selection; callers map it to 400."""
 
     chapters = books.get_chapters(conn, book.id)
-    idxs = books.parse_selection(selection, chapters, books.chapter_statuses(conn, book.id))
+    statuses = books.chapter_statuses(conn, book.id)
+    idxs = books.parse_selection(selection, chapters, statuses)
     if voice is None and book.voice_id:
         voice_id = book.voice_id
     else:
         voice_id = voices.resolve(conn, voice)
         books.set_voice(conn, book.id, voice_id)
-    result = books.queue_chapters(conn, book, idxs, voice_id)
+    result = books.queue_chapters(conn, book, idxs, voice_id, chapters, statuses)
     idx_by_episode = {c.episode_id: c.idx for c in chapters}
     queued = sorted(idx_by_episode[j.episode_id] for j in result.queued)
     return book_response(conn, book, queued=queued, skipped=result.skipped)
@@ -125,7 +137,9 @@ def _get_or_404(conn: sqlite3.Connection, book_id: str) -> books.Book:
 
 @router.get("", response_model=list[BookResponse], summary="List chapter-split books")
 async def list_books(conn: Annotated[sqlite3.Connection, Depends(get_conn)]) -> list[BookResponse]:
-    return [book_response(conn, b, with_chapters=False) for b in books.list_books(conn)]
+    summaries = books.book_summaries(conn)
+    empty = books.BookSummary(counts={}, can_resume=False)
+    return [_response(b, summaries.get(b.id, empty), []) for b in books.list_books(conn)]
 
 
 @router.get("/{book_id}", response_model=BookResponse, summary="Book detail with every chapter")
@@ -168,7 +182,7 @@ async def delete_book(
         _get_or_404(conn, book_id)
         if books.has_in_flight(conn, book_id):
             raise HTTPException(status_code=409, detail="a chapter of this book is processing")
-        published = "done" in books.chapter_statuses(conn, book_id).values()
+        published = books.has_published_chapter(conn, book_id)
         books.delete_book(conn, settings, book_id)
         if published:
             feed_revision.bump(conn)

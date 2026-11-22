@@ -333,7 +333,7 @@ def _parse_pdf(
 ) -> tuple[list[str], set[int], dict[str, Any]]:
     try:
         reader = PdfReader(io.BytesIO(data))
-        source_pages = list(reader.pages)[first : None if last is None else last + 1]
+        source_pages = reader.pages[first : None if last is None else last + 1]
         pages = [page.extract_text() or "" for page in source_pages]
         image_pages = {index for index, page in enumerate(source_pages) if page_has_image(page)}
     except (PyPdfError, ValueError, OSError) as exc:

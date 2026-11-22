@@ -114,6 +114,17 @@ def test_chapter_episode_ids_are_deterministic_and_distinct(conn) -> None:
     assert books.get_chapters(conn, book.id)[0].locator == {"start": 1}
 
 
+def _queue(conn, book, idxs, voice_id):
+    return books.queue_chapters(
+        conn,
+        book,
+        idxs,
+        voice_id,
+        books.get_chapters(conn, book.id),
+        books.chapter_statuses(conn, book.id),
+    )
+
+
 def test_status_derivation(conn) -> None:
     book = _make(conn, n=8)
     _job(conn, book, 2, "queued")
@@ -136,6 +147,15 @@ def test_status_derivation(conn) -> None:
     }
 
 
+def test_has_published_chapter_only_counts_this_books_episodes(conn) -> None:
+    book, other = _make(conn, "a", n=2), _make(conn, "b", n=2)
+    assert not books.has_published_chapter(conn, book.id)
+    _episode(conn, other, 1)
+    assert not books.has_published_chapter(conn, book.id)
+    _episode(conn, book, 2)
+    assert books.has_published_chapter(conn, book.id)
+
+
 def test_parse_selection_forms(conn) -> None:
     book = _make(conn, n=10, short=(4,))
     chapters = books.get_chapters(conn, book.id)
@@ -155,7 +175,7 @@ def test_parse_selection_forms(conn) -> None:
 
 def test_remaining_excludes_completed_and_in_flight(conn) -> None:
     book = _make(conn, n=8)
-    books.queue_chapters(conn, book, [1, 2, 3, 4, 5, 6, 7], None)
+    _queue(conn, book, [1, 2, 3, 4, 5, 6, 7], None)
     conn.execute("DELETE FROM jobs")
     eps = {c.idx: c.episode_id for c in books.get_chapters(conn, book.id)}
     _job(conn, book, 1, "failed")
@@ -179,7 +199,7 @@ def test_queue_chapters_skips_done_and_in_flight_and_sets_requested(conn) -> Non
     _job(conn, book, 2, "queued")
     _job(conn, book, 3, "processing")
     _job(conn, book, 4, "failed")
-    result = books.queue_chapters(conn, book, [5, 4, 3, 2, 1], "2")
+    result = _queue(conn, book, [5, 4, 3, 2, 1], "2")
     assert result.skipped == [1, 2, 3]
     assert [j.url for j in result.queued] == [
         books.chapter_uri(book.source_uri, 4),
@@ -243,7 +263,7 @@ def test_newest_job_query_uses_episode_index(conn) -> None:
 
 def test_queue_chapters_skips_unknown_and_unselectable(conn) -> None:
     book = _make(conn, n=3, short=(2,))
-    result = books.queue_chapters(conn, book, [1, 2, 9], None)
+    result = _queue(conn, book, [1, 2, 9], None)
     assert [j.url for j in result.queued] == [books.chapter_uri(book.source_uri, 1)]
     assert result.skipped == [2, 9]
     assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
@@ -259,7 +279,7 @@ def test_queue_chapters_marks_requested_before_job_creation(
 
     monkeypatch.setattr(jobs, "create_job", boom)
     with pytest.raises(RuntimeError):
-        books.queue_chapters(conn, book, [1, 2], None)
+        _queue(conn, book, [1, 2], None)
     assert {c.idx: c.requested for c in books.get_chapters(conn, book.id)} == {1: True, 2: False}
 
 
