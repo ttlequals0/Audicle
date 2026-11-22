@@ -302,7 +302,8 @@ async def run() -> None:
             extra={"event": "worker_signal", "signum": signum},
         )
         shutdown.set()
-        _note_stop_requested(settings.DATA_DIR)
+        # Off the loop: a locked database must not delay the shutdown this starts.
+        loop.run_in_executor(None, _note_stop_requested, settings.DATA_DIR)
 
     # Install signal handlers BEFORE crash recovery so a SIGTERM during a slow
     # migration or recovery isn't dispatched to the default handler.

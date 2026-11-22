@@ -136,6 +136,22 @@ def test_docx_entry_with_unknown_content_type_counts_toward_cap(
         file_extraction._parse_docx(data)
 
 
+def test_docx_part_extension_comes_from_the_entry_basename(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = _make_docx(title=None, author=None, body="hello")
+    with zipfile.ZipFile(io.BytesIO(original)) as archive:
+        entries = {i.filename: archive.read(i.filename) for i in archive.infolist()}
+        xml_total = sum(i.file_size for i in archive.infolist())
+    entries["word.v2/image1.png"] = bytes(5000)
+    entries["[Content_Types].xml"] = entries["[Content_Types].xml"].replace(
+        b"</Types>", b'<Default Extension="png" ContentType="image/png"/></Types>'
+    )
+    monkeypatch.setattr(file_extraction, "MAX_DOCX_XML_BYTES", xml_total + 1000)
+    text, _meta = file_extraction._parse_docx(_zip(entries))
+    assert "hello" in text
+
+
 def test_docx_without_content_types_is_a_permanent_error() -> None:
     data = _zip({"word/document.xml": b"<w/>"})
     with pytest.raises(ExtractionPermanentError, match="could not read DOCX: bad content types"):

@@ -719,6 +719,17 @@ def test_reset_processing_fails_job_after_max_recoveries(tmp_path: Path) -> None
         conn.close()
 
 
+def test_reset_processing_keeps_the_last_error_when_failing_a_job(tmp_path: Path) -> None:
+    conn = _jobs_conn(tmp_path)
+    try:
+        _insert_processing(conn, "dead", count=database.MAX_CRASH_RECOVERIES, error="llm_timeout")
+        database.reset_processing_to_queued(conn)
+        error = _job(conn, "dead")["error"]
+        assert error.startswith("worker stopped") and error.endswith("(last error: llm_timeout)")
+    finally:
+        conn.close()
+
+
 def test_job_survives_exactly_max_recoveries(tmp_path: Path) -> None:
     conn = _jobs_conn(tmp_path)
     try:

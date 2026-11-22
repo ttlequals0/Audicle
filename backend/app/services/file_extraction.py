@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import posixpath
 import re
 import sqlite3
 import zipfile
@@ -383,7 +384,7 @@ def _check_docx_size(data: bytes) -> None:
             return True
         content_type = overrides.get("/" + lowered)
         if content_type is None:
-            content_type = defaults.get(lowered.rpartition(".")[2] if "." in lowered else "")
+            content_type = defaults.get(posixpath.splitext(lowered)[1][1:])
         return content_type is None or content_type.endswith("xml")
 
     xml_bytes = sum(i.file_size for i in infos if is_xml(i.filename))

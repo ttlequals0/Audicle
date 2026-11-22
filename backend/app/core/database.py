@@ -1006,7 +1006,7 @@ def reset_processing_to_queued(conn: sqlite3.Connection, *, count: bool = True) 
             """
             UPDATE jobs
             SET status = 'failed',
-                error = ?,
+                error = ? || COALESCE(' (last error: ' || error || ')', ''),
                 updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
             WHERE status = 'processing' AND recovery_count >= ?
             """,
