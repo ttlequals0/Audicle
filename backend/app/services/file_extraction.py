@@ -28,7 +28,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote
 
+import defusedxml.ElementTree as DET
 import docx
+from defusedxml import DefusedXmlException
 from docx.opc.exceptions import PackageNotFoundError
 from docx.oxml.table import CT_Tbl
 from docx.oxml.text.paragraph import CT_P
@@ -69,6 +71,8 @@ ALLOWED_EXTENSIONS: frozenset[str] = frozenset(
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 _MAX_FILENAME_LEN = 255
 MAX_DOCX_XML_BYTES = 50 * 1024 * 1024
+MAX_DOCX_CONTENT_TYPES_BYTES = 1024 * 1024
+_CONTENT_TYPES_NAME = "[Content_Types].xml"
 
 
 def is_upload_source(url: str) -> bool:
@@ -352,11 +356,34 @@ def _check_docx_size(data: bytes) -> None:
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             infos = archive.infolist()
-    except zipfile.BadZipFile as exc:
+            if len(infos) > book_chapters.MAX_ARCHIVE_ENTRIES:
+                raise ExtractionPermanentError("DOCX has too many entries")
+            types_info = next((i for i in infos if i.filename == _CONTENT_TYPES_NAME), None)
+            if types_info is None or types_info.file_size > MAX_DOCX_CONTENT_TYPES_BYTES:
+                raise ExtractionPermanentError("could not read DOCX: bad content types")
+            root = DET.fromstring(archive.read(types_info))
+    except (zipfile.BadZipFile, DET.ParseError, DefusedXmlException) as exc:
         raise ExtractionPermanentError(f"could not read DOCX: {exc}") from exc
-    if len(infos) > book_chapters.MAX_ARCHIVE_ENTRIES:
-        raise ExtractionPermanentError("DOCX has too many entries")
-    xml_bytes = sum(i.file_size for i in infos if i.filename.lower().endswith((".xml", ".rels")))
+    defaults: dict[str, str] = {}
+    overrides: dict[str, str] = {}
+    for element in root:
+        kind = element.tag.rpartition("}")[2]
+        content_type = (element.get("ContentType") or "").lower()
+        if kind == "Default":
+            defaults[(element.get("Extension") or "").lower()] = content_type
+        elif kind == "Override":
+            overrides[(element.get("PartName") or "").lower()] = content_type
+
+    def is_xml(name: str) -> bool:
+        lowered = name.lower()
+        if lowered.endswith(".rels") or name == _CONTENT_TYPES_NAME:
+            return True
+        content_type = overrides.get("/" + lowered)
+        if content_type is None:
+            content_type = defaults.get(lowered.rpartition(".")[2] if "." in lowered else "")
+        return content_type is None or content_type.endswith("xml")
+
+    xml_bytes = sum(i.file_size for i in infos if is_xml(i.filename))
     total = sum(i.file_size for i in infos)
     if total > book_chapters.MAX_UNCOMPRESSED_BYTES or xml_bytes > MAX_DOCX_XML_BYTES:
         raise ExtractionPermanentError("DOCX is too large once uncompressed")

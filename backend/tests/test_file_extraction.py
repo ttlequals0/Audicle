@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import zipfile
 from pathlib import Path
 
 import docx
@@ -58,6 +59,91 @@ def test_docx_with_too_many_entries_is_rejected(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(book_chapters, "MAX_ARCHIVE_ENTRIES", 1)
     _forbid_docx_parse(monkeypatch)
     with pytest.raises(ExtractionPermanentError, match="too many entries"):
+        file_extraction._parse_docx(data)
+
+
+_CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
+
+
+def _zip(entries: dict[str, bytes]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, payload in entries.items():
+            archive.writestr(name, payload)
+    return buf.getvalue()
+
+
+def _content_types(body: str) -> bytes:
+    return f'<Types xmlns="{_CT_NS}">{body}</Types>'.encode()
+
+
+def _small_package(part_name: str, body: str) -> bytes:
+    return _zip(
+        {
+            "[Content_Types].xml": _content_types(body),
+            "_rels/.rels": b"<Relationships/>",
+            part_name: b"x" * 5000,
+        }
+    )
+
+
+def test_docx_xml_part_with_non_xml_name_counts_toward_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data = _small_package(
+        "word/document.bin",
+        '<Override PartName="/word/document.bin" '
+        'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml'
+        '.document.main+xml"/>',
+    )
+    monkeypatch.setattr(file_extraction, "MAX_DOCX_XML_BYTES", 2000)
+    _forbid_docx_parse(monkeypatch)
+    with pytest.raises(ExtractionPermanentError, match="too large once uncompressed"):
+        file_extraction._parse_docx(data)
+
+
+def test_docx_binary_media_does_not_count_toward_xml_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = _make_docx(title=None, author=None, body="hello")
+    with zipfile.ZipFile(io.BytesIO(original)) as archive:
+        entries = {i.filename: archive.read(i.filename) for i in archive.infolist()}
+        xml_total = sum(
+            i.file_size for i in archive.infolist() if i.filename.endswith((".xml", ".rels"))
+        )
+    entries["word/media/image1.png"] = bytes(5000)
+    types = entries["[Content_Types].xml"]
+    if b'Extension="png"' not in types:
+        entries["[Content_Types].xml"] = types.replace(
+            b"</Types>", b'<Default Extension="png" ContentType="image/png"/></Types>'
+        )
+    monkeypatch.setattr(file_extraction, "MAX_DOCX_XML_BYTES", xml_total + 1000)
+    text, _meta = file_extraction._parse_docx(_zip(entries))
+    assert "hello" in text
+
+
+def test_docx_entry_with_unknown_content_type_counts_toward_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data = _small_package("word/blob.dat", '<Default Extension="png" ContentType="image/png"/>')
+    monkeypatch.setattr(file_extraction, "MAX_DOCX_XML_BYTES", 2000)
+    _forbid_docx_parse(monkeypatch)
+    with pytest.raises(ExtractionPermanentError, match="too large once uncompressed"):
+        file_extraction._parse_docx(data)
+
+
+def test_docx_without_content_types_is_a_permanent_error() -> None:
+    data = _zip({"word/document.xml": b"<w/>"})
+    with pytest.raises(ExtractionPermanentError, match="could not read DOCX: bad content types"):
+        file_extraction._parse_docx(data)
+
+
+def test_docx_with_oversized_content_types_is_a_permanent_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data = _small_package("word/media/a.png", '<Default Extension="png" ContentType="image/png"/>')
+    monkeypatch.setattr(file_extraction, "MAX_DOCX_CONTENT_TYPES_BYTES", 10)
+    with pytest.raises(ExtractionPermanentError, match="could not read DOCX: bad content types"):
         file_extraction._parse_docx(data)
 
 
