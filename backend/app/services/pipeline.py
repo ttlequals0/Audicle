@@ -622,6 +622,8 @@ def _title_key(text: str) -> str:
 
 _TITLE_SEPARATORS = re.compile(r": | \| | - ")
 _TITLE_ENUMERATOR = re.compile(r"^(?:chapter\s+)?\d+[.):]?\s+", re.IGNORECASE)
+# Title separators plus the sentence boundary, capturing so kept text rebuilds verbatim.
+_HEADING_PARTS = re.compile(r"(: | \| | - |\. )")
 
 
 def _title_echo_keys(title: str) -> set[str]:
@@ -631,6 +633,36 @@ def _title_echo_keys(title: str) -> set[str]:
     keys = {_title_key(p) for p in _TITLE_SEPARATORS.split(title.translate(_TITLE_PUNCT))} | {full}
     keys |= {_TITLE_ENUMERATOR.sub("", k) for k in keys}
     return {k for k in keys if len(k) >= 4 or (k and k == full)}
+
+
+def _is_title_key(key: str, title_keys: set[str]) -> bool:
+    return any(key == tk or SequenceMatcher(None, key, tk).ratio() >= 0.9 for tk in title_keys)
+
+
+def _drop_echo_parts(line: str, title_keys: set[str]) -> str | None:
+    """The line minus its title-echo parts; None when no part echoes, "" when all do."""
+
+    # translate() is 1:1 per character, so offsets from the normalised line slice the original.
+    pieces = _HEADING_PARTS.split(line.translate(_TITLE_PUNCT))
+    texts: list[str] = []
+    pos = 0
+    for piece in pieces:
+        texts.append(line[pos : pos + len(piece)])
+        pos += len(piece)
+    parts, seps = texts[0::2], texts[1::2]
+    echo = [_is_title_key(_title_key(p), title_keys) for p in parts]
+    kept = [i for i, p in enumerate(parts) if not echo[i] and p.strip()]
+    if not any(echo):
+        return None
+    if not kept:
+        return ""
+    out = parts[kept[0]]
+    for k in kept[1:]:
+        out += seps[k - 1] + parts[k]
+    # Keep the sentence period that preceded the removed trailing part.
+    if kept[-1] < len(seps) and seps[kept[-1]].startswith("."):
+        out = out.rstrip() + "."
+    return out.strip()
 
 
 def _strip_title_echo(cleaned: str, title: str | None) -> str:
@@ -645,17 +677,26 @@ def _strip_title_echo(cleaned: str, title: str | None) -> str:
     longest = max(len(k) for k in title_keys)
     lines = cleaned.split("\n")
     echoes: set[int] = set()
+    edits: dict[int, str] = {}
     seen = 0
     for i, line in enumerate(lines):
         if not line.strip():
             continue
         seen += 1
         key = _title_key(line)
-        if seen > 5 or len(key) > longest * 1.3:
+        if seen > 5 or len(key) > longest * 2:
             break
-        if any(key == tk or SequenceMatcher(None, key, tk).ratio() >= 0.9 for tk in title_keys):
+        if _is_title_key(key, title_keys):
             echoes.add(i)
-    if not echoes:
+            continue
+        trimmed = _drop_echo_parts(line, title_keys)
+        if trimmed is None:
+            continue
+        if trimmed:
+            edits[i] = trimmed
+        else:
+            echoes.add(i)
+    if not echoes and not edits:
         return cleaned
     out: list[str] = []
     after_echo = False
@@ -667,7 +708,7 @@ def _strip_title_echo(cleaned: str, title: str | None) -> str:
         if after_echo and not line.strip() and (not out or not out[-1].strip()):
             continue
         after_echo = False
-        out.append(line)
+        out.append(edits.get(i, line))
     return "\n".join(out).strip() or cleaned
 
 

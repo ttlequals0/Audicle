@@ -3477,6 +3477,31 @@ _ECHO_HEAD = "A Made Up Headline About Widgets"
         ("AI", f"AI\n\n{_ECHO_PARA}", _ECHO_PARA),
         (_ECHO_HEAD, f"{_ECHO_HEAD}\n\n\n\n{_ECHO_BODY}", _ECHO_BODY),
         (_ECHO_HEAD, f"{_ECHO_HEAD}\n\n{_ECHO_BODY}\n", _ECHO_BODY),
+        (
+            "The Widget Book: 6. A Quiet Start",
+            f"Chapter Six. A Quiet Start.\n\n{_ECHO_BODY}",
+            f"Chapter Six.\n\n{_ECHO_BODY}",
+        ),
+        (
+            "The Widget Book: 6. A Quiet Start",
+            f"Chapter Six: A Quiet Start\n\n{_ECHO_BODY}",
+            f"Chapter Six\n\n{_ECHO_BODY}",
+        ),
+        (
+            f"{_ECHO_HEAD} | Example Site",
+            f"Example Site | {_ECHO_HEAD}\n\n{_ECHO_BODY}",
+            _ECHO_BODY,
+        ),
+        (
+            _ECHO_HEAD,
+            f"Technology - {_ECHO_HEAD}\n\n{_ECHO_BODY}",
+            f"Technology\n\n{_ECHO_BODY}",
+        ),
+        (
+            "The Widget Book: 6. Sunny",
+            f"Chapter Six. Sunny.\n\n{_ECHO_BODY}",
+            f"Chapter Six.\n\n{_ECHO_BODY}",
+        ),
     ],
     ids=[
         "after_leading_label",
@@ -3487,6 +3512,11 @@ _ECHO_HEAD = "A Made Up Headline About Widgets"
         "short_full_title",
         "extra_blank_lines_after_echo",
         "trailing_newline_stripped",
+        "chapter_number_and_title_on_one_line_period",
+        "chapter_number_and_title_on_one_line_colon",
+        "site_name_before_headline_on_one_line",
+        "label_and_headline_on_one_line",
+        "one_word_chapter_title_on_one_line",
     ],
 )
 def test_title_echo_strips_heading_shaped_echoes(title: str, body: str, expected: str) -> None:
@@ -3519,6 +3549,16 @@ def test_title_echo_strips_heading_shaped_echoes(title: str, body: str, expected
             "while without repeating anything.",
         ),
         (_ECHO_HEAD, f"\n\n{_ECHO_PARA}\n"),
+        (
+            "The Widget Book: 6. A Quiet Start",
+            f"Chapter Six. The Long Road.\n\n{_ECHO_BODY}",
+        ),
+        (
+            "Widgets",
+            "Widgets are small. They are also cheap, and this opening paragraph keeps going "
+            f"well past the length of any heading.\n\n{_ECHO_BODY}",
+        ),
+        (_ECHO_HEAD, f"It rained all week. Nobody minded at first.\n\n{_ECHO_BODY}"),
     ],
     ids=[
         "does_not_reach_into_body",
@@ -3527,6 +3567,9 @@ def test_title_echo_strips_heading_shaped_echoes(title: str, body: str, expected
         "short_full_title_segment_only",
         "unrelated_heading_kept",
         "no_echo_keeps_whitespace",
+        "heading_with_parts_that_do_not_match",
+        "opening_sentences_are_not_split",
+        "short_paragraph_under_the_wider_gate",
     ],
 )
 def test_title_echo_leaves_text_unchanged(title: str, body: str) -> None:
