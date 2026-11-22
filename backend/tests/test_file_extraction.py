@@ -386,6 +386,9 @@ def test_ocr_page_cap_counts_selected_pages_and_accepts_high_page_numbers(
         def __init__(self, number: int) -> None:
             self.number = number
 
+        def get_size(self) -> tuple[float, float]:
+            return (612, 792)
+
         def render(self, scale: float):
             rendered.append(self.number)
             return self
@@ -438,6 +441,9 @@ def test_ocr_fails_when_selected_scanned_page_has_no_readable_text(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     class _Page:
+        def get_size(self) -> tuple[float, float]:
+            return (612, 792)
+
         def render(self, scale: float):
             return self
 
@@ -660,3 +666,38 @@ def test_whole_file_pdf_ocr_indexes_are_unshifted(
     monkeypatch.setattr(ocr, "ocr_pdf_pages", _fake_ocr)
     file_extraction._parse(data, ".pdf", get_settings(), lambda: None)
     assert seen["indices"] == [1, 3]
+
+
+def _forbid_ocr_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*_a: object, **_k: object) -> None:
+        raise AssertionError("OCR reached")
+
+    monkeypatch.setattr(ocr, "_run_page", boom)
+
+
+def test_ocr_pdf_page_over_pixel_budget_is_rejected_before_render(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ocr, "MAX_OCR_PIXELS", 1_000_000)
+    _forbid_ocr_run(monkeypatch)
+    with pytest.raises(ocr.OcrError, match="too large to rasterize"):
+        ocr.ocr_pdf_pages(text_page_pdf("hello"), get_settings(), lambda: None, [0])
+
+
+def test_ocr_pdf_page_within_budget_still_renders(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ocr, "_run_page", lambda _image: ("some text", [0.99]))
+    result = ocr.ocr_pdf_pages(text_page_pdf("hello"), get_settings(), lambda: None, [0])
+    assert result == {0: "some text"}
+
+
+def test_ocr_image_over_pixel_budget_is_rejected(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    buf = io.BytesIO()
+    Image.new("RGB", (200, 200), "white").save(buf, format="PNG")
+    monkeypatch.setattr(ocr, "MAX_OCR_PIXELS", 10_000)
+    _forbid_ocr_run(monkeypatch)
+    with pytest.raises(ocr.OcrError, match="too large"):
+        ocr.ocr_image(buf.getvalue(), get_settings(), lambda: None)
