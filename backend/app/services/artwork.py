@@ -60,7 +60,11 @@ async def process_artwork(
     the reason and returns ``None``.
     """
 
-    cover_path = metadata.get("book_cover_path") if isinstance(metadata, dict) else None
+    if not isinstance(metadata, dict):
+        _log_fallback("missing_og_image", episode_id, None)
+        return None
+
+    cover_path = metadata.get("book_cover_path")
     if cover_path:
         return _process_local_cover(str(cover_path), episode_id, output_dir, settings)
 
@@ -246,8 +250,6 @@ def _extract_og_image(metadata: dict[str, Any]) -> str | None:
     ``og:image``. Accept either, and accept list values (some pages declare
     multiple og:image tags and Firecrawl forwards the array)."""
 
-    if not isinstance(metadata, dict):
-        return None
     for key in ("ogImage", "og:image", "og_image"):
         value = metadata.get(key)
         if isinstance(value, str) and value.strip():

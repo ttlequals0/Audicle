@@ -2114,7 +2114,9 @@ async def _stage_finalize(
 
     season_number = metadata.get("season_number")
     episode_number = metadata.get("episode_number")
-    if not (isinstance(season_number, int) and isinstance(episode_number, int)):
+    if not all(
+        isinstance(n, int) and not isinstance(n, bool) for n in (season_number, episode_number)
+    ):
         season_number = episode_number = None
 
     conn = database.connect(database.db_path(settings.DATA_DIR))
@@ -2146,6 +2148,8 @@ async def _stage_finalize(
             season_number=season_number,
             episode_number=episode_number,
         )
+        # Not atomic with publish: a crash between them is safe, chapter status derives
+        # from the episode row and mark_completed is idempotent.
         books.mark_completed(conn, job.episode_id)
     finally:
         conn.close()

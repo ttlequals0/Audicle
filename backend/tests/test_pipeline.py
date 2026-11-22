@@ -849,6 +849,31 @@ async def test_finalize_leaves_numbers_null_for_articles(
     assert ep.season_number is None and ep.episode_number is None
 
 
+async def test_finalize_ignores_boolean_season_numbers(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+
+    async def _bool_extract(_url, _settings, _registry=None):
+        return extraction.ExtractionResult(
+            markdown="raw " * 250,
+            metadata={"title": "T", "season_number": True, "episode_number": 7},
+        )
+
+    monkeypatch.setattr(extraction, "extract", _bool_extract)
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+
+    conn = database.connect(database.db_path(env))
+    try:
+        ep = episodes.get_by_id(conn, job.episode_id)
+    finally:
+        conn.close()
+    assert ep is not None
+    assert ep.season_number is None and ep.episode_number is None
+
+
 async def test_failed_first_publication_is_not_servable(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

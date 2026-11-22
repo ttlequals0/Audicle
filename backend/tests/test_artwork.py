@@ -204,6 +204,81 @@ async def test_unsupported_local_cover_falls_back(
     assert result is None
 
 
+async def test_oversized_local_cover_falls_back(
+    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _forbid_network(monkeypatch)
+    settings = get_settings().model_copy(update={"ARTWORK_MAX_DOWNLOAD_BYTES": 1000})
+    cover = settings.DATA_DIR / "books" / "b1" / "cover.jpg"
+    cover.parent.mkdir(parents=True)
+    cover.write_bytes(_jpeg_with_exif(800, 800))
+    assert cover.stat().st_size > 1000
+
+    result = await artwork.process_artwork(
+        metadata={"book_cover_path": str(cover)},
+        episode_id="chap5",
+        output_dir=tmp_path,
+        settings=settings,
+    )
+
+    assert result is None
+    assert not (tmp_path / "chap5.jpg").exists()
+
+
+async def test_local_cover_symlink_escape_is_rejected(
+    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _forbid_network(monkeypatch)
+    outside = tmp_path / "outside.jpg"
+    outside.write_bytes(_jpeg_with_exif(800, 800))
+    link = get_settings().DATA_DIR / "books" / "b1" / "cover.jpg"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(outside)
+
+    result = await artwork.process_artwork(
+        metadata={"book_cover_path": str(link)},
+        episode_id="chap6",
+        output_dir=tmp_path,
+        settings=get_settings(),
+    )
+
+    assert result is None
+    assert not (tmp_path / "chap6.jpg").exists()
+
+
+async def test_local_cover_dotdot_escape_is_rejected(
+    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _forbid_network(monkeypatch)
+    books_root = get_settings().DATA_DIR / "books"
+    (books_root / "b1").mkdir(parents=True)
+    outside = get_settings().DATA_DIR / "secret.jpg"
+    outside.write_bytes(_jpeg_with_exif(800, 800))
+
+    result = await artwork.process_artwork(
+        metadata={"book_cover_path": str(books_root / "b1" / ".." / ".." / "secret.jpg")},
+        episode_id="chap7",
+        output_dir=tmp_path,
+        settings=get_settings(),
+    )
+
+    assert result is None
+    assert not (tmp_path / "chap7.jpg").exists()
+
+
+async def test_process_artwork_with_non_dict_metadata_returns_none(
+    env: Path, tmp_path: Path
+) -> None:
+    result = await artwork.process_artwork(
+        metadata=None,  # type: ignore[arg-type]
+        episode_id="chap8",
+        output_dir=tmp_path,
+        settings=get_settings(),
+    )
+
+    assert result is None
+
+
 async def test_local_cover_outside_books_dir_is_rejected(
     env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

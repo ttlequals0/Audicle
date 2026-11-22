@@ -146,9 +146,6 @@ def test_channel_pc2_tags_precede_items(env: Path) -> None:
     assert pc2_guid_idx < first_item_idx
 
 
-_PC2_NS = "https://podcastindex.org/namespace/1.0"
-
-
 def _season_items(body: bytes) -> list:
     return DET.fromstring(body).findall("channel/item")
 
@@ -161,15 +158,15 @@ def test_feed_season_tags_only_on_chapter_episodes(env: Path) -> None:
 
     assert first.find(f"{{{_ITUNES_NS}}}season").text == "2"
     assert first.find(f"{{{_ITUNES_NS}}}episode").text == "7"
-    season = first.find(f"{{{_PC2_NS}}}season")
+    season = first.find(f"{{{_PODCAST_NS}}}season")
     assert season.text == "2"
     assert season.get("name") == "Bad Blood"
-    assert first.find(f"{{{_PC2_NS}}}episode").text == "7"
+    assert first.find(f"{{{_PODCAST_NS}}}episode").text == "7"
     for tag in (
         f"{{{_ITUNES_NS}}}season",
         f"{{{_ITUNES_NS}}}episode",
-        f"{{{_PC2_NS}}}season",
-        f"{{{_PC2_NS}}}episode",
+        f"{{{_PODCAST_NS}}}season",
+        f"{{{_PODCAST_NS}}}episode",
     ):
         assert second.find(tag) is None
     assert DET.fromstring(body).find(f"channel/{{{_ITUNES_NS}}}type").text == "episodic"
@@ -179,10 +176,10 @@ def test_feed_season_tag_without_book_row_has_no_name(env: Path) -> None:
     body = _render([_episode(id="chap", season_number=2, episode_number=7)], env=env)
     (item,) = _season_items(body)
 
-    season = item.find(f"{{{_PC2_NS}}}season")
+    season = item.find(f"{{{_PODCAST_NS}}}season")
     assert season.text == "2"
     assert "name" not in season.attrib
-    assert item.find(f"{{{_PC2_NS}}}episode").text == "7"
+    assert item.find(f"{{{_PODCAST_NS}}}episode").text == "7"
 
 
 def test_channel_includes_itunes_type_episodic(env: Path) -> None:
