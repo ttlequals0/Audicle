@@ -19,6 +19,7 @@ Send `null` for an individual setting to reset it. The app stores desired values
 | Area | Endpoints |
 |---|---|
 | Submit | `POST /submit` (URL), `POST /upload` (one file per request; the UI loops for batches), `POST /upload/{episode_id}/reprocess` |
+| Books | `GET /books`, `GET /books/{book_id}`, `POST /books/{book_id}/chapters`, `DELETE /books/{book_id}` |
 | Jobs | `GET /jobs`, `POST /jobs/{id}/requeue`, `POST /jobs/{id}/cancel`, `DELETE /jobs/{id}`, `DELETE /jobs?scope=all` |
 | Episodes | `GET /episodes?page=&per_page=&q=` (paginated, `X-Total-Count` header carries the filtered total; `q` matches title, source URL, and uploaded filename), `DELETE /episodes/{id}`, `POST /episodes/{id}/chapters` |
 | Feed | `GET/POST /feed-auth`, `POST /feed-auth/regenerate`, `POST /feed/recreate?confirm=true` (global GUID reset: every subscriber re-downloads) |
@@ -27,6 +28,71 @@ Send `null` for an individual setting to reset it. The app stores desired values
 | Health | `GET /health/live`, `GET /health/ready`, `GET /health/ingestion` (outside `/api/v1`) |
 
 The interactive docs and `openapi.yaml` list every route and its request schema.
+
+## Books and chapter splitting
+
+`POST /upload` accepts `.epub` as well as the other document types. Two optional form fields turn an EPUB or PDF into a chapter-split book:
+
+| Field | Meaning |
+|---|---|
+| `split_chapters` | `true` to split into one episode per chapter. Default `false`. Any type other than EPUB or PDF returns 400. |
+| `chapters` | Which chapters to queue: `all`, `default`, or a list such as `1,3,5-9`. Requires `split_chapters` (400 otherwise). |
+
+| Case | Result |
+|---|---|
+| `split_chapters` false | One episode, as before. |
+| Chapters found, no `chapters` field | 201 with the book and its chapter list; nothing is queued. |
+| Chapters found, `chapters` given | 201 with the book; those chapters are queued in the same call. |
+| Same file uploaded again with `split_chapters` | 200 with the existing book and the current chapter status; nothing is duplicated. |
+| No chapters found | One episode is queued, and the response is the usual `SubmitResponse` with `"chapters_detected": false`. |
+
+An invalid archive, a DRM-protected EPUB, an archive over the size or entry limits, or a bad `chapters` value returns 400. Chapters come from the EPUB table of contents or the PDF bookmark outline; top-level entries only. See [How it works](how-it-works.md#books-and-chapters) for detection and limits.
+
+```bash
+curl -b cookies.txt -H "X-CSRF-Token: $CSRF" \
+  -F "file=@book.epub" -F "split_chapters=true" \
+  http://your-server:8000/api/v1/upload
+```
+
+```json
+{
+  "book_id": "b1c2d3e4f5a6",
+  "title": "Example Book",
+  "author": "A. Author",
+  "filename": "book.epub",
+  "format": "epub",
+  "season_number": 1,
+  "has_cover": true,
+  "created_at": "2026-11-21T09:30:00",
+  "counts": {"not_queued": 27, "queued": 0, "processing": 0, "done": 0, "failed": 0, "cancelled": 0, "removed": 0},
+  "can_resume": false,
+  "chapters": [
+    {"index": 1, "title": "Prologue", "word_count": 1952, "default_selected": true,
+     "selectable": true, "requested": false, "status": "not_queued", "episode_id": "c7d8e9f0a1b2"}
+  ],
+  "queued": [],
+  "skipped": []
+}
+```
+
+`GET /books` returns the same objects without `chapters`. A chapter's `status` is one of `not_queued`, `queued`, `processing`, `done`, `failed`, `cancelled` or `removed`. It is read from the chapter's newest job; `removed` means the episode was published and has since been deleted by you or by retention.
+
+`POST /books/{book_id}/chapters` queues chapters and requires a loaded voice, like upload:
+
+```json
+{"chapters": "remaining", "voice": "2"}
+```
+
+| `chapters` | Queues |
+|---|---|
+| `all` | every selectable chapter |
+| `default` | the chapters ticked by default |
+| `remaining` | chapters you queued earlier that are not done and not running (failed, cancelled), skipping any chapter whose episode was deleted after it was published |
+| `[1,3,5]` or `"1,3,5-9"` | those chapters |
+
+The response is the book with `queued` (chapter numbers) and `skipped` (chapters already done or in flight, or not selectable). A failed or cancelled chapter listed by number is queued again. A chapter number out of range, a too-short chapter named explicitly, or a malformed value returns 400; an unknown book returns 404. A book narrates in one voice: `voice` is stored on the book the first time chapters are queued, and later calls reuse it unless `voice` is given.
+
+`DELETE /books/{book_id}` returns 204, or 409 while any chapter is processing. It removes the book and its stored original and cover. Published chapter episodes stay in the feed but can no longer be reprocessed. To re-run one chapter, use `POST /upload/{episode_id}/reprocess` or `POST /jobs/{id}/requeue`; both read the source from the book.
 
 Media is served under `/media/`: `{id}.mp3`, `{id}.vtt`, `{id}.chapters.json`, `{id}.txt` (the cleaned article), and `{id}.jpg`. Published URLs add `?v=<generation>` to non-artwork media. Artwork carries the generation in its filename.
 
