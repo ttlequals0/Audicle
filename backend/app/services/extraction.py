@@ -605,16 +605,17 @@ _GATE_SUFFIXES = {
 def gate_offset(markdown: str) -> int | None:
     """Index of a standalone registration prompt, or None when ungated."""
 
-    starts = [0]
-    starts.extend(match.end() for match in re.finditer(r"\n\s*\n", markdown))
+    seps = list(re.finditer(r"\n\s*\n", markdown))
     found: list[int] = []
-    for start in starts:
-        end_match = re.search(r"\n\s*\n", markdown[start:])
-        end = start + end_match.start() if end_match else len(markdown)
+    for i in range(len(seps) + 1):
+        start = 0 if i == 0 else seps[i - 1].end()
+        end = seps[i].start() if i < len(seps) else len(markdown)
         block = markdown[start:end].strip()
         if not block or block.startswith((">", "'", '"', "\u2018", "\u201c")):
             continue
-        visible = re.sub(r"^[\s#*_`]+|[\s*_`]+$", "", block).strip()
+        visible = re.sub(r"^[\s#*_`]+", "", block)
+        trailing = re.match(r"[\s*_`]*", visible[::-1])
+        visible = visible[: len(visible) - trailing.end()].strip()
         if len(visible) > 160:
             continue
         normalized = re.sub(r"\s+", " ", visible).lower()

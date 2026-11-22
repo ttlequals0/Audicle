@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import random
+import re
+import time
 from pathlib import Path
 
 import httpx
@@ -2033,3 +2036,79 @@ async def test_render_enrichment_skipped_for_opted_out_host(
 )
 def test_gate_offset_does_not_truncate_prose_containing_prompts(body):
     assert extraction.gate_offset(body) is None
+
+
+def _reference_gate_offset(markdown: str) -> int | None:
+    """Index of a standalone registration prompt, or None when ungated."""
+
+    starts = [0]
+    starts.extend(match.end() for match in re.finditer(r"\n\s*\n", markdown))
+    found: list[int] = []
+    for start in starts:
+        end_match = re.search(r"\n\s*\n", markdown[start:])
+        end = start + end_match.start() if end_match else len(markdown)
+        block = markdown[start:end].strip()
+        if not block or block.startswith((">", "'", '"', "\u2018", "\u201c")):
+            continue
+        visible = re.sub(r"^[\s#*_`]+|[\s*_`]+$", "", block).strip()
+        if len(visible) > 160:
+            continue
+        normalized = re.sub(r"\s+", " ", visible).lower()
+        for marker in extraction._GATE_MARKERS:
+            if not normalized.startswith(marker):
+                continue
+            tail = normalized[len(marker) :].strip(" .!?:,")
+            if not re.fullmatch(extraction._GATE_SUFFIXES[marker], tail):
+                continue
+            found.append(start)
+
+    return min(found) if found else None
+
+
+_M = "continue reading this story"
+_RANDOM_PIECES = ["\n", " ", "\t", "*", "_", "#", "`", ">", "a", "b", ".", _M, "subscribe to continue", "\n\n"]
+_GATE_CASES = [
+    "",
+    "no separators here at all",
+    _M,
+    f"intro text\n\n{_M}\n\nafter",
+    f"intro text\n\nmore text\n\n{_M}",
+    "intro\n \t\n create your free account to continue reading\n\nend",
+    "a\n\n\n\n\nsubscribe to continue reading\n\n\nb",
+    "\n\n\n" + _M + "\n\n\n",
+    f"> {_M}\n\ntext",
+    f"'{_M}'\n\ntext",
+    f'"{_M}"\n\ntext',
+    f"**{_M}**",
+    f"_{_M}_",
+    f"`{_M}`",
+    f"## {_M}",
+    f"# {_M} #\n\nbody",
+    f"{_M}\n\nbody ending in #",
+    "body\n\nended by #",
+    "***\n\n___\n\n```",
+    "x" * 200 + f"\n\n{_M}",
+    _M + " " + "y" * 200,
+]
+_GATE_CASES += [
+    "".join(random.Random(1234 + n).choice(_RANDOM_PIECES) for _ in range(40)) for n in range(200)
+]
+
+
+@pytest.mark.parametrize("body", _GATE_CASES)
+def test_gate_offset_matches_reference_implementation(body):
+    assert extraction.gate_offset(body) == _reference_gate_offset(body)
+
+
+def test_gate_offset_is_linear_in_paragraph_count():
+    body = "\n\n".join(["p" * 70] * 85_000)
+    started = time.perf_counter()
+    assert extraction.gate_offset(body) is None
+    assert time.perf_counter() - started < 3.0
+
+
+def test_gate_offset_handles_long_marker_run_quickly():
+    body = "a" + "*" * 200_000 + "a"
+    started = time.perf_counter()
+    assert extraction.gate_offset(body) is None
+    assert time.perf_counter() - started < 2.0
