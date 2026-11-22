@@ -6,7 +6,8 @@ import pytest
 from app.config import get_settings
 from app.core import database
 from app.main import create_app
-from app.services import file_extraction, jobs, voices
+from app.services import books, file_extraction, jobs, voices
+from app.services.book_chapters import DetectedBook, DetectedChapter
 from fastapi.testclient import TestClient
 
 
@@ -83,3 +84,46 @@ def test_jobs_list_exposes_source_filename(env: Path) -> None:
     by_filename = {r["source_filename"] for r in rows}
     assert "report.pdf" in by_filename
     assert None in by_filename  # the url job has no filename
+
+
+def _chapter_book(env: Path):
+    database.run_migrations(env)
+    detected = DetectedBook(
+        format="epub",
+        title="Book",
+        author=None,
+        cover=None,
+        chapters=[
+            DetectedChapter(
+                idx=1,
+                title="One",
+                locator={},
+                word_count=10,
+                char_count=50,
+                default_selected=True,
+                selectable=True,
+            )
+        ],
+    )
+    uri = file_extraction.build_source_uri("a" * 16, "novel.epub")
+    with database.connection(env) as conn:
+        book = books.create_book(
+            conn, source_uri=uri, filename="novel.epub", detected=detected, has_cover=False
+        )
+        conn.commit()
+    path = books.source_file(get_settings(), book.id, ".epub")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"EPUB")
+    return book, path
+
+
+def test_requeue_chapter_job_uses_book_source(env: Path) -> None:
+    book, path = _chapter_book(env)
+    job_id = _failed_job(env, books.chapter_uri(book.source_uri, 1))
+    with _client(env) as client:
+        assert client.post(f"/api/v1/jobs/{job_id}/requeue").status_code == 201
+        with database.connection(env) as conn:
+            conn.execute("UPDATE jobs SET status = 'failed'")
+            conn.commit()
+        path.unlink()
+        assert client.post(f"/api/v1/jobs/{job_id}/requeue").status_code == 409

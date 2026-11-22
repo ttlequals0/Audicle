@@ -51,3 +51,18 @@ def test_claim_sets_started_at(env: Path) -> None:
         assert claimed.started_at is not None
     finally:
         conn.close()
+
+
+def test_same_second_jobs_claimed_in_insertion_order(env: Path) -> None:
+    database.run_migrations(env)
+    conn = database.connect(database.db_path(env))
+    try:
+        for job_id in ("zz", "aa", "mm"):
+            conn.execute(
+                "INSERT INTO jobs (id, url, episode_id, status, created_at) "
+                "VALUES (?, ?, ?, 'queued', '2026-01-01T00:00:00Z')",
+                (job_id, f"https://example.test/{job_id}", job_id),
+            )
+        assert [jobs.claim_next_queued(conn).id for _ in range(3)] == ["zz", "aa", "mm"]
+    finally:
+        conn.close()

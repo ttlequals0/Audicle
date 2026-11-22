@@ -6,6 +6,66 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.63.4] - 2026-11-22
+
+### Security
+
+- Reject a DOCX upload that is too large once uncompressed. The limits are 5,000 entries, 200 MB in total and 50 MB of XML parts, checked before the file is parsed. XML parts are identified from the package content types, and a file that repeats an entry name is refused. A 435 KB file that expanded to 343 MB used to stop the worker.
+- Refuse to rasterize a PDF page or decode an image for OCR above 50,000,000 pixels. A page that declared a very large size used to request a bitmap of several gigabytes and stop the worker.
+- Make registration-gate detection linear in the length of the page. A page of many short paragraphs used to hold the worker for tens of seconds.
+
+### Fixed
+
+- Stop retrying a job that keeps stopping the worker. A job is put back in the queue at most 3 times after the worker dies without being asked to stop, then marked failed with its last error kept. A restart that follows a stop signal, such as a deploy, does not count. Migration `032_job_recovery_count` adds a `recovery_count` column to `jobs` and changes no existing data.
+
+## [0.63.3] - 2026-11-22
+
+### Fixed
+
+- A title could still be announced twice when the repeated heading carried a markdown marker, such as "# Sunny", "## Sunny" or "**Sunny**". The check runs before leftover markers are removed, and it compared the heading with its marker attached, so short titles and bold titles did not match. The comparison now ignores heading and emphasis markers. Episodes narrated before this release keep the repeat until they are reprocessed.
+
+## [0.63.2] - 2026-11-22
+
+### Fixed
+
+- A book chapter still announced its title twice on 0.63.1. Cleanup can put the chapter number and the title on one line, such as "Chapter Six. A Quiet Start.", and 0.63.1 only compared whole lines. A heading line is now also checked part by part: the part that repeats the title is removed and the rest is kept, so that line becomes "Chapter Six." The same applies to a label and a headline on one line, such as "Technology - Headline". Episodes narrated before this release keep the repeat until they are reprocessed.
+- Three tests that upload the same book twice failed at random. The test EPUB builder stamped its zip entries with the current time, so two builds a few seconds apart were different files. It now uses a fixed timestamp. Uploads were not affected.
+
+## [0.63.1] - 2026-11-22
+
+### Fixed
+
+- Episodes could still announce their title twice. The intro reads the title, and the check that drops a repeated heading from the body only looked at the first block and only matched the whole title. It now checks the first five heading-like lines and stops at the first paragraph. It also matches one part of a title, such as the chapter in "Book: Chapter" or the headline in "Headline | Site", with or without a leading chapter number. A headline that shares a block with its subtitle is removed and the subtitle is kept. Episodes narrated before this release keep the repeat until they are reprocessed.
+
+## [0.63.0] - 2026-11-21
+
+### Added
+
+- Accept `.epub` uploads. Without the split option, the whole book is narrated in reading order as one episode.
+- Split an EPUB or PDF into one episode per chapter. `POST /api/v1/upload` takes two new form fields: `split_chapters` and `chapters` (`all`, `default`, or a list such as `1,3,5-9`). Chapters come from the EPUB table of contents (EPUB 3 nav document, then EPUB 2 `toc.ncx`, then one chapter per spine document) or the PDF bookmark outline, top-level entries only. A chapter with a front or back matter title (copyright, contents, notes, index and similar) is unticked by default. A chapter shorter than `MIN_EXTRACTION_CHARS` cannot be selected.
+- Add the books API. `GET /api/v1/books` and `GET /api/v1/books/{book_id}` return a `BookResponse` with a status for each chapter (`not_queued`, `queued`, `processing`, `done`, `failed`, `cancelled`, `removed`). `POST /api/v1/books/{book_id}/chapters` queues chapters from `all`, `default`, `remaining` or a list of numbers, and reports skipped chapters that are already done or in flight. `DELETE /api/v1/books/{book_id}` returns 409 while any chapter is queued or processing.
+- Return `chapters_detected: false` from `POST /api/v1/upload` when `split_chapters` is set and the file has no chapters. The file is queued as one episode.
+- Add a "Split into chapters" checkbox to the Home upload area for EPUB and PDF files. Add a Books section with Choose chapters, Resume and Delete, and a chapter picker with Select all, Defaults and None.
+- Tag chapter episodes with `itunes:season`, `itunes:episode`, `podcast:season` (named after the book) and `podcast:episode`. The season is allocated per book and the episode number is the chapter's position in the full table of contents. The feed stays `episodic`.
+- Store each book's original and cover under `{DATA_DIR}/books/{book_id}/`, outside the media directory, so the orphan sweep leaves them alone. They stay until the book is deleted. Reprocess and requeue of a chapter episode read the source from there.
+- Reject EPUBs whose spine documents are encrypted (DRM) with a 400. Font-only `encryption.xml` entries are ignored. Archives are capped at `MAX_UNCOMPRESSED_BYTES` (200 MiB), `MAX_ARCHIVE_ENTRIES` (5000 entries) and `MAX_EXTRACTED_CHARS` (50 MiB of text).
+- Add `chapter` (the chapter number, or null) to `GET /api/v1/jobs` items and to upload webhook payloads. The Queue and Recents rows show "filename, chapter N" for a chapter job.
+- Add `voice_id` to the book response. The chapter picker shows "Voice: slot N (book's voice)" when Random is chosen and the book already has a voice.
+- Name a book after its filename, without the extension, when the EPUB or PDF has no title.
+- Pad a book cover to a square on the cover's average colour instead of cropping it. A small cover is used rather than falling back to the show image.
+- Pick up a deleted book's chapter episodes still in the feed when it is uploaded again. They show as done and move to the new season.
+- Add migration `031_books` with the `books` and `book_chapters` tables and nullable `season_number` and `episode_number` columns on `episodes`. It is additive and changes no existing rows.
+
+### Changed
+
+- The queue claims jobs created in the same second in insertion order, so chapters queued together are narrated in chapter order.
+- A book narrates in one voice. The voice is stored the first time chapters are queued and reused on later calls unless `voice` is given, so a `random` default does not change voice between chapters.
+- Bump pydantic to 2.14.3 and ruff to 0.17.5 in all three packages, huggingface-hub to 2.2.0, and the uv build image and CI uv to 0.13.9.
+
+### Security
+
+- Accept three HIGH CVEs that Debian trixie has no fixed package for: CVE-2026-124709 (OpenSSL, all images), CVE-2026-109094 (X.Org server, render) and CVE-2026-109908 (libfontenc, render). The 0.62.1 app and render images carry the same findings. Each has a dated entry in the image's trivy ignorefile with a recheck date of 2026-12-22.
+
 ## [0.62.1] - 2026-11-18
 
 ### Changed
@@ -1305,7 +1365,7 @@ image could not start.
 ### Added
 
 - WARNING log (event=asr_transcript_missing) when ASR verification is enabled
-  but the wrapper returns no transcript -- previously this skipped the check
+  but the wrapper returns no transcript; previously this skipped the check
   silently and was indistinguishable from a pass.
 - chunk_quality_bad log events now include the divergent-run length (asr_run)
   alongside asr_divergence; passing ASR checks emit a DEBUG chunk_asr_ok event
@@ -1324,7 +1384,7 @@ image could not start.
   container start on drivers older than CUDA 12, where the old image
   surfaced a torch runtime error mid-job instead. Note: the gate applies
   whenever the NVIDIA runtime processes the container (i.e. a GPU device
-  reservation is present), including TTS_DEVICE=cpu -- on a pre-CUDA-12
+  reservation is present), including TTS_DEVICE=cpu: on a pre-CUDA-12
   driver, remove the GPU reservation or use the -cpu image. The GPU image
   is also amd64-only by construction (arm64 pip torch has no CUDA) and now
   fails fast on non-amd64 builds with a clear message.
@@ -1380,7 +1440,7 @@ image could not start.
 
 - With authenticated feeds enabled, the Feed page's own transcript (`.vtt`),
   cleaned-text (`.txt`), and artwork links returned 401 for the logged-in
-  operator -- they point at `/media/...` without the feed key. The media/RSS key
+  operator: they point at `/media/...` without the feed key. The media/RSS key
   gate now exempts an authenticated admin session (same-origin, so the browser
   sends the session cookie); public podcast clients have no session and still
   require the key.
@@ -1394,13 +1454,13 @@ image could not start.
   sidebar rail as the main content and returned a list of other articles'
   headlines; the real body never reached cleanup, so the job failed with "no
   article". Extraction now falls back to the page's `<article>` element when
-  trafilatura's output isn't inside it and that element holds more text -- an
+  trafilatura's output isn't inside it and that element holds more text, an
   in-process recall net using lxml (already a dependency), no external service.
   The size guard keeps a good long extraction from being replaced by a small
   decoy `<article>` (a comment or promo card) on pages with no `<article>` wrapper.
 - The cleanup fallback (used when the model won't clean an article) now runs a
-  deterministic boilerplate strip -- ad markers, skip/jump nav, datelines,
-  editorial tip-lines, subscribe prompts, inline links/images -- so a fallback
+  deterministic boilerplate strip (ad markers, skip/jump nav, datelines,
+  editorial tip-lines, subscribe prompts, inline links/images) so a fallback
   episode narrates the article body, not the surrounding chrome. It replaces the
   0.45.1 raw-text fallback and the `NO_ARTICLE_CONTENT` gate: the strip doubles
   as the article detector, so a real article the model refuses still ships while
@@ -1417,7 +1477,7 @@ image could not start.
   because the model balked, the pipeline now narrates the de-chromed extraction
   (inline links/images stripped so URLs aren't read aloud) instead of failing. A
   page the model reports as all boilerplate (`NO_ARTICLE_CONTENT` for every
-  window), or one whose extraction is itself below the floor, still fails -- the
+  window), or one whose extraction is itself below the floor, still fails; the
   fallback only rescues a real article the model wouldn't clean.
 - The Anthropic provider rejected requests with `temperature` on models that no
   longer accept the parameter ("temperature is deprecated for this model"). The
@@ -1486,7 +1546,7 @@ image could not start.
   The backend sends them on every `/generate` call; a change applies to the next job
   (auditions pick it up immediately), no restart. The wrapper's `CHATTERBOX_*` and
   `TTS_MAX_CHARS` env vars are removed; if a deployment overrode them, re-enter those
-  values in Settings once after upgrading (stale lines in `.env` are harmless -- the
+  values in Settings once after upgrading (stale lines in `.env` are harmless: the
   backend reads them as its defaults). Voice auditions use the same knobs (and seed)
   as episode synthesis, so a sample previews exactly what an episode will sound like.
 - The old `CHATTERBOX_EXAGGERATION` and `CHATTERBOX_CFG_WEIGHT` env vars are gone
@@ -1513,7 +1573,7 @@ image could not start.
 ### Removed
 
 - The pronunciation-correction IPA field, its gruut-derived phonemes, and the W3C PLS export.
-  Chatterbox is text-only and never consumed IPA -- it only fed the PLS export. Plain-text
+  Chatterbox is text-only and never consumed IPA; it only fed the PLS export. Plain-text
   respelling corrections are unchanged and still applied to every episode. Migration 021 drops
   the now-unused `lexicon.ipa` column (every correction row is preserved). The `gruut` dependency
   is removed from the backend.
@@ -1557,7 +1617,7 @@ image could not start.
 
 - Articles behind a DataDome bot wall (e.g. wsj.com) no longer fail instantly. Those sites
   answer a scrape with HTTP 401, which the extractor treated as a dead end and failed the
-  job before any fallback ran -- so none of the per-host overrides ever got a chance. A 401
+  job before any fallback ran, so none of the per-host overrides ever got a chance. A 401
   now routes into the fallback cascade like a 403/429 does.
 
 ### Added
@@ -1565,7 +1625,7 @@ image could not start.
 - A "reader" per-host strategy under Site overrides. It fetches the article through the
   Jina Reader proxy, which returns clean markdown and bypasses DataDome/PerimeterX bot walls
   that FlareSolverr can't solve. The endpoint is configurable (`READER_PROXY_TEMPLATE`, must
-  contain `{url}`) with an optional `READER_API_KEY` -- the keyless public endpoint is rate
+  contain `{url}`) with an optional `READER_API_KEY`; the keyless public endpoint is rate
   limited, so a free key raises the limit if it starts returning empty bodies.
 
 ## [0.41.0] - 2026-06-19
@@ -1591,7 +1651,7 @@ image could not start.
   never starts, and a running one stops at the worker's next checkpoint (within a chunk) and
   is marked cancelled, not failed.
 - An optional end-of-episode chime. Upload a short clip under Settings -> end chime, enable
-  CHIME_ENABLED, and every episode ends with it -- handy for telling back-to-back episodes
+  CHIME_ENABLED, and every episode ends with it, handy for telling back-to-back episodes
   apart. The clip is transcoded and loudness-matched to the narration.
 
 ### Fixed
@@ -1616,7 +1676,7 @@ image could not start.
 ### Fixed
 
 - The render sidecar now retries when DataDome blocks it, which is the actual cause of the
-  missing-tail inc.com articles. A captured render proved the article -- tail included --
+  missing-tail inc.com articles. A captured render proved the article (tail included)
   was already fully extracted whenever render got through; the truncated copies were the
   FlareSolverr front-half partial, kept on the attempts where DataDome served a CAPTCHA
   shell instead of the page. Because that wall is probabilistic and tied to the browser
@@ -1627,8 +1687,8 @@ image could not start.
 
 ### Removed
 
-- The lazy-load scroll added in 0.39.2 and the `favor_recall` extraction tweak from 0.39.3
-  -- the captured render showed the expand click alone already pulls the full article into
+- The lazy-load scroll added in 0.39.2 and the `favor_recall` extraction tweak from 0.39.3:
+  the captured render showed the expand click alone already pulls the full article into
   the DOM and trafilatura already extracts all of it, so neither change did anything for
   inc.com. Removing the scroll also drops up to ~24 seconds of settle waits per render,
   which is what makes room for the retries.
@@ -1658,7 +1718,7 @@ image could not start.
 - The render sidecar now scrolls the page before capturing it, so it returns the full article
   body instead of the front half. inc.com (and sites like it) mount the article tail into the DOM
   only as it nears the viewport, so a render that never scrolled captured what was loaded above the
-  fold and stopped -- the click expanded the gate, but the paragraphs below it never rendered. The
+  fold and stopped; the click expanded the gate, but the paragraphs below it never rendered. The
   driver now scrolls to the bottom in steps until the page stops growing, clicks the expand gate,
   then scrolls again to pull in whatever the gate revealed. The scroll height uses the larger of
   `document.body` and `document.documentElement` so it still reaches the bottom on sites whose
@@ -1678,7 +1738,7 @@ image could not start.
 - The render sidecar now actually returns the full article instead of crashing. Camoufox 0.4.11
   declares no Playwright version cap, so the image picked up Playwright 1.60.0, whose Firefox
   driver crashes on a page error with no location ("Cannot read properties of undefined (reading
-  'url')") -- which inc.com triggers. Render came back with an error and the pipeline fell back to
+  'url')"), which inc.com triggers. Render came back with an error and the pipeline fell back to
   the front-half partial. Pinning `playwright<1.60` (1.59.0) fixes it: a live inc.com render now
   clicks the expander and returns ~1019 words versus the 449-word partial.
 - The "test a URL" button (`POST /api/v1/source-fallbacks/test`) now applies the runtime-settings
@@ -1692,7 +1752,7 @@ image could not start.
 - The render sidecar is now a per-host extraction strategy, not a global setting. Pick "render"
   for a host in the Settings page (the section formerly "paywall sites", now "Site overrides")
   the same way you pick FlareSolverr or archive. Render runs after the normal cascade: as
-  enrichment when FlareSolverr returned only the front half, and -- new in this release -- as a
+  enrichment when FlareSolverr returned only the front half, and, new in this release, as a
   rescue when the cascade was blocked entirely, so a render site still gets the stronger headful
   browser when FlareSolverr is DataDome-blocked. inc.com ships with the render strategy by
   default; the shipped defaults live in one place, `config.RENDER_BUILTIN_HOSTS`, so adding a site
@@ -1773,7 +1833,7 @@ image could not start.
   dictionary are unchanged; the dictionary is the escape hatch for any acronym Chatterbox
   mispronounces. Migration 019 re-imports the trimmed seed into existing databases.
 - TTS narration splits more naturally, removing mid-sentence pauses. The wrapper used to cut any
-  sentence over 200 characters at the nearest space -- mid-word -- and insert a short silence
+  sentence over 200 characters at the nearest space (mid-word) and insert a short silence
   there. It now collapses stray whitespace (newlines read as pauses in Chatterbox), splits an
   oversize sentence at a clause boundary (comma, semicolon, colon, dash) so the gap lands on a
   natural pause, and raises the per-piece cap to 300 characters so most whole sentences stay
@@ -1798,7 +1858,7 @@ image could not start.
   job-creating path (submit, upload, reprocess, requeue) returns 400 when every slot is
   empty. The committed-voice endpoints
   (`/api/v1/reference` `preview`, `status`, `test`, `audition`, `commit`) and the Settings
-  "Default" row were removed -- manage voices entirely through the five slots. The wrapper
+  "Default" row were removed; manage voices entirely through the five slots. The wrapper
   boots on its lowest filled slot and stays up (returning 503 from `/generate`) until a slot
   is uploaded.
 - Removed all pseudo-phonetic respellings from the pronunciation system. The seed list
@@ -1894,7 +1954,7 @@ image could not start.
   and shows the response. A new `POST /api/v1/webhooks/test` does the same from the API.
   The README now documents every payload field with example bodies.
 - US state abbreviations are expanded to full names for narration when they sit in clear
-  state context -- after a city and comma (`Chicago, IL` -> `Chicago, Illinois`) or in a
+  state context: after a city and comma (`Chicago, IL` -> `Chicago, Illinois`) or in a
   `City, ST ZIP` address. Codes that double as common words or abbreviations (OK, OR, PA,
   MA, ...) only expand inside a ZIP address, to avoid mangling ordinary prose. Connecticut
   joins the curated state pronunciations alongside Illinois, Arkansas, Missouri, Oregon,
@@ -2052,12 +2112,12 @@ image could not start.
 ### Changed
 
 - An episode now records its source: a `source_type` of `url` or `upload` plus the
-  original `source_filename` for uploads (migration 013, additive -- existing
+  original `source_filename` for uploads (migration 013, additive; existing
   episodes default to `url`). The RSS feed and Feed UI render an uploaded episode's
   filename instead of treating its synthetic `upload://` identifier as a hyperlink.
 - Episode identity for an upload is derived from the file's content and name, so
   re-uploading the same document maps to the same episode (HTTP 409 unless
-  `reprocess` is set) -- the same dedupe behavior URL submits already had.
+  `reprocess` is set), the same dedupe behavior URL submits already had.
 
 ## [0.29.1] - 2026-06-10
 
@@ -2132,7 +2192,7 @@ Security and code-audit fixes.
 - A paywall teaser padded with related-article chrome no longer slips through as a real
   article. Some sites (e.g. Crain's Chicago Business) serve a one-paragraph lede plus a
   "Recommended For You" / "Latest News" rail, and the scraped markdown clears the teaser
-  threshold on chrome alone -- so the bypass never fired and the episode was the lede read
+  threshold on chrome alone, so the bypass never fired and the episode was the lede read
   aloud followed by unrelated headlines. For a host with a bypass rule, the floor decision
   now uses the page's own JSON-LD `articleBody` length when it declares one, so the lede is
   seen for what it is and routes to the bypass. Hosts with no rule are untouched.
@@ -2140,14 +2200,14 @@ Security and code-audit fixes.
 ### Added
 
 - `archive` is a new bypass strategy and an automatic last resort. It pulls a saved copy of
-  the article from the Wayback Machine (a clean API, no bot wall, no cookies), and -- as an
-  opt-in per-host fallback -- from archive.today through FlareSolverr. When a scrape is a
+  the article from the Wayback Machine (a clean API, no bot wall, no cookies), and, as an
+  opt-in per-host fallback, from archive.today through FlareSolverr. When a scrape is a
   hard block and nothing else recovered the article, a Wayback capture is tried before the
   job fails (`ARCHIVE_FALLBACK_ENABLED`, on by default). This helps metered, soft, and older
   articles that were archived while free; it is not a fix for a hard subscriber wall, which
   still needs your own cookies.
 - A "test a URL" control in the paywall settings runs the saved rules against one link and
-  reports what came back -- the character count and the strategy that matched -- so you can
+  reports what came back: the character count and the strategy that matched, so you can
   confirm a rule (and its cookie jar) actually fetches the full article. It never echoes the
   cookie value.
 
@@ -2174,7 +2234,7 @@ Security and code-audit fixes.
 
 - A `flaresolverr` host rule no longer gets swallowed by its own teaser. The rule's
   teaser floor (`min_chars`, default 3000) now gates the decision to escalate, so a
-  ~1 KB stub drops below it and the solver fires -- previously the stub cleared the
+  ~1 KB stub drops below it and the solver fires; previously the stub cleared the
   hard 500-char floor and was accepted before the browser fetch ever ran.
 - Reprocess and config changes now take effect on the next run. Firecrawl caches a
   scrape by URL, so reprocessing an article (or flipping its bypass rule) could return
@@ -2185,8 +2245,8 @@ Security and code-audit fixes.
 - Internal: the bypass strategies (Googlebot, Freedium, custom, FlareSolverr) now run
   through one `Attempt` abstraction and a single dispatch loop instead of FlareSolverr
   being a hand-coded special case. The FlareSolverr engine moved to its own
-  `flaresolverr.py` module. No behavior change -- the existing test suite passes
-  untouched -- but the cookie jar above is built cleanly on top rather than bolted on.
+  `flaresolverr.py` module. No behavior change (the existing test suite passes
+  untouched), but the cookie jar above is built cleanly on top rather than bolted on.
 
 ## [0.26.0] - 2026-06-08
 
@@ -2194,8 +2254,8 @@ Security and code-audit fixes.
 
 - FlareSolverr now escalates automatically on a hard block, not just on a detected
   Cloudflare challenge. When a scrape comes back near-empty (below
-  `MIN_EXTRACTION_CHARS`) -- the signature of a 403/IP block like the NYT, where the
-  site served almost nothing -- Audicle retries through the solver for any host with
+  `MIN_EXTRACTION_CHARS`, the signature of a 403/IP block like the NYT, where the
+  site served almost nothing), Audicle retries through the solver for any host with
   `FLARESOLVERR_URL` set, no per-host rule needed. It stays bounded: a real article
   or a partial teaser (which returns actual text) never pays for a browser solve. The
   per-host `flaresolverr` strategy (0.25.0) remains as an explicit override.
@@ -2214,7 +2274,7 @@ Security and code-audit fixes.
   datacenter IPs, so Firecrawl gets nothing and the Googlebot header trick can't
   help). Pointing such a host at the `flaresolverr` strategy routes it through the
   operator's FlareSolverr, which fetches the page with a real browser from a
-  residential IP -- where the publisher serves the article normally. This is in
+  residential IP, where the publisher serves the article normally. This is in
   addition to the automatic challenge-gated FlareSolverr escalation (0.22.0); the
   per-host strategy fires regardless of challenge detection, so it covers plain
   403/IP blocks that aren't a Cloudflare interstitial. Needs `FLARESOLVERR_URL` set.
@@ -2226,7 +2286,7 @@ Security and code-audit fixes.
 - The global default bypass proxy now applies to every article, not only to hosts
   with an explicit rule. When a direct scrape comes back near-empty (below
   `MIN_EXTRACTION_CHARS`) and no per-host rule matches, Audicle retries through the
-  configured default proxy (e.g. the built-in Googlebot fetch) for any host -- so a
+  configured default proxy (e.g. the built-in Googlebot fetch) for any host, so a
   hard-blocked paywall no longer fails silently just because it had no rule. Per-host
   rules are overrides: they win on host match, keep their higher teaser floor (to
   catch partial teasers), and a rule with `proxy=none` opts a host out. A
@@ -2254,10 +2314,10 @@ Security and code-audit fixes.
 ### Added
 
 - Automatic Cloudflare/bot-challenge bypass via FlareSolverr. When a scrape comes
-  back as a challenge page (Firecrawl couldn't clear it -- "Just a moment...",
+  back as a challenge page (Firecrawl couldn't clear it: "Just a moment...",
   "Checking your browser", a Cloudflare Ray ID, etc.), Audicle re-fetches the URL
   through an operator-run FlareSolverr and extracts the article from the solved HTML
-  with trafilatura -- for any host, no per-site rule needed. It is gated on challenge
+  with trafilatura, for any host, no per-site rule needed. It is gated on challenge
   detection, so a plain paywall teaser never triggers an expensive browser solve. Set
   `FLARESOLVERR_URL` via env or live from Settings (`PUT /api/v1/settings`); unset
   disables it. Audicle does not bundle a solver. Paywalls remain the job of the
@@ -2269,7 +2329,7 @@ Security and code-audit fixes.
 - The extraction fallback path is now fully traceable in logs. It records which
   bypass strategy ran for a matched host (`extraction_fallback_start`), when a
   fallback ran but still came back below the floor (`extraction_fallback_short`,
-  previously silent -- a hard subscription paywall that ignores the Googlebot
+  previously silent: a hard subscription paywall that ignores the Googlebot
   fetch looked like nothing happened), and when a short scrape had no matching
   rule (`extraction_no_fallback_rule`). "Why did the proxy not help" is now
   answerable from logs alone.
@@ -2294,7 +2354,7 @@ Security and code-audit fixes.
   page (and `PUT /api/v1/settings`), no redeploy needed: `WHISPER_VERIFY_ENABLED`,
   `WHISPER_DIVERGENCE_THRESHOLD`, and `WHISPER_VERIFY_MIN_WORDS` join the
   runtime-settings allowlist alongside the audio-QA thresholds. The wrapper's
-  `WHISPER_ENABLED` (which loads the model) stays env-only -- it is a
+  `WHISPER_ENABLED` (which loads the model) stays env-only: it is a
   separate-container startup capability, not a per-job policy.
 
 ## [0.21.0] - 2026-06-07
@@ -2305,8 +2365,8 @@ Security and code-audit fixes.
   each produced chunk with faster-whisper and the backend compares that transcript
   to the text it asked the wrapper to speak. A high word-level divergence (dropped
   content, a hallucinated run, a leaked preamble) regenerates the chunk on the same
-  budget as the existing audio analysis. The transcription is blind -- the expected
-  text is never used as a Whisper prompt -- so the comparison stays honest. Off by
+  budget as the existing audio analysis. The transcription is blind: the expected
+  text is never used as a Whisper prompt, so the comparison stays honest. Off by
   default; it takes both `WHISPER_ENABLED` on the wrapper (loads the model) and
   `WHISPER_VERIFY_ENABLED` on the backend, with `WHISPER_MODEL` and
   `WHISPER_DIVERGENCE_THRESHOLD` to tune the speed/strictness trade. faster-whisper
@@ -2462,7 +2522,7 @@ Security and code-audit fixes.
   against a reader-proxy rewrite of the URL. Ships with a Medium rule (retries via
   `freedium.cfd`, then the `freedium-mirror.cfd` mirror), since a direct Medium
   scrape returns only a paywalled teaser. Rules live in
-  `backend/app/services/source_fallbacks.py` as a plain-data registry -- a new
+  `backend/app/services/source_fallbacks.py` as a plain-data registry: a new
   problem source is a one-line entry (host suffixes, reader-proxy URL templates,
   per-source `min_chars`). Gated by `EXTRACTION_FALLBACKS_ENABLED` (default on);
   disabling reverts to direct scrapes only.
@@ -2501,7 +2561,7 @@ Security and code-audit fixes.
 - Default TTS engine moves from Coqui XTTS-v2 to Chatterbox. Coqui shut down and
   XTTS-v2 is no longer maintained; XTTS and StyleTTS2 remain selectable engines
   for fallback. The HTTP contract (`/generate`, `/reload`, `/health`), the
-  pipeline, and the reference-voice flow are unchanged -- only the wrapper's
+  pipeline, and the reference-voice flow are unchanged; only the wrapper's
   inference engine swaps.
 - Wrapper dependencies restructured so each engine is a mutually-exclusive
   optional extra (`xtts` / `styletts2` / `chatterbox`), selected at build time
@@ -2570,7 +2630,7 @@ Security and code-audit fixes.
   /api/v1/corrections/lookup?q=` searches the full lexicon.
 - `scripts/build_base_lexicon.py` builds the base-lexicon artifact from all eight
   external sources (CMUdict, ISLEX, Wiktionary, balacoon abbreviations,
-  WikipediaAbbreviationData, USA + world city names, journalism acronyms) -- ~1.3M
+  WikipediaAbbreviationData, USA + world city names, journalism acronyms), ~1.3M
   entries, shipped gzipped and imported into the read-only rows by a versioned
   startup sync that runs in a background thread (non-blocking) under the migration
   lock. Source attributions in `THIRD_PARTY_NOTICES.md`.
@@ -2613,7 +2673,7 @@ Security and code-audit fixes.
   `/rss/articles_of_interest.xml` (lowercase, underscores, ASCII-folded). The
   atom `rel="self"` link and the Feed page's subscribe URL track the slug; the
   backend computes the URL so the client never reimplements the slug rule.
-  **The old `/rss/rss.xml` path is gone and now returns 404** -- resubscribe at
+  **The old `/rss/rss.xml` path is gone and now returns 404**; resubscribe at
   the slug URL shown on the Feed page.
 - Renaming the feed is treated as a new feed: when the slug changes, the channel
   `podcast:guid` is rotated and `feed_guid_epoch` is bumped, which re-salts every
@@ -2699,7 +2759,7 @@ Security and code-audit fixes.
   discarded it, leaving the LLM step contributing nothing (the deterministic
   dictionary still applied). The prompt now mandates full verbatim reproduction
   with only matched terms respelled, and a discarded short reply is logged with a
-  preview for diagnosis. Article content was never at risk -- the guard kept the
+  preview for diagnosis. Article content was never at risk; the guard kept the
   original text whenever the model came back short.
 
 ## [0.13.0] - 2026-05-31
@@ -2951,13 +3011,13 @@ Security and code-audit fixes.
   `require_admin` gate, so a new route is authenticated by default rather than
   opt-in. The only public surface under `/api/v1` is `/api/v1/auth/*` (the UI
   reads `/auth/status` and logs in via `/auth/login`). The podcast and ops
-  endpoints stay public on purpose -- `/rss/rss.xml`, `/media/*`, and
-  `/health/*` -- since podcast apps and probes fetch them without a session.
+  endpoints stay public on purpose: `/rss/rss.xml`, `/media/*`, and
+  `/health/*`, since podcast apps and probes fetch them without a session.
   All of this is a no-op in convenience mode (no password set).
 - **The UI shows only the password box until you log in.** Previously the
   header, tabs, and page content rendered even when logged out (the API calls
   just failed with 401). Now, with a password set and no session, the login box
-  is the only thing on screen -- no header, nav, or content -- and the full UI
+  is the only thing on screen (no header, nav, or content) and the full UI
   appears after a successful login.
 
 ## [0.7.0] - 2026-05-30
@@ -3005,8 +3065,8 @@ Security and code-audit fixes.
   per-episode artwork URLs are now extension-clean; the audio enclosure keeps
   its `?v=` so reprocessed episodes still re-download.
 - **Settings artwork preview.** The Feed artwork field now shows an image
-  preview -- the configured cover, or the seeded branding default
-  (`/media/default.jpg`) when the field is empty -- instead of a blank box.
+  preview: the configured cover, or the seeded branding default
+  (`/media/default.jpg`) when the field is empty, instead of a blank box.
 - **Download the cleaned article per episode.** The pipeline used to discard the
   cleaned text (the exact input to TTS) after chunking; it's now stored and
   served at `/media/{id}.txt`. Each Feed card links to it once available
@@ -3022,7 +3082,7 @@ Security and code-audit fixes.
   loading, so the wrapper registers the XTTS config classes as safe globals
   before loading the model.
 - **Note:** changing feed fields in Settings takes effect on the next feed
-  fetch -- the RSS is rendered on demand with the runtime-settings overlay, so
+  fetch: the RSS is rendered on demand with the runtime-settings overlay, so
   no regeneration or restart is needed (apps pick it up on their next poll).
 
 ## [0.5.0] - 2026-05-30
@@ -3093,9 +3153,9 @@ Security and code-audit fixes.
 
 ### Windowed cleanup, episode show notes, artwork TLS fix, centralized version
 
-- **Windowed LLM cleanup (fixes truncated episodes).** The cleanup stage sent the whole article in one call capped at `LLM_MAX_TOKENS=4000`, so a 56K-char article was truncated to ~440 chars -- a ~30s episode with a near-empty transcript. Cleanup now splits the article into paragraph-bounded windows (`LLM_CLEANUP_WINDOW_CHARS`, default 12000), cleans each in its own call, and concatenates, so article length is never bottlenecked by the output cap. `LLM_MAX_TOKENS` default raised to 16000; both are tunable in Settings. Per-window `cleanup_window_done` log events.
+- **Windowed LLM cleanup (fixes truncated episodes).** The cleanup stage sent the whole article in one call capped at `LLM_MAX_TOKENS=4000`, so a 56K-char article was truncated to ~440 chars, a ~30s episode with a near-empty transcript. Cleanup now splits the article into paragraph-bounded windows (`LLM_CLEANUP_WINDOW_CHARS`, default 12000), cleans each in its own call, and concatenates, so article length is never bottlenecked by the output cap. `LLM_MAX_TOKENS` default raised to 16000; both are tunable in Settings. Per-window `cleanup_window_done` log events.
 - **Episode show notes.** A new summary stage generates a short LLM summary of the cleaned article (graceful: never fails the job), stored on a new `episodes.summary` column (additive migration 005) and rendered into the feed `<description>` and `<itunes:summary>`. Old episodes (NULL summary) keep the prior title/author/source form.
-- **Artwork TLS SNI fix.** The SSRF guard pinned the og:image URL to the resolved IP, and httpx then used the IP as the TLS SNI -- so every CDN host rejected the handshake (`SSLV3_ALERT_HANDSHAKE_FAILURE`) and all episodes fell back to default art. The download now passes the real hostname via the `sni_hostname` request extension while still connecting to the validated IP.
+- **Artwork TLS SNI fix.** The SSRF guard pinned the og:image URL to the resolved IP, and httpx then used the IP as the TLS SNI, so every CDN host rejected the handshake (`SSLV3_ALERT_HANDSHAKE_FAILURE`) and all episodes fell back to default art. The download now passes the real hostname via the `sni_hostname` request extension while still connecting to the validated IP.
 - **Feed owner email.** Trailing commas/whitespace in `FEED_EMAIL` are stripped before rendering `<itunes:email>` and the `podcast:locked` owner.
 - **Single-source version.** Version lives only in the repo-root `VERSION` file. Backend (`app/version.py`) and the tts-wrapper read it at runtime; `scripts/sync_version.py` propagates it into both `pyproject.toml` files and `--check` (run as a test) guards against drift.
 - **UI version links to the repo.** The header version is now a link to the GitHub repository.
@@ -3104,11 +3164,11 @@ Security and code-audit fixes.
 
 ### tts-wrapper non-root cache fix, structured wrapper logs, and PWA route fallback
 
-- **Non-root cache paths:** both wrapper Dockerfiles defaulted `HF_HOME`/`TTS_HOME` to `/root/.cache`, which is mode-700 root-owned and crashes the `user: 1000:1000` container on startup -- the Numba "no locator available" error and the Coqui "Permission denied: '/root/.cache'" model-download error both trace back to it. Caches now default to writable paths: model weights on the persistent `/data` volume (`HF_HOME=/data/hf_cache`, `TTS_HOME=/data/tts_home`), and `HOME`/`XDG_CACHE_HOME`/`NUMBA_CACHE_DIR`/`MPLCONFIGDIR` under image-local `/tmp`. The image now boots as uid 1000 without per-deploy env overrides.
+- **Non-root cache paths:** both wrapper Dockerfiles defaulted `HF_HOME`/`TTS_HOME` to `/root/.cache`, which is mode-700 root-owned and crashes the `user: 1000:1000` container on startup: the Numba "no locator available" error and the Coqui "Permission denied: '/root/.cache'" model-download error both trace back to it. Caches now default to writable paths: model weights on the persistent `/data` volume (`HF_HOME=/data/hf_cache`, `TTS_HOME=/data/tts_home`), and `HOME`/`XDG_CACHE_HOME`/`NUMBA_CACHE_DIR`/`MPLCONFIGDIR` under image-local `/tmp`. The image now boots as uid 1000 without per-deploy env overrides.
 - **Structured wrapper logs:** the wrapper used `logging.basicConfig`, which rendered records as plain `INFO:tts.main:...` text and dropped every `extra={...}` field, so pipeline steps were invisible and multi-line tracebacks broke Loki's JSON parser. A JSON formatter (matching the backend's shape) now emits one structured line per record, with uvicorn's loggers routed through it; `/health` access spam is quieted to keep pipeline steps legible.
 - **More TTS step detail:** added `tts_model_loaded` (with `load_ms`), `tts_request_received` (episode/chunk/`text_chars`), and per-chunk `inference_ms` on `tts_chunk_done`, so a single `/generate` is traceable end to end in log analysis.
 - **PWA route fallback:** the service worker's navigate-fallback served `index.html` for any navigation, so visiting `/api/v1/docs` (or `/rss`, `/media`, `/health`) returned the SPA shell and the router redirected to `/`. Added a `navigateFallbackDenylist` so these server-owned routes hit the network directly. (Browsers with the old service worker cached still need a one-time unregister/hard-reload.)
-- **RSS 500 fix:** the per-episode `itunes:image` fell back to the raw `FEED_ARTWORK_URL`, which is `""` when unset -- feedgen rejects that ("Image file must be png or jpg") and the whole feed render returned a 500 for any episode without its own artwork. It now falls back to the same resolved channel artwork (`/media/default.jpg`), matching the channel image. Regression test added.
+- **RSS 500 fix:** the per-episode `itunes:image` fell back to the raw `FEED_ARTWORK_URL`, which is `""` when unset: feedgen rejects that ("Image file must be png or jpg") and the whole feed render returned a 500 for any episode without its own artwork. It now falls back to the same resolved channel artwork (`/media/default.jpg`), matching the channel image. Regression test added.
 - **Default podcast artwork:** the seeded default art (`/media/default.jpg`, used by the feed and the Feed UI when an episode has no image) is now the project branding image (`branding/podcast-artwork-3000.png`, 3000x3000).
 - **Feed UI artwork:** episodes without their own image now show the default podcast art instead of a flat gradient tile; the gradient remains only as a load-failure fallback.
 
@@ -3120,7 +3180,7 @@ Patches the fixable HIGH/CRITICAL CVEs in the tts-wrapper image (16 of 17; the
 78 `linux-libc-dev` findings are kernel-header noise, not exploitable in a container).
 
 - Bump transitive deps to their patched versions in both wrapper Dockerfiles: `urllib3>=2.7.0`, `cryptography>=46.0.5`, `pillow>=12.2.0`, `Brotli>=1.2.0`, `setuptools>=78.1.1`, `wheel>=0.46.2`.
-- `transformers` pinned to the 4.48.x line (`>=4.48.0,<4.49`) -- clears CVE-2024-11392/-11393/-11394; coqui-tts 0.24 requires `>=4.43.0` unbounded and only breaks on the 5.x line, so 4.48 is safe.
+- `transformers` pinned to the 4.48.x line (`>=4.48.0,<4.49`); clears CVE-2024-11392/-11393/-11394; coqui-tts 0.24 requires `>=4.43.0` unbounded and only breaks on the 5.x line, so 4.48 is safe.
 - `gpgv` upgraded to the patched base-image package (CVE-2025-68973).
 - `torch` left at 2.4.x: the only fix (2.6.0) flips `torch.load` to `weights_only=True`, which breaks XTTS checkpoint loading, and CVE-2025-32434 is a `torch.load` RCE unreachable with Audicle's trusted model + WAV inputs.
 - Versions bumped to 0.3.1 (app + wrapper) so `BUILD_VERSION=0.3.1` resolves for both images.
@@ -3134,7 +3194,7 @@ Patches the fixable HIGH/CRITICAL CVEs in the tts-wrapper image (16 of 17; the
 - **Bind-mount-safe defaults:** the shipped prompt and a curated default pronunciation set are seeded into the prompt/corrections locations on first boot from a packaged `app/defaults/` dir, so an empty bind-mount no longer hides them. Default podcast artwork (from branding) is seeded to `DATA_DIR/media/default.jpg`; the feed channel image falls back to `{BASE_URL}/media/default.jpg` when `FEED_ARTWORK_URL` is unset.
 - **Feed URL:** the Feed page's subscribe URL is built from the configured `BASE_URL` (exposed via `/health/live`), not the browser origin.
 - **Non-root:** documented that the image runs as uid 1000 and host bind-mounts must be `chown`ed to 1000:1000 (README + compose comment + optional `user:` line).
-- **UI:** rebuilt to the branding/mockup design system -- logo mark, JetBrains Mono + Satoshi, Home hero, Feed cards with status tags, and collapsible Settings sections. System info shows version + uptime (replacing the `allowlist_keys` row) and a link to the API docs (`/api/v1/docs`); `/health/live` now returns `uptime_seconds` + `base_url`.
+- **UI:** rebuilt to the branding/mockup design system: logo mark, JetBrains Mono + Satoshi, Home hero, Feed cards with status tags, and collapsible Settings sections. System info shows version + uptime (replacing the `allowlist_keys` row) and a link to the API docs (`/api/v1/docs`); `/health/live` now returns `uptime_seconds` + `base_url`.
 - **Access logging:** a structured HTTP access log, always enabled (one `http_access` record per request: method, path, status, duration, client) with a per-request `request_id` stamped onto every log emitted during the request.
 - **Reachability/health:** `reachability.check_llm` and `/health/ready` now probe the selected provider's endpoint (openrouter/ollama included) with the right base + key, instead of assuming `OPENAI_BASE_URL`.
 
@@ -3155,8 +3215,8 @@ The app now boots unconfigured and you set operational config at runtime in the 
 ### Image polish + headless TTS (`chore/build-plan-audit-and-cleanup`)
 
 - TTS wrapper accepts the CPML terms non-interactively (`COQUI_TOS_AGREED=1` in both Dockerfiles): without it the first XTTS-v2 load blocks on an interactive y/n prompt that has no TTY in a container, so the wrapper crashed on startup.
-- The wrapper no longer fails to start when `voice.wav` is absent *or unreadable*. The model loads, a missing/undecodable reference is logged and skipped (`reference_loaded=false`), and `/generate` returns 503 until a usable voice is committed -- so an operator can bring the stack up and upload a reference voice through the Settings UI instead of crash-looping on a missing or corrupt pre-staged file. `reachability.check_tts` accepts `model_loaded=true` even on a 503 so the worker doesn't block on it.
-- TTS wrapper gains `/health/live` (200 once the model is loaded, voice or not); the docker healthcheck and `depends_on: service_healthy` now use it. Previously the healthcheck hit `/health` (readiness, 503 without a voice), which marked a voice-less wrapper unhealthy and deadlocked the app's startup -- the app gated on the wrapper being healthy, but the voice is uploaded through the app's UI. `/health` stays the readiness probe.
+- The wrapper no longer fails to start when `voice.wav` is absent *or unreadable*. The model loads, a missing/undecodable reference is logged and skipped (`reference_loaded=false`), and `/generate` returns 503 until a usable voice is committed, so an operator can bring the stack up and upload a reference voice through the Settings UI instead of crash-looping on a missing or corrupt pre-staged file. `reachability.check_tts` accepts `model_loaded=true` even on a 503 so the worker doesn't block on it.
+- TTS wrapper gains `/health/live` (200 once the model is loaded, voice or not); the docker healthcheck and `depends_on: service_healthy` now use it. Previously the healthcheck hit `/health` (readiness, 503 without a voice), which marked a voice-less wrapper unhealthy and deadlocked the app's startup: the app gated on the wrapper being healthy, but the voice is uploaded through the app's UI. `/health` stays the readiness probe.
 - `docker-compose.yml`: dropped the `build:` blocks (images come from Docker Hub).
 - Comment cleanup: removed phase-specific and `build-plan line NNN` references across the codebase and trimmed verbose comments.
 
@@ -3176,7 +3236,7 @@ Audited the whole codebase against `build-plan.md` for completeness and accuracy
 
 **Docs:**
 
-- `build-plan.md`: reconciled with the as-built code -- env-var auth model (`AUTH_ENABLED`/`ADMIN_*`, username-keyed lockout, no `set-password`/`csrf` endpoints), reference-audio flow (GET preview + direct-upload test/commit, 5 MB cap, 400), `page`/`per_page` pagination, runtime-settings allowlist and Settings UI groups, `soundfile` concat, single-pass loudnorm, `podcast:txt` prose value, project-layout module names (no `services/queue.py` / `utils/corrections.py` / `models/` dir), React 18, Python 3.14 backend image / 3.11 wrapper, added config vars (`ARTWORK_MAX_DOWNLOAD_BYTES`, `TTS_REACHABILITY_*`, the real auth vars), and the compose `/app/app/*` mount paths.
+- `build-plan.md`: reconciled with the as-built code: env-var auth model (`AUTH_ENABLED`/`ADMIN_*`, username-keyed lockout, no `set-password`/`csrf` endpoints), reference-audio flow (GET preview + direct-upload test/commit, 5 MB cap, 400), `page`/`per_page` pagination, runtime-settings allowlist and Settings UI groups, `soundfile` concat, single-pass loudnorm, `podcast:txt` prose value, project-layout module names (no `services/queue.py` / `utils/corrections.py` / `models/` dir), React 18, Python 3.14 backend image / 3.11 wrapper, added config vars (`ARTWORK_MAX_DOWNLOAD_BYTES`, `TTS_REACHABILITY_*`, the real auth vars), and the compose `/app/app/*` mount paths.
 - `README.md`: `ADMIN_PASSWORD` -> `ADMIN_PASSWORD_HASH`, rewrote the circular Coqui/Python 3.13 note (the `coqui-tts` PyPI package is the idiap fork) and added the backend-3.14 / wrapper-3.11 split.
 - `tts-wrapper/README.md`: voice-clip spec aligned to the authoritative `reference/README.md` (3-60 s, 24 kHz, <= 5 MB) and the `/app/app/reference` mount path.
 - All Markdown docs normalized to ASCII (em-dashes, arrows, ellipses, box-drawing tree glyphs) per the repo's ASCII-only rule.
@@ -3185,7 +3245,7 @@ Audited the whole codebase against `build-plan.md` for completeness and accuracy
 **Features built (closing documented gaps) + CodeQL:**
 
 - LLM Provider settings group: `LLM_PROVIDER`/`LLM_MODEL`/`OPENAI_BASE_URL`/`OPENAI_API_KEY`/`ANTHROPIC_API_KEY`/`LLM_TEMPERATURE`/`LLM_MAX_TOKENS`/`LLM_TIMEOUT_SECONDS`/`LLM_RETRY_COUNT` added to `runtime_settings.ALLOWED_KEYS`. API keys are masked on GET (`MASK_SENTINEL`) and the sentinel is ignored on PUT so re-saving never overwrites the stored secret; an empty value clears the override. `Settings.tsx` gains an LLM group with a provider dropdown and password inputs.
-- `worker.py`: `_process_one` now runs `runtime_settings.overlay()` per job (with a fallback to env settings if the overlay read fails), so Settings-UI edits actually reach the pipeline -- the per-job resolution chain the plan promised was not previously wired into `process_job`.
+- `worker.py`: `_process_one` now runs `runtime_settings.overlay()` per job (with a fallback to env settings if the overlay read fails), so Settings-UI edits actually reach the pipeline; the per-job resolution chain the plan promised was not previously wired into `process_job`.
 - `Feed.tsx`: cards now show artwork thumbnail, status badge, title link (2-line clamp), author + source domain, and inline transcript / reprocess / mp3 / delete actions, with error feedback (e.g. a 409 on reprocessing an in-flight URL surfaces a message instead of silently failing).
 - CodeQL: deleted `.github/workflows/codeql.yml` (it conflicted with the repo's enabled default CodeQL setup, which covers python + js/ts/actions). Fixed the flagged alerts: `main.py` SPA fallback serves an allowlist of root static files plus the hash-named workbox runtime (user path never reaches the filesystem); `tts-wrapper/main.py` `/generate` validates the wav path via `realpath`+`commonpath`; `reference.py` `/commit` no longer returns the raw httpx error string.
 
@@ -3245,15 +3305,15 @@ Multi-agent /simplify + /code-review sweep over the full backend (49 service mod
 
 - Shared `retention.MAX_OLDER_THAN_DAYS` between the service guard and the purge endpoint's `Query(..., le=...)` constraint.
 - Lifted three inline imports in `main.py` (`secrets`, `_LOGIN_LIMITER`, `JSONResponse`) to the module top per `CLAUDE.md`.
-- Replaced the hand-built 429 envelope in `_attach_rate_limiter` with `errors.envelope(status=429, error="rate limit exceeded")` -- the canonical helper every other 4xx/5xx route uses.
+- Replaced the hand-built 429 envelope in `_attach_rate_limiter` with `errors.envelope(status=429, error="rate limit exceeded")`, the canonical helper every other 4xx/5xx route uses.
 
 **Tests (16 new, 317 total):** parametrized tables in `test_api_auth.py` assert every admin route returns 401 without a session when `AUTH_ENABLED=true`, mutating routes return 403 without `X-CSRF-Token`, and `GET` is allowed with session + no CSRF (safe-methods exemption). A typo on any future `dependencies=[Depends(require_admin)]` declaration is caught immediately.
 
 **Deferred (real findings, deserve their own PR):**
 
 - Runtime settings (`PUT /api/v1/settings`) persists overrides but no production service reads them back. The Phase 10 docstring promised a "code default -> env var -> DB" resolution chain that doesn't yet exist.
-- `database.connect/close` try/finally repeats 20 times across 12 modules -- would benefit from a `core/database.connection(settings)` context manager.
-- ISO-timestamp `Z`-suffix parsing repeats in `feed.py`, `auth.py`, and `api/rss.py` -- promote to `core/timestamps.parse_iso`.
+- `database.connect/close` try/finally repeats 20 times across 12 modules and would benefit from a `core/database.connection(settings)` context manager.
+- ISO-timestamp `Z`-suffix parsing repeats in `feed.py`, `auth.py`, and `api/rss.py`, so promote to `core/timestamps.parse_iso`.
 - `list_episodes` / `list_jobs` use Python slice rather than SQL `LIMIT`/`OFFSET` + `COUNT(*)`.
 - DNS-rebinding TOCTOU in the artwork SSRF guard.
 - Phase 11 (Web UI) remains deferred.
@@ -3264,7 +3324,7 @@ Multi-agent /simplify + /code-review sweep over the full backend (49 service mod
 - `.github/workflows/dependency-review.yml`: blocks PRs that introduce a high-severity CVE on a runtime dep. License allowlist accepts the OSS set the project already uses (MIT/BSD/Apache/MPL/ISC/PSF/CC0/BlueOak); GPL/AGPL drift surfaces for a deliberate decision.
 - `.github/dependabot.yml`: weekly updates for `pip`, `github-actions`, and `docker` ecosystems with a 5/3/3 PR cap per ecosystem.
 - `services/jobs.compute_episode_id`: `hashlib.md5(..., usedforsecurity=False)`. md5 is the build-plan-mandated content identity hash (12-char URL fingerprint), not a security primitive; the flag silences CodeQL's `py/weak-cryptographic-algorithm` rule.
-- `services/episodes.py`: rewrote two `f"SELECT {_SELECT_COLUMNS} FROM episodes WHERE id = ?"` calls as `"SELECT " + _SELECT_COLUMNS + " FROM ..."` with `# noqa: S608` comments. `_SELECT_COLUMNS` is a fixed module constant so there was no SQL injection -- but CodeQL keys on the f-string shape regardless of interpolation source; the explicit concatenation + noqa removes the false positive while preserving the safety property in code review.
+- `services/episodes.py`: rewrote two `f"SELECT {_SELECT_COLUMNS} FROM episodes WHERE id = ?"` calls as `"SELECT " + _SELECT_COLUMNS + " FROM ..."` with `# noqa: S608` comments. `_SELECT_COLUMNS` is a fixed module constant so there was no SQL injection, but CodeQL keys on the f-string shape regardless of interpolation source; the explicit concatenation + noqa removes the false positive while preserving the safety property in code review.
 
 No behavioral changes; tests still 301/301; ruff clean.
 
@@ -3314,7 +3374,7 @@ Container smoke (`tmp/phase9_smoke.sh`) verified inside the runtime image: enabl
 
 - `backend/app/services/retention.py`: `purge_older_than(settings, older_than_days)` deletes episodes (DB row + on-disk mp3/jpg/vtt) older than the cutoff. `older_than_days=0` is the explicit "wipe everything" contract used by the purge endpoint; positive N filters strictly older than `now - N days`. Returns `PurgeResult(episode_ids, rows_deleted, files_removed)` so callers can log + surface a summary.
 - **Defense-in-depth file removal**: `_remove_path` resolves the target with `path.resolve(strict=False)`, then `relative_to(media_dir.resolve())` to confirm the path stays under `DATA_DIR/media` before unlinking. A poisoned row pointing `audio_path` at `/etc/passwd` (manual DB edit, future migration accident) logs a WARN and is skipped. Missing files are silently treated as success (the sweep is idempotent).
-- `backend/app/worker.py`: daily retention sweep wired into the worker poll loop. `_maybe_run_retention_sweep` runs at most once per UTC day at `RETENTION_SWEEP_HOUR_UTC`, calling `purge_older_than(RETENTION_DAYS)`. Sweep failures are logged at ERROR (`retention_sweep_failed`) but do NOT mark the day as swept, so the next iteration retries. The sweep is stateless across restarts -- a worker bounce past the sweep hour without having run today will re-fire.
+- `backend/app/worker.py`: daily retention sweep wired into the worker poll loop. `_maybe_run_retention_sweep` runs at most once per UTC day at `RETENTION_SWEEP_HOUR_UTC`, calling `purge_older_than(RETENTION_DAYS)`. Sweep failures are logged at ERROR (`retention_sweep_failed`) but do NOT mark the day as swept, so the next iteration retries. The sweep is stateless across restarts: a worker bounce past the sweep hour without having run today will re-fire.
 - `backend/app/api/v1/purge.py`: `POST /api/v1/purge` for operator-initiated wipes. Requires `confirm=true` query param to acknowledge the destructive action (returns 400 otherwise). Accepts `older_than_days=N` for a partial purge (validated `ge=0`). Returns `{older_than_days, rows_deleted, files_removed, episode_ids: [...]}` so an operator script can confirm what got removed.
 - `backend/app/api/v1/router.py`: registered the purge route alongside the existing v1 routes.
 
@@ -3348,8 +3408,8 @@ Container smoke (`tmp/phase8_smoke.sh`) verified inside the runtime image: build
 - `backend/app/core/database.py`: migration `002_settings_kv` appends a `settings(key, value, updated_at)` k/v table for `podcast:guid` and future runtime knobs. Phase-1 schema is left untouched.
 - `backend/app/services/episodes.py`: typed `Episode` dataclass + `upsert`, `get_by_id`, `list_published` (newest-first, filters out rows with `audio_path IS NULL` so half-finalized jobs don't leak into the feed), `latest_updated_at` (for the RSS `Last-Modified` header and `<lastBuildDate>` field). `upsert` preserves `pub_date` on update (original publish moment) but bumps `updated_at` so clients see a fresh build.
 - `backend/app/services/settings_store.py`: k/v get/set + `get_or_init_podcast_guid` which derives a UUIDv5 from `BASE_URL` on first call and persists it. The PC2 spec requires the guid stay stable across feed-URL changes, so the persisted value is returned verbatim on subsequent calls regardless of `BASE_URL`.
-- `backend/app/services/feed.py`: `render(episodes, settings, podcast_guid, last_build) -> bytes`. feedgen renders Atom + iTunes namespaces; PC2 (`podcast:` namespace) tags are layered on via string-level XML construction afterwards (`podcast:guid`, `podcast:locked` with `owner=FEED_EMAIL`, `podcast:txt purpose="ai-content"` at channel level; `podcast:transcript` per item when `transcript_vtt` is present). Item enclosures get the on-disk MP3 size via `Path.stat().st_size` (missing files report length=0 rather than 500). `itunes:duration` renders as `HH:MM:SS`. Uses `defusedxml.ElementTree.fromstring` for parsing feedgen's output -- XXE/billion-laughs defense-in-depth, even though the parser only ever sees our own output.
-- `backend/app/api/rss.py`: `GET /rss/rss.xml` -- streams the rendered feed with `Cache-Control: public, max-age=RSS_CACHE_MAX_AGE_SECONDS` and `Last-Modified` derived from the newest episode's `updated_at` (or the channel build time when the feed is empty). `If-Modified-Since` round-trips to `304 Not Modified` so podcast clients don't refetch the full body on every poll.
+- `backend/app/services/feed.py`: `render(episodes, settings, podcast_guid, last_build) -> bytes`. feedgen renders Atom + iTunes namespaces; PC2 (`podcast:` namespace) tags are layered on via string-level XML construction afterwards (`podcast:guid`, `podcast:locked` with `owner=FEED_EMAIL`, `podcast:txt purpose="ai-content"` at channel level; `podcast:transcript` per item when `transcript_vtt` is present). Item enclosures get the on-disk MP3 size via `Path.stat().st_size` (missing files report length=0 rather than 500). `itunes:duration` renders as `HH:MM:SS`. Uses `defusedxml.ElementTree.fromstring` for parsing feedgen's output as XXE/billion-laughs defense-in-depth, even though the parser only ever sees our own output.
+- `backend/app/api/rss.py`: `GET /rss/rss.xml`: streams the rendered feed with `Cache-Control: public, max-age=RSS_CACHE_MAX_AGE_SECONDS` and `Last-Modified` derived from the newest episode's `updated_at` (or the channel build time when the feed is empty). `If-Modified-Since` round-trips to `304 Not Modified` so podcast clients don't refetch the full body on every poll.
 - `backend/app/api/media.py`: `GET /media/{episode_id}.mp3`, `/media/{episode_id}.jpg` serve from disk via `FileResponse` with the right content-types and a 24h cache. `GET /media/{episode_id}.vtt` serves the transcript directly from the episode row's `transcript_vtt` column with `Cache-Control: public, max-age=86400`. The `episode_id` route parameter is validated against a strict allowlist (`^[A-Za-z0-9_-]+$`) so a client can't use `..` or absolute paths to escape `DATA_DIR/media`.
 - `backend/app/services/pipeline.py`: `_stage_finalize` calls `episodes.upsert` with the live audio/artwork/vtt/duration produced by prior stages. Title and author come from the extraction metadata; when Firecrawl doesn't report an author the row falls back to `FEED_AUTHOR` so the iTunes author field stays populated. The transcript stage no longer drops its VTT on the floor.
 - `backend/app/main.py`: mounted `rss` and `media` routers at the root prefix (the build-plan paths are `/rss/rss.xml` and `/media/{id}.{ext}`, not `/api/v1/*`).
@@ -3399,7 +3459,7 @@ Container smoke (`tmp/phase7_smoke.sh`) verified inside the runtime image: feedg
   - Rejects sources below `ARTWORK_MIN_SOURCE_PX` so we don't ship a blurry upscale as the episode card.
   - Flattens `RGBA/LA/P` to RGB on a black background (JPEG has no alpha channel), center-crops to square, resizes via `LANCZOS` to `ARTWORK_SIZE_PX`, saves JPG quality `ARTWORK_JPG_QUALITY` with `optimize=True` and `exif=b""` to strip metadata.
   - Every failure path returns `None` and emits an `artwork_fallback` WARN with a typed `reason` (`missing_og_image`, `download_unreachable`, `download_http_error`, `download_too_large`, `unidentified_format`, `unsupported_format`, `source_too_small`, `decompression_bomb`, `pillow_decode_failed`, `atomic_write_failed`, `blocked_scheme`, `blocked_host`). The pipeline continues; episodes with no per-episode JPG render the feed-level artwork (Phase 7).
-  - Hardened against attacker-controlled `og:image` URLs (the article HTML is scraped, so the URL is influenced by content the operator did not write): scheme allowlist (`http`/`https` only -- rejects `data:`, `javascript:`, `file:`); SSRF guard rejects private/loopback/link-local/multicast IPs after DNS resolution; streaming download with hard `ARTWORK_MAX_DOWNLOAD_BYTES` cap so a hostile body can't OOM the worker; broad `httpx.HTTPError` catch so `InvalidURL` / `UnsupportedProtocol` / `TooManyRedirects` / `DecodingError` / `RemoteProtocolError` all fall back instead of escaping the "never raises" contract.
+  - Hardened against attacker-controlled `og:image` URLs (the article HTML is scraped, so the URL is influenced by content the operator did not write): scheme allowlist (`http`/`https` only; rejects `data:`, `javascript:`, `file:`); SSRF guard rejects private/loopback/link-local/multicast IPs after DNS resolution; streaming download with hard `ARTWORK_MAX_DOWNLOAD_BYTES` cap so a hostile body can't OOM the worker; broad `httpx.HTTPError` catch so `InvalidURL` / `UnsupportedProtocol` / `TooManyRedirects` / `DecodingError` / `RemoteProtocolError` all fall back instead of escaping the "never raises" contract.
   - EXIF orientation is honored via `ImageOps.exif_transpose` BEFORE flatten/crop/resize so phone-shot JPEGs (Orientation=6) don't render sideways after `exif=b""` strips the tag.
   - JPG write is atomic (`services/atomic_write.write_bytes_atomic` with prefix `.artwork-`) so a crash mid-save can't leave a truncated cover served by the Phase 7 RSS handler.
   - `Image.Resampling.LANCZOS` (not the deprecated `Image.LANCZOS` alias).
@@ -3428,7 +3488,7 @@ Container smoke (`tmp/phase6_smoke.sh`) verified inside the runtime image: Pillo
 
 Findings surfaced and applied:
 
-- **httpx exception coverage broadened**: `_download`'s original `except (httpx.TimeoutException, httpx.NetworkError)` missed `httpx.InvalidURL`, `httpx.UnsupportedProtocol`, `httpx.TooManyRedirects`, `httpx.RemoteProtocolError`, and `httpx.DecodingError` -- all reachable from attacker-controlled og:image URLs and all of which would escape the "never raises" contract and fail the artwork stage. Now catches `httpx.HTTPError` as the final arm so every transport-level error is converted to a `download_unreachable` fallback.
+- **httpx exception coverage broadened**: `_download`'s original `except (httpx.TimeoutException, httpx.NetworkError)` missed `httpx.InvalidURL`, `httpx.UnsupportedProtocol`, `httpx.TooManyRedirects`, `httpx.RemoteProtocolError`, and `httpx.DecodingError`, all reachable from attacker-controlled og:image URLs and all of which would escape the "never raises" contract and fail the artwork stage. Now catches `httpx.HTTPError` as the final arm so every transport-level error is converted to a `download_unreachable` fallback.
 - **SSRF guard**: `_assert_public_host` resolves the hostname (DNS) and rejects private / loopback / link-local / multicast / reserved / unspecified addresses BEFORE the GET. Re-runs on every redirect via httpx `event_hooks={"request": [...]}` so a 302 into the internal network is caught. Scheme allowlist (`http`/`https` only) rejects `data:`, `javascript:`, `file:`, `ftp:` up front. Two new typed exceptions: `_BlockedHostError` (with reason: `dns_resolution_failed`, `non_public_address_<ip>`, etc.) and the `blocked_scheme` fallback reason.
 - **Download size cap**: streams the response with `client.stream("GET", ...)`, checks advertised `Content-Length` first, then enforces `ARTWORK_MAX_DOWNLOAD_BYTES` on each streamed chunk. A hostile body can no longer OOM the worker by serving an unbounded payload within the fetch timeout. Default cap is 25 MiB (`ARTWORK_MAX_DOWNLOAD_BYTES=26214400` in `.env.example`).
 - **EXIF orientation honored before crop/resize**: a portrait phone JPEG with `Orientation=6` was being saved sideways at 3000x3000 because `exif=b""` strips the orientation tag with no recovery. Now `ImageOps.exif_transpose(img)` runs first; the test `test_process_artwork_exif_rotation_actually_rotates_pixels` samples a colored stripe from the expected post-rotation column to verify the pixels (not just the EXIF tag) were transposed.
@@ -3436,7 +3496,7 @@ Findings surfaced and applied:
 - **Atomic JPG write**: re-uses `services/atomic_write.write_bytes_atomic` (Phase 4 helper, with `prefix=".artwork-"`). A crash mid-save can no longer leave a truncated cover that the Phase 7 RSS handler would serve.
 - **Transcript timeline as integer ms**: `cursor_ms` is incremented as `int` rather than `cursor_secs` as `float`, eliminating cumulative drift over hundreds of cues. Trailing silence is no longer added after the final cue (was a dead store and would have desynced any cumulative-end check). `_escape_cue` switched to `html.escape(text, quote=False)` and now also flattens internal whitespace runs via `" ".join(text.split())` so a chunk with an embedded blank line can't split a VTT cue. `math.isfinite` rejects NaN and +/-inf duration values (would have crashed `_format_ts`).
 - **Pipeline integration**: `core/paths.media_dir(settings)` is the single source of truth for `{DATA_DIR}/media`; `_stage_audio` and `_stage_artwork` both call it. `_stage_transcript` does an explicit `len(chunks) != len(chunk_results)` check so the resulting `jobs.error` reads "transcript stage: N chunks but M TTS results -- pipeline state corrupted" instead of a stdlib zip message.
-- **CHANGELOG accuracy**: previous draft listed `pillow_render_failed` (no longer emitted after the render path was folded into a single `_decode_and_render`) and was missing `download_too_large`, `decompression_bomb`, `atomic_write_failed`, `blocked_scheme`, `blocked_host` -- now reflects the real reason set.
+- **CHANGELOG accuracy**: previous draft listed `pillow_render_failed` (no longer emitted after the render path was folded into a single `_decode_and_render`) and was missing `download_too_large`, `decompression_bomb`, `atomic_write_failed`, `blocked_scheme`, `blocked_host`; now reflects the real reason set.
 - **Module docstring on `pipeline.py`**: was Phase-2 vintage and listed only the extract stage; updated to describe the Phase 6 chain.
 - **Stale comment / dead branch in `_decode_and_render`**: removed the `if oriented is None: oriented = opened` guard. `ImageOps.exif_transpose` does not return `None` on Pillow 10+; the comment was factually wrong about Pillow's contract.
 
@@ -3449,14 +3509,14 @@ New tests added by the review pass (17 more, 197 total):
 ### Added (Phase 5 - Chunking + Audio pipeline)
 
 - Pipeline now runs **extract -> cleanup -> corrections -> chunk -> tts -> audio**. Final `status=done` with `stage=audio`; an MP3 lands at `/data/media/{episode_id}.mp3`. Phase 6 will append artwork + transcript + finalize.
-- `backend/app/services/chunker.py`: hybrid chunker per build-plan rules. Paragraphs first (`\n\n`); sentence boundaries via `(?<=[.!?])\s+`; comma / semicolon fallback for oversize sentences that emits a `chunk_fallback_split` WARN record so dashboards can spot a steady stream of them. `UnsplittableSentenceError` is raised with a sentence preview when no breakpoint fits -- the pipeline marks the job failed with stage=chunk rather than truncating content. Targets 180 words / 1100 chars per chunk; hard max 220 words.
+- `backend/app/services/chunker.py`: hybrid chunker per build-plan rules. Paragraphs first (`\n\n`); sentence boundaries via `(?<=[.!?])\s+`; comma / semicolon fallback for oversize sentences that emits a `chunk_fallback_split` WARN record so dashboards can spot a steady stream of them. `UnsplittableSentenceError` is raised with a sentence preview when no breakpoint fits; the pipeline marks the job failed with stage=chunk rather than truncating content. Targets 180 words / 1100 chars per chunk; hard max 220 words.
 - `backend/app/services/tts.py`: added `generate_chunk_with_retry` wrapping `generate_chunk` with tenacity. `TTS_RETRY_COUNT` attempts, exponential backoff, retry only `TTSProviderError` / `TTSTimeoutError`; `TTSRequestError` propagates immediately per build-plan line 829.
 - `backend/app/services/audio.py`:
-  - `trim_silence(waveform, sample_rate, settings)` -- torch-based silence detection per the ebook2audiobook algorithm. `AUDIO_SILENCE_THRESHOLD` + `AUDIO_SILENCE_BUFFER_MS`. Fully silent input returns unchanged so the chunk isn't accidentally erased.
-  - `concat_with_padding(chunk_paths, output_path, settings)` -- load each WAV via soundfile, trim silence, insert a `torch.zeros((1, n))` pad of `TTS_CHUNK_SILENCE_MS` between chunks, concatenate via `torch.cat`, write the combined WAV. Returns `(output_path, sample_rate)`.
-  - `normalize_and_encode(input_wav, output_mp3, settings)` -- runs the full ebook2audiobook ffmpeg filter chain (`agate`, `afftdn`, `acompressor`, `loudnorm=I=-14:TP=-3:LRA=7:linear=true`, six `equalizer` bands, `highpass=63`), then encodes to MP3 via `libmp3lame` at 128k / 24000 Hz / stereo upmix (`-ac 2`). Reads final duration via mutagen.
+  - `trim_silence(waveform, sample_rate, settings)`: torch-based silence detection per the ebook2audiobook algorithm. `AUDIO_SILENCE_THRESHOLD` + `AUDIO_SILENCE_BUFFER_MS`. Fully silent input returns unchanged so the chunk isn't accidentally erased.
+  - `concat_with_padding(chunk_paths, output_path, settings)`: load each WAV via soundfile, trim silence, insert a `torch.zeros((1, n))` pad of `TTS_CHUNK_SILENCE_MS` between chunks, concatenate via `torch.cat`, write the combined WAV. Returns `(output_path, sample_rate)`.
+  - `normalize_and_encode(input_wav, output_mp3, settings)`: runs the full ebook2audiobook ffmpeg filter chain (`agate`, `afftdn`, `acompressor`, `loudnorm=I=-14:TP=-3:LRA=7:linear=true`, six `equalizer` bands, `highpass=63`), then encodes to MP3 via `libmp3lame` at 128k / 24000 Hz / stereo upmix (`-ac 2`). Reads final duration via mutagen.
   - `FfmpegError` carries `returncode` + last 400 chars of stderr so operators have something useful in the job's error column.
-  - `remove_quietly(*paths)` -- used by the pipeline's `finally` block to clean per-chunk WAVs + the concatenated WAV regardless of success/failure (no persistent debug artifacts).
+  - `remove_quietly(*paths)`: used by the pipeline's `finally` block to clean per-chunk WAVs + the concatenated WAV regardless of success/failure (no persistent debug artifacts).
 - `backend/app/services/pipeline.py`:
   - `_stage_chunk` calls `chunker.chunk`, logs `chunk_complete` with `chunk_count` + `min/max/total_words`.
   - `_stage_tts` iterates chunks, calls `tts.generate_chunk_with_retry`, emits `tts_chunk_done` per chunk and `tts_stage_complete` with `total_audio_secs`. Per-chunk durations are kept on the in-memory pipeline state for Phase 6 transcript generation.
@@ -3478,8 +3538,8 @@ Container smoke verified end-to-end with a mock Firecrawl + mock OpenAI-compatib
 
 Findings surfaced and applied:
 
-- **`_finalize_failure` no longer crashes on curly-brace exception text**: switched from `error_template.format(stage=last_stage)` to `error_template.replace("{stage}", last_stage)`. ffmpeg stderr, JSON bodies, sentence previews, and any other user-controlled exception text can contain literal `{` or `}` -- `str.format` would have raised `KeyError` mid-finalize and left the job stuck in `processing`. Replace is inert to braces.
-- **chunker `chunk_index` in `chunk_fallback_split` WARN logs is now the global running position**: thread the current output-chunk count from `chunk()` through `_chunk_paragraph` into `_pack` as `base_chunk_index`. Previously hard-coded to `len(_split_paragraphs(""))` which is structurally always 0 -- every paragraph's WARN reset to 0, defeating the build-plan diagnostic.
+- **`_finalize_failure` no longer crashes on curly-brace exception text**: switched from `error_template.format(stage=last_stage)` to `error_template.replace("{stage}", last_stage)`. ffmpeg stderr, JSON bodies, sentence previews, and any other user-controlled exception text can contain literal `{` or `}`; `str.format` would have raised `KeyError` mid-finalize and left the job stuck in `processing`. Replace is inert to braces.
+- **chunker `chunk_index` in `chunk_fallback_split` WARN logs is now the global running position**: thread the current output-chunk count from `chunk()` through `_chunk_paragraph` into `_pack` as `base_chunk_index`. Previously hard-coded to `len(_split_paragraphs(""))` which is structurally always 0: every paragraph's WARN reset to 0, defeating the build-plan diagnostic.
 - **Comma/semicolon fallback preserves the original separator**: `_COMMA_OR_SEMI` now captures the separator via a regex group; `_join_pieces` rebuilds the chunk with the original `;` or `,` instead of silently rewriting semicolons to commas. XTTS-v2 prosody pauses are different for the two, so this matters for the narrator's pace.
 - **`concat_with_padding` validates channel uniformity AND builds the pad tensor with the matching channel count**: the previous `(1, pad_n)` hard-coding would crash with an opaque `torch.cat` RuntimeError on any future non-mono input; now it raises a clean `AudioError("chunk N has X channels but earlier chunk had Y")`.
 - **loudnorm `linear=true` removed**: the flag is a documented no-op without a first-pass measurement (which we don't run); ffmpeg silently fell back to dynamic single-pass loudnorm anyway. Removed so the filter chain accurately describes what's running. Two-pass measure-then-apply is a follow-up.
@@ -3493,10 +3553,10 @@ New tests added by the review pass (5 more, 157 total):
 
 ### Added (Phase 4 - TTS Wrapper)
 
-- `tts-wrapper/` -- new sibling container that wraps Coqui XTTS-v2 in a FastAPI service. Endpoints per build plan:
+- `tts-wrapper/`: new sibling container that wraps Coqui XTTS-v2 in a FastAPI service. Endpoints per build plan:
   - `POST /generate` accepts `{text, episode_id, chunk_index}`, runs inference under an `asyncio.Lock` so concurrent calls queue at the GPU boundary while `/health` stays responsive, writes the result to `/data/media/{episode_id}_chunk_{chunk_index}.wav`, returns `{wav_path, duration_secs, sample_rate}`.
   - `GET /health` reports `{ok, model_loaded, reference_loaded}`; 503 until the model has loaded AND the reference embeddings are computed.
-  - `POST /reload` acquires the same lock, re-reads `reference/voice.wav`, and recomputes speaker embeddings -- called by the main app after a reference-voice commit (Phase 10).
+  - `POST /reload` acquires the same lock, re-reads `reference/voice.wav`, and recomputes speaker embeddings, called by the main app after a reference-voice commit (Phase 10).
 - `tts-wrapper/engine.py`: `Engine` Protocol + `XTTSEngine` real implementation. The Coqui TTS and PyTorch imports are deferred to `XTTSEngine.load()` so the module is importable in test environments without GPU runtime. Tests inject a `FakeEngine` via `create_app(engine=..., data_dir=...)`.
 - `tts-wrapper/main.py`: lifespan calls `engine.load()` and `sys.exit(1)`s on failure so uvicorn exits non-zero and the container restart policy fires (matches the missing-`voice.wav` and model-load-failure deliverables). Pydantic request model uses `extra="forbid"`, `min_length` on text + episode_id, `ge=0` on `chunk_index`. GPU OOM raises a typed `GPUOutOfMemoryError` that the route catches, calls `torch.cuda.empty_cache()`, and returns 500 with `{error: "GPU OOM", cause}`. WAV duration is computed from the file header so the response value matches what was written.
 - `tts-wrapper/config.py`: env-driven `Config` carrying `TTS_DEVICE`, `TTS_LANGUAGE`, the XTTS generation tunables (`XTTS_TEMPERATURE`/`LENGTH_PENALTY`/`REPETITION_PENALTY`/`TOP_K`/`TOP_P`), and the sample rate. Defaults match build-plan.md.
@@ -3538,7 +3598,7 @@ Findings surfaced and applied:
 
 New tests added by the review pass (5 more, 158 total):
 
-- `tts-wrapper/tests/test_main.py`: path traversal in `episode_id` rejected (covers `../etc/foo`, `a/b`, `with space`, `with\x00null`); `/reload` 404 when engine raises `FileNotFoundError`; `/reload` 500 when engine raises any other exception (each path matters because the backend's `tts.reload` client classifies 4xx as terminal `TTSRequestError` and 5xx as retryable `TTSProviderError`); engine `sample_rate` mismatch is observable in the response (FakeEngine.sample_rate=24000 over a 22050 Hz WAV -> response carries the engine's value, duration computed from the WAV header -- a future code change that reads the rate from the header fails the assertion); atomic write leaves no `.tmp` files on success.
+- `tts-wrapper/tests/test_main.py`: path traversal in `episode_id` rejected (covers `../etc/foo`, `a/b`, `with space`, `with\x00null`); `/reload` 404 when engine raises `FileNotFoundError`; `/reload` 500 when engine raises any other exception (each path matters because the backend's `tts.reload` client classifies 4xx as terminal `TTSRequestError` and 5xx as retryable `TTSProviderError`); engine `sample_rate` mismatch is observable in the response (FakeEngine.sample_rate=24000 over a 22050 Hz WAV -> response carries the engine's value, duration computed from the WAV header; a future code change that reads the rate from the header fails the assertion); atomic write leaves no `.tmp` files on success.
 
 Container smoke remains operator-side per the original Phase 4 plan; the additional fixes don't change the manual XTTS smoke path documented in `tts-wrapper/README.md`.
 
@@ -3627,7 +3687,7 @@ Findings surfaced and applied:
 New tests added by the review pass (11 more, 59 total):
 
 - `test_reachability.py`: 6 tests covering check_firecrawl 2xx, fallback through endpoint candidates, network unreachable, persistent 5xx reports last detail, run_all raises on failure, run_all returns on success.
-- `test_api_v1.py`: 5 new tests -- `extra="forbid"` rejects typo'd field, raw URL preserved through to status, reprocess+inflight still returns 409 with the right reason, status endpoint returns failed jobs with stage + error, 500 envelope contract (no detail leakage, never logs exc.args into response).
+- `test_api_v1.py`: 5 new tests: `extra="forbid"` rejects typo'd field, raw URL preserved through to status, reprocess+inflight still returns 409 with the right reason, status endpoint returns failed jobs with stage + error, 500 envelope contract (no detail leakage, never logs exc.args into response).
 
 - New tests (17 new, 59 total Phase 2 starting point pre-review):
   - `test_extraction.py`: happy path, retries-then-succeeds on 5xx, no-retry on 4xx, retry exhaustion on persistent 5xx, MIN_EXTRACTION_CHARS guard, `success=false` rejection. Uses `httpx.MockTransport` via a factory monkeypatch on `httpx.AsyncClient`.
@@ -3643,7 +3703,7 @@ New tests added by the review pass (11 more, 59 total):
 - `backend/app/version.py` as the single source of `__version__`.
 - `backend/app/config.py`: Pydantic `BaseSettings` covering the required, conditional, and tunable env vars from the build plan. `extra="forbid"` so typo'd keys in `.env` fail loudly. Provider-specific validation: `openai-compatible` requires `OPENAI_BASE_URL` + `OPENAI_API_KEY`; `anthropic` requires `ANTHROPIC_API_KEY`. `get_settings()` is `lru_cache`-singletonized.
 - `backend/app/utils/logging.py`: stdlib `logging` with custom `JSONFormatter` (Loki-ready, ms + Z timestamps) and `TextFormatter` (local dev). Context propagation via `contextvars` (`job_id_ctx`, `episode_id_ctx`, `stage_ctx`, `status_ctx`). Constant `service` label per build plan. Inverse-denylist context payload so every caller-supplied extra surfaces. Third-party loggers locked at WARNING.
-- `backend/app/startup.py`: shared `bootstrap(settings, *, process_label)` called by both the FastAPI lifespan and the queue worker -- single source of truth for logging + migrations + the startup banner.
+- `backend/app/startup.py`: shared `bootstrap(settings, *, process_label)` called by both the FastAPI lifespan and the queue worker, a single source of truth for logging + migrations + the startup banner.
 - `backend/app/core/database.py`: sync `sqlite3` connection helper with WAL pragma + DELETE fallback, `synchronous=NORMAL`, `wal_autocheckpoint=1000`, `foreign_keys=ON`. Idempotent migration runner with `fcntl.flock` on `.migration.lock`, `schema_migrations` tracking table, explicit `BEGIN IMMEDIATE`/`COMMIT`/`ROLLBACK` so the migration body and tracking-row INSERT are atomic under autocommit, retry loop that refreshes the pending set between attempts on transient `database is locked`, and a `wal_checkpoint(TRUNCATE)`-before-copy backup that only triggers when a pending migration runs against a populated DB. `_db_has_user_tables` skips sqlite-internal bookkeeping tables. Includes crash-recovery `reset_processing_to_queued` that bumps `updated_at` and preserves any pre-existing error message via `COALESCE`. Includes backup pruning.
 - v1 schema migration `001_initial_schema`: `jobs` + `episodes` tables with application-managed `updated_at`, the indices the build plan specifies, and the timestamp default convention (`strftime('%Y-%m-%dT%H:%M:%SZ', 'now')`).
 - `backend/app/api/health.py`: `/health/live` (no dependency checks), `/health/ready` (DB connectivity check, returns 503 on failure and logs the exception with traceback), `/health` (alias registered as a stacked decorator on the same function). Both ready responses include `version`, `uptime_seconds` (per-app instance, read from `app.state.started_at` set in lifespan), `components.app`, `components.python`, and the `checks` map.
@@ -3672,7 +3732,7 @@ Findings surfaced by the multi-angle review and applied in this pass:
 - **Bootstrap dedup**: extracted `app.startup.bootstrap(...)` so the lifespan and the worker share one setup-logging + run-migrations path.
 - **Health aliases**: stacked `@router.get` decorators on a single function rather than two duplicate handlers.
 - **Structured logging fixes**:
-  - JSON timestamp now uses `formatTime(record)` without an explicit `datefmt` so `default_msec_format` actually applies -- output is `YYYY-MM-DDTHH:MM:SS.NNNZ` instead of naive seconds.
+  - JSON timestamp now uses `formatTime(record)` without an explicit `datefmt` so `default_msec_format` actually applies: output is `YYYY-MM-DDTHH:MM:SS.NNNZ` instead of naive seconds.
   - `_context_payload` switched from a 5-key whitelist to a `_STANDARD_RECORD_ATTRS` denylist so every caller-supplied extra (`error`, `path`, `count`, `version`, `process_label`, ...) surfaces in JSON instead of being silently dropped.
   - Constant `service` label on every record (build plan low-cardinality label).
   - `stage_ctx` and `status_ctx` ContextVars added for spec parity (build plan calls these out as label/body fields propagated by context, not threaded through every `extra=`).
@@ -3681,6 +3741,6 @@ Findings surfaced by the multi-angle review and applied in this pass:
 - **Test isolation**: `env` fixture switched from `return` to `yield` with `get_settings.cache_clear()` on teardown, so a stale `Settings` pointing at a removed `tmp_path` can't bleed into the next test.
 - **Settings strictness**: `extra="forbid"` so `.env` typos like `LLM_MODE=...` fail at startup instead of silently being ignored.
 - **Docker layer**: bind mounts target `/app/app/*` (matching where the Dockerfile actually copies files); added `./backend/app/reference:/app/app/reference` so the volume exists before Phase 4 lands.
-- **Dockerfile**: dropped silent `--frozen` fallback (`uv sync --no-dev --frozen` only -- lockfile drift fails the build); migrated to PEP 735 `[dependency-groups]` so `--no-dev` actually excludes dev deps.
+- **Dockerfile**: dropped silent `--frozen` fallback (`uv sync --no-dev --frozen` only; lockfile drift fails the build); migrated to PEP 735 `[dependency-groups]` so `--no-dev` actually excludes dev deps.
 - **Lint**: enabled ruff rule sets `E,F,I,B,UP,SIM,RUF`. Repo is clean (`uv run ruff check .` returns "All checks passed").
 - **New tests** added for the previously uncovered behaviors: mid-migration rollback atomicity, retry loop on transient lock, `updated_at` bump + prior-error preservation, lock serialization across threads, JSON timestamp ms+Z, JSON arbitrary extras pass-through, idempotent `setup_logging` handler count, `bootstrap()` safe-to-call-twice, worker `_crash_recovery` integration.

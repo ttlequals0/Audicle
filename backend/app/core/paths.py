@@ -16,6 +16,14 @@ def media_dir(settings: Settings) -> Path:
     return settings.DATA_DIR / "media"
 
 
+def books_dir(settings: Settings) -> Path:
+    return settings.DATA_DIR / "books"
+
+
+def book_dir(settings: Settings, book_id: str) -> Path:
+    return books_dir(settings) / book_id
+
+
 def default_artwork_path(settings: Settings) -> Path:
     return media_dir(settings) / "default.jpg"
 

@@ -6,7 +6,7 @@
 
 Self-hosted Podcasting 2.0 service that turns saved articles into a personal podcast feed.
 
-Paste a URL or upload a document (PDF including scanned, DOCX, Markdown, text, HTML, or an image), wait a few minutes, and get an episode with cloned-voice narration, chapters, artwork, an LLM-written episode summary, and a WebVTT transcript. Subscribe in Pocket Casts, Overcast, or Apple Podcasts like any other show.
+Paste a URL or upload a document (PDF including scanned, DOCX, EPUB, Markdown, text, HTML, or an image), wait a few minutes, and get an episode with cloned-voice narration, chapters, artwork, an LLM-written episode summary, and a WebVTT transcript. EPUB and PDF books can be split into one episode per chapter. Subscribe in Pocket Casts, Overcast, or Apple Podcasts like any other show.
 
 *Your reading list, as a podcast you own.*
 

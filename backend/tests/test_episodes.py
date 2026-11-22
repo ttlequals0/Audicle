@@ -263,3 +263,73 @@ def test_count_and_page_agree_on_the_same_term(env: Path) -> None:
         assert len(episodes.list_published_page(conn, limit=50, offset=0, q="rust")) == 5
     finally:
         conn.close()
+
+
+def _processing_job(conn, job_id: str) -> None:
+    conn.execute(
+        "INSERT INTO jobs (id, url, episode_id, status) VALUES (?, ?, ?, 'processing')",
+        (job_id, "https://example.test/c", "chap1"),
+    )
+
+
+def _publish(
+    conn, job_id: str, *, create: bool, expected: str | None, token: str, **numbers
+) -> None:
+    episodes.publish_episode_generation(
+        conn,
+        token=token,
+        expected_token=expected,
+        create=create,
+        id="chap1",
+        job_id=job_id,
+        original_url="upload://h/b.epub#chapter=7",
+        title="Book: Chapter",
+        author="A",
+        audio_path="/data/media/chap1.mp3",
+        artwork_path=None,
+        transcript_vtt="WEBVTT\n",
+        duration_secs=60,
+        summary=None,
+        cleaned_text="text",
+        audio_size_bytes=10,
+        source_type="upload",
+        source_filename="b.epub",
+        voice_label=None,
+        chapters_json=None,
+        **numbers,
+    )
+
+
+def test_publish_generation_persists_season_and_episode_numbers(env: Path) -> None:
+    conn = _open(env)
+    try:
+        _processing_job(conn, "j1")
+        _publish(
+            conn, "j1", create=True, expected=None, token="t1", season_number=2, episode_number=7
+        )
+        created = episodes.get_by_id(conn, "chap1")
+        assert created is not None
+        assert (created.season_number, created.episode_number) == (2, 7)
+
+        conn.execute("UPDATE jobs SET status = 'processing' WHERE id = 'j1'")
+        _publish(
+            conn, "j1", create=False, expected="t1", token="t2", season_number=3, episode_number=9
+        )
+        reprocessed = episodes.get_by_id(conn, "chap1")
+        assert reprocessed is not None
+        assert reprocessed.revision == 2
+        assert (reprocessed.season_number, reprocessed.episode_number) == (3, 9)
+    finally:
+        conn.close()
+
+
+def test_publish_generation_defaults_numbers_to_null(env: Path) -> None:
+    conn = _open(env)
+    try:
+        _processing_job(conn, "j1")
+        _publish(conn, "j1", create=True, expected=None, token="t1")
+        row = episodes.get_by_id(conn, "chap1")
+        assert row is not None
+        assert row.season_number is None and row.episode_number is None
+    finally:
+        conn.close()

@@ -10,9 +10,12 @@ from app.config import get_settings
 from app.core import database
 from app.core.paths import media_dir
 from app.main import create_app
-from app.services import episodes, feed, file_extraction, jobs, runtime_settings, voices
+from app.services import books, episodes, feed, file_extraction, jobs, runtime_settings, voices
+from app.services.book_chapters import DetectedBook, DetectedChapter
 from app.services.episodes import Episode
 from fastapi.testclient import TestClient
+
+from tests.conftest import simple_epub, text_page_pdf
 
 
 def _client(env: Path) -> TestClient:
@@ -289,3 +292,336 @@ def test_feed_render_upload_episode_has_no_synthetic_link(env: Path) -> None:
     )
     assert b"upload://" not in body
     assert b"My Report.pdf" in body
+
+
+def _seed_chapter_episode(env: Path) -> tuple[books.Book, str]:
+    database.run_migrations(env)
+    detected = DetectedBook(
+        format="epub",
+        title="Book",
+        author=None,
+        cover=None,
+        chapters=[
+            DetectedChapter(
+                idx=1,
+                title="One",
+                locator={},
+                word_count=10,
+                char_count=50,
+                default_selected=True,
+                selectable=True,
+            )
+        ],
+    )
+    uri = file_extraction.build_source_uri("a" * 16, "novel.epub")
+    chapter_url = books.chapter_uri(uri, 1)
+    episode_id = jobs.compute_episode_id(chapter_url)
+    conn = database.connect(database.db_path(env))
+    try:
+        book = books.create_book(
+            conn, source_uri=uri, filename="novel.epub", detected=detected, has_cover=False
+        )
+        episodes.upsert(
+            conn,
+            id=episode_id,
+            job_id=None,
+            original_url=chapter_url,
+            title="Book: One",
+            author="A",
+            audio_path=None,
+            artwork_path=None,
+            transcript_vtt="WEBVTT\n",
+            duration_secs=10,
+            source_type="upload",
+            source_filename="novel.epub",
+        )
+    finally:
+        conn.close()
+    path = books.source_file(get_settings(), book.id, ".epub")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"EPUB")
+    return book, episode_id
+
+
+def test_reprocess_chapter_episode_uses_book_source(env: Path) -> None:
+    book, episode_id = _seed_chapter_episode(env)
+    path = books.source_file(get_settings(), book.id, ".epub")
+    with _client(env) as client:
+        ok = client.post(f"/api/v1/upload/{episode_id}/reprocess")
+        path.unlink()
+        gone = client.post(f"/api/v1/upload/{episode_id}/reprocess")
+    assert ok.status_code == 201
+    assert gone.status_code == 409
+
+
+def test_reprocess_chapter_episode_locks_on_book_id(env: Path, monkeypatch) -> None:
+    book, episode_id = _seed_chapter_episode(env)
+    original_lock = database.upload_staging_lock
+    locked: list[str] = []
+
+    @contextmanager
+    def _recording_lock(data_dir: Path, key: str, *, blocking: bool = True):
+        locked.append(key)
+        with original_lock(data_dir, key, blocking=blocking) as held:
+            yield held
+
+    monkeypatch.setattr(database, "upload_staging_lock", _recording_lock)
+    with _client(env) as client:
+        r = client.post(f"/api/v1/upload/{episode_id}/reprocess")
+    assert r.status_code == 201
+    assert locked == [book.id]
+
+
+def test_reprocess_chapter_episode_keeps_book_voice(env: Path) -> None:
+    book, episode_id = _seed_chapter_episode(env)
+    conn = database.connect(database.db_path(env))
+    try:
+        books.set_voice(conn, book.id, "2")
+    finally:
+        conn.close()
+    with _client(env) as client:
+        r = client.post(f"/api/v1/upload/{episode_id}/reprocess")
+    assert r.status_code == 201
+    conn = database.connect(database.db_path(env))
+    try:
+        row = conn.execute(
+            "SELECT voice_id FROM jobs WHERE id = ?", (r.json()["job_id"],)
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row["voice_id"] == "2"
+
+
+# --- POST /upload with split_chapters -----------------------------------------
+
+
+def _post_epub(client: TestClient, data: bytes | None = None, **form: str):
+    return client.post(
+        "/api/v1/upload",
+        files={
+            "file": (
+                "book.epub",
+                data if data is not None else simple_epub(),
+                "application/epub+zip",
+            )
+        },
+        data=form,
+    )
+
+
+def _row_counts(env: Path) -> tuple[int, int, int]:
+    conn = database.connect(database.db_path(env))
+    try:
+        return tuple(  # type: ignore[return-value]
+            conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+            for t in ("books", "book_chapters", "jobs")
+        )
+    finally:
+        conn.close()
+
+
+def test_upload_unsplit_epub_is_one_whole_book_job(env: Path) -> None:
+    with _client(env) as client:
+        r = _post_epub(client)
+    assert r.status_code == 201
+    body = r.json()
+    assert body["status"] == "queued"
+    assert body["chapters_detected"] is None
+    assert _row_counts(env) == (0, 0, 1)
+    assert (media_dir(get_settings()) / f"{body['episode_id']}.source.epub").is_file()
+
+
+def test_upload_split_rejects_non_book_type(env: Path) -> None:
+    with _client(env) as client:
+        r = client.post(
+            "/api/v1/upload",
+            files={"file": ("notes.md", b"# Hi\n\nsome body text", "text/markdown")},
+            data={"split_chapters": "true"},
+        )
+    assert r.status_code == 400
+    assert _row_counts(env) == (0, 0, 0)
+
+
+def test_upload_split_pdf_without_outline_falls_back_to_one_job(env: Path) -> None:
+    with _client(env) as client:
+        r = client.post(
+            "/api/v1/upload",
+            files={"file": ("doc.pdf", text_page_pdf("hello " * 40), "application/pdf")},
+            data={"split_chapters": "true"},
+        )
+    assert r.status_code == 201
+    assert r.json()["chapters_detected"] is False
+    assert _row_counts(env) == (0, 0, 1)
+
+
+def test_upload_split_epub_creates_book_and_no_jobs(env: Path) -> None:
+    with _client(env) as client:
+        r = _post_epub(client, split_chapters="true")
+    assert r.status_code == 201
+    body = r.json()
+    assert len(body["chapters"]) == 3
+    assert body["queued"] == []
+    assert _row_counts(env) == (1, 3, 0)
+    assert (Path(get_settings().DATA_DIR) / "books" / body["book_id"] / "source.epub").is_file()
+
+
+def test_upload_split_epub_without_title_uses_filename_stem(env: Path) -> None:
+    with _client(env) as client:
+        r = _post_epub(client, simple_epub(title=None), split_chapters="true")
+    assert r.status_code == 201
+    assert r.json()["title"] == "book"
+
+
+def test_upload_split_with_chapters_queues_in_order(env: Path) -> None:
+    with _client(env) as client:
+        r = _post_epub(client, split_chapters="true", chapters="2-3")
+    assert r.status_code == 201
+    body = r.json()
+    assert body["queued"] == [2, 3]
+    conn = database.connect(database.db_path(env))
+    try:
+        rows = conn.execute("SELECT episode_id FROM jobs ORDER BY rowid").fetchall()
+        by_idx = {c["index"]: c["episode_id"] for c in body["chapters"]}
+        assert [r["episode_id"] for r in rows] == [by_idx[2], by_idx[3]]
+    finally:
+        conn.close()
+
+
+def test_upload_split_again_returns_existing_book(env: Path) -> None:
+    with _client(env) as client:
+        first = _post_epub(client, split_chapters="true")
+        again = _post_epub(client, split_chapters="true")
+    assert first.status_code == 201
+    assert again.status_code == 200
+    assert again.json()["book_id"] == first.json()["book_id"]
+    assert _row_counts(env) == (1, 3, 0)
+
+
+def test_upload_split_again_with_chapters_still_queues(env: Path) -> None:
+    with _client(env) as client:
+        _post_epub(client, split_chapters="true")
+        again = _post_epub(client, split_chapters="true", chapters="1")
+    assert again.status_code == 200
+    assert again.json()["queued"] == [1]
+    assert _row_counts(env) == (1, 3, 1)
+
+
+def test_reuploaded_book_adopts_published_chapter_episode(env: Path) -> None:
+    with _client(env) as client:
+        first = _post_epub(client, split_chapters="true").json()
+        episode_id = {c["index"]: c["episode_id"] for c in first["chapters"]}[2]
+        conn = database.connect(database.db_path(env))
+        try:
+            conn.execute(
+                "INSERT INTO episodes (id, original_url) VALUES (?, ?)", (episode_id, "x-chapter-2")
+            )
+        finally:
+            conn.close()
+        assert client.delete(f"/api/v1/books/{first['book_id']}").status_code == 204
+        again = _post_epub(client, split_chapters="true")
+    assert again.status_code == 201
+    conn = database.connect(database.db_path(env))
+    try:
+        row = conn.execute(
+            "SELECT season_number, episode_number FROM episodes WHERE id = ?", (episode_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    assert (row["season_number"], row["episode_number"]) == (2, 2)
+    statuses = {c["index"]: c["status"] for c in again.json()["chapters"]}
+    assert statuses == {1: "not_queued", 2: "done", 3: "not_queued"}
+
+
+def test_upload_chapters_without_split_is_400(env: Path) -> None:
+    with _client(env) as client:
+        r = _post_epub(client, chapters="1")
+    assert r.status_code == 400
+    assert _row_counts(env) == (0, 0, 0)
+
+
+def test_upload_split_encrypted_epub_is_400_naming_drm(env: Path) -> None:
+    with _client(env) as client:
+        r = _post_epub(client, simple_epub(encrypted=True), split_chapters="true")
+    assert r.status_code == 400
+    assert "DRM" in r.json()["error"]
+    assert _row_counts(env) == (0, 0, 0)
+
+
+def test_upload_split_unknown_chapter_is_400(env: Path) -> None:
+    with _client(env) as client:
+        r = _post_epub(client, split_chapters="true", chapters="99")
+    assert r.status_code == 400
+    assert _row_counts(env) == (0, 0, 0)
+
+
+def test_split_and_unsplit_uploads_of_same_file_coexist(env: Path) -> None:
+    data = simple_epub()
+    with _client(env) as client:
+        whole = _post_epub(client, data)
+        split = _post_epub(client, data, split_chapters="true", chapters="1")
+        assert whole.status_code == 201
+        assert split.status_code == 201
+        assert split.json()["queued"] == [1]
+        assert whole.json()["episode_id"] == split.json()["book_id"]
+        whole_again = _post_epub(client, data)
+    assert whole_again.status_code == 409
+    assert _row_counts(env) == (1, 3, 2)
+    whole_copy = media_dir(get_settings()) / f"{whole.json()['episode_id']}.source.epub"
+    book_copy = books.source_file(get_settings(), split.json()["book_id"], ".epub")
+    assert whole_copy.read_bytes() == data
+    assert book_copy.read_bytes() == data
+
+
+def test_upload_split_removes_book_directory_when_create_fails(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _boom(*_a, **_k):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(books, "create_book", _boom)
+    with _client(env) as client, pytest.raises(RuntimeError):
+        _post_epub(client, split_chapters="true")
+    assert list((Path(get_settings().DATA_DIR) / "books").iterdir()) == []
+
+
+def test_split_upload_with_bad_chapters_writes_nothing_and_keeps_season(env: Path) -> None:
+    data = simple_epub()
+    with _client(env) as client:
+        bad = _post_epub(client, data, split_chapters="true", chapters="99")
+        assert bad.status_code == 400
+        assert _row_counts(env) == (0, 0, 0)
+        assert list((Path(get_settings().DATA_DIR) / "books").glob("*")) == []
+        good = _post_epub(client, data, split_chapters="true", chapters="1")
+    assert good.status_code == 201
+    assert good.json()["season_number"] == 1
+
+
+def test_split_upload_survives_book_deleted_between_check_and_lock(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = books.get_book
+    calls = {"n": 0}
+
+    def _flaky(conn, book_id):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return books.Book(
+                id=book_id,
+                source_uri="x",
+                filename="book.epub",
+                format="epub",
+                title="book",
+                author=None,
+                season_number=1,
+                has_cover=False,
+                created_at="",
+                voice_id=None,
+            )
+        return real(conn, book_id)
+
+    monkeypatch.setattr(uploads.books, "get_book", _flaky)
+    with _client(env) as client:
+        r = _post_epub(client, split_chapters="true")
+    assert r.status_code == 201
+    assert len(r.json()["chapters"]) == 3
+    assert _row_counts(env) == (1, 3, 0)

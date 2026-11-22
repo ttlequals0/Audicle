@@ -132,6 +132,167 @@ async def test_process_artwork_pins_ip_but_sni_keeps_hostname(
     assert captured["host_header"] == "example.test"
 
 
+# --- local book cover ------------------------------------------------------
+
+
+def _forbid_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"unexpected request to {request.url}")
+
+    _patch_async_client(monkeypatch, httpx.MockTransport(handler))
+
+
+async def test_local_cover_is_processed_without_network(
+    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _forbid_network(monkeypatch)
+    cover = get_settings().DATA_DIR / "books" / "b1" / "cover.jpg"
+    cover.parent.mkdir(parents=True)
+    cover.write_bytes(_jpeg_with_exif(800, 1000))
+
+    result = await artwork.process_artwork(
+        metadata={"ogImage": "https://example.test/ignored.jpg"},
+        episode_id="chap1",
+        output_dir=tmp_path,
+        settings=get_settings(),
+        local_cover=cover,
+    )
+
+    assert result is not None
+    assert result.jpg_path == tmp_path / "chap1.jpg"
+    assert result.jpg_path.is_file()
+    with Image.open(result.jpg_path) as img:
+        assert img.size == (get_settings().ARTWORK_SIZE_PX,) * 2
+
+
+async def test_local_cover_used_when_metadata_is_not_a_dict(env: Path, tmp_path: Path) -> None:
+    cover = get_settings().DATA_DIR / "books" / "b1" / "cover.jpg"
+    cover.parent.mkdir(parents=True)
+    cover.write_bytes(_jpeg_with_exif(800, 1000))
+
+    result = await artwork.process_artwork(
+        None, "chap1", tmp_path, get_settings(), local_cover=cover
+    )
+
+    assert result is not None
+    assert result.jpg_path.is_file()
+
+
+async def _render_local_cover(tmp_path: Path, data: bytes):
+    cover = get_settings().DATA_DIR / "books" / "b1" / "cover.png"
+    cover.parent.mkdir(parents=True, exist_ok=True)
+    cover.write_bytes(data)
+    return await artwork.process_artwork(
+        metadata={},
+        episode_id="chap1",
+        output_dir=tmp_path,
+        settings=get_settings(),
+        local_cover=cover,
+    )
+
+
+async def test_local_cover_is_padded_not_cropped(env: Path, tmp_path: Path) -> None:
+    img = Image.new("RGB", (600, 900), (0, 0, 255))
+    img.paste((255, 0, 0), (0, 0, 600, 100))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+
+    result = await _render_local_cover(tmp_path, buf.getvalue())
+
+    assert result is not None
+    side = get_settings().ARTWORK_SIZE_PX
+    with Image.open(result.jpg_path) as out:
+        assert out.size == (side, side)
+        rgb = out.convert("RGB")
+        # the title band at the top of the cover survives (a centre crop would cut it)
+        r, _g, b = rgb.getpixel((side // 2, side // 40))
+        assert r > 200 and b < 60
+        # padding columns are the cover's average colour, not cover pixels
+        r, _g, b = rgb.getpixel((2, side // 2))
+        assert 5 < r < 80 and 180 < b < 250
+
+
+async def test_small_local_cover_is_still_used(env: Path, tmp_path: Path) -> None:
+    result = await _render_local_cover(tmp_path, _png_bytes(300, 450))
+    assert result is not None
+    with Image.open(result.jpg_path) as out:
+        assert out.size == (get_settings().ARTWORK_SIZE_PX,) * 2
+
+
+async def test_unreadable_local_cover_falls_back(
+    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    _forbid_network(monkeypatch)
+    missing = get_settings().DATA_DIR / "books" / "b1" / "cover.jpg"
+
+    with caplog.at_level(logging.WARNING, logger="app.services.artwork"):
+        result = await artwork.process_artwork(
+            metadata={},
+            episode_id="chap2",
+            output_dir=tmp_path,
+            settings=get_settings(),
+            local_cover=missing,
+        )
+
+    assert result is None
+    assert any(getattr(r, "event", "") == "artwork_fallback" for r in caplog.records)
+    assert not (tmp_path / "chap2.jpg").exists()
+
+
+async def test_unsupported_local_cover_falls_back(
+    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _forbid_network(monkeypatch)
+    cover = get_settings().DATA_DIR / "books" / "b1" / "cover.jpg"
+    cover.parent.mkdir(parents=True)
+    cover.write_bytes(b"not an image")
+
+    result = await artwork.process_artwork(
+        metadata={},
+        episode_id="chap3",
+        output_dir=tmp_path,
+        settings=get_settings(),
+        local_cover=cover,
+    )
+
+    assert result is None
+
+
+async def test_oversized_local_cover_falls_back(
+    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _forbid_network(monkeypatch)
+    settings = get_settings().model_copy(update={"ARTWORK_MAX_DOWNLOAD_BYTES": 1000})
+    cover = settings.DATA_DIR / "books" / "b1" / "cover.jpg"
+    cover.parent.mkdir(parents=True)
+    cover.write_bytes(_jpeg_with_exif(800, 800))
+    assert cover.stat().st_size > 1000
+
+    result = await artwork.process_artwork(
+        metadata={},
+        episode_id="chap5",
+        output_dir=tmp_path,
+        settings=settings,
+        local_cover=cover,
+    )
+
+    assert result is None
+    assert not (tmp_path / "chap5.jpg").exists()
+
+
+async def test_process_artwork_with_non_dict_metadata_returns_none(
+    env: Path, tmp_path: Path
+) -> None:
+    result = await artwork.process_artwork(
+        metadata=None,  # type: ignore[arg-type]
+        episode_id="chap8",
+        output_dir=tmp_path,
+        settings=get_settings(),
+    )
+
+    assert result is None
+
+
 # --- fallback paths -------------------------------------------------------
 
 

@@ -106,3 +106,12 @@ CVE-2026-113351
 CVE-2026-115506
 CVE-2026-117610
 CVE-2026-118370
+
+# Owner: Audicle maintainers. Recheck: 2026-12-22. Added 0.63.0.
+# xserver-common and xvfb (CVE-2026-109094, X.Org XRes) and libfontenc1
+# (CVE-2026-109908, file parsing), both HIGH. Debian trixie has no fixed
+# package (trivy status "affected"). Accepted by the operator on 2026-11-22;
+# the 0.62.1 render image carries the same findings. Remove when trixie ships
+# the fixes.
+CVE-2026-109094
+CVE-2026-109908

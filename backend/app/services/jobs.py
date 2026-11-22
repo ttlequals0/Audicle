@@ -236,7 +236,7 @@ def claim_next_queued(conn: sqlite3.Connection) -> Job | None:
     conn.execute("BEGIN IMMEDIATE")
     try:
         row = conn.execute(
-            "SELECT id FROM jobs WHERE status = 'queued' ORDER BY created_at ASC LIMIT 1"
+            "SELECT id FROM jobs WHERE status = 'queued' ORDER BY created_at ASC, rowid ASC LIMIT 1"
         ).fetchone()
         if row is None:
             conn.execute("COMMIT")

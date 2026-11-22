@@ -118,12 +118,12 @@ def rotate_feed_guids(
         set_(conn, PODCAST_GUID_KEY, new_guid)
         set_(conn, FEED_GUID_EPOCH_KEY, str(new_epoch))
     else:
-        _set_without_commit(conn, PODCAST_GUID_KEY, new_guid)
-        _set_without_commit(conn, FEED_GUID_EPOCH_KEY, str(new_epoch))
+        set_without_commit(conn, PODCAST_GUID_KEY, new_guid)
+        set_without_commit(conn, FEED_GUID_EPOCH_KEY, str(new_epoch))
     return new_guid, new_epoch
 
 
-def _set_without_commit(conn: sqlite3.Connection, key: str, value: str) -> None:
+def set_without_commit(conn: sqlite3.Connection, key: str, value: str) -> None:
     conn.execute(
         "INSERT INTO settings(key,value,updated_at) VALUES(?,?,strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",

@@ -801,6 +801,49 @@ def _m018_voice_wav_to_slot1(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m031_books(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS books ("
+        "id TEXT PRIMARY KEY, "
+        "source_uri TEXT NOT NULL UNIQUE, "
+        "filename TEXT NOT NULL, "
+        "format TEXT NOT NULL, "
+        "title TEXT, "
+        "author TEXT, "
+        "season_number INTEGER NOT NULL UNIQUE, "
+        "has_cover INTEGER NOT NULL DEFAULT 0, "
+        "voice_id TEXT, "
+        "created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')))"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS book_chapters ("
+        "book_id TEXT NOT NULL, "
+        "idx INTEGER NOT NULL, "
+        "title TEXT NOT NULL, "
+        "locator TEXT NOT NULL, "
+        "word_count INTEGER NOT NULL, "
+        "char_count INTEGER NOT NULL, "
+        "selectable INTEGER NOT NULL, "
+        "default_selected INTEGER NOT NULL, "
+        "requested INTEGER NOT NULL DEFAULT 0, "
+        "episode_id TEXT NOT NULL UNIQUE, "
+        "completed_at TEXT, "
+        "PRIMARY KEY (book_id, idx))"
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_episode_id ON jobs(episode_id)")
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(episodes)")}
+    for column in ("season_number", "episode_number"):
+        if column not in columns:
+            conn.execute(f"ALTER TABLE episodes ADD COLUMN {column} INTEGER")
+
+
+MAX_CRASH_RECOVERIES = 3
+
+
+def _m032_job_recovery_count(conn: sqlite3.Connection) -> None:
+    conn.execute("ALTER TABLE jobs ADD COLUMN recovery_count INTEGER NOT NULL DEFAULT 0")
+
+
 MIGRATIONS: list[tuple[str, Migration]] = [
     ("001_initial_schema", _m001_initial_schema),
     ("002_settings_kv", _m002_settings_kv),
@@ -832,6 +875,8 @@ MIGRATIONS: list[tuple[str, Migration]] = [
     ("028_lexicon_generations", _m028_lexicon_generations),
     ("029_feed_revision", _m029_feed_revision),
     ("030_episode_audio_generation", _m030_episode_audio_generation),
+    ("031_books", _m031_books),
+    ("032_job_recovery_count", _m032_job_recovery_count),
 ]
 
 
@@ -943,11 +988,12 @@ def _apply_pending(
         )
 
 
-def reset_processing_to_queued(conn: sqlite3.Connection) -> int:
+def reset_processing_to_queued(conn: sqlite3.Connection, *, count: bool = True) -> int:
     """Crash recovery: jobs that died mid-pipeline get picked up again.
 
-    Build plan dictates an unconditional reset (single in-flight job, no race).
-    Returns the row count affected.
+    A job already recovered ``MAX_CRASH_RECOVERIES`` times is failed instead, so an
+    input that kills the worker cannot loop forever. ``count=False`` requeues without
+    counting, for a stop the operator asked for. Returns the number requeued.
 
     Preserves any prior `error` text by only stamping "reset on restart" when
     the column is NULL. A job that hit a real failure right before the worker
@@ -955,14 +1001,35 @@ def reset_processing_to_queued(conn: sqlite3.Connection) -> int:
     distinguish a clean restart from a recurring upstream problem.
     """
 
+    if count:
+        abandoned = conn.execute(
+            """
+            UPDATE jobs
+            SET status = 'failed',
+                error = ? || COALESCE(' (last error: ' || error || ')', ''),
+                updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+            WHERE status = 'processing' AND recovery_count >= ?
+            """,
+            (
+                f"worker stopped {MAX_CRASH_RECOVERIES} times while processing this job; not retried",
+                MAX_CRASH_RECOVERIES,
+            ),
+        ).rowcount
+        if abandoned:
+            logger.warning(
+                "Failed jobs that repeatedly stopped the worker",
+                extra={"event": "crash_recovery_abandoned", "failed": abandoned},
+            )
     cursor = conn.execute(
         """
         UPDATE jobs
         SET status = 'queued',
             error = COALESCE(error, 'reset on restart'),
+            recovery_count = recovery_count + ?,
             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
         WHERE status = 'processing'
-        """
+        """,
+        (int(count),),
     )
     return cursor.rowcount
 

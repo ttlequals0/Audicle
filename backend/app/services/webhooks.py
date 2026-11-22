@@ -30,13 +30,10 @@ def _source(job: Job, episode: Episode | None) -> dict[str, Any]:
     """The same url-vs-upload source branch the feed/UI use: a real link for url
     jobs, the filename for uploads (whose ``url`` is a synthetic ``upload://`` id)."""
 
-    if file_extraction.is_upload_source(job.url):
-        filename = (
-            episode.source_filename
-            if episode and episode.source_filename
-            else file_extraction.parse_source_uri(job.url)[1]
-        )
-        return {"source_type": "upload", "source_filename": filename}
+    ref = file_extraction.SourceRef.parse(job.url, job.episode_id)
+    if ref.is_upload:
+        filename = episode.source_filename if episode and episode.source_filename else ref.filename
+        return {"source_type": "upload", "source_filename": filename, "chapter": ref.chapter}
     return {"source_type": "url", "url": job.url}
 
 

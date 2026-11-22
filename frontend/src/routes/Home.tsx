@@ -1,19 +1,25 @@
 import { useEffect, useRef, useState, DragEvent, FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError, JobRow, JobStatus, postForm, SettingsPayload, VoiceSlot } from "../lib/api";
-import { fileExt, formatBytes, formatDateTime } from "../lib/format";
+import { api, ApiError, Book, JobRow, JobStatus, postForm, SettingsPayload, VoiceSlot } from "../lib/api";
+import { fileExt, formatBytes, formatDateTime, statusTag } from "../lib/format";
 import { usePersistentOpen } from "../components/CollapsibleSection";
 import ActionMenu from "../components/ActionMenu";
+import BooksSection from "../components/BooksSection";
+import { pollIntervalMs } from "../lib/polling";
 
 interface SubmitResponse {
   job_id: string;
   episode_id: string;
+  chapters_detected?: boolean | null;
 }
+
+// An upload answers with a book when it was split, otherwise a queued job.
+type UploadResponse = SubmitResponse | Book;
 
 type Mode = "url" | "file";
 
 // Kept in sync with file_extraction.ALLOWED_EXTENSIONS on the backend.
-const ACCEPT = ".pdf,.docx,.md,.txt,.html,.htm,.png,.jpg,.jpeg,.webp,.tiff";
+const ACCEPT = ".pdf,.docx,.epub,.md,.txt,.html,.htm,.png,.jpg,.jpeg,.webp,.tiff";
 const ALLOWED_EXTS = ACCEPT.split(",").map((ext) => ext.slice(1));
 // Fallback only until the live UPLOAD_MAX_MB setting loads.
 const DEFAULT_MAX_UPLOAD_MB = 50;
@@ -42,6 +48,10 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   // Reference-voice choice for this submission: "random" (default), "last", or a slot id.
   const [voice, setVoice] = useState("random");
+  const [split, setSplit] = useState(false);
+  // Split fallbacks queued fine, so they leave the file list and report here.
+  const [splitNotes, setSplitNotes] = useState<string[]>([]);
+  const [openBookId, setOpenBookId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Recents and the per-submission voice picker are collapsed by default; the
   // toggles are remembered across reloads.
@@ -56,18 +66,10 @@ export default function Home() {
     queryFn: () => api<SettingsPayload>("/api/v1/settings"),
     staleTime: 60_000,
   });
-  const configuredPollSeconds = Number(
-    settingsQ.data?.values.QUEUE_POLL_INTERVAL_SECONDS ??
-      settingsQ.data?.defaults.QUEUE_POLL_INTERVAL_SECONDS ??
-      5
-  );
   const jobsQ = useQuery({
     queryKey: ["jobs"],
     queryFn: () => api<JobRow[]>("/api/v1/jobs?per_page=50"),
-    refetchInterval:
-      Number.isFinite(configuredPollSeconds) && configuredPollSeconds > 0
-        ? configuredPollSeconds * 1000
-        : 5000,
+    refetchInterval: pollIntervalMs(settingsQ.data),
   });
   // Filled reference-voice slots drive the optional per-submission voice picker.
   const slotsQ = useQuery({
@@ -96,6 +98,9 @@ export default function Home() {
     const stillFilled = (slotsQ.data ?? []).some((s) => s.filled && String(s.slot) === voice);
     if (!stillFilled) setVoice("random");
   }, [slotsQ.data, voice]);
+  useEffect(() => {
+    if (!files.some(canSplit)) setSplit(false);
+  }, [files]);
 
   const configuredMb = Number(
     settingsQ.data?.values.UPLOAD_MAX_MB ?? settingsQ.data?.defaults.UPLOAD_MAX_MB
@@ -136,16 +141,26 @@ export default function Home() {
       // Clear last run's results so a retried file does not show its old
       // failure. A file with no status yet renders its size, as before.
       setStatuses({});
+      setSplitNotes([]);
       const failed: File[] = [];
+      const notes: string[] = [];
+      let firstBook: string | null = null;
       for (const f of batch) {
         const key = fileKey(f);
         setStatuses((prev) => ({ ...prev, [key]: { state: "uploading" } }));
         const fd = new FormData();
         fd.append("file", f);
         fd.append("voice", voice);
+        if (split && canSplit(f)) fd.append("split_chapters", "true");
         try {
-          await postForm<SubmitResponse>("/api/v1/upload", fd);
+          const res = await postForm<UploadResponse>("/api/v1/upload", fd);
+          const isBook = "book_id" in res;
+          if (isBook) firstBook ??= res.book_id;
+          if (!isBook && res.chapters_detected === false) {
+            notes.push(`${f.name}: no chapters found, queued as one episode`);
+          }
           setStatuses((prev) => ({ ...prev, [key]: { state: "queued" } }));
+          if (isBook) qc.invalidateQueries({ queryKey: ["books"] });
           // Refetch per file so the queue fills in during the batch rather than
           // all at once when it ends.
           qc.invalidateQueries({ queryKey: ["jobs"] });
@@ -157,6 +172,8 @@ export default function Home() {
           }));
         }
       }
+      if (firstBook) setOpenBookId(firstBook);
+      setSplitNotes(notes);
       return failed;
     },
     // One failure does not stop the run, so the mutation itself succeeds and
@@ -179,6 +196,7 @@ export default function Home() {
     onSuccess: () => {
       setRecentMsg(null);
       qc.invalidateQueries({ queryKey: ["jobs"] });
+      qc.invalidateQueries({ queryKey: ["books"] });
     },
     onError: (e) => {
       const status = e instanceof ApiError ? e.status : undefined;
@@ -260,6 +278,7 @@ export default function Home() {
     onSuccess: () => {
       setCancelMsg(null);
       qc.invalidateQueries({ queryKey: ["jobs"] });
+      qc.invalidateQueries({ queryKey: ["books"] });
     },
     onError: (e) => {
       const status = e instanceof ApiError ? e.status : undefined;
@@ -276,12 +295,14 @@ export default function Home() {
     setFiles([]);
     setRejected([]);
     setStatuses({});
+    setSplitNotes([]);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const addFiles = (incoming: File[]) => {
     if (!incoming.length) return;
     setError(null);
+    setSplitNotes([]);
     const reasons: string[] = [];
     const next = [...files];
     for (const f of incoming) {
@@ -476,12 +497,23 @@ export default function Home() {
                   <div className="text-xs text-accent mb-2">Upload files</div>
                   <div className="text-sm text-dim">Drag files here, or browse</div>
                   <div className="text-xs text-mute mt-2">
-                    PDF · DOCX · MD · TXT · HTML · images
+                    PDF · DOCX · EPUB · MD · TXT · HTML · images
                     <br />
                     up to {maxUploadMb} MB each, {MAX_BATCH} at a time
                   </div>
                 </>
               )}
+            </label>
+          )}
+          {mode === "file" && files.some(canSplit) && (
+            <label className="flex items-center gap-2 text-sm text-dim cursor-pointer">
+              <input
+                type="checkbox"
+                checked={split}
+                onChange={(e) => setSplit(e.target.checked)}
+                disabled={uploadM.isPending}
+              />
+              Split into chapters
             </label>
           )}
           <button
@@ -552,6 +584,16 @@ export default function Home() {
           </ul>
         )}
 
+        {splitNotes.length > 0 && (
+          <ul className="text-xs text-mute mt-2 space-y-1" aria-label="Split notes">
+            {splitNotes.map((note) => (
+              <li key={note} className="break-words">
+                {note}
+              </li>
+            ))}
+          </ul>
+        )}
+
         {jobsQ.isError && (
           <div className="text-danger text-sm mt-4" role="alert">
             <p>Submissions could not be loaded.</p>
@@ -577,7 +619,7 @@ export default function Home() {
               >
                 <span className="queue-index">{String(i + 1).padStart(2, "0")}</span>
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs text-dim truncate">{j.url}</p>
+                  <p className="text-xs text-dim truncate">{jobSource(j)}</p>
                   <p className="text-xs text-mute mt-1 truncate">
                     stage: {j.stage ?? "-"}
                     {progressSuffix(j)}
@@ -589,7 +631,7 @@ export default function Home() {
                     className="btn-ghost text-xs"
                     disabled={cancelM.isPending}
                     onClick={() => cancelM.mutate(j.id)}
-                    aria-label={`Cancel ${j.source_filename ?? j.url}`}
+                    aria-label={`Cancel ${jobSource(j)}`}
                   >
                     &times; cancel
                   </button>
@@ -599,6 +641,8 @@ export default function Home() {
           </ul>
         </section>
       )}
+
+      <BooksSection voice={voice} openBookId={openBookId} onOpenBook={setOpenBookId} />
 
       {history.length > 0 && (
         <section className="mt-8">
@@ -646,7 +690,7 @@ export default function Home() {
                 return (
                 <li key={j.id} className="card p-4 flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="text-xs text-mute truncate">{j.source_filename ?? j.url}</p>
+                    <p className="text-xs text-mute truncate">{jobSource(j)}</p>
                     <p className="text-sm mt-1 truncate text-dim">
                       {j.episode_id} &middot; {j.stage ?? "-"}
                       {progressSuffix(j)}
@@ -655,7 +699,7 @@ export default function Home() {
                         its fix stay readable. */}
                     {j.error && <p className="text-sm mt-1 text-danger break-words">{j.error}</p>}
                     <ActionMenu
-                      context={j.source_filename ?? j.url}
+                      context={jobSource(j)}
                       pending={requeueM.isPending || chaptersM.isPending}
                       actions={[
                         {
@@ -700,6 +744,8 @@ export default function Home() {
   );
 }
 
+const canSplit = (f: File) => ["epub", "pdf"].includes(fileExt(f.name));
+
 // Processing time = claim (started_at) to last update. Null/invalid/negative
 // (queued jobs, pre-0.11.0 rows) renders nothing.
 function formatDuration(start: string | null, end: string): string {
@@ -711,6 +757,11 @@ function formatDuration(start: string | null, end: string): string {
   const m = Math.floor(secs / 60);
   const s = secs % 60;
   return `${m}m ${s}s`;
+}
+
+function jobSource(j: JobRow): string {
+  if (!j.source_filename) return j.url;
+  return j.chapter === null ? j.source_filename : `${j.source_filename}, chapter ${j.chapter}`;
 }
 
 function progressSuffix(j: JobRow): string {
@@ -743,21 +794,6 @@ function uploadTag(state: UploadState): string {
       return "tag-failed";
     default:
       return "tag-done"; // queued
-  }
-}
-
-function statusTag(status: JobStatus): string {
-  switch (status) {
-    case "done":
-      return "tag-done";
-    case "failed":
-      return "tag-failed";
-    case "cancelled":
-      return "tag-cancelled";
-    case "processing":
-      return "tag-processing";
-    default:
-      return "tag-queued";
   }
 }
 

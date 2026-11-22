@@ -14,7 +14,7 @@ permissions:
 
 # One source for the toolchain pins; the Dockerfiles carry the same values.
 env:
-  UV_VERSION: "0.13.5"
+  UV_VERSION: "0.13.9"
   PYTHON_VERSION: "3.14"
 
 jobs:

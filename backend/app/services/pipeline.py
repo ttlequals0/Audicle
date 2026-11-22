@@ -47,6 +47,7 @@ from app.services import (
     asr_verify,
     audio,
     audio_analysis,
+    books,
     chunker,
     cleanup_output,
     corrections,
@@ -441,6 +442,13 @@ async def _run_stages(
         conn.close()
     expected_token = previous.generation_token if previous else None
     create_episode = previous is None
+    chapter = None
+    if file_extraction.SourceRef.parse(job.url, job.episode_id).chapter is not None:
+        conn = database.connect(database.db_path(settings.DATA_DIR))
+        try:
+            chapter = books.chapter_for_episode(conn, job.episode_id)
+        finally:
+            conn.close()
     staged_paths = [
         media_dir(settings) / f"{job.episode_id}.{publication_token}.mp3",
         media_dir(settings) / f"{job.episode_id}.{publication_token}.jpg",
@@ -498,7 +506,9 @@ async def _run_stages(
         )
         artwork_result = await _run_stage(
             "artwork",
-            lambda: _stage_artwork(job, extraction_result.metadata, publication_token, settings),
+            lambda: _stage_artwork(
+                job, extraction_result.metadata, publication_token, settings, chapter
+            ),
             job.id,
             settings,
         )
@@ -540,6 +550,7 @@ async def _run_stages(
                 publication_token=publication_token,
                 expected_token=expected_token,
                 create_episode=create_episode,
+                chapter=chapter,
                 settings=settings,
             ),
             job.id,
@@ -602,36 +613,85 @@ _TITLE_PUNCT = str.maketrans(
 
 
 def _title_key(text: str) -> str:
-    """Comparison form of a title: punctuation unified, case folded, spaces
-    collapsed, trailing punctuation dropped."""
+    """Comparison form of a title: case, spacing, edge punctuation and markdown markers ignored."""
 
     flat = " ".join(text.translate(_TITLE_PUNCT).split()).casefold()
-    return flat.strip(" .:;,-!?\"'")
+    return flat.strip(" .:;,-!?\"'#*_|>")
+
+
+_TITLE_SEPARATORS = re.compile(r": | \| | [-\u2013\u2014] ")
+_TITLE_ENUMERATOR = re.compile(r"^(?:chapter\s+)?\d+[.):]?\s+", re.IGNORECASE)
+# Title separators plus the space after a sentence period; captured so kept text rebuilds verbatim.
+_HEADING_PARTS = re.compile(rf"({_TITLE_SEPARATORS.pattern}|(?<=\.) )")
+
+
+def _title_echo_keys(title: str) -> set[str]:
+    """Keys a body heading may match: the title, its segments, each minus a chapter number."""
+
+    full = _title_key(title)
+    keys = {_title_key(p) for p in _TITLE_SEPARATORS.split(title)} | {full}
+    keys |= {_TITLE_ENUMERATOR.sub("", k) for k in keys}
+    return {k for k in keys if len(k) >= 4 or (k and k == full)}
+
+
+def _is_title_key(key: str, title_keys: set[str]) -> bool:
+    return any(key == tk or SequenceMatcher(None, key, tk).ratio() >= 0.9 for tk in title_keys)
+
+
+def _drop_echo_parts(line: str, title_keys: set[str]) -> str:
+    """The line minus its title-echo parts; "" when every part echoes."""
+
+    pieces = _HEADING_PARTS.split(line)
+    pairs = list(zip(["", *pieces[1::2]], pieces[0::2], strict=True))
+    echo = [_is_title_key(_title_key(part), title_keys) for _, part in pairs]
+    if not any(echo):
+        return line
+    kept = [pair for pair, e in zip(pairs, echo, strict=True) if not e and pair[1].strip()]
+    return (kept[0][1] + "".join(sep + part for sep, part in kept[1:])).strip(" \t*_") if kept else ""
 
 
 def _strip_title_echo(cleaned: str, title: str | None) -> str:
-    """Drop a leading line that just repeats the article's own headline.
-
-    Substack and similar render headline + subtitle, so the body opens with the
-    same words the intro read is about to announce and the episode says the title
-    twice. Only a heading-shaped first line is dropped: a real opening paragraph
-    that happens to begin with the headline stays."""
+    """Drop leading heading-shaped lines that repeat the headline; a paragraph that merely
+    starts with it stays."""
 
     if not title:
         return cleaned
-    head, sep, rest = cleaned.partition("\n\n")
-    candidate = head.strip()
-    if not candidate or not rest.strip():
+    title_keys = _title_echo_keys(title)
+    if not title_keys:
         return cleaned
-    key, title_key = _title_key(candidate), _title_key(title)
-    if not title_key:
+    longest = max(len(k) for k in title_keys)
+    lines = cleaned.split("\n")
+    edits: dict[int, str] = {}
+    seen = 0
+    for i, line in enumerate(lines):
+        if not line.strip():
+            continue
+        seen += 1
+        key = _title_key(line)
+        if seen > 5 or len(key) > longest * 2:
+            break
+        if _is_title_key(key, title_keys):
+            edits[i] = ""
+            continue
+        new = _drop_echo_parts(line, title_keys)
+        if new != line:
+            edits[i] = new
+    if not edits:
         return cleaned
-    # A heading restates the title and stops; a paragraph keeps going.
-    if len(key) > len(title_key) * 1.3:
-        return cleaned
-    if key != title_key and SequenceMatcher(None, key, title_key).ratio() < 0.9:
-        return cleaned
-    return rest.strip() if sep else cleaned
+    out: list[str] = []
+    after_echo = False
+    for i, line in enumerate(lines):
+        if i in edits:
+            line = edits[i]
+            if not line:
+                after_echo = True
+                continue
+        # Drop blanks that would stack or lead once an echo line is gone.
+        elif after_echo and not line.strip() and (not out or not out[-1].strip()):
+            continue
+        after_echo = False
+        out.append(line)
+    return "\n".join(out).strip() or cleaned
 
 
 def _intro_read_line(metadata: dict[str, Any] | None, settings: Settings) -> str | None:
@@ -1861,6 +1921,7 @@ async def _stage_artwork(
     metadata: dict[str, Any],
     publication_token: str,
     settings: Settings,
+    chapter: tuple[books.Book, books.Chapter] | None,
 ) -> artwork.ArtworkResult | None:
     """Download + process the article's og:image.
 
@@ -1870,7 +1931,11 @@ async def _stage_artwork(
     """
 
     generation_id = f"{job.episode_id}.{publication_token}"
-    result = await artwork.process_artwork(metadata, generation_id, media_dir(settings), settings)
+    book = chapter[0] if chapter else None
+    local_cover = books.cover_file(settings, book.id) if book and book.has_cover else None
+    result = await artwork.process_artwork(
+        metadata, generation_id, media_dir(settings), settings, local_cover=local_cover
+    )
     if result is None:
         logger.info(
             "Artwork falling back to feed-level art",
@@ -2077,6 +2142,7 @@ async def _stage_finalize(
     publication_token: str,
     expected_token: str | None,
     create_episode: bool,
+    chapter: tuple[books.Book, books.Chapter] | None,
     settings: Settings,
 ) -> None:
     """Upsert the ``episodes`` row that the RSS feed and media handlers read.
@@ -2104,15 +2170,14 @@ async def _stage_finalize(
     # Provenance: an uploaded document's ``original_url`` is the synthetic
     # ``upload://`` identifier; record source_type/source_filename so the feed and
     # UI render the filename instead of treating it as a hyperlink.
-    if file_extraction.is_upload_source(job.url):
-        source_type = "upload"
-        source_filename = file_extraction.parse_source_uri(job.url)[1]
-    else:
-        source_type = "url"
-        source_filename = None
+    ref = file_extraction.SourceRef.parse(job.url, job.episode_id)
+    source_type = "upload" if ref.is_upload else "url"
 
     conn = database.connect(database.db_path(settings.DATA_DIR))
     try:
+        season_number, episode_number = (
+            (chapter[0].season_number, chapter[1].idx) if chapter is not None else (None, None)
+        )
         # Snapshot the voice this job used (slot label, "Slot N", or "Default")
         # so the API, feed UI, and RSS description can show which voice narrated it.
         voice_label = voices.label_for(conn, job.voice_id)
@@ -2134,10 +2199,14 @@ async def _stage_finalize(
             cleaned_text=cleaned_text,
             audio_size_bytes=audio_size_bytes,
             source_type=source_type,
-            source_filename=source_filename,
+            source_filename=ref.filename,
             voice_label=voice_label,
             chapters_json=chapters_json,
+            season_number=season_number,
+            episode_number=episode_number,
         )
+        # Idempotent; chapter status derives from the episode row.
+        books.mark_completed(conn, job.episode_id)
     finally:
         conn.close()
 

@@ -64,6 +64,9 @@ class EpisodeListItem(BaseModel):
     # Which reference voice narrated the episode (0.31.x): a slot label, "Slot N",
     # or "Default". NULL only for old rows finalized before the column existed.
     voice_label: str | None
+    # Book-chapter episodes only; NULL for everything else.
+    season_number: int | None = None
+    episode_number: int | None = None
 
 
 @router.get(
@@ -100,6 +103,8 @@ async def list_episodes(
             source_type=ep.source_type,
             source_filename=ep.source_filename,
             voice_label=ep.voice_label,
+            season_number=ep.season_number,
+            episode_number=ep.episode_number,
         )
         for ep in page_rows
     ]

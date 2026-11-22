@@ -2,43 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import io
+import zipfile
 from pathlib import Path
 
 import docx
 import pytest
 from app.config import get_settings
-from app.services import file_extraction, jobs, ocr
+from app.core import database
+from app.services import book_chapters, books, file_extraction, jobs, ocr
 from app.services.extraction_types import ExtractionPermanentError, ExtractionTooShortError
 from PIL import Image, ImageDraw
 
+from tests.conftest import pdf_book, simple_epub, text_page_pdf
+
 _LONG = "Lorem ipsum dolor sit amet consectetur adipiscing elit. " * 20  # ~1100 chars
-
-
-def _make_pdf(text: str) -> bytes:
-    """Build a minimal single-page PDF whose content stream prints ``text`` so
-    pypdf.extract_text returns it. Offsets are computed so the xref is valid."""
-
-    stream = b"BT /F1 24 Tf 72 720 Td (" + text.encode("latin-1") + b") Tj ET"
-    objs = [
-        b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
-        b"/Resources << /Font << /F1 5 0 R >> >> >>",
-        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-    ]
-    out = bytearray(b"%PDF-1.4\n")
-    offsets: list[int] = []
-    for i, body in enumerate(objs, start=1):
-        offsets.append(len(out))
-        out += str(i).encode() + b" 0 obj\n" + body + b"\nendobj\n"
-    xref_pos = len(out)
-    out += b"xref\n0 " + str(len(objs) + 1).encode() + b"\n0000000000 65535 f \n"
-    for off in offsets:
-        out += f"{off:010d} 00000 n \n".encode()
-    out += b"trailer\n<< /Size " + str(len(objs) + 1).encode() + b" /Root 1 0 R >>\n"
-    out += b"startxref\n" + str(xref_pos).encode() + b"\n%%EOF"
-    return bytes(out)
 
 
 def _make_docx(*, title: str | None, author: str | None, body: str) -> bytes:
@@ -52,6 +29,169 @@ def _make_docx(*, title: str | None, author: str | None, body: str) -> bytes:
     buf = io.BytesIO()
     document.save(buf)
     return buf.getvalue()
+
+
+def _forbid(monkeypatch: pytest.MonkeyPatch, owner: object, name: str) -> None:
+    def boom(*_a: object, **_k: object) -> None:
+        raise AssertionError(f"{name} reached")
+
+    monkeypatch.setattr(owner, name, boom)
+
+
+def _forbid_docx_parse(monkeypatch: pytest.MonkeyPatch) -> None:
+    _forbid(monkeypatch, file_extraction.docx, "Document")
+
+
+def test_docx_over_xml_cap_is_rejected_before_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
+    data = _make_docx(title=None, author=None, body="hello")
+    monkeypatch.setattr(file_extraction, "MAX_DOCX_XML_BYTES", 100)
+    _forbid_docx_parse(monkeypatch)
+    with pytest.raises(ExtractionPermanentError, match="too large once uncompressed"):
+        file_extraction._parse_docx(data)
+
+
+def test_docx_over_total_uncompressed_cap_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    data = _make_docx(title=None, author=None, body="hello")
+    monkeypatch.setattr(book_chapters, "MAX_UNCOMPRESSED_BYTES", 100)
+    _forbid_docx_parse(monkeypatch)
+    with pytest.raises(ExtractionPermanentError, match="too large once uncompressed"):
+        file_extraction._parse_docx(data)
+
+
+def test_docx_with_too_many_entries_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    data = _make_docx(title=None, author=None, body="hello")
+    monkeypatch.setattr(book_chapters, "MAX_ARCHIVE_ENTRIES", 1)
+    _forbid_docx_parse(monkeypatch)
+    with pytest.raises(ExtractionPermanentError, match="too many entries"):
+        file_extraction._parse_docx(data)
+
+
+_CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
+
+
+def _zip(entries: dict[str, bytes]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, payload in entries.items():
+            archive.writestr(name, payload)
+    return buf.getvalue()
+
+
+def _content_types(body: str) -> bytes:
+    return f'<Types xmlns="{_CT_NS}">{body}</Types>'.encode()
+
+
+def _small_package(part_name: str, body: str) -> bytes:
+    return _zip(
+        {
+            "[Content_Types].xml": _content_types(body),
+            "_rels/.rels": b"<Relationships/>",
+            part_name: b"x" * 5000,
+        }
+    )
+
+
+def test_docx_xml_part_with_non_xml_name_counts_toward_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data = _small_package(
+        "word/document.bin",
+        '<Override PartName="/word/document.bin" '
+        'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml'
+        '.document.main+xml"/>',
+    )
+    monkeypatch.setattr(file_extraction, "MAX_DOCX_XML_BYTES", 2000)
+    _forbid_docx_parse(monkeypatch)
+    with pytest.raises(ExtractionPermanentError, match="too large once uncompressed"):
+        file_extraction._parse_docx(data)
+
+
+def test_docx_binary_media_does_not_count_toward_xml_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = _make_docx(title=None, author=None, body="hello")
+    with zipfile.ZipFile(io.BytesIO(original)) as archive:
+        entries = {i.filename: archive.read(i.filename) for i in archive.infolist()}
+        xml_total = sum(
+            i.file_size for i in archive.infolist() if i.filename.endswith((".xml", ".rels"))
+        )
+    entries["word/media/image1.png"] = bytes(5000)
+    types = entries["[Content_Types].xml"]
+    if b'Extension="png"' not in types:
+        entries["[Content_Types].xml"] = types.replace(
+            b"</Types>", b'<Default Extension="png" ContentType="image/png"/></Types>'
+        )
+    monkeypatch.setattr(file_extraction, "MAX_DOCX_XML_BYTES", xml_total + 1000)
+    text, _meta = file_extraction._parse_docx(_zip(entries))
+    assert "hello" in text
+
+
+def test_docx_entry_with_unknown_content_type_counts_toward_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data = _small_package("word/blob.dat", '<Default Extension="png" ContentType="image/png"/>')
+    monkeypatch.setattr(file_extraction, "MAX_DOCX_XML_BYTES", 2000)
+    _forbid_docx_parse(monkeypatch)
+    with pytest.raises(ExtractionPermanentError, match="too large once uncompressed"):
+        file_extraction._parse_docx(data)
+
+
+def test_docx_part_extension_comes_from_the_entry_basename(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = _make_docx(title=None, author=None, body="hello")
+    with zipfile.ZipFile(io.BytesIO(original)) as archive:
+        entries = {i.filename: archive.read(i.filename) for i in archive.infolist()}
+        xml_total = sum(i.file_size for i in archive.infolist())
+    entries["word.v2/image1.png"] = bytes(5000)
+    entries["[Content_Types].xml"] = entries["[Content_Types].xml"].replace(
+        b"</Types>", b'<Default Extension="png" ContentType="image/png"/></Types>'
+    )
+    monkeypatch.setattr(file_extraction, "MAX_DOCX_XML_BYTES", xml_total + 1000)
+    text, _meta = file_extraction._parse_docx(_zip(entries))
+    assert "hello" in text
+
+
+def test_docx_without_content_types_is_a_permanent_error() -> None:
+    data = _zip({"word/document.xml": b"<w/>"})
+    with pytest.raises(ExtractionPermanentError, match="could not read DOCX: bad content types"):
+        file_extraction._parse_docx(data)
+
+
+def test_docx_with_oversized_content_types_is_a_permanent_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data = _small_package("word/media/a.png", '<Default Extension="png" ContentType="image/png"/>')
+    monkeypatch.setattr(file_extraction, "MAX_DOCX_CONTENT_TYPES_BYTES", 10)
+    with pytest.raises(ExtractionPermanentError, match="could not read DOCX: bad content types"):
+        file_extraction._parse_docx(data)
+
+
+def test_docx_with_duplicate_entry_names_is_a_permanent_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as archive, pytest.warns(UserWarning, match="Duplicate name"):
+        archive.writestr("[Content_Types].xml", _content_types(""))
+        archive.writestr("[Content_Types].xml", _content_types(""))
+    _forbid_docx_parse(monkeypatch)
+    with pytest.raises(ExtractionPermanentError, match="duplicate entries"):
+        file_extraction._parse_docx(buf.getvalue())
+
+
+def test_docx_xml_named_entry_counts_toward_cap_whatever_its_content_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data = _small_package("word/big.xml", '<Default Extension="xml" ContentType="image/png"/>')
+    monkeypatch.setattr(file_extraction, "MAX_DOCX_XML_BYTES", 2000)
+    _forbid_docx_parse(monkeypatch)
+    with pytest.raises(ExtractionPermanentError, match="too large once uncompressed"):
+        file_extraction._parse_docx(data)
+
+
+def test_docx_that_is_not_a_zip_is_a_permanent_error() -> None:
+    with pytest.raises(ExtractionPermanentError, match="could not read DOCX"):
+        file_extraction._parse_docx(b"not a zip")
 
 
 def _make_docx_with_table() -> bytes:
@@ -139,7 +279,7 @@ async def test_extract_text_falls_back_to_filename_title(env: Path) -> None:
 
 
 async def test_extract_pdf_text_and_filename_title(env: Path) -> None:
-    result = await _run(env, "whitepaper.pdf", _make_pdf(_LONG))
+    result = await _run(env, "whitepaper.pdf", text_page_pdf(_LONG))
     assert "Lorem ipsum" in result.markdown
     assert result.metadata["title"] == "whitepaper"
 
@@ -169,7 +309,9 @@ def test_extract_mixed_pdf_ocr_recovers_sparse_page_in_order(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     native = "Native text from page one. " * 40
-    monkeypatch.setattr(file_extraction, "_parse_pdf", lambda _data: ([native, ""], {1}, {}))
+    monkeypatch.setattr(
+        file_extraction, "_parse_pdf", lambda _data, _first, _last: ([native, ""], {1}, {})
+    )
     seen: dict[str, list[int]] = {}
 
     def _fake_ocr(_data, _settings, _beat, page_indices):
@@ -186,7 +328,9 @@ def test_mixed_pdf_ocr_failure_fails_extraction_instead_of_publishing_partial(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     native = "Native page text. " * 40
-    monkeypatch.setattr(file_extraction, "_parse_pdf", lambda _data: ([native, ""], {1}, {}))
+    monkeypatch.setattr(
+        file_extraction, "_parse_pdf", lambda _data, _first, _last: ([native, ""], {1}, {})
+    )
 
     def _fail(*_args):
         raise ocr.OcrLowConfidenceError("OCR found no readable text on PDF page 2")
@@ -197,7 +341,9 @@ def test_mixed_pdf_ocr_failure_fails_extraction_instead_of_publishing_partial(
 
 
 def test_blank_pdf_page_is_not_sent_to_ocr(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(file_extraction, "_parse_pdf", lambda _data: ([""], set(), {}))
+    monkeypatch.setattr(
+        file_extraction, "_parse_pdf", lambda _data, _first, _last: ([""], set(), {})
+    )
 
     def _fail(*_args):
         raise AssertionError("a blank page must not trigger OCR")
@@ -219,9 +365,9 @@ def test_pdf_image_detection_distinguishes_blank_pages_and_nested_scans() -> Non
             }
         }
     }
-    assert not file_extraction._page_has_image(blank)
-    assert file_extraction._page_has_image(scan)
-    assert file_extraction._page_has_image(nested_scan)
+    assert not book_chapters.page_has_image(blank)
+    assert book_chapters.page_has_image(scan)
+    assert book_chapters.page_has_image(nested_scan)
 
 
 async def test_extract_html_pulls_main_article(env: Path) -> None:
@@ -307,9 +453,11 @@ async def test_extract_scanned_pdf_falls_back_to_ocr(env: Path, monkeypatch) -> 
         beat()
         return {0: "Recovered by OCR. " * 40}
 
-    monkeypatch.setattr(file_extraction, "_parse_pdf", lambda _data: (["tiny"], {0}, {}))
+    monkeypatch.setattr(
+        file_extraction, "_parse_pdf", lambda _data, _first, _last: (["tiny"], {0}, {})
+    )
     monkeypatch.setattr(ocr, "ocr_pdf_pages", _fake_ocr_pdf_pages)
-    result = await _run(env, "scan.pdf", _make_pdf("tiny"))
+    result = await _run(env, "scan.pdf", text_page_pdf("tiny"))
     assert called.get("n")
     assert called["pages"] == [0]
     assert "Recovered by OCR" in result.markdown
@@ -329,9 +477,11 @@ async def test_ocr_beat_is_called_off_the_event_loop(env: Path, monkeypatch) -> 
         beat()
         return {0: "Recovered by OCR. " * 40}
 
-    monkeypatch.setattr(file_extraction, "_parse_pdf", lambda _data: (["tiny"], {0}, {}))
+    monkeypatch.setattr(
+        file_extraction, "_parse_pdf", lambda _data, _first, _last: (["tiny"], {0}, {})
+    )
     monkeypatch.setattr(ocr, "ocr_pdf_pages", _fake_ocr_pdf_pages)
-    await _run(env, "scan.pdf", _make_pdf("tiny"))
+    await _run(env, "scan.pdf", text_page_pdf("tiny"))
     assert seen.get("off_loop"), "OCR ran on the loop; the per-page beat would be loop-bound"
 
 
@@ -340,7 +490,7 @@ async def test_extract_text_pdf_does_not_invoke_ocr(env: Path, monkeypatch) -> N
         raise AssertionError("OCR must not run for a text PDF")
 
     monkeypatch.setattr(ocr, "ocr_pdf_pages", _boom)
-    result = await _run(env, "whitepaper.pdf", _make_pdf(_LONG))
+    result = await _run(env, "whitepaper.pdf", text_page_pdf(_LONG))
     assert "Lorem ipsum" in result.markdown
 
 
@@ -363,6 +513,9 @@ def test_ocr_page_cap_counts_selected_pages_and_accepts_high_page_numbers(
     class _Page:
         def __init__(self, number: int) -> None:
             self.number = number
+
+        def get_size(self) -> tuple[float, float]:
+            return (612, 792)
 
         def render(self, scale: float):
             rendered.append(self.number)
@@ -416,6 +569,9 @@ def test_ocr_fails_when_selected_scanned_page_has_no_readable_text(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     class _Page:
+        def get_size(self) -> tuple[float, float]:
+            return (612, 792)
+
         def render(self, scale: float):
             return self
 
@@ -444,6 +600,225 @@ def test_ocr_fails_when_selected_scanned_page_has_no_readable_text(
 def test_mixed_pdf_with_ocr_disabled_fails_instead_of_omitting_scans(env, monkeypatch):
     monkeypatch.setenv("OCR_ENABLED", "false")
     get_settings.cache_clear()
-    monkeypatch.setattr(file_extraction, "_parse_pdf", lambda data: ([_LONG, ""], {1}, {}))
+    monkeypatch.setattr(
+        file_extraction, "_parse_pdf", lambda _data, _first, _last: ([_LONG, ""], {1}, {})
+    )
     with pytest.raises(ExtractionPermanentError, match="Enable OCR_ENABLED"):
         file_extraction._parse(b"pdf", ".pdf", get_settings(), lambda: None)
+
+
+# --- chapter jobs (books) ------------------------------------------------------
+
+
+def _epub_three_chapters() -> bytes:
+    names = ["One", "Two", "Three"]
+    return simple_epub(
+        title="Book",
+        author="Some Author",
+        names=names,
+        bodies=[f"Body of chapter {name.lower()}. {_LONG}" for name in names],
+    )
+
+
+def _store_book(
+    env: Path, filename: str, data: bytes, *, has_cover: bool = False
+) -> tuple[books.Book, list[books.Chapter]]:
+    settings = get_settings()
+    detected = book_chapters.detect(data, file_extraction.extension_of(filename), min_chars=10)
+    assert detected is not None
+    database.run_migrations(env)
+    conn = database.connect(database.db_path(env))
+    try:
+        uri = file_extraction.build_source_uri("c" * 16, filename)
+        book = books.create_book(
+            conn, source_uri=uri, filename=filename, detected=detected, has_cover=has_cover
+        )
+        chapters = books.get_chapters(conn, book.id)
+    finally:
+        conn.close()
+    path = books.source_file(settings, book.id, file_extraction.extension_of(filename))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return book, chapters
+
+
+def _chapter_job(book: books.Book, idx: int) -> jobs.Job:
+    uri = books.chapter_uri(book.source_uri, idx)
+    return jobs.Job(
+        id="job1",
+        url=uri,
+        episode_id=jobs.compute_episode_id(uri),
+        status="processing",
+        stage="extract",
+        error=None,
+        created_at="t",
+        updated_at="t",
+    )
+
+
+def test_parse_source_uri_ignores_chapter_fragment() -> None:
+    uri = file_extraction.build_source_uri("abc123", "My Book.epub")
+    assert file_extraction.parse_source_uri(books.chapter_uri(uri, 4)) == (
+        "abc123",
+        "My Book.epub",
+    )
+
+
+async def test_extract_epub_whole_book(env: Path) -> None:
+    result = await _run(env, "novel.epub", _epub_three_chapters())
+    assert result.metadata["title"] == "Book"
+    assert result.metadata["author"] == "Some Author"
+    for name in ("one", "two", "three"):
+        assert f"Body of chapter {name}" in result.markdown
+
+
+async def test_extract_epub_chapter_returns_only_that_chapter(env: Path) -> None:
+    book, _ = _store_book(env, "novel.epub", _epub_three_chapters())
+    result = await file_extraction.extract_file(_chapter_job(book, 2), get_settings())
+    assert "Body of chapter two" in result.markdown
+    assert "Body of chapter one" not in result.markdown
+    assert "Body of chapter three" not in result.markdown
+    assert result.metadata["title"] == "Book: Two"
+    assert result.metadata["author"] == "Some Author"
+    assert set(result.metadata) == {"title", "author"}
+
+
+async def test_extract_pdf_chapter_reads_only_its_pages(env: Path) -> None:
+    texts = [f"Marker{n} " + "filler words here. " * 12 for n in range(6)]
+    data = pdf_book(texts, [("A", 0), ("B", 2), ("C", 4)])
+    book, chapters = _store_book(env, "tome.pdf", data)
+    assert chapters[1].locator == {"first_page": 2, "last_page": 3}
+    result = await file_extraction.extract_file(_chapter_job(book, 2), get_settings())
+    assert "Marker2" in result.markdown
+    assert "Marker3" in result.markdown
+    for n in (0, 1, 4, 5):
+        assert f"Marker{n}" not in result.markdown
+    assert result.metadata["title"] == "tome: B"
+
+
+async def test_extract_pdf_chapter_ocr_limited_to_range(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    texts = ["tiny"] * 6
+    data = pdf_book(texts, [("A", 0), ("B", 2), ("C", 4)])
+    book, _ = _store_book(env, "scan.pdf", data)
+    monkeypatch.setattr(file_extraction, "page_has_image", lambda _page: True)
+    seen: dict[str, list[int]] = {}
+
+    def _fake_ocr(_data, _settings, _beat, page_indices):
+        seen["indices"] = list(page_indices)
+        return {i: f"Recognized page {i}. " * 20 for i in page_indices}
+
+    monkeypatch.setattr(ocr, "ocr_pdf_pages", _fake_ocr)
+    result = await file_extraction.extract_file(_chapter_job(book, 2), get_settings())
+    assert seen["indices"] == [2, 3]
+    assert "Recognized page 2" in result.markdown
+    assert "Recognized page 4" not in result.markdown
+
+
+async def test_chapter_job_with_missing_book_source_is_permanent_error(env: Path) -> None:
+    book, _ = _store_book(env, "novel.epub", _epub_three_chapters())
+    books.source_file(get_settings(), book.id, ".epub").unlink()
+    with pytest.raises(ExtractionPermanentError, match="stored upload missing") as exc:
+        await file_extraction.extract_file(_chapter_job(book, 1), get_settings())
+    assert book.id in str(exc.value)
+
+
+async def test_chapter_job_with_missing_book_row_is_permanent_error(env: Path) -> None:
+    database.run_migrations(env)
+    uri = file_extraction.build_source_uri("e" * 16, "ghost.epub")
+    job = jobs.Job(
+        id="job1",
+        url=books.chapter_uri(uri, 1),
+        episode_id="x",
+        status="processing",
+        stage="extract",
+        error=None,
+        created_at="t",
+        updated_at="t",
+    )
+    with pytest.raises(ExtractionPermanentError, match="stored upload missing"):
+        await file_extraction.extract_file(job, get_settings())
+
+
+def test_source_ref_stored_path_and_lock_key(env: Path) -> None:
+    settings = get_settings()
+    uri = file_extraction.build_source_uri("f" * 16, "novel.epub")
+    book_id = books.book_id_for(uri)
+    chapter = file_extraction.SourceRef.parse(books.chapter_uri(uri, 3), "ep")
+    assert chapter.chapter == 3 and chapter.book_id == book_id
+    assert chapter.stored_path(settings) == books.source_file(settings, book_id, ".epub")
+    assert chapter.lock_key() == book_id
+    plain = file_extraction.SourceRef.parse(uri, "ep")
+    assert plain.chapter is None and plain.book_id is None
+    assert plain.stored_path(settings) == file_extraction.source_path(settings, "ep", "novel.epub")
+    assert plain.lock_key() == "ep"
+
+
+def test_source_ref_for_a_web_url() -> None:
+    ref = file_extraction.SourceRef.parse("https://example.test/a", "ep")
+    assert (ref.is_upload, ref.filename, ref.chapter, ref.book_id) == (False, None, None, None)
+
+
+def test_source_ref_ignores_chapter_fragment_on_web_urls() -> None:
+    url = "https://example.test/post#chapter=3"
+    ref = file_extraction.SourceRef.parse(url, "abc")
+    assert ref.is_upload is False
+    assert (ref.chapter, ref.book_id, ref.filename) == (None, None, None)
+    assert ref.base_uri == url
+
+
+async def test_unsplit_corrupt_epub_is_permanent_error(env: Path) -> None:
+    with pytest.raises(ExtractionPermanentError, match="could not read EPUB"):
+        await _run(env, "broken.epub", b"this is not a zip")
+
+
+async def test_chapter_job_with_corrupt_book_source_is_permanent_error(env: Path) -> None:
+    book, _ = _store_book(env, "novel.epub", _epub_three_chapters())
+    books.source_file(get_settings(), book.id, ".epub").write_bytes(b"this is not a zip")
+    with pytest.raises(ExtractionPermanentError, match="could not read EPUB"):
+        await file_extraction.extract_file(_chapter_job(book, 2), get_settings())
+
+
+def test_whole_file_pdf_ocr_indexes_are_unshifted(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = pdf_book(["Native text. " * 20, "tiny", "Native text. " * 20, "tiny"], [])
+    monkeypatch.setattr(file_extraction, "page_has_image", lambda _page: True)
+    seen: dict[str, list[int]] = {}
+
+    def _fake_ocr(_data, _settings, _beat, page_indices):
+        seen["indices"] = list(page_indices)
+        return {i: f"Recognized page {i}. " * 20 for i in page_indices}
+
+    monkeypatch.setattr(ocr, "ocr_pdf_pages", _fake_ocr)
+    file_extraction._parse(data, ".pdf", get_settings(), lambda: None)
+    assert seen["indices"] == [1, 3]
+
+
+def test_ocr_pdf_page_over_pixel_budget_is_rejected_before_render(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ocr, "MAX_OCR_PIXELS", 1_000_000)
+    _forbid(monkeypatch, ocr, "_run_page")
+    with pytest.raises(ocr.OcrError, match="too large to rasterize"):
+        ocr.ocr_pdf_pages(text_page_pdf("hello"), get_settings(), lambda: None, [0])
+
+
+def test_ocr_pdf_page_within_budget_still_renders(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ocr, "_run_page", lambda _image: ("some text", [0.99]))
+    result = ocr.ocr_pdf_pages(text_page_pdf("hello"), get_settings(), lambda: None, [0])
+    assert result == {0: "some text"}
+
+
+def test_ocr_image_over_pixel_budget_is_rejected(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    buf = io.BytesIO()
+    Image.new("RGB", (200, 200), "white").save(buf, format="PNG")
+    monkeypatch.setattr(ocr, "MAX_OCR_PIXELS", 10_000)
+    _forbid(monkeypatch, ocr, "_run_page")
+    with pytest.raises(ocr.OcrError, match="too large"):
+        ocr.ocr_image(buf.getvalue(), get_settings(), lambda: None)

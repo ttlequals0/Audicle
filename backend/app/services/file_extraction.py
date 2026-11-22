@@ -19,13 +19,19 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import posixpath
 import re
+import sqlite3
+import zipfile
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote
 
+import defusedxml.ElementTree as DET
 import docx
+from defusedxml import DefusedXmlException
 from docx.opc.exceptions import PackageNotFoundError
 from docx.oxml.table import CT_Tbl
 from docx.oxml.text.paragraph import CT_P
@@ -35,14 +41,15 @@ from pypdf import PdfReader
 from pypdf.errors import PyPdfError
 
 from app.config import Settings
+from app.core import database
 from app.core.paths import media_dir
-from app.services import html_markdown, ocr
+from app.services import book_chapters, books, html_markdown, jobs, ocr
+from app.services.book_chapters import BookFormatError, page_has_image
 from app.services.extraction_types import (
     ExtractionPermanentError,
     ExtractionResult,
     ExtractionTooShortError,
 )
-from app.services.jobs import Job
 
 logger = logging.getLogger("app.services.file_extraction")
 
@@ -57,13 +64,16 @@ IMAGE_EXTENSIONS: tuple[str, ...] = (".png", ".jpg", ".jpeg", ".webp", ".tiff")
 # constant (not an operator setting): adding a type without a parser would
 # accept files the pipeline then can't read.
 ALLOWED_EXTENSIONS: frozenset[str] = frozenset(
-    {".pdf", ".docx", ".md", ".txt", ".html", ".htm"} | set(IMAGE_EXTENSIONS)
+    {".pdf", ".docx", ".epub", ".md", ".txt", ".html", ".htm"} | set(IMAGE_EXTENSIONS)
 )
 
 # Strip directory components and control characters from a client-supplied
 # filename before it is embedded in the synthetic URI / used to derive a path.
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 _MAX_FILENAME_LEN = 255
+MAX_DOCX_XML_BYTES = 50 * 1024 * 1024
+MAX_DOCX_CONTENT_TYPES_BYTES = 1024 * 1024
+_CONTENT_TYPES_NAME = "[Content_Types].xml"
 
 
 def is_upload_source(url: str) -> bool:
@@ -101,7 +111,7 @@ def build_source_uri(content_hash: str, filename: str) -> str:
 def parse_source_uri(uri: str) -> tuple[str, str]:
     """Inverse of :func:`build_source_uri`: ``(content_hash, filename)``."""
 
-    body = uri[len(SOURCE_SCHEME) :]
+    body = books.split_chapter_uri(uri)[0][len(SOURCE_SCHEME) :]
     content_hash, _, raw_name = body.partition("/")
     return content_hash, unquote(raw_name)
 
@@ -112,8 +122,77 @@ def source_path(settings: Settings, episode_id: str, filename: str) -> Path:
     return media_dir(settings) / f"{episode_id}.source{extension_of(filename)}"
 
 
+@dataclass(frozen=True)
+class SourceRef:
+    """What a job's ``url`` points at: an upload (maybe one chapter of a book) or a web page."""
+
+    is_upload: bool
+    filename: str | None
+    base_uri: str
+    chapter: int | None
+    book_id: str | None
+    episode_id: str
+
+    @classmethod
+    def parse(cls, url: str, episode_id: str) -> SourceRef:
+        is_upload = is_upload_source(url)
+        base_uri, chapter = books.split_chapter_uri(url) if is_upload else (url, None)
+        return cls(
+            is_upload=is_upload,
+            filename=parse_source_uri(base_uri)[1] if is_upload else None,
+            base_uri=base_uri,
+            chapter=chapter,
+            book_id=books.book_id_for(base_uri) if chapter is not None else None,
+            episode_id=episode_id,
+        )
+
+    def stored_path(self, settings: Settings) -> Path:
+        """Where the original lives: the book source for a chapter, else the upload."""
+
+        if self.book_id is None:
+            return source_path(settings, self.episode_id, self.filename)
+        return books.source_file(settings, self.book_id, extension_of(self.filename))
+
+    def lock_key(self) -> str:
+        """Chapter jobs serialize on their book (as book delete and queue do); others on the episode."""
+
+        return self.book_id or self.episode_id
+
+
+class StoredSourceMissingError(Exception):
+    """The stored original of an upload is no longer on disk."""
+
+
+def requeue_stored(
+    conn: sqlite3.Connection, settings: Settings, url: str, episode_id: str, voice_id: str | None
+) -> jobs.CreateJobResult:
+    """Re-run a stored upload; raises StoredSourceMissingError or jobs.DuplicateSubmissionError."""
+
+    ref = SourceRef.parse(url, episode_id)
+    with database.upload_staging_lock(settings.DATA_DIR, ref.lock_key()):
+        if not ref.stored_path(settings).exists():
+            raise StoredSourceMissingError(url)
+        return jobs.create_job(conn, url, reprocess=True, voice_id=voice_id)
+
+
+def _load_chapter(settings: Settings, ref: SourceRef) -> tuple[books.Book, books.Chapter]:
+    """Look up a chapter's book and row, closing the connection before any parsing."""
+
+    conn = database.connect(database.db_path(settings.DATA_DIR))
+    try:
+        found = books.chapter_for_episode(conn, ref.episode_id)
+    finally:
+        conn.close()
+    if found is None or found[1].idx != ref.chapter:
+        raise ExtractionPermanentError(
+            f"stored upload missing for book {ref.book_id} (chapter {ref.chapter}); "
+            "re-upload the book to reprocess it"
+        )
+    return found
+
+
 async def extract_file(
-    job: Job, settings: Settings, beat: Callable[[], None] = lambda: None
+    job: jobs.Job, settings: Settings, beat: Callable[[], None] = lambda: None
 ) -> ExtractionResult:
     """Read and parse the stored upload for ``job`` into article markdown + metadata.
 
@@ -123,22 +202,28 @@ async def extract_file(
     loop, so whatever is passed has to tolerate it.
     """
 
-    _, filename = parse_source_uri(job.url)
+    ref = SourceRef.parse(job.url, job.episode_id)
+    filename = ref.filename
     ext = extension_of(filename)
-    path = source_path(settings, job.episode_id, filename)
+    found = _load_chapter(settings, ref) if ref.chapter is not None else None
+    path = ref.stored_path(settings)
     if not path.exists():
+        missing = f"book {found[0].id}" if found else f"episode {job.episode_id}"
         raise ExtractionPermanentError(
-            f"stored upload missing for episode {job.episode_id} ({path.name}); "
+            f"stored upload missing for {missing} ({path.name}); "
             "re-upload the document to reprocess it"
         )
 
     # Read + parse off the event loop so a large file on slow storage can't block
     # it. asyncio.to_thread copies the context, so the per-page OCR beat reaches
     # the running job's watchdog.
+    locator = found[1].locator if found else None
     markdown, metadata = await asyncio.to_thread(
-        lambda: _parse(path.read_bytes(), ext, settings, beat)
+        lambda: _parse(path.read_bytes(), ext, settings, beat, locator)
     )
     markdown = markdown.strip()
+    if found:
+        metadata = _chapter_metadata(*found)
 
     # Filename (minus extension) is the title fallback when the document declares
     # none -- the common case for PDFs, plain text, and bare markdown.
@@ -171,13 +256,31 @@ async def extract_file(
     return ExtractionResult(markdown=markdown, metadata=metadata, article_chars=None)
 
 
+def _chapter_metadata(book: books.Book, chapter: books.Chapter) -> dict[str, Any]:
+    return {"title": f"{book.title}: {chapter.title}", "author": book.author}
+
+
 def _parse(
-    data: bytes, ext: str, settings: Settings, beat: Callable[[], None]
+    data: bytes,
+    ext: str,
+    settings: Settings,
+    beat: Callable[[], None],
+    locator: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Dispatch raw bytes to the per-format parser. Returns ``(markdown, metadata)``."""
 
+    if ext == ".epub":
+        try:
+            if locator is not None:
+                return book_chapters.epub_chapter_markdown(data, locator), {}
+            return book_chapters.epub_full_markdown(data)
+        except BookFormatError as exc:
+            raise ExtractionPermanentError(f"could not read EPUB: {exc}") from exc
     if ext == ".pdf":
-        pages, image_pages, metadata = _parse_pdf(data)
+        # Page indexes are relative to the range; add ``first`` for OCR.
+        first = locator["first_page"] if locator is not None else 0
+        last = locator["last_page"] if locator is not None else None
+        pages, image_pages, metadata = _parse_pdf(data, first, last)
         markdown = "\n\n".join(page for page in pages if page)
         sparse_image_pages = [
             index
@@ -200,13 +303,14 @@ def _parse(
                 )
             try:
                 recognized = (
-                    ocr.ocr_pdf_pages(data, settings, beat, sparse_image_pages)
+                    ocr.ocr_pdf_pages(data, settings, beat, [first + i for i in sparse_image_pages])
                     if sparse_image_pages
                     else {}
                 )
             except ocr.OcrError as exc:
                 raise ExtractionPermanentError(f"Could not read scanned PDF pages: {exc}") from exc
-            for index, text in recognized.items():
+            for absolute, text in recognized.items():
+                index = absolute - first
                 if text.strip():
                     pages[index] = "\n\n".join(part for part in (pages[index], text) if part)
             markdown = "\n\n".join(page for page in pages if page)
@@ -228,12 +332,14 @@ def _parse(
     return _parse_text(data)
 
 
-def _parse_pdf(data: bytes) -> tuple[list[str], set[int], dict[str, Any]]:
+def _parse_pdf(
+    data: bytes, first: int = 0, last: int | None = None
+) -> tuple[list[str], set[int], dict[str, Any]]:
     try:
         reader = PdfReader(io.BytesIO(data))
-        source_pages = list(reader.pages)
+        source_pages = reader.pages[first : None if last is None else last + 1]
         pages = [page.extract_text() or "" for page in source_pages]
-        image_pages = {index for index, page in enumerate(source_pages) if _page_has_image(page)}
+        image_pages = {index for index, page in enumerate(source_pages) if page_has_image(page)}
     except (PyPdfError, ValueError, OSError) as exc:
         raise ExtractionPermanentError(f"could not read PDF: {exc}") from exc
     pages = [page.strip() for page in pages]
@@ -247,36 +353,51 @@ def _parse_pdf(data: bytes) -> tuple[list[str], set[int], dict[str, Any]]:
     return pages, image_pages, metadata
 
 
-def _page_has_image(page: Any) -> bool:
-    """Whether a PDF page contains an image XObject, including nested forms."""
+def _check_docx_size(data: bytes) -> None:
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            infos = archive.infolist()
+            if len(infos) > book_chapters.MAX_ARCHIVE_ENTRIES:
+                raise ExtractionPermanentError("DOCX has too many entries")
+            # python-docx reads the last entry of a repeated name; this check reads the first.
+            if len({i.filename for i in infos}) != len(infos):
+                raise ExtractionPermanentError("could not read DOCX: duplicate entries")
+            types_info = next((i for i in infos if i.filename == _CONTENT_TYPES_NAME), None)
+            if types_info is None or types_info.file_size > MAX_DOCX_CONTENT_TYPES_BYTES:
+                raise ExtractionPermanentError("could not read DOCX: bad content types")
+            root = DET.fromstring(archive.read(types_info))
+    except (zipfile.BadZipFile, DET.ParseError, DefusedXmlException) as exc:
+        raise ExtractionPermanentError(f"could not read DOCX: {exc}") from exc
+    defaults: dict[str, str] = {}
+    overrides: dict[str, str] = {}
+    for element in root:
+        kind = element.tag.rpartition("}")[2]
+        content_type = (element.get("ContentType") or "").lower()
+        if kind == "Default":
+            defaults[(element.get("Extension") or "").lower()] = content_type
+        elif kind == "Override":
+            overrides[(element.get("PartName") or "").lower()] = content_type
 
-    def visit(resources: Any, seen: set[int]) -> bool:
-        if resources is None:
-            return False
-        if hasattr(resources, "get_object"):
-            resources = resources.get_object()
-        xobjects = resources.get("/XObject")
-        if xobjects is None:
-            return False
-        for reference in xobjects.values():
-            item = reference.get_object() if hasattr(reference, "get_object") else reference
-            if id(item) in seen:
-                continue
-            seen.add(id(item))
-            subtype = item.get("/Subtype")
-            if subtype == "/Image":
-                return True
-            if subtype == "/Form" and visit(item.get("/Resources"), seen):
-                return True
-        return False
+    def is_xml(name: str) -> bool:
+        lowered = name.lower()
+        if lowered.endswith((".rels", ".xml")):
+            return True
+        content_type = overrides.get("/" + lowered)
+        if content_type is None:
+            content_type = defaults.get(posixpath.splitext(lowered)[1][1:])
+        return content_type is None or content_type.endswith("xml")
 
-    return visit(page.get("/Resources"), set())
+    xml_bytes = sum(i.file_size for i in infos if is_xml(i.filename))
+    total = sum(i.file_size for i in infos)
+    if total > book_chapters.MAX_UNCOMPRESSED_BYTES or xml_bytes > MAX_DOCX_XML_BYTES:
+        raise ExtractionPermanentError("DOCX is too large once uncompressed")
 
 
 def _parse_docx(data: bytes) -> tuple[str, dict[str, Any]]:
+    _check_docx_size(data)
     try:
         document = docx.Document(io.BytesIO(data))
-    except (PackageNotFoundError, ValueError, KeyError, OSError) as exc:
+    except (PackageNotFoundError, zipfile.BadZipFile, ValueError, KeyError, OSError) as exc:
         raise ExtractionPermanentError(f"could not read DOCX: {exc}") from exc
 
     def blocks(container: Any) -> list[str]:

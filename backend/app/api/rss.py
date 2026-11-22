@@ -28,7 +28,15 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 
 from app.api.deps import get_conn, require_feed_key
 from app.config import Settings, get_settings
-from app.services import episodes, feed, feed_auth, feed_revision, runtime_settings, settings_store
+from app.services import (
+    books,
+    episodes,
+    feed,
+    feed_auth,
+    feed_revision,
+    runtime_settings,
+    settings_store,
+)
 from app.services import slug as slug_module
 
 logger = logging.getLogger("app.api.rss")
@@ -106,6 +114,7 @@ async def get_rss(
     if body is None:
         list_started = time.perf_counter()
         rows = episodes.list_for_feed(conn)
+        season_names = {b.season_number: b.title for b in books.list_books(conn)}
         render_started = time.perf_counter()
         body = feed.render(
             rows,
@@ -114,6 +123,7 @@ async def get_rss(
             last_build=last_build,
             feed_guid_epoch=guid_epoch,
             feed_auth_key=key,
+            season_names=season_names,
         )
         rendered_at = time.perf_counter()
         logger.info(

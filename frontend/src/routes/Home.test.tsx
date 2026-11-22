@@ -1,0 +1,283 @@
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import "@testing-library/jest-dom/vitest";
+import Home from "./Home";
+
+const { apiMock, postFormMock } = vi.hoisted(() => ({ apiMock: vi.fn(), postFormMock: vi.fn() }));
+
+vi.mock("../lib/api", () => ({
+  api: apiMock,
+  postForm: postFormMock,
+  ApiError: class ApiError extends Error {
+    status = 500;
+    detail = "";
+  },
+}));
+
+function renderHome() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <Home />
+    </QueryClientProvider>
+  );
+}
+
+async function chooseFile(user: ReturnType<typeof userEvent.setup>, file: File) {
+  await user.click(screen.getByRole("button", { name: "File" }));
+  const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+  await user.upload(input, file);
+}
+
+beforeEach(() => {
+  localStorage.clear();
+  apiMock.mockImplementation((path: string) => {
+    if (path === "/api/v1/settings") return Promise.resolve({ values: {}, defaults: {} });
+    if (path === "/api/v1/reference/slots") {
+      return Promise.resolve([{ slot: 1, filled: true, label: "A", duration_secs: 5 }]);
+    }
+    if (path.startsWith("/api/v1/jobs")) return Promise.resolve([]);
+    if (path === "/api/v1/books") return Promise.resolve([]);
+    return Promise.resolve({});
+  });
+  postFormMock.mockResolvedValue({ job_id: "j", episode_id: "e", chapters_detected: null });
+});
+
+afterEach(() => {
+  cleanup();
+  apiMock.mockReset();
+  postFormMock.mockReset();
+});
+
+describe("Home split option", () => {
+  it("hides the checkbox for a .txt selection", async () => {
+    const user = userEvent.setup();
+    renderHome();
+    await chooseFile(user, new File(["hello"], "a.txt", { type: "text/plain" }));
+    expect(screen.queryByLabelText("Split into chapters")).not.toBeInTheDocument();
+  });
+
+  it("shows the checkbox for .epub and sends split_chapters when ticked", async () => {
+    const user = userEvent.setup();
+    renderHome();
+    await chooseFile(user, new File(["x"], "book.epub"));
+    const box = screen.getByLabelText("Split into chapters");
+    expect(box).not.toBeChecked();
+    await user.click(box);
+    await user.click(screen.getByRole("button", { name: "Submit" }));
+    await waitFor(() => expect(postFormMock).toHaveBeenCalled());
+    const fd = postFormMock.mock.calls[0][1] as FormData;
+    expect(fd.get("split_chapters")).toBe("true");
+  });
+
+  it("sends no split field when unticked", async () => {
+    const user = userEvent.setup();
+    renderHome();
+    await chooseFile(user, new File(["x"], "book.epub"));
+    await user.click(screen.getByRole("button", { name: "Submit" }));
+    await waitFor(() => expect(postFormMock).toHaveBeenCalled());
+    const fd = postFormMock.mock.calls[0][1] as FormData;
+    expect(fd.has("split_chapters")).toBe(false);
+  });
+
+  it("reports a split fallback and clears the file from the list", async () => {
+    const user = userEvent.setup();
+    postFormMock.mockResolvedValue({ job_id: "j", episode_id: "e", chapters_detected: false });
+    renderHome();
+    await chooseFile(user, new File(["x"], "book.pdf"));
+    await user.click(screen.getByLabelText("Split into chapters"));
+    await user.click(screen.getByRole("button", { name: "Submit" }));
+    expect(
+      await screen.findByText("book.pdf: no chapters found, queued as one episode")
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove book.pdf" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Submit" })).toBeDisabled();
+  });
+
+  it("posts a mixed batch and splits only the epub", async () => {
+    const user = userEvent.setup();
+    renderHome();
+    await user.click(screen.getByRole("button", { name: "File" }));
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, [new File(["x"], "book.epub"), new File(["y"], "a.txt")]);
+    await user.click(screen.getByLabelText("Split into chapters"));
+    await user.click(screen.getByRole("button", { name: "Upload 2 files" }));
+    await waitFor(() => expect(postFormMock).toHaveBeenCalledTimes(2));
+    const sent = postFormMock.mock.calls.map(([, fd]) => fd as FormData);
+    const epub = sent.find((fd) => (fd.get("file") as File).name === "book.epub");
+    const txt = sent.find((fd) => (fd.get("file") as File).name === "a.txt");
+    expect(epub?.get("split_chapters")).toBe("true");
+    expect(txt?.has("split_chapters")).toBe(false);
+  });
+
+  it("starts unticked on a later epub selection after a split upload", async () => {
+    const user = userEvent.setup();
+    renderHome();
+    await chooseFile(user, new File(["x"], "book.epub"));
+    await user.click(screen.getByLabelText("Split into chapters"));
+    await user.click(screen.getByRole("button", { name: "Submit" }));
+    await waitFor(() => expect(postFormMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Split into chapters")).not.toBeInTheDocument()
+    );
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, new File(["z"], "other.epub"));
+    expect(screen.getByLabelText("Split into chapters")).not.toBeChecked();
+  });
+
+  it("keeps the box ticked for a failed book that stays listed for retry", async () => {
+    const user = userEvent.setup();
+    postFormMock.mockRejectedValue(new Error("boom"));
+    renderHome();
+    await chooseFile(user, new File(["x"], "book.epub"));
+    await user.click(screen.getByLabelText("Split into chapters"));
+    await user.click(screen.getByRole("button", { name: "Submit" }));
+    expect(await screen.findByText("boom")).toBeInTheDocument();
+    expect(screen.getByLabelText("Split into chapters")).toBeChecked();
+  });
+});
+
+describe("Home job rows", () => {
+  const job = (over: Record<string, unknown>) => ({
+    id: "j1",
+    url: "upload://abc/book.epub#chapter=7",
+    episode_id: "ep1",
+    status: "queued",
+    stage: null,
+    error: null,
+    progress_current: null,
+    progress_total: null,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    started_at: null,
+    source_filename: "book.epub",
+    chapter: 7,
+    reprocess: false,
+    ...over,
+  });
+  let booksFetches = 0;
+
+  function serveJobs(rows: unknown[]) {
+    booksFetches = 0;
+    apiMock.mockImplementation((path: string) => {
+      if (path === "/api/v1/settings") return Promise.resolve({ values: {}, defaults: {} });
+      if (path === "/api/v1/reference/slots") {
+        return Promise.resolve([{ slot: 1, filled: true, label: "A", duration_secs: 5 }]);
+      }
+      if (path.startsWith("/api/v1/jobs?")) return Promise.resolve(rows);
+      if (path === "/api/v1/books") {
+        booksFetches += 1;
+        return Promise.resolve([]);
+      }
+      return Promise.resolve({});
+    });
+  }
+
+  it("shows the filename and chapter number in the Queue and Recents rows", async () => {
+    const user = userEvent.setup();
+    serveJobs([job({}), job({ id: "j2", status: "done", chapter: 8 })]);
+    renderHome();
+    expect(await screen.findByText("book.epub, chapter 7")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Recent \(1\)/ }));
+    expect(await screen.findByText("book.epub, chapter 8")).toBeInTheDocument();
+  });
+
+  it("shows a plain upload filename and a URL as before when chapter is null", async () => {
+    serveJobs([
+      job({ id: "j1", url: "upload://abc/doc.pdf", source_filename: "doc.pdf", chapter: null }),
+      job({ id: "j2", url: "https://example.test/a", source_filename: null, chapter: null }),
+    ]);
+    renderHome();
+    expect(await screen.findByText("doc.pdf")).toBeInTheDocument();
+    expect(screen.getByText("https://example.test/a")).toBeInTheDocument();
+    expect(screen.queryByText(/chapter/)).not.toBeInTheDocument();
+  });
+
+  it("refetches books after a successful requeue", async () => {
+    const user = userEvent.setup();
+    serveJobs([job({ status: "failed" })]);
+    renderHome();
+    await user.click(await screen.findByRole("button", { name: /Recent \(1\)/ }));
+    await user.click(await screen.findByRole("button", { name: /Redo actions for book.epub, chapter 7/ }));
+    const before = booksFetches;
+    await user.click(await screen.findByRole("menuitem", { name: /Reprocess article/ }));
+    await waitFor(() => expect(booksFetches).toBeGreaterThan(before));
+  });
+
+  it("refetches books after a successful cancel", async () => {
+    const user = userEvent.setup();
+    serveJobs([job({})]);
+    renderHome();
+    const cancel = await screen.findByRole("button", { name: /Cancel book.epub, chapter 7/ });
+    const before = booksFetches;
+    await user.click(cancel);
+    await waitFor(() => expect(booksFetches).toBeGreaterThan(before));
+  });
+});
+
+describe("Home book responses", () => {
+  const book = {
+    book_id: "nb",
+    title: "My Book",
+    author: null,
+    filename: "book.epub",
+    format: "epub",
+    season_number: 1,
+    has_cover: false,
+    voice_id: null,
+    created_at: "2026-01-01T00:00:00Z",
+    counts: { not_queued: 0, queued: 0, processing: 0, done: 0, failed: 0, cancelled: 0, removed: 0 },
+    can_resume: false,
+    chapters: [],
+    queued: [],
+    skipped: [],
+  };
+  let booksFetches = 0;
+
+  beforeEach(() => {
+    booksFetches = 0;
+    apiMock.mockImplementation((path: string) => {
+      if (path === "/api/v1/settings") return Promise.resolve({ values: {}, defaults: {} });
+      if (path === "/api/v1/reference/slots") {
+        return Promise.resolve([{ slot: 1, filled: true, label: "A", duration_secs: 5 }]);
+      }
+      if (path.startsWith("/api/v1/jobs")) return Promise.resolve([]);
+      if (path === "/api/v1/books") {
+        booksFetches += 1;
+        return Promise.resolve([book]);
+      }
+      if (path === "/api/v1/books/nb") return Promise.resolve(book);
+      return Promise.resolve({});
+    });
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  async function uploadWithHttpStatus(status: number) {
+    const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
+    postFormMock.mockImplementation(actual.postForm);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(book), {
+          status,
+          headers: { "Content-Type": "application/json" },
+        })
+      )
+    );
+    const user = userEvent.setup();
+    renderHome();
+    await chooseFile(user, new File(["x"], "book.epub"));
+    await user.click(screen.getByLabelText("Split into chapters"));
+    await user.click(screen.getByRole("button", { name: "Submit" }));
+    expect(await screen.findByRole("dialog", { name: "My Book" })).toBeInTheDocument();
+    await waitFor(() => expect(booksFetches).toBeGreaterThanOrEqual(2));
+  }
+
+  it("opens the picker and refetches books on a 201 book response", () =>
+    uploadWithHttpStatus(201));
+
+  it("does the same when the book already existed (200)", () => uploadWithHttpStatus(200));
+});

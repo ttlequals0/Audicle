@@ -41,6 +41,8 @@ def test_run_migrations_creates_tables(tmp_path: Path) -> None:
         "028_lexicon_generations",
         "029_feed_revision",
         "030_episode_audio_generation",
+        "031_books",
+        "032_job_recovery_count",
     ]
 
     conn = database.connect(database.db_path(tmp_path))
@@ -87,6 +89,8 @@ def test_second_run_is_a_noop(tmp_path: Path) -> None:
         "028_lexicon_generations",
         "029_feed_revision",
         "030_episode_audio_generation",
+        "031_books",
+        "032_job_recovery_count",
     ]
     assert second == []
 
@@ -588,5 +592,173 @@ def test_lexicon_input_text_index_exists(env: Path) -> None:
             "EXPLAIN QUERY PLAN SELECT * FROM lexicon WHERE case_sensitive = 1 AND input_text = 'x'"
         ).fetchall()
         assert any("idx_lexicon_input_text" in row["detail"] for row in plan)
+    finally:
+        conn.close()
+
+
+def test_m031_is_additive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    full = database.MIGRATIONS
+    cutoff = next(i for i, (name, _) in enumerate(full) if name == "031_books")
+    monkeypatch.setattr(database, "MIGRATIONS", full[:cutoff])
+    database.run_migrations(tmp_path)
+    conn = database.connect(database.db_path(tmp_path))
+    try:
+        conn.executescript(
+            """
+            INSERT INTO jobs (id, url, episode_id, status, voice_id)
+              VALUES ('j1','https://x/1','e1','done','3');
+            INSERT INTO episodes (id, job_id, original_url, title)
+              VALUES ('e1','j1','https://x/1','T');
+            """
+        )
+        before_job = tuple(conn.execute("SELECT * FROM jobs").fetchone())
+        before_ep = dict(conn.execute("SELECT * FROM episodes").fetchone())
+    finally:
+        conn.close()
+    monkeypatch.setattr(database, "MIGRATIONS", full)
+    assert database.run_migrations(tmp_path) == ["031_books", "032_job_recovery_count"]
+    conn = database.connect(database.db_path(tmp_path))
+    try:
+        assert tuple(conn.execute("SELECT * FROM jobs").fetchone())[: len(before_job)] == before_job
+        after_ep = dict(conn.execute("SELECT * FROM episodes").fetchone())
+        assert after_ep.pop("season_number") is None
+        assert after_ep.pop("episode_number") is None
+        assert after_ep == before_ep
+        index = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_jobs_episode_id'"
+        ).fetchone()
+        assert index is not None
+        database._m031_books(conn)  # idempotent re-run
+    finally:
+        conn.close()
+
+
+def _jobs_conn(tmp_path: Path):
+    database.run_migrations(tmp_path)
+    return database.connect(database.db_path(tmp_path))
+
+
+def _insert_processing(conn, job_id: str, count: int = 0, error: str | None = None) -> None:
+    conn.execute(
+        "INSERT INTO jobs (id, url, episode_id, status, error, recovery_count) "
+        "VALUES (?, ?, ?, 'processing', ?, ?)",
+        (job_id, f"https://x.test/{job_id}", job_id, error, count),
+    )
+
+
+def _job(conn, job_id: str):
+    return conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+
+
+def test_migration_032_adds_recovery_count_and_keeps_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    full = database.MIGRATIONS
+    cutoff = next(i for i, (name, _) in enumerate(full) if name == "032_job_recovery_count")
+    monkeypatch.setattr(database, "MIGRATIONS", full[:cutoff])
+    database.run_migrations(tmp_path)
+    conn = database.connect(database.db_path(tmp_path))
+    try:
+        conn.execute(
+            "INSERT INTO jobs (id, url, episode_id, status, error, voice_id) "
+            "VALUES ('j1','https://x/1','e1','failed','boom','3')"
+        )
+        before = dict(conn.execute("SELECT * FROM jobs").fetchone())
+    finally:
+        conn.close()
+    monkeypatch.setattr(database, "MIGRATIONS", full)
+    assert database.run_migrations(tmp_path) == ["032_job_recovery_count"]
+    conn = database.connect(database.db_path(tmp_path))
+    try:
+        after = dict(conn.execute("SELECT * FROM jobs").fetchone())
+        assert after.pop("recovery_count") == 0
+        assert after == before
+    finally:
+        conn.close()
+
+
+def test_reset_processing_requeues_and_counts(tmp_path: Path) -> None:
+    conn = _jobs_conn(tmp_path)
+    try:
+        _insert_processing(conn, "a")
+        _insert_processing(conn, "b", error="llm_timeout")
+        assert database.reset_processing_to_queued(conn) == 2
+        a, b = _job(conn, "a"), _job(conn, "b")
+        assert (a["status"], a["recovery_count"], a["error"]) == ("queued", 1, "reset on restart")
+        assert (b["status"], b["recovery_count"], b["error"]) == ("queued", 1, "llm_timeout")
+    finally:
+        conn.close()
+
+
+def test_reset_processing_without_counting_requeues_a_job_at_the_cap(tmp_path: Path) -> None:
+    conn = _jobs_conn(tmp_path)
+    try:
+        _insert_processing(conn, "a", count=database.MAX_CRASH_RECOVERIES)
+        assert database.reset_processing_to_queued(conn, count=False) == 1
+        a = _job(conn, "a")
+        assert (a["status"], a["recovery_count"]) == ("queued", database.MAX_CRASH_RECOVERIES)
+    finally:
+        conn.close()
+
+
+def test_reset_processing_fails_job_after_max_recoveries(tmp_path: Path) -> None:
+    conn = _jobs_conn(tmp_path)
+    try:
+        _insert_processing(conn, "dead", count=database.MAX_CRASH_RECOVERIES)
+        _insert_processing(conn, "live", count=database.MAX_CRASH_RECOVERIES - 1)
+        assert database.reset_processing_to_queued(conn) == 1
+        dead, live = _job(conn, "dead"), _job(conn, "live")
+        assert dead["status"] == "failed"
+        assert dead["error"] == (
+            f"worker stopped {database.MAX_CRASH_RECOVERIES} times while processing "
+            "this job; not retried"
+        )
+        assert dead["recovery_count"] == database.MAX_CRASH_RECOVERIES
+        assert live["status"] == "queued"
+    finally:
+        conn.close()
+
+
+def test_reset_processing_keeps_the_last_error_when_failing_a_job(tmp_path: Path) -> None:
+    conn = _jobs_conn(tmp_path)
+    try:
+        _insert_processing(conn, "dead", count=database.MAX_CRASH_RECOVERIES, error="llm_timeout")
+        database.reset_processing_to_queued(conn)
+        error = _job(conn, "dead")["error"]
+        assert error.startswith("worker stopped") and error.endswith("(last error: llm_timeout)")
+    finally:
+        conn.close()
+
+
+def test_job_survives_exactly_max_recoveries(tmp_path: Path) -> None:
+    conn = _jobs_conn(tmp_path)
+    try:
+        _insert_processing(conn, "j")
+        for _ in range(database.MAX_CRASH_RECOVERIES):
+            assert database.reset_processing_to_queued(conn) == 1
+            assert _job(conn, "j")["status"] == "queued"
+            conn.execute("UPDATE jobs SET status = 'processing' WHERE id = 'j'")
+        assert database.reset_processing_to_queued(conn) == 0
+        assert _job(conn, "j")["status"] == "failed"
+    finally:
+        conn.close()
+
+
+def test_operator_requeue_resets_recovery_count(tmp_path: Path) -> None:
+    from app.services import jobs
+
+    conn = _jobs_conn(tmp_path)
+    try:
+        url = "https://x.test/article"
+        first = jobs.create_job(conn, url).job
+        conn.execute(
+            "UPDATE jobs SET status = 'processing', recovery_count = ? WHERE id = ?",
+            (database.MAX_CRASH_RECOVERIES, first.id),
+        )
+        database.reset_processing_to_queued(conn)
+        assert _job(conn, first.id)["status"] == "failed"
+        again = jobs.create_job(conn, url, reprocess=True).job
+        row = _job(conn, again.id)
+        assert (row["status"], row["recovery_count"]) == ("queued", 0)
     finally:
         conn.close()

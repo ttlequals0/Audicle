@@ -7,10 +7,13 @@ override it with monkeypatch and call ``get_settings.cache_clear()``.
 
 from __future__ import annotations
 
+import io
+import zipfile
 from pathlib import Path
 
 import pytest
 from app.config import get_settings
+from pypdf import PdfReader, PdfWriter
 
 _REQUIRED = {
     "BASE_URL": "https://audifeed.example.test",
@@ -147,3 +150,127 @@ def archive_capture_junk() -> str:
     archive.today snapshot whose capture was a bot wall (seen in prod on 0.58.0)."""
 
     return _ARCHIVE_TODAY_CAPTURE
+
+
+def make_epub(files: dict[str, bytes | str], *, opf_path: str = "content.opf") -> bytes:
+    """Zip ``files`` into an EPUB container whose package document is at ``opf_path``."""
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+
+        def put(name: str, content: bytes | str) -> None:
+            # Fixed timestamp: the same inputs must give the same bytes (and book id).
+            zf.writestr(zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0)), content)
+
+        put("mimetype", "application/epub+zip")
+        put(
+            "META-INF/container.xml",
+            '<?xml version="1.0"?><container version="1.0" '
+            'xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>'
+            f'<rootfile full-path="{opf_path}" media-type="application/oebps-package+xml"/>'
+            "</rootfiles></container>",
+        )
+        for name, content in files.items():
+            put(name, content)
+    return buf.getvalue()
+
+
+def simple_epub(
+    n: int = 3,
+    *,
+    title: str | None = "Test Book",
+    author: str | None = "Test Author",
+    cover: bytes | None = None,
+    encrypted: bool = False,
+    words: tuple[int, ...] = (),
+    names: list[str] | None = None,
+    bodies: list[str] | None = None,
+) -> bytes:
+    """An EPUB 2 book with an NCX and one chapter per spine item.
+
+    ``names`` and ``bodies`` override the chapter headings and paragraph text;
+    ``words`` gives per-chapter filler word counts (60 by default).
+    """
+
+    n = len(names) if names else n
+    ncx_type, xhtml = "application/x-dtbncx+xml", "application/xhtml+xml"
+    items = [f'<item id="ncx" href="toc.ncx" media-type="{ncx_type}"/>']
+    points = ""
+    files: dict[str, bytes | str] = {}
+    for i in range(1, n + 1):
+        name = names[i - 1] if names else f"Chapter {i}"
+        text = bodies[i - 1] if bodies else "word " * (words[i - 1] if words else 60)
+        files[f"ch{i}.xhtml"] = (
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title></head>'
+            f"<body><h1>{name}</h1><p>{text}</p></body></html>"
+        )
+        items.append(f'<item id="c{i}" href="ch{i}.xhtml" media-type="{xhtml}"/>')
+        points += (
+            f'<navPoint id="p{i}" playOrder="{i}"><navLabel><text>{name}</text></navLabel>'
+            f'<content src="ch{i}.xhtml"/></navPoint>'
+        )
+    meta = (f"<dc:title>{title}</dc:title>" if title else "") + (
+        f"<dc:creator>{author}</dc:creator>" if author else ""
+    )
+    if cover:
+        files["cover.img"] = cover
+        items.append(
+            '<item id="cov" href="cover.img" media-type="image/png" properties="cover-image"/>'
+        )
+        meta += '<meta name="cover" content="cov"/>'
+    spine = "".join(f'<itemref idref="c{i}"/>' for i in range(1, n + 1))
+    files["toc.ncx"] = (
+        '<?xml version="1.0"?><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">'
+        f"<navMap>{points}</navMap></ncx>"
+    )
+    files["content.opf"] = (
+        '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0">'
+        f'<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">{meta}</metadata>'
+        f'<manifest>{"".join(items)}</manifest><spine toc="ncx">{spine}</spine></package>'
+    )
+    if encrypted:
+        files["META-INF/encryption.xml"] = (
+            '<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container" '
+            'xmlns:enc="http://www.w3.org/2001/04/xmlenc#"><enc:EncryptedData><enc:CipherData>'
+            '<enc:CipherReference URI="ch1.xhtml"/></enc:CipherData></enc:EncryptedData></encryption>'
+        )
+    return make_epub(files)
+
+
+def text_page_pdf(text: str) -> bytes:
+    """A minimal single-page PDF whose content stream prints ``text`` (valid xref)."""
+
+    stream = b"BT /F1 24 Tf 72 720 Td (" + text.encode("latin-1") + b") Tj ET"
+    objs = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+        b"/Resources << /Font << /F1 5 0 R >> >> >>",
+        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets: list[int] = []
+    for i, body in enumerate(objs, start=1):
+        offsets.append(len(out))
+        out += str(i).encode() + b" 0 obj\n" + body + b"\nendobj\n"
+    xref_pos = len(out)
+    out += b"xref\n0 " + str(len(objs) + 1).encode() + b"\n0000000000 65535 f \n"
+    for off in offsets:
+        out += f"{off:010d} 00000 n \n".encode()
+    out += b"trailer\n<< /Size " + str(len(objs) + 1).encode() + b" /Root 1 0 R >>\n"
+    out += b"startxref\n" + str(xref_pos).encode() + b"\n%%EOF"
+    return bytes(out)
+
+
+def pdf_book(texts: list[str], outline: list[tuple[str, int]]) -> bytes:
+    """A PDF with one page per entry of ``texts`` and a top-level outline item per entry."""
+
+    writer = PdfWriter()
+    for text in texts:
+        writer.add_page(PdfReader(io.BytesIO(text_page_pdf(text))).pages[0])
+    for title, page in outline:
+        writer.add_outline_item(title, page)
+    buf = io.BytesIO()
+    writer.write(buf)
+    return buf.getvalue()

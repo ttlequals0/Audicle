@@ -14,7 +14,13 @@ Every term the app uses, in plain words, with a link to the part of the docs tha
 
 **Authenticated feeds** - An optional 64-hex key on every feed and media URL so only clients holding it can read your feed. [Feeds > Authenticated feeds](feeds-and-podcasting.md#authenticated-feeds)
 
+## B
+
+**Book** - An EPUB or PDF uploaded with "Split into chapters". It holds one row per chapter, a season number, one narration voice, and the stored original under `{DATA_DIR}/books/`. [How it works > Books and chapters](how-it-works.md#books-and-chapters)
+
 ## C
+
+**Chapter episode** - The episode made from one chapter of a book. It carries season and episode tags in the feed and is a normal job and episode otherwise. Not the same as Chapters below. [Feeds > Books and seasons](feeds-and-podcasting.md#books-and-seasons)
 
 **Chapters** - Topic markers with titles, picked from transcript windows and shipped as Podcasting 2.0 JSON and ID3 frames in the MP3. [Feeds > Chapters](feeds-and-podcasting.md#chapters)
 
@@ -91,6 +97,8 @@ Every term the app uses, in plain words, with a link to the part of the docs tha
 **Runtime setting** - A setting editable from the UI or API with no restart, stored in the database over the env value. [Configuration](configuration.md)
 
 ## S
+
+**Season** - The number a book gets in the feed: one per book, assigned in the order books are added and never reused. Chapter episodes carry it as `itunes:season` and `podcast:season`. [Feeds > Books and seasons](feeds-and-podcasting.md#books-and-seasons)
 
 **Site override** - A per-host paywall rule: which bypass strategy a host gets, its teaser threshold, and optionally a cookie jar. [Paywalls](paywalls.md)
 

@@ -50,13 +50,22 @@ async def process_artwork(
     episode_id: str,
     output_dir: Path,
     settings: Settings,
+    *,
+    local_cover: Path | None = None,
 ) -> ArtworkResult | None:
-    """Download and process the article's ``og:image``.
+    """Process ``local_cover`` when given, else download the article's ``og:image``.
 
     Returns the local JPG path on success, ``None`` on any documented failure
     (fall back to feed-level artwork). Never raises -- every error path logs
     the reason and returns ``None``.
     """
+
+    if local_cover is not None:
+        return _process_local_cover(local_cover, episode_id, output_dir, settings)
+
+    if not isinstance(metadata, dict):
+        _log_fallback("missing_og_image", episode_id, None)
+        return None
 
     source_url = _extract_og_image(metadata)
     if not source_url:
@@ -127,8 +136,20 @@ async def process_artwork(
         )
         return None
 
+    return _render_and_store(data, source_url, episode_id, output_dir, settings)
+
+
+def _render_and_store(
+    data: bytes,
+    source_url: str,
+    episode_id: str,
+    output_dir: Path,
+    settings: Settings,
+    *,
+    pad_square: bool = False,
+) -> ArtworkResult | None:
     try:
-        rendered = _decode_and_render(data, settings)
+        rendered = _decode_and_render(data, settings, pad_square=pad_square)
     except UnidentifiedImageError:
         _log_fallback("unidentified_format", episode_id, source_url)
         return None
@@ -194,13 +215,39 @@ async def process_artwork(
     )
 
 
+def _process_local_cover(
+    path: Path, episode_id: str, output_dir: Path, settings: Settings
+) -> ArtworkResult | None:
+    """Render a book cover from local disk, padded to a square with no minimum source size."""
+
+    cover_path = str(path)
+    try:
+        if path.stat().st_size > settings.ARTWORK_MAX_DOWNLOAD_BYTES:
+            _log_fallback(
+                "download_too_large",
+                episode_id,
+                cover_path,
+                limit_bytes=settings.ARTWORK_MAX_DOWNLOAD_BYTES,
+            )
+            return None
+        data = path.read_bytes()
+    except (OSError, ValueError) as exc:
+        _log_fallback(
+            "local_cover_unreadable",
+            episode_id,
+            cover_path,
+            error_class=type(exc).__name__,
+            error=str(exc),
+        )
+        return None
+    return _render_and_store(data, cover_path, episode_id, output_dir, settings, pad_square=True)
+
+
 def _extract_og_image(metadata: dict[str, Any]) -> str | None:
     """Firecrawl returns ``ogImage`` in the metadata dict; older versions use
     ``og:image``. Accept either, and accept list values (some pages declare
     multiple og:image tags and Firecrawl forwards the array)."""
 
-    if not isinstance(metadata, dict):
-        return None
     for key in ("ogImage", "og:image", "og_image"):
         value = metadata.get(key)
         if isinstance(value, str) and value.strip():
@@ -328,7 +375,7 @@ def _encode_jpeg(img: Image.Image, quality: int) -> bytes:
     return buf.getvalue()
 
 
-def _decode_and_render(data: bytes, settings: Settings) -> _RenderedImage:
+def _decode_and_render(data: bytes, settings: Settings, *, pad_square: bool) -> _RenderedImage:
     """Decode ``data``, validate, EXIF-rotate, flatten, crop, resize, encode
     JPG. Raises typed exceptions; the caller maps each to a fallback reason.
     """
@@ -347,14 +394,19 @@ def _decode_and_render(data: bytes, settings: Settings) -> _RenderedImage:
         # ``exif=b""`` strips the only hint clients have.
         oriented = ImageOps.exif_transpose(opened)
         width, height = oriented.size
-        if width < settings.ARTWORK_MIN_SOURCE_PX or height < settings.ARTWORK_MIN_SOURCE_PX:
+        if not pad_square and (
+            width < settings.ARTWORK_MIN_SOURCE_PX or height < settings.ARTWORK_MIN_SOURCE_PX
+        ):
             raise _SourceTooSmallError(width, height)
 
         flat = _flatten_to_rgb(oriented)
-        square = _center_crop_square(flat)
         target = settings.ARTWORK_SIZE_PX
-        if square.size != (target, target):
-            square = square.resize((target, target), Image.Resampling.LANCZOS)
+        if pad_square:
+            square = _pad_square(flat, target)
+        else:
+            square = _center_crop_square(flat)
+            if square.size != (target, target):
+                square = square.resize((target, target), Image.Resampling.LANCZOS)
 
         quality = settings.ARTWORK_JPG_QUALITY
         # A smaller copy of the same square for embedding into the MP3 (ID3 APIC).
@@ -396,6 +448,20 @@ def _center_crop_square(img: Image.Image) -> Image.Image:
     left = (width - side) // 2
     top = (height - side) // 2
     return img.crop((left, top, left + side, top + side))
+
+
+def _pad_square(img: Image.Image, target: int) -> Image.Image:
+    """Fit ``img`` inside a ``target`` square on a canvas of its average colour."""
+
+    average = img.resize((1, 1), Image.Resampling.BOX).getpixel((0, 0))
+    scale = target / max(img.size)
+    size = (max(1, round(img.width * scale)), max(1, round(img.height * scale)))
+    canvas = Image.new("RGB", (target, target), average)
+    canvas.paste(
+        img.resize(size, Image.Resampling.LANCZOS),
+        ((target - size[0]) // 2, (target - size[1]) // 2),
+    )
+    return canvas
 
 
 def _log_fallback(reason: str, episode_id: str, source_url: str | None, **extra: Any) -> None:

@@ -990,9 +990,10 @@ def _validate_runtime_setting(key: str, value: Any) -> None:
     elif key == "LOG_FORMAT":
         if not isinstance(value, str) or value not in {"json", "text"}:
             raise HTTPException(status_code=400, detail="LOG_FORMAT must be json or text")
-    elif key in {"WHISPER_MODEL", "WHISPER_COMPUTE_TYPE"}:
-        if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", value):
-            raise HTTPException(status_code=400, detail=f"{key} is invalid")
+    elif key in {"WHISPER_MODEL", "WHISPER_COMPUTE_TYPE"} and (
+        not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", value)
+    ):
+        raise HTTPException(status_code=400, detail=f"{key} is invalid")
 
 
 def _wav_duration_seconds(wav_bytes: bytes) -> float:

@@ -6,6 +6,17 @@ The RSS feed is served at a slug derived from the feed name: `FEED_TITLE="Articl
 
 Episodes carry a Podcasting 2.0 `podcast:transcript` (WebVTT), `podcast:chapters` (JSON), and the usual iTunes tags. A successful reprocess publishes a new immutable generation. Its token appears in the episode GUID, the media query string, and the artwork filename, so clients fetch one consistent set of audio, artwork, transcript, and chapters. A failed or cancelled reprocess leaves the previous generation published.
 
+## Books and seasons
+
+Each chapter of a chapter-split book is an ordinary episode in the same feed. Chapter episodes carry `itunes:season`, `itunes:episode`, `podcast:season` and `podcast:episode`; `podcast:season` has a `name` attribute holding the book title while the book exists. Other episodes have none of these tags. The channel stays `episodic`.
+
+| Tag | Value |
+|---|---|
+| season | one number per book, assigned in the order books are added and never reused |
+| episode | the chapter's position in the book's full table of contents, so numbers stay stable whichever chapters you narrate |
+
+Apps that read season tags can group a book's chapters and order them by episode number; apps that ignore them list chapters like any other episode. Chapter episodes follow the normal [retention](#retention) rules. The season and episode numbers are stored on the episode, so they survive deleting the book.
+
 ## Authenticated feeds
 
 The feed is open by default: anyone with the URL can read it. Settings > Publishing > Authenticated feeds puts a 64-hex key on every feed and media URL: `?key=<key>` on the RSS, MP3, transcript, chapters, and text URLs, and `/media/<id>-v<generation>-<key>.jpg` for artwork. Podcast apps can drop query strings from image URLs, so artwork carries both tokens in the path. With the toggle on, a request without a valid key gets a 401. Protected responses use `Cache-Control: private, no-store`, so a shared cache cannot keep serving a revoked key.

@@ -31,6 +31,7 @@ logger = logging.getLogger("app.services.ocr")
 # The Settings dropdown and OCR_LANGUAGE validation both read this tuple.
 SUPPORTED_LANGUAGES: tuple[str, ...] = ("en",)
 DEFAULT_LANGUAGE = "en"
+MAX_OCR_PIXELS = 50_000_000
 
 
 class OcrError(Exception):
@@ -135,10 +136,15 @@ def ocr_pdf_pages(
         scores: list[float] = []
         for index in indices:
             try:
-                bitmap = document[index].render(scale=scale)
-                image = np.asarray(bitmap.to_pil().convert("RGB"))
+                page = document[index]
+                width_pt, height_pt = page.get_size()
+                too_large = round(width_pt * scale) * round(height_pt * scale) > MAX_OCR_PIXELS
+                if not too_large:
+                    image = np.asarray(page.render(scale=scale).to_pil().convert("RGB"))
             except Exception as exc:
                 raise OcrError(f"could not rasterize PDF page {index + 1}: {exc}") from exc
+            if too_large:
+                raise OcrError(f"PDF page {index + 1} is too large to rasterize for OCR")
             text, page_scores = _run_page(image)
             if not text.strip() or not page_scores:
                 raise OcrLowConfidenceError(f"OCR found no readable text on PDF page {index + 1}")
@@ -162,8 +168,11 @@ def ocr_image(data: bytes, settings: Settings, beat: Callable[[], None]) -> str:
     """OCR a single uploaded image (png/jpg/webp/tiff)."""
 
     try:
-        image = np.asarray(Image.open(io.BytesIO(data)).convert("RGB"))
-    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        opened = Image.open(io.BytesIO(data))
+        if opened.width * opened.height > MAX_OCR_PIXELS:
+            raise OcrError("image is too large for OCR")
+        image = np.asarray(opened.convert("RGB"))
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as exc:
         raise OcrError(f"could not decode image: {exc}") from exc
     text, scores = _run_page(image)
     beat()

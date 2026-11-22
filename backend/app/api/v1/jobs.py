@@ -20,7 +20,6 @@ from pydantic import BaseModel, ConfigDict
 from app.api.deps import get_conn, require_voice_loaded
 from app.api.v1.submit import SubmitResponse
 from app.config import Settings, get_settings
-from app.core import database
 from app.services import file_extraction, ssrf
 from app.services import jobs as jobs_service
 
@@ -28,15 +27,6 @@ router = APIRouter(tags=["jobs"])
 
 _StatusFilter = Literal["staging", "queued", "processing", "done", "failed", "cancelled"]
 _EPISODE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-
-
-def _source_filename(url: str) -> str | None:
-    """The uploaded filename for an ``upload://`` job, else None -- derived from the
-    job url (which carries it), so no episodes-table join is needed."""
-
-    if file_extraction.is_upload_source(url):
-        return file_extraction.parse_source_uri(url)[1]
-    return None
 
 
 class JobListItem(BaseModel):
@@ -56,7 +46,29 @@ class JobListItem(BaseModel):
     # 0.31.0: the uploaded filename (upload jobs only) so Recents can show the source
     # without a broken upload:// link, and whether this run was a reprocess.
     source_filename: str | None
+    # Chapter index for a chapter-split book job, else None.
+    chapter: int | None
     reprocess: bool
+
+
+def _list_item(row: sqlite3.Row) -> JobListItem:
+    ref = file_extraction.SourceRef.parse(row["url"], row["episode_id"])
+    return JobListItem(
+        id=row["id"],
+        url=row["url"],
+        episode_id=row["episode_id"],
+        status=row["status"],
+        stage=row["stage"],
+        error=row["error"],
+        progress_current=row["progress_current"],
+        progress_total=row["progress_total"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+        started_at=row["started_at"],
+        source_filename=ref.filename,
+        chapter=ref.chapter,
+        reprocess=bool(row["reprocess"]),
+    )
 
 
 @router.get(
@@ -86,24 +98,7 @@ async def list_jobs(
             (status, per_page, offset),
         ).fetchall()
     response.headers["X-Total-Count"] = str(total)
-    return [
-        JobListItem(
-            id=row["id"],
-            url=row["url"],
-            episode_id=row["episode_id"],
-            status=row["status"],
-            stage=row["stage"],
-            error=row["error"],
-            progress_current=row["progress_current"],
-            progress_total=row["progress_total"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-            started_at=row["started_at"],
-            source_filename=_source_filename(row["url"]),
-            reprocess=bool(row["reprocess"]),
-        )
-        for row in page_rows
-    ]
+    return [_list_item(row) for row in page_rows]
 
 
 @router.post(
@@ -125,25 +120,20 @@ async def requeue_job(
     if file_extraction.is_upload_source(job.url):
         if not _EPISODE_ID_RE.fullmatch(job.episode_id):
             raise HTTPException(status_code=409, detail="the uploaded source id is invalid")
-        with database.upload_staging_lock(settings.DATA_DIR, job.episode_id):
-            job = jobs_service.get_job(conn, job_id)
-            if job is None:
-                raise HTTPException(status_code=404, detail="job not found")
-            _, filename = file_extraction.parse_source_uri(job.url)
-            if not file_extraction.source_path(settings, job.episode_id, filename).exists():
-                raise HTTPException(
-                    status_code=409,
-                    detail="the uploaded file is no longer on disk; re-upload it to reprocess",
-                )
-            try:
-                result = jobs_service.create_job(
-                    conn, job.url, reprocess=True, voice_id=job.voice_id
-                )
-            except jobs_service.DuplicateSubmissionError as exc:
-                raise HTTPException(
-                    status_code=409,
-                    detail={"error": "Already queued or processing", "reason": exc.reason},
-                ) from exc
+        try:
+            result = file_extraction.requeue_stored(
+                conn, settings, job.url, job.episode_id, job.voice_id
+            )
+        except file_extraction.StoredSourceMissingError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="the uploaded file is no longer on disk; re-upload it to reprocess",
+            ) from exc
+        except jobs_service.DuplicateSubmissionError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "Already queued or processing", "reason": exc.reason},
+            ) from exc
     else:
         # URL job: same SSRF guard as /submit before re-fetching.
         try:

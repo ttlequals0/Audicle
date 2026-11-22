@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audicle
-  version: 0.62.1
+  version: 0.63.4
 paths:
   /health/live:
     get:
@@ -209,7 +209,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SubmitResponse'
+                anyOf:
+                - $ref: '#/components/schemas/SubmitResponse'
+                - $ref: '#/components/schemas/BookResponse'
+                title: Response Upload Api V1 Upload Post
         '400':
           description: Invalid request
           content:
@@ -240,6 +243,115 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SubmitResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
+  /api/v1/books:
+    get:
+      tags:
+      - books
+      summary: List chapter-split books
+      operationId: list_books_api_v1_books_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/BookResponse'
+                type: array
+                title: Response List Books Api V1 Books Get
+      security:
+      - {}
+      - AdminSession: []
+  /api/v1/books/{book_id}:
+    get:
+      tags:
+      - books
+      summary: Book detail with every chapter
+      operationId: get_book_api_v1_books__book_id__get
+      parameters:
+      - name: book_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Book Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+    delete:
+      tags:
+      - books
+      summary: Delete a book and its stored source
+      operationId: delete_book_api_v1_books__book_id__delete
+      parameters:
+      - name: book_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Book Id
+      responses:
+        '204':
+          description: Successful Response
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      security:
+      - {}
+      - AdminSession: []
+        CsrfToken: []
+  /api/v1/books/{book_id}/chapters:
+    post:
+      tags:
+      - books
+      summary: Queue chapters of a book for narration
+      operationId: queue_chapters_api_v1_books__book_id__chapters_post
+      parameters:
+      - name: book_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Book Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueueChaptersRequest'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookResponse'
         '400':
           description: Invalid request
           content:
@@ -2163,6 +2275,17 @@ components:
           - type: string
           - type: 'null'
           title: Voice
+        split_chapters:
+          type: boolean
+          title: Split Chapters
+          description: Split an EPUB or PDF into one episode per chapter.
+          default: false
+        chapters:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Chapters
+          description: 'With split_chapters: all, default, or a list such as 1,3,5-9.'
       type: object
       required:
       - file
@@ -2194,6 +2317,116 @@ components:
       required:
       - voice
       title: Body_upload_slot_api_v1_reference_slots__slot__post
+    BookChapterOut:
+      properties:
+        index:
+          type: integer
+          title: Index
+        title:
+          type: string
+          title: Title
+        word_count:
+          type: integer
+          title: Word Count
+        default_selected:
+          type: boolean
+          title: Default Selected
+        selectable:
+          type: boolean
+          title: Selectable
+        requested:
+          type: boolean
+          title: Requested
+        status:
+          type: string
+          title: Status
+        episode_id:
+          type: string
+          title: Episode Id
+      type: object
+      required:
+      - index
+      - title
+      - word_count
+      - default_selected
+      - selectable
+      - requested
+      - status
+      - episode_id
+      title: BookChapterOut
+    BookResponse:
+      properties:
+        book_id:
+          type: string
+          title: Book Id
+        title:
+          type: string
+          title: Title
+        author:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Author
+        filename:
+          type: string
+          title: Filename
+        format:
+          type: string
+          title: Format
+        season_number:
+          type: integer
+          title: Season Number
+        has_cover:
+          type: boolean
+          title: Has Cover
+        voice_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Voice Id
+        created_at:
+          type: string
+          title: Created At
+        counts:
+          additionalProperties:
+            type: integer
+          type: object
+          title: Counts
+        can_resume:
+          type: boolean
+          title: Can Resume
+        chapters:
+          items:
+            $ref: '#/components/schemas/BookChapterOut'
+          type: array
+          title: Chapters
+        queued:
+          items:
+            type: integer
+          type: array
+          title: Queued
+          default: []
+        skipped:
+          items:
+            type: integer
+          type: array
+          title: Skipped
+          default: []
+      type: object
+      required:
+      - book_id
+      - title
+      - author
+      - filename
+      - format
+      - season_number
+      - has_cover
+      - voice_id
+      - created_at
+      - counts
+      - can_resume
+      - chapters
+      title: BookResponse
     ChaptersRegenResponse:
       properties:
         episode_id:
@@ -2339,6 +2572,16 @@ components:
           - type: string
           - type: 'null'
           title: Voice Label
+        season_number:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Season Number
+        episode_number:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Episode Number
       additionalProperties: false
       type: object
       required:
@@ -2465,6 +2708,11 @@ components:
           - type: string
           - type: 'null'
           title: Source Filename
+        chapter:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Chapter
         reprocess:
           type: boolean
           title: Reprocess
@@ -2483,6 +2731,7 @@ components:
       - updated_at
       - started_at
       - source_filename
+      - chapter
       - reprocess
       title: JobListItem
     LoginRequest:
@@ -2614,6 +2863,25 @@ components:
       - files_removed
       - episode_ids
       title: PurgeResponse
+    QueueChaptersRequest:
+      properties:
+        chapters:
+          anyOf:
+          - type: string
+          - items:
+              type: integer
+            type: array
+          title: Chapters
+        voice:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Voice
+      additionalProperties: false
+      type: object
+      required:
+      - chapters
+      title: QueueChaptersRequest
     SettingsResponse:
       properties:
         allowlist:
@@ -2707,6 +2975,13 @@ components:
           title: Replaced Previous
           description: True if reprocess=true and a prior episode for this URL existed.
           default: false
+        chapters_detected:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Chapters Detected
+          description: False only when split_chapters was requested and no chapters
+            were found.
       type: object
       required:
       - job_id

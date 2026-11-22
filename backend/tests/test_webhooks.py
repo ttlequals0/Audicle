@@ -60,6 +60,20 @@ def test_processed_payload_url() -> None:
     assert "error" not in p
 
 
+def test_processed_payload_chapter_job_carries_chapter_index() -> None:
+    job = _job(url="upload://abc/My%20Book.epub#chapter=7", episode_id="up2")
+    ep = _episode(id="up2", source_type="upload", source_filename="My Book.epub")
+    p = webhooks.build_payload("episode.processed", job, ep)
+    assert p["source_filename"] == "My Book.epub"
+    assert p["chapter"] == 7
+
+
+def test_processed_payload_plain_upload_has_null_chapter() -> None:
+    job = _job(url="upload://abc/My%20Doc.pdf", episode_id="up1")
+    p = webhooks.build_payload("episode.processed", job, _episode(id="up1", source_type="upload"))
+    assert p["chapter"] is None
+
+
 def test_processed_payload_upload_uses_filename() -> None:
     job = _job(url="upload://abc/My%20Doc.pdf", episode_id="up1")
     ep = _episode(id="up1", source_type="upload", source_filename="My Doc.pdf", title=None)

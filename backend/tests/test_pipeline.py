@@ -13,6 +13,8 @@ import pytest
 from app.config import get_settings
 from app.core import database
 from app.services import (
+    audio,
+    books,
     cleanup_output,
     episodes,
     extraction,
@@ -24,6 +26,7 @@ from app.services import (
     tts_cache,
     tts_remote,
 )
+from app.services.book_chapters import DetectedBook, DetectedChapter
 from PIL import Image
 
 
@@ -768,6 +771,172 @@ async def test_pipeline_finalize_upserts_episode_row(
     assert row.transcript_vtt and row.transcript_vtt.startswith("WEBVTT")
     # Stubbed encode returns 2.5s; round() uses banker's rounding -> 2.
     assert row.duration_secs == 2
+
+
+def _make_chapter_book(env: Path, source_uri: str, *, has_cover: bool = False) -> books.Book:
+    conn = database.connect(database.db_path(env))
+    try:
+        book = books.create_book(
+            conn,
+            source_uri=source_uri,
+            filename="book.epub",
+            detected=DetectedBook(
+                format="epub",
+                title="Book",
+                author="Author",
+                cover=None,
+                chapters=[
+                    DetectedChapter(
+                        idx=7,
+                        title="Chapter 7",
+                        locator={"start": 7},
+                        word_count=1000,
+                        char_count=5000,
+                        default_selected=True,
+                        selectable=True,
+                    )
+                ],
+            ),
+            has_cover=has_cover,
+        )
+    finally:
+        conn.close()
+    return book
+
+
+def _stub_chapter_extract(monkeypatch: pytest.MonkeyPatch, **metadata: str) -> None:
+    async def _chapter_extract(_job, _settings, **_kw):
+        return extraction.ExtractionResult(
+            markdown="raw " * 250, metadata={"title": "Book: Chapter 7", **metadata}
+        )
+
+    monkeypatch.setattr(pipeline.file_extraction, "extract_file", _chapter_extract)
+
+
+async def test_finalize_writes_numbers_and_marks_chapter_completed(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+    source_uri = "upload://hash1/book.epub"
+    book = _make_chapter_book(env, source_uri)
+    _stub_chapter_extract(monkeypatch)
+    job = _seed_job(env, books.chapter_uri(source_uri, 7))
+    await pipeline.process_job(job, get_settings())
+
+    assert _job_after(env, job.id).status == "done"
+    conn = database.connect(database.db_path(env))
+    try:
+        ep = episodes.get_by_id(conn, job.episode_id)
+        chapter = books.get_chapters(conn, book.id)[0]
+    finally:
+        conn.close()
+    assert ep is not None
+    assert (ep.season_number, ep.episode_number) == (book.season_number, 7)
+    assert chapter.completed_at is not None
+    assert ep.artwork_path is None
+
+
+async def test_chapter_job_uses_the_book_cover_over_og_image(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+    source_uri = "upload://hash3/book.epub"
+    book = _make_chapter_book(env, source_uri, has_cover=True)
+    cover = books.cover_file(get_settings(), book.id)
+    cover.parent.mkdir(parents=True)
+    Image.new("RGB", (800, 800), (255, 0, 0)).save(cover, format="JPEG")
+    _stub_chapter_extract(monkeypatch, ogImage="https://example.test/cover.png")
+    _stub_artwork_download(monkeypatch, _png_bytes())
+    job = _seed_job(env, books.chapter_uri(source_uri, 7))
+    await pipeline.process_job(job, get_settings())
+
+    conn = database.connect(database.db_path(env))
+    try:
+        ep = episodes.get_by_id(conn, job.episode_id)
+    finally:
+        conn.close()
+    assert ep is not None
+    with Image.open(ep.artwork_path) as art:
+        r, _g, b = art.convert("RGB").getpixel((art.width // 2, art.height // 2))
+    assert r > 200 and b < 60
+
+
+async def test_finalize_leaves_numbers_null_for_articles(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+
+    conn = database.connect(database.db_path(env))
+    try:
+        ep = episodes.get_by_id(conn, job.episode_id)
+    finally:
+        conn.close()
+    assert ep is not None
+    assert ep.season_number is None and ep.episode_number is None
+
+
+async def test_finalize_does_not_mark_chapter_completed_when_publish_loses_the_race(
+    env: Path, tmp_path: Path
+) -> None:
+    database.run_migrations(env)
+    source_uri = "upload://hash4/book.epub"
+    book = _make_chapter_book(env, source_uri)
+    job = _seed_job(env, books.chapter_uri(source_uri, 7))
+    mp3 = tmp_path / "out.mp3"
+    mp3.write_bytes(b"mp3")
+    conn = database.connect(database.db_path(env))
+    try:
+        conn.execute(
+            "INSERT INTO episodes (id, original_url, generation_token) VALUES (?, ?, ?)",
+            (job.episode_id, job.url, "winner"),
+        )
+    finally:
+        conn.close()
+
+    with pytest.raises(RuntimeError, match="episode generation changed"):
+        await pipeline._stage_finalize(
+            job,
+            metadata={"title": "T"},
+            audio_result=audio.EncodeResult(mp3_path=mp3, duration_secs=2.5),
+            artwork_result=None,
+            vtt="WEBVTT",
+            summary=None,
+            cleaned_text="text",
+            chapters_json=None,
+            publication_token="loser",
+            expected_token="stale",
+            create_episode=False,
+            chapter=None,
+            settings=get_settings(),
+        )
+
+    conn = database.connect(database.db_path(env))
+    try:
+        assert books.get_chapters(conn, book.id)[0].completed_at is None
+    finally:
+        conn.close()
+
+
+async def test_non_chapter_job_does_not_look_up_a_chapter(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+    _stub_chapter_extract(monkeypatch)
+
+    def _forbidden(*_a, **_kw):
+        raise AssertionError("chapter lookup for a non-chapter job")
+
+    monkeypatch.setattr(books, "chapter_for_episode", _forbidden)
+    for url in ("https://example.test/article", "upload://hash5/plain.md"):
+        job = _seed_job(env, url)
+        await pipeline.process_job(job, get_settings())
+        assert _job_after(env, job.id).status == "done"
 
 
 async def test_failed_first_publication_is_not_servable(
@@ -3269,6 +3438,222 @@ def test_title_echo_tolerates_punctuation_and_case_drift() -> None:
     assert pipeline._strip_title_echo(body, title) == "Real content here."
 
 
+_ECHO_PARA = "A paragraph that is long enough to be body text and goes on for a while."
+_ECHO_LONG = (
+    "The first real paragraph of the chapter goes here and it is long enough to count as body text."
+)
+_ECHO_BODY = "Body paragraph that is clearly longer than the headline and carries on for a while."
+_ECHO_HEAD = "A Made Up Headline About Widgets"
+_ECHO_BOOK = "The Widget Book: 6. A Quiet Start"
+_ECHO_SUNNY = "The Widget Book: 6. Sunny"
+
+
+@pytest.mark.parametrize(
+    "title,body,expected",
+    [
+        (
+            _ECHO_HEAD,
+            f"Technology\n\n{_ECHO_HEAD}\n\n{_ECHO_PARA}",
+            f"Technology\n\n{_ECHO_PARA}",
+        ),
+        (
+            "The Widget Book: Prologue",
+            f"Prologue\n\n{_ECHO_PARA}",
+            _ECHO_PARA,
+        ),
+        (
+            "The Widget Book: 1. A Quiet Start",
+            f"ONE\n\nA Quiet Start\n\n{_ECHO_LONG}",
+            f"ONE\n\n{_ECHO_LONG}",
+        ),
+        (
+            f"{_ECHO_HEAD} | Example Site",
+            f"{_ECHO_HEAD}\n\n{_ECHO_BODY}",
+            _ECHO_BODY,
+        ),
+        (
+            _ECHO_HEAD,
+            f"{_ECHO_HEAD}\nA subtitle that says something else entirely\n\n{_ECHO_BODY}",
+            f"A subtitle that says something else entirely\n\n{_ECHO_BODY}",
+        ),
+        ("AI", f"AI\n\n{_ECHO_PARA}", _ECHO_PARA),
+        (_ECHO_HEAD, f"{_ECHO_HEAD}\n\n\n\n{_ECHO_BODY}", _ECHO_BODY),
+        (_ECHO_HEAD, f"{_ECHO_HEAD}\n\n{_ECHO_BODY}\n", _ECHO_BODY),
+        (
+            _ECHO_BOOK,
+            f"Chapter Six. A Quiet Start.\n\n{_ECHO_BODY}",
+            f"Chapter Six.\n\n{_ECHO_BODY}",
+        ),
+        (
+            _ECHO_BOOK,
+            f"Chapter Six: A Quiet Start\n\n{_ECHO_BODY}",
+            f"Chapter Six\n\n{_ECHO_BODY}",
+        ),
+        (
+            f"{_ECHO_HEAD} | Example Site",
+            f"Example Site | {_ECHO_HEAD}\n\n{_ECHO_BODY}",
+            _ECHO_BODY,
+        ),
+        (
+            _ECHO_HEAD,
+            f"Technology - {_ECHO_HEAD}\n\n{_ECHO_BODY}",
+            f"Technology\n\n{_ECHO_BODY}",
+        ),
+        (
+            _ECHO_SUNNY,
+            f"Chapter Six. Sunny.\n\n{_ECHO_BODY}",
+            f"Chapter Six.\n\n{_ECHO_BODY}",
+        ),
+        (
+            _ECHO_BOOK,
+            f"Part Two. A Quiet Start. 1998.\n\n{_ECHO_BODY}",
+            f"Part Two. 1998.\n\n{_ECHO_BODY}",
+        ),
+        (
+            _ECHO_HEAD,
+            f"Technology \u2013 {_ECHO_HEAD}\n\n{_ECHO_BODY}",
+            f"Technology\n\n{_ECHO_BODY}",
+        ),
+        (
+            "Widgets \u2014 A Field Guide",
+            f"A Field Guide\n\n{_ECHO_BODY}",
+            _ECHO_BODY,
+        ),
+        (
+            _ECHO_SUNNY,
+            f"# SIX\n\n# Sunny\n\n{_ECHO_BODY}",
+            f"# SIX\n\n{_ECHO_BODY}",
+        ),
+        (
+            _ECHO_SUNNY,
+            f"SIX\n\n> Sunny\n\n{_ECHO_BODY}",
+            f"SIX\n\n{_ECHO_BODY}",
+        ),
+        (
+            _ECHO_SUNNY,
+            f"SIX\n\n**Sunny**\n\n{_ECHO_BODY}",
+            f"SIX\n\n{_ECHO_BODY}",
+        ),
+        (_ECHO_BOOK, f"_A Quiet Start_\n\n{_ECHO_BODY}", _ECHO_BODY),
+        (_ECHO_HEAD, f"**{_ECHO_HEAD}**\n\n{_ECHO_BODY}", _ECHO_BODY),
+        (
+            _ECHO_BOOK,
+            f"# Chapter Six. A Quiet Start.\n\n{_ECHO_BODY}",
+            f"# Chapter Six.\n\n{_ECHO_BODY}",
+        ),
+        (
+            _ECHO_SUNNY,
+            f"| SIX |\n\nSunny\n\n{_ECHO_BODY}",
+            f"| SIX |\n\n{_ECHO_BODY}",
+        ),
+        (
+            _ECHO_SUNNY,
+            f"**Chapter Six. Sunny**\n\n{_ECHO_BODY}",
+            f"Chapter Six.\n\n{_ECHO_BODY}",
+        ),
+        (
+            _ECHO_SUNNY,
+            f"_Prologue. Sunny_\n\n{_ECHO_BODY}",
+            f"Prologue.\n\n{_ECHO_BODY}",
+        ),
+        (
+            _ECHO_SUNNY,
+            f"**Sunny. Chapter Six**\n\n{_ECHO_BODY}",
+            f"Chapter Six\n\n{_ECHO_BODY}",
+        ),
+    ],
+    ids=[
+        "after_leading_label",
+        "title_segment_for_book_chapter",
+        "numbered_chapter_without_number",
+        "headline_before_site_suffix",
+        "headline_sharing_block_with_subtitle",
+        "short_full_title",
+        "extra_blank_lines_after_echo",
+        "trailing_newline_stripped",
+        "chapter_number_and_title_on_one_line_period",
+        "chapter_number_and_title_on_one_line_colon",
+        "site_name_before_headline_on_one_line",
+        "label_and_headline_on_one_line",
+        "one_word_chapter_title_on_one_line",
+        "title_between_two_other_parts",
+        "en_dash_between_label_and_headline",
+        "em_dash_title_separator_segment",
+        "short_title_with_h1_marker",
+        "short_title_in_blockquote",
+        "short_title_in_bold",
+        "title_in_italics",
+        "headline_in_bold",
+        "marked_chapter_number_and_title_on_one_line",
+        "number_between_pipes_then_title",
+        "bold_heading_partly_the_title",
+        "italic_heading_partly_the_title",
+        "bold_heading_with_title_first",
+    ],
+)
+def test_title_echo_strips_heading_shaped_echoes(title: str, body: str, expected: str) -> None:
+    assert pipeline._strip_title_echo(body, title) == expected
+
+
+@pytest.mark.parametrize(
+    "title,body",
+    [
+        (
+            "Widgets",
+            "This opening paragraph is deliberately long so that it is plainly body text and "
+            "not a heading, running well past two hundred characters to make sure the walk "
+            "stops here and never looks at anything further down the page.\n\nWidgets\n\nMore.",
+        ),
+        ("Prologue", "Prologue"),
+        (
+            "AI: The Made Up Headline About Widgets",
+            "AI\n\nA paragraph that is long enough to be body text and does not repeat the "
+            "headline at all, going on for a while.",
+        ),
+        (
+            "AI",
+            "Notes\n\nA paragraph that is long enough to be body text and goes on for a while "
+            "without repeating anything.",
+        ),
+        (
+            "How to Build Widgets - A Beginner's Guide",
+            "Introduction\n\nA paragraph that is long enough to be body text and goes on for a "
+            "while without repeating anything.",
+        ),
+        (_ECHO_HEAD, f"\n\n{_ECHO_PARA}\n"),
+        (
+            _ECHO_BOOK,
+            f"Chapter Six. The Long Road.\n\n{_ECHO_BODY}",
+        ),
+        (
+            "Widgets",
+            "Widgets are small. They are also cheap, and this opening paragraph keeps going "
+            f"well past the length of any heading.\n\n{_ECHO_BODY}",
+        ),
+        (_ECHO_HEAD, f"It rained all week. Nobody minded at first.\n\n{_ECHO_BODY}"),
+        ("Widgets \u2014 A Field Guide", f"Introduction\n\n{_ECHO_BODY}"),
+        (_ECHO_SUNNY, f"# SIX\n\n## Cloudy\n\n{_ECHO_BODY}"),
+        (_ECHO_HEAD, f"**Technology**\n\n{_ECHO_BODY}"),
+    ],
+    ids=[
+        "does_not_reach_into_body",
+        "never_empties_the_text",
+        "short_title_segments_ignored",
+        "short_full_title_segment_only",
+        "unrelated_heading_kept",
+        "no_echo_keeps_whitespace",
+        "heading_with_parts_that_do_not_match",
+        "opening_sentences_are_not_split",
+        "short_paragraph_under_the_wider_gate",
+        "em_dash_title_separator_segments_still_match_nothing_here",
+        "marked_heading_that_is_not_the_title",
+        "bold_label_that_is_not_the_title",
+    ],
+)
+def test_title_echo_leaves_text_unchanged(title: str, body: str) -> None:
+    assert pipeline._strip_title_echo(body, title) == body
+
+
 def test_title_echo_no_title_is_a_noop() -> None:
     body = "Some article text."
     assert pipeline._strip_title_echo(body, None) == body
@@ -3292,3 +3677,78 @@ def test_slow_job_write_logs_warning_with_wal_size(
     assert len(slow) == 1
     assert slow[0].op == "set_stage"
     assert slow[0].duration_ms >= 1100
+
+
+def _plant_local_cover(env: Path) -> Path:
+    cover = env / "books" / "abc" / "cover.jpg"
+    cover.parent.mkdir(parents=True)
+    Image.new("RGB", (800, 800), (255, 0, 0)).save(cover, format="JPEG")
+    return cover
+
+
+async def test_url_job_ignores_book_only_metadata_keys(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+    cover = _plant_local_cover(env)
+
+    async def _hostile_extract(_url, _settings, _registry=None):
+        return extraction.ExtractionResult(
+            markdown="raw " * 250,
+            metadata={
+                "title": "T",
+                "ogImage": "https://example.test/cover.png",
+                "book_cover_path": str(cover),
+                "season_number": 3,
+                "episode_number": 4,
+            },
+        )
+
+    monkeypatch.setattr(extraction, "extract", _hostile_extract)
+    _stub_artwork_download(monkeypatch, _png_bytes())
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+
+    conn = database.connect(database.db_path(env))
+    try:
+        ep = episodes.get_by_id(conn, job.episode_id)
+    finally:
+        conn.close()
+    assert ep is not None
+    assert ep.season_number is None and ep.episode_number is None
+    with Image.open(ep.artwork_path) as art:
+        r, _g, b = art.convert("RGB").getpixel((10, 10))
+    assert r < 60 and b > 10
+
+
+async def test_unsplit_upload_ignores_book_only_metadata_keys(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+    cover = _plant_local_cover(env)
+
+    async def _upload_extract(_job, _settings, **_kw):
+        return extraction.ExtractionResult(
+            markdown="raw " * 250,
+            metadata={
+                "title": "T",
+                "book_cover_path": str(cover),
+                "season_number": 3,
+                "episode_number": 4,
+            },
+        )
+
+    monkeypatch.setattr(pipeline.file_extraction, "extract_file", _upload_extract)
+    job = _seed_job(env, "upload://hash2/doc.epub")
+    await pipeline.process_job(job, get_settings())
+
+    conn = database.connect(database.db_path(env))
+    try:
+        ep = episodes.get_by_id(conn, job.episode_id)
+    finally:
+        conn.close()
+    assert ep is not None
+    assert ep.season_number is None and ep.episode_number is None
+    assert ep.artwork_path is None
