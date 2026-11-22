@@ -988,11 +988,12 @@ def _apply_pending(
         )
 
 
-def reset_processing_to_queued(conn: sqlite3.Connection) -> int:
+def reset_processing_to_queued(conn: sqlite3.Connection, *, count: bool = True) -> int:
     """Crash recovery: jobs that died mid-pipeline get picked up again.
 
     A job already recovered ``MAX_CRASH_RECOVERIES`` times is failed instead, so an
-    input that kills the worker cannot loop forever. Returns the number requeued.
+    input that kills the worker cannot loop forever. ``count=False`` requeues without
+    counting, for a stop the operator asked for. Returns the number requeued.
 
     Preserves any prior `error` text by only stamping "reset on restart" when
     the column is NULL. A job that hit a real failure right before the worker
@@ -1000,28 +1001,35 @@ def reset_processing_to_queued(conn: sqlite3.Connection) -> int:
     distinguish a clean restart from a recurring upstream problem.
     """
 
-    conn.execute(
-        """
-        UPDATE jobs
-        SET status = 'failed',
-            error = ?,
-            updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-        WHERE status = 'processing' AND recovery_count >= ?
-        """,
-        (
-            f"worker stopped {MAX_CRASH_RECOVERIES} times while processing this job; not retried",
-            MAX_CRASH_RECOVERIES,
-        ),
-    )
+    if count:
+        abandoned = conn.execute(
+            """
+            UPDATE jobs
+            SET status = 'failed',
+                error = ?,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+            WHERE status = 'processing' AND recovery_count >= ?
+            """,
+            (
+                f"worker stopped {MAX_CRASH_RECOVERIES} times while processing this job; not retried",
+                MAX_CRASH_RECOVERIES,
+            ),
+        ).rowcount
+        if abandoned:
+            logger.warning(
+                "Failed jobs that repeatedly stopped the worker",
+                extra={"event": "crash_recovery_abandoned", "failed": abandoned},
+            )
     cursor = conn.execute(
         """
         UPDATE jobs
         SET status = 'queued',
             error = COALESCE(error, 'reset on restart'),
-            recovery_count = recovery_count + 1,
+            recovery_count = recovery_count + ?,
             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
         WHERE status = 'processing'
-        """
+        """,
+        (int(count),),
     )
     return cursor.rowcount
 

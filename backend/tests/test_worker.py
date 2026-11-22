@@ -9,7 +9,7 @@ import pytest
 from app import worker
 from app.config import get_settings
 from app.core import database
-from app.services import jobs, sidecar_settings
+from app.services import jobs, settings_store, sidecar_settings
 
 
 async def test_log_level_refresh_applies_changes_and_recovers(
@@ -100,6 +100,35 @@ async def test_crash_recovery_resets_processing(env: Path) -> None:
     finally:
         conn.close()
     assert status == "queued"
+
+
+async def _recover_stuck_job(env: Path) -> tuple[str, int]:
+    from app.worker import _crash_recovery
+
+    database.run_migrations(env)
+    with database.connection(env) as conn:
+        conn.execute(
+            "INSERT INTO jobs (id, url, episode_id, status) VALUES (?, ?, ?, ?)",
+            ("stuck", "https://x.test/a", "abc", "processing"),
+        )
+    await _crash_recovery(env)
+    with database.connection(env) as conn:
+        row = conn.execute("SELECT status, recovery_count FROM jobs WHERE id = 'stuck'").fetchone()
+    return row["status"], row["recovery_count"]
+
+
+async def test_crash_recovery_counts_an_unrequested_stop(env: Path) -> None:
+    assert await _recover_stuck_job(env) == ("queued", 1)
+
+
+async def test_crash_recovery_does_not_count_a_requested_stop(env: Path) -> None:
+    from app.worker import _STOP_REQUESTED_KEY, _note_stop_requested
+
+    database.run_migrations(env)
+    _note_stop_requested(env)
+    assert await _recover_stuck_job(env) == ("queued", 0)
+    with database.connection(env) as conn:
+        assert settings_store.get(conn, _STOP_REQUESTED_KEY) is None
 
 
 async def test_crash_recovery_keeps_staging_upload_with_active_lock(env: Path) -> None:

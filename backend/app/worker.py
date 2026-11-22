@@ -33,21 +33,16 @@ from app.utils.logging import apply_format, apply_level
 logger = logging.getLogger("app.worker")
 
 _RETENTION_SWEEP_DAY_KEY = "retention_sweep_day"
+_STOP_REQUESTED_KEY = "worker_stop_requested"
 
 
 async def _crash_recovery(data_dir) -> None:
     conn = database.connect(database.db_path(data_dir))
     try:
-        abandoned = conn.execute(
-            "SELECT COUNT(*) FROM jobs WHERE status = 'processing' AND recovery_count >= ?",
-            (database.MAX_CRASH_RECOVERIES,),
-        ).fetchone()[0]
-        reset = database.reset_processing_to_queued(conn)
-        if abandoned:
-            logger.warning(
-                "Failed jobs that repeatedly stopped the worker",
-                extra={"event": "crash_recovery_abandoned", "failed": abandoned},
-            )
+        # A stop the operator asked for must not count against the job it interrupted.
+        requested = settings_store.get(conn, _STOP_REQUESTED_KEY) is not None
+        reset = database.reset_processing_to_queued(conn, count=not requested)
+        settings_store.delete(conn, _STOP_REQUESTED_KEY)
         staged = 0
         for row in conn.execute("SELECT id, episode_id FROM jobs WHERE status = 'staging'"):
             with database.upload_staging_lock(
@@ -71,6 +66,14 @@ async def _crash_recovery(data_dir) -> None:
             )
     finally:
         conn.close()
+
+
+def _note_stop_requested(data_dir) -> None:
+    try:
+        with database.connection(data_dir) as conn:
+            settings_store.set_(conn, _STOP_REQUESTED_KEY, "1")
+    except Exception:
+        logger.exception("could not record the stop request")
 
 
 async def _pickup_once(settings: Settings) -> jobs.Job | None:
@@ -299,6 +302,7 @@ async def run() -> None:
             extra={"event": "worker_signal", "signum": signum},
         )
         shutdown.set()
+        _note_stop_requested(settings.DATA_DIR)
 
     # Install signal handlers BEFORE crash recovery so a SIGTERM during a slow
     # migration or recovery isn't dispatched to the default handler.

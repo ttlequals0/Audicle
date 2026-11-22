@@ -690,6 +690,17 @@ def test_reset_processing_requeues_and_counts(tmp_path: Path) -> None:
         conn.close()
 
 
+def test_reset_processing_without_counting_requeues_a_job_at_the_cap(tmp_path: Path) -> None:
+    conn = _jobs_conn(tmp_path)
+    try:
+        _insert_processing(conn, "a", count=database.MAX_CRASH_RECOVERIES)
+        assert database.reset_processing_to_queued(conn, count=False) == 1
+        a = _job(conn, "a")
+        assert (a["status"], a["recovery_count"]) == ("queued", database.MAX_CRASH_RECOVERIES)
+    finally:
+        conn.close()
+
+
 def test_reset_processing_fails_job_after_max_recoveries(tmp_path: Path) -> None:
     conn = _jobs_conn(tmp_path)
     try:

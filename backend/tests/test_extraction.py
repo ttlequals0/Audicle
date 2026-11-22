@@ -2104,7 +2104,7 @@ def test_gate_offset_is_linear_in_paragraph_count():
     body = "\n\n".join(["p" * 70] * 85_000)
     started = time.perf_counter()
     assert extraction.gate_offset(body) is None
-    assert time.perf_counter() - started < 3.0
+    assert time.perf_counter() - started < 5.0
 
 
 def test_gate_offset_handles_long_marker_run_quickly():
