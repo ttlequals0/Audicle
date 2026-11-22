@@ -358,6 +358,9 @@ def _check_docx_size(data: bytes) -> None:
             infos = archive.infolist()
             if len(infos) > book_chapters.MAX_ARCHIVE_ENTRIES:
                 raise ExtractionPermanentError("DOCX has too many entries")
+            # python-docx reads the last entry of a repeated name; this check reads the first.
+            if len({i.filename for i in infos}) != len(infos):
+                raise ExtractionPermanentError("could not read DOCX: duplicate entries")
             types_info = next((i for i in infos if i.filename == _CONTENT_TYPES_NAME), None)
             if types_info is None or types_info.file_size > MAX_DOCX_CONTENT_TYPES_BYTES:
                 raise ExtractionPermanentError("could not read DOCX: bad content types")
@@ -376,7 +379,7 @@ def _check_docx_size(data: bytes) -> None:
 
     def is_xml(name: str) -> bool:
         lowered = name.lower()
-        if lowered.endswith(".rels") or name == _CONTENT_TYPES_NAME:
+        if lowered.endswith((".rels", ".xml")):
             return True
         content_type = overrides.get("/" + lowered)
         if content_type is None:
@@ -393,7 +396,7 @@ def _parse_docx(data: bytes) -> tuple[str, dict[str, Any]]:
     _check_docx_size(data)
     try:
         document = docx.Document(io.BytesIO(data))
-    except (PackageNotFoundError, ValueError, KeyError, OSError) as exc:
+    except (PackageNotFoundError, zipfile.BadZipFile, ValueError, KeyError, OSError) as exc:
         raise ExtractionPermanentError(f"could not read DOCX: {exc}") from exc
 
     def blocks(container: Any) -> list[str]:

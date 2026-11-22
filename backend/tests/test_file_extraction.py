@@ -31,11 +31,15 @@ def _make_docx(*, title: str | None, author: str | None, body: str) -> bytes:
     return buf.getvalue()
 
 
-def _forbid_docx_parse(monkeypatch: pytest.MonkeyPatch) -> None:
+def _forbid(monkeypatch: pytest.MonkeyPatch, owner: object, name: str) -> None:
     def boom(*_a: object, **_k: object) -> None:
-        raise AssertionError("parser reached")
+        raise AssertionError(f"{name} reached")
 
-    monkeypatch.setattr(file_extraction.docx, "Document", boom)
+    monkeypatch.setattr(owner, name, boom)
+
+
+def _forbid_docx_parse(monkeypatch: pytest.MonkeyPatch) -> None:
+    _forbid(monkeypatch, file_extraction.docx, "Document")
 
 
 def test_docx_over_xml_cap_is_rejected_before_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -144,6 +148,28 @@ def test_docx_with_oversized_content_types_is_a_permanent_error(
     data = _small_package("word/media/a.png", '<Default Extension="png" ContentType="image/png"/>')
     monkeypatch.setattr(file_extraction, "MAX_DOCX_CONTENT_TYPES_BYTES", 10)
     with pytest.raises(ExtractionPermanentError, match="could not read DOCX: bad content types"):
+        file_extraction._parse_docx(data)
+
+
+def test_docx_with_duplicate_entry_names_is_a_permanent_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as archive, pytest.warns(UserWarning, match="Duplicate name"):
+        archive.writestr("[Content_Types].xml", _content_types(""))
+        archive.writestr("[Content_Types].xml", _content_types(""))
+    _forbid_docx_parse(monkeypatch)
+    with pytest.raises(ExtractionPermanentError, match="duplicate entries"):
+        file_extraction._parse_docx(buf.getvalue())
+
+
+def test_docx_xml_named_entry_counts_toward_cap_whatever_its_content_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data = _small_package("word/big.xml", '<Default Extension="xml" ContentType="image/png"/>')
+    monkeypatch.setattr(file_extraction, "MAX_DOCX_XML_BYTES", 2000)
+    _forbid_docx_parse(monkeypatch)
+    with pytest.raises(ExtractionPermanentError, match="too large once uncompressed"):
         file_extraction._parse_docx(data)
 
 
@@ -754,18 +780,11 @@ def test_whole_file_pdf_ocr_indexes_are_unshifted(
     assert seen["indices"] == [1, 3]
 
 
-def _forbid_ocr_run(monkeypatch: pytest.MonkeyPatch) -> None:
-    def boom(*_a: object, **_k: object) -> None:
-        raise AssertionError("OCR reached")
-
-    monkeypatch.setattr(ocr, "_run_page", boom)
-
-
 def test_ocr_pdf_page_over_pixel_budget_is_rejected_before_render(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(ocr, "MAX_OCR_PIXELS", 1_000_000)
-    _forbid_ocr_run(monkeypatch)
+    _forbid(monkeypatch, ocr, "_run_page")
     with pytest.raises(ocr.OcrError, match="too large to rasterize"):
         ocr.ocr_pdf_pages(text_page_pdf("hello"), get_settings(), lambda: None, [0])
 
@@ -784,6 +803,6 @@ def test_ocr_image_over_pixel_budget_is_rejected(
     buf = io.BytesIO()
     Image.new("RGB", (200, 200), "white").save(buf, format="PNG")
     monkeypatch.setattr(ocr, "MAX_OCR_PIXELS", 10_000)
-    _forbid_ocr_run(monkeypatch)
+    _forbid(monkeypatch, ocr, "_run_page")
     with pytest.raises(ocr.OcrError, match="too large"):
         ocr.ocr_image(buf.getvalue(), get_settings(), lambda: None)
