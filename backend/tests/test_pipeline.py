@@ -3445,6 +3445,7 @@ _ECHO_LONG = (
 _ECHO_BODY = "Body paragraph that is clearly longer than the headline and carries on for a while."
 _ECHO_HEAD = "A Made Up Headline About Widgets"
 _ECHO_BOOK = "The Widget Book: 6. A Quiet Start"
+_ECHO_SUNNY = "The Widget Book: 6. Sunny"
 
 
 @pytest.mark.parametrize(
@@ -3499,7 +3500,7 @@ _ECHO_BOOK = "The Widget Book: 6. A Quiet Start"
             f"Technology\n\n{_ECHO_BODY}",
         ),
         (
-            "The Widget Book: 6. Sunny",
+            _ECHO_SUNNY,
             f"Chapter Six. Sunny.\n\n{_ECHO_BODY}",
             f"Chapter Six.\n\n{_ECHO_BODY}",
         ),
@@ -3519,17 +3520,17 @@ _ECHO_BOOK = "The Widget Book: 6. A Quiet Start"
             _ECHO_BODY,
         ),
         (
-            "The Widget Book: 6. Sunny",
+            _ECHO_SUNNY,
             f"# SIX\n\n# Sunny\n\n{_ECHO_BODY}",
             f"# SIX\n\n{_ECHO_BODY}",
         ),
         (
-            "The Widget Book: 6. Sunny",
-            f"SIX\n\n## Sunny\n\n{_ECHO_BODY}",
+            _ECHO_SUNNY,
+            f"SIX\n\n> Sunny\n\n{_ECHO_BODY}",
             f"SIX\n\n{_ECHO_BODY}",
         ),
         (
-            "The Widget Book: 6. Sunny",
+            _ECHO_SUNNY,
             f"SIX\n\n**Sunny**\n\n{_ECHO_BODY}",
             f"SIX\n\n{_ECHO_BODY}",
         ),
@@ -3541,7 +3542,7 @@ _ECHO_BOOK = "The Widget Book: 6. A Quiet Start"
             f"# Chapter Six.\n\n{_ECHO_BODY}",
         ),
         (
-            "The Widget Book: 6. Sunny",
+            _ECHO_SUNNY,
             f"| SIX |\n\nSunny\n\n{_ECHO_BODY}",
             f"| SIX |\n\n{_ECHO_BODY}",
         ),
@@ -3564,7 +3565,7 @@ _ECHO_BOOK = "The Widget Book: 6. A Quiet Start"
         "en_dash_between_label_and_headline",
         "em_dash_title_separator_segment",
         "short_title_with_h1_marker",
-        "short_title_with_h2_marker",
+        "short_title_in_blockquote",
         "short_title_in_bold",
         "title_in_italics",
         "headline_in_bold",
@@ -3613,7 +3614,7 @@ def test_title_echo_strips_heading_shaped_echoes(title: str, body: str, expected
         ),
         (_ECHO_HEAD, f"It rained all week. Nobody minded at first.\n\n{_ECHO_BODY}"),
         ("Widgets \u2014 A Field Guide", f"Introduction\n\n{_ECHO_BODY}"),
-        ("The Widget Book: 6. Sunny", f"# SIX\n\n## Cloudy\n\n{_ECHO_BODY}"),
+        (_ECHO_SUNNY, f"# SIX\n\n## Cloudy\n\n{_ECHO_BODY}"),
         (_ECHO_HEAD, f"**Technology**\n\n{_ECHO_BODY}"),
     ],
     ids=[

@@ -613,8 +613,7 @@ _TITLE_PUNCT = str.maketrans(
 
 
 def _title_key(text: str) -> str:
-    """Comparison form of a title: punctuation unified, case folded, spaces
-    collapsed, edge punctuation and markdown heading/emphasis markers dropped."""
+    """Comparison form of a title: case, spacing, edge punctuation and markdown markers ignored."""
 
     flat = " ".join(text.translate(_TITLE_PUNCT).split()).casefold()
     return flat.strip(" .:;,-!?\"'#*_|>")
