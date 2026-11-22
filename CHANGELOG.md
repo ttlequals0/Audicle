@@ -6,6 +6,12 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.63.1] - 2026-11-22
+
+### Fixed
+
+- Episodes could still announce their title twice. The intro reads the title, and the check that drops a repeated heading from the body only looked at the first block and only matched the whole title. It now checks the first five heading-like lines and stops at the first paragraph. It also matches one part of a title, such as the chapter in "Book: Chapter" or the headline in "Headline | Site", with or without a leading chapter number. A headline that shares a block with its subtitle is removed and the subtitle is kept. Episodes narrated before this release keep the repeat until they are reprocessed.
+
 ## [0.63.0] - 2026-11-21
 
 ### Added
