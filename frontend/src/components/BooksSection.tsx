@@ -58,7 +58,7 @@ export default function BooksSection({ voice, openBookId, onOpenBook }: Props) {
     onError: (e) =>
       setMsg(
         e instanceof ApiError && e.status === 409
-          ? "chapters are still processing"
+          ? "chapters are still queued or processing"
           : `delete failed${e instanceof ApiError ? ` (HTTP ${e.status})` : ""}`
       ),
   });

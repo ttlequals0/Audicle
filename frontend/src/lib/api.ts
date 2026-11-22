@@ -191,6 +191,8 @@ export interface JobRow {
   started_at: string | null;
   // 0.31.0: uploaded filename (upload jobs only) + whether this run was a reprocess.
   source_filename: string | null;
+  // Chapter index for a chapter-split book job, else null.
+  chapter: number | null;
   reprocess: boolean;
 }
 
@@ -246,7 +248,7 @@ export interface BookChapter {
   selectable: boolean;
   requested: boolean;
   status: ChapterStatus;
-  episode_id: string | null;
+  episode_id: string;
 }
 
 export interface Book {
@@ -257,6 +259,7 @@ export interface Book {
   format: string;
   season_number: number;
   has_cover: boolean;
+  voice_id: string | null;
   created_at: string;
   counts: Record<string, number>;
   can_resume: boolean;
@@ -264,5 +267,3 @@ export interface Book {
   queued: number[];
   skipped: number[];
 }
-
-export type ChapterSelection = "all" | "default" | "remaining" | number[];

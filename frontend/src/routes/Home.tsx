@@ -94,13 +94,13 @@ export default function Home() {
   // select, and the submitted value can't disagree. Depend on the stable query
   // data (not the per-render filledSlots array) to avoid re-running every render.
   useEffect(() => {
-    if (!files.some(canSplit)) setSplit(false);
-  }, [files]);
-  useEffect(() => {
     if (voice === "random" || voice === "last") return;
     const stillFilled = (slotsQ.data ?? []).some((s) => s.filled && String(s.slot) === voice);
     if (!stillFilled) setVoice("random");
   }, [slotsQ.data, voice]);
+  useEffect(() => {
+    if (!files.some(canSplit)) setSplit(false);
+  }, [files]);
 
   const configuredMb = Number(
     settingsQ.data?.values.UPLOAD_MAX_MB ?? settingsQ.data?.defaults.UPLOAD_MAX_MB
@@ -181,7 +181,6 @@ export default function Home() {
     // failures stay, with their reason, so they can be retried or removed.
     onSuccess: (failed) => {
       setFiles(failed);
-      setSplit(false);
       setRejected([]);
       setError(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -197,6 +196,7 @@ export default function Home() {
     onSuccess: () => {
       setRecentMsg(null);
       qc.invalidateQueries({ queryKey: ["jobs"] });
+      qc.invalidateQueries({ queryKey: ["books"] });
     },
     onError: (e) => {
       const status = e instanceof ApiError ? e.status : undefined;
@@ -278,6 +278,7 @@ export default function Home() {
     onSuccess: () => {
       setCancelMsg(null);
       qc.invalidateQueries({ queryKey: ["jobs"] });
+      qc.invalidateQueries({ queryKey: ["books"] });
     },
     onError: (e) => {
       const status = e instanceof ApiError ? e.status : undefined;
@@ -618,7 +619,7 @@ export default function Home() {
               >
                 <span className="queue-index">{String(i + 1).padStart(2, "0")}</span>
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs text-dim truncate">{j.url}</p>
+                  <p className="text-xs text-dim truncate">{jobSource(j)}</p>
                   <p className="text-xs text-mute mt-1 truncate">
                     stage: {j.stage ?? "-"}
                     {progressSuffix(j)}
@@ -630,7 +631,7 @@ export default function Home() {
                     className="btn-ghost text-xs"
                     disabled={cancelM.isPending}
                     onClick={() => cancelM.mutate(j.id)}
-                    aria-label={`Cancel ${j.source_filename ?? j.url}`}
+                    aria-label={`Cancel ${jobSource(j)}`}
                   >
                     &times; cancel
                   </button>
@@ -689,7 +690,7 @@ export default function Home() {
                 return (
                 <li key={j.id} className="card p-4 flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="text-xs text-mute truncate">{j.source_filename ?? j.url}</p>
+                    <p className="text-xs text-mute truncate">{jobSource(j)}</p>
                     <p className="text-sm mt-1 truncate text-dim">
                       {j.episode_id} &middot; {j.stage ?? "-"}
                       {progressSuffix(j)}
@@ -698,7 +699,7 @@ export default function Home() {
                         its fix stay readable. */}
                     {j.error && <p className="text-sm mt-1 text-danger break-words">{j.error}</p>}
                     <ActionMenu
-                      context={j.source_filename ?? j.url}
+                      context={jobSource(j)}
                       pending={requeueM.isPending || chaptersM.isPending}
                       actions={[
                         {
@@ -756,6 +757,11 @@ function formatDuration(start: string | null, end: string): string {
   const m = Math.floor(secs / 60);
   const s = secs % 60;
   return `${m}m ${s}s`;
+}
+
+function jobSource(j: JobRow): string {
+  if (!j.source_filename) return j.url;
+  return j.chapter === null ? j.source_filename : `${j.source_filename}, chapter ${j.chapter}`;
 }
 
 function progressSuffix(j: JobRow): string {

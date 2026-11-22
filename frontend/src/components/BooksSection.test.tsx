@@ -29,6 +29,7 @@ const makeBook = (over: Record<string, unknown> = {}) => ({
   format: "epub",
   season_number: 2,
   has_cover: false,
+  voice_id: null,
   created_at: "2026-01-01T00:00:00Z",
   counts: { done: 12, queued: 2, failed: 1 },
   can_resume: true,
@@ -137,7 +138,7 @@ describe("BooksSection", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     renderSection();
     await user.click(await screen.findByRole("button", { name: /Delete/ }));
-    expect(await screen.findByText("chapters are still processing")).toBeInTheDocument();
+    expect(await screen.findByText("chapters are still queued or processing")).toBeInTheDocument();
   });
 
   it("does not delete when confirm is declined", async () => {

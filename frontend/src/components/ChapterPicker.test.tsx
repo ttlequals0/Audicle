@@ -41,6 +41,7 @@ const book = {
   format: "epub",
   season_number: 1,
   has_cover: false,
+  voice_id: null,
   created_at: "2026-01-01T00:00:00Z",
   counts: {},
   can_resume: false,
@@ -124,6 +125,35 @@ describe("ChapterPicker", () => {
     await waitFor(() => expect(apiMock.mock.calls.some(([, o]) => o?.method === "POST")).toBe(true));
     const call = apiMock.mock.calls.find(([, o]) => o?.method === "POST");
     expect(JSON.parse(call?.[1].body)).toEqual({ chapters: [6, 7] });
+  });
+
+  describe("voice label", () => {
+    const withVoice = (voiceId: string | null) =>
+      apiMock.mockImplementation((path: string) =>
+        Promise.resolve(
+          path === "/api/v1/settings"
+            ? { values: {}, defaults: {} }
+            : { ...book, voice_id: voiceId }
+        )
+      );
+
+    it("shows the book's stored voice when Home is on random", async () => {
+      withVoice("2");
+      renderPicker("random");
+      expect(await screen.findByText("Voice: slot 2 (book's voice)")).toBeInTheDocument();
+    });
+
+    it("shows random when the book has no voice yet", async () => {
+      withVoice(null);
+      renderPicker("random");
+      expect(await screen.findByText("Voice: random")).toBeInTheDocument();
+    });
+
+    it("shows the Home choice when it is not random", async () => {
+      withVoice("2");
+      renderPicker("3");
+      expect(await screen.findByText("Voice: slot 3")).toBeInTheDocument();
+    });
   });
 
   it("moves focus into the picker when it opens", async () => {

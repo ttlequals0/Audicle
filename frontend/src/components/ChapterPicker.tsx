@@ -88,7 +88,15 @@ export default function ChapterPicker({ bookId, voice, onClose }: Props) {
   const selectNone = () => setEdited(new Set());
   const submitSelection = () => queueM.mutate([...ticked].sort((a, b) => a - b));
 
-  const voiceLabel = voice === "random" ? "random" : voice === "last" ? "last used" : `slot ${voice}`;
+  // With "random" the request omits voice and the backend reuses the book's stored voice.
+  const voiceLabel =
+    voice === "random"
+      ? book?.voice_id
+        ? `slot ${book.voice_id} (book's voice)`
+        : "random"
+      : voice === "last"
+        ? "last used"
+        : `slot ${voice}`;
 
   return (
     <section

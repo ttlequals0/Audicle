@@ -126,6 +126,95 @@ describe("Home split option", () => {
     await user.upload(input, new File(["z"], "other.epub"));
     expect(screen.getByLabelText("Split into chapters")).not.toBeChecked();
   });
+
+  it("keeps the box ticked for a failed book that stays listed for retry", async () => {
+    const user = userEvent.setup();
+    postFormMock.mockRejectedValue(new Error("boom"));
+    renderHome();
+    await chooseFile(user, new File(["x"], "book.epub"));
+    await user.click(screen.getByLabelText("Split into chapters"));
+    await user.click(screen.getByRole("button", { name: "Submit" }));
+    expect(await screen.findByText("boom")).toBeInTheDocument();
+    expect(screen.getByLabelText("Split into chapters")).toBeChecked();
+  });
+});
+
+describe("Home job rows", () => {
+  const job = (over: Record<string, unknown>) => ({
+    id: "j1",
+    url: "upload://abc/book.epub#chapter=7",
+    episode_id: "ep1",
+    status: "queued",
+    stage: null,
+    error: null,
+    progress_current: null,
+    progress_total: null,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    started_at: null,
+    source_filename: "book.epub",
+    chapter: 7,
+    reprocess: false,
+    ...over,
+  });
+  let booksFetches = 0;
+
+  function serveJobs(rows: unknown[]) {
+    booksFetches = 0;
+    apiMock.mockImplementation((path: string) => {
+      if (path === "/api/v1/settings") return Promise.resolve({ values: {}, defaults: {} });
+      if (path === "/api/v1/reference/slots") {
+        return Promise.resolve([{ slot: 1, filled: true, label: "A", duration_secs: 5 }]);
+      }
+      if (path.startsWith("/api/v1/jobs?")) return Promise.resolve(rows);
+      if (path === "/api/v1/books") {
+        booksFetches += 1;
+        return Promise.resolve([]);
+      }
+      return Promise.resolve({});
+    });
+  }
+
+  it("shows the filename and chapter number in the Queue and Recents rows", async () => {
+    const user = userEvent.setup();
+    serveJobs([job({}), job({ id: "j2", status: "done", chapter: 8 })]);
+    renderHome();
+    expect(await screen.findByText("book.epub, chapter 7")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Recent \(1\)/ }));
+    expect(await screen.findByText("book.epub, chapter 8")).toBeInTheDocument();
+  });
+
+  it("shows a plain upload filename and a URL as before when chapter is null", async () => {
+    serveJobs([
+      job({ id: "j1", url: "upload://abc/doc.pdf", source_filename: "doc.pdf", chapter: null }),
+      job({ id: "j2", url: "https://example.test/a", source_filename: null, chapter: null }),
+    ]);
+    renderHome();
+    expect(await screen.findByText("doc.pdf")).toBeInTheDocument();
+    expect(screen.getByText("https://example.test/a")).toBeInTheDocument();
+    expect(screen.queryByText(/chapter/)).not.toBeInTheDocument();
+  });
+
+  it("refetches books after a successful requeue", async () => {
+    const user = userEvent.setup();
+    serveJobs([job({ status: "failed" })]);
+    renderHome();
+    await user.click(await screen.findByRole("button", { name: /Recent \(1\)/ }));
+    await user.click(await screen.findByRole("button", { name: /Redo actions for book.epub, chapter 7/ }));
+    const before = booksFetches;
+    await user.click(await screen.findByRole("menuitem", { name: /Reprocess article/ }));
+    await waitFor(() => expect(booksFetches).toBeGreaterThan(before));
+  });
+
+  it("refetches books after a successful cancel", async () => {
+    const user = userEvent.setup();
+    serveJobs([job({})]);
+    renderHome();
+    const cancel = await screen.findByRole("button", { name: /Cancel book.epub, chapter 7/ });
+    const before = booksFetches;
+    await user.click(cancel);
+    await waitFor(() => expect(booksFetches).toBeGreaterThan(before));
+  });
 });
 
 describe("Home book responses", () => {
@@ -137,6 +226,7 @@ describe("Home book responses", () => {
     format: "epub",
     season_number: 1,
     has_cover: false,
+    voice_id: null,
     created_at: "2026-01-01T00:00:00Z",
     counts: {},
     can_resume: false,
