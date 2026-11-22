@@ -3546,6 +3546,21 @@ _ECHO_SUNNY = "The Widget Book: 6. Sunny"
             f"| SIX |\n\nSunny\n\n{_ECHO_BODY}",
             f"| SIX |\n\n{_ECHO_BODY}",
         ),
+        (
+            _ECHO_SUNNY,
+            f"**Chapter Six. Sunny**\n\n{_ECHO_BODY}",
+            f"Chapter Six.\n\n{_ECHO_BODY}",
+        ),
+        (
+            _ECHO_SUNNY,
+            f"_Prologue. Sunny_\n\n{_ECHO_BODY}",
+            f"Prologue.\n\n{_ECHO_BODY}",
+        ),
+        (
+            _ECHO_SUNNY,
+            f"**Sunny. Chapter Six**\n\n{_ECHO_BODY}",
+            f"Chapter Six\n\n{_ECHO_BODY}",
+        ),
     ],
     ids=[
         "after_leading_label",
@@ -3571,6 +3586,9 @@ _ECHO_SUNNY = "The Widget Book: 6. Sunny"
         "headline_in_bold",
         "marked_chapter_number_and_title_on_one_line",
         "number_between_pipes_then_title",
+        "bold_heading_partly_the_title",
+        "italic_heading_partly_the_title",
+        "bold_heading_with_title_first",
     ],
 )
 def test_title_echo_strips_heading_shaped_echoes(title: str, body: str, expected: str) -> None:

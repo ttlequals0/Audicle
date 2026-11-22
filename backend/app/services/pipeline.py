@@ -647,7 +647,7 @@ def _drop_echo_parts(line: str, title_keys: set[str]) -> str:
     if not any(echo):
         return line
     kept = [pair for pair, e in zip(pairs, echo, strict=True) if not e and pair[1].strip()]
-    return (kept[0][1] + "".join(sep + part for sep, part in kept[1:])).strip() if kept else ""
+    return (kept[0][1] + "".join(sep + part for sep, part in kept[1:])).strip(" \t*_") if kept else ""
 
 
 def _strip_title_echo(cleaned: str, title: str | None) -> str:
