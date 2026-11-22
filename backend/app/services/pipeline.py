@@ -658,15 +658,17 @@ def _strip_title_echo(cleaned: str, title: str | None) -> str:
     if not echoes:
         return cleaned
     out: list[str] = []
+    after_echo = False
     for i, line in enumerate(lines):
         if i in echoes:
+            after_echo = True
             continue
         # Drop blanks that would stack or lead once an echo line is gone.
-        if not line.strip() and i - 1 in echoes and (not out or not out[-1].strip()):
+        if after_echo and not line.strip() and (not out or not out[-1].strip()):
             continue
+        after_echo = False
         out.append(line)
-    result = "\n".join(out)
-    return result if result.strip() else cleaned
+    return "\n".join(out).strip() or cleaned
 
 
 def _intro_read_line(metadata: dict[str, Any] | None, settings: Settings) -> str | None:

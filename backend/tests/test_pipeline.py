@@ -3475,6 +3475,8 @@ _ECHO_HEAD = "A Made Up Headline About Widgets"
             f"A subtitle that says something else entirely\n\n{_ECHO_BODY}",
         ),
         ("AI", f"AI\n\n{_ECHO_PARA}", _ECHO_PARA),
+        (_ECHO_HEAD, f"{_ECHO_HEAD}\n\n\n\n{_ECHO_BODY}", _ECHO_BODY),
+        (_ECHO_HEAD, f"{_ECHO_HEAD}\n\n{_ECHO_BODY}\n", _ECHO_BODY),
     ],
     ids=[
         "after_leading_label",
@@ -3483,6 +3485,8 @@ _ECHO_HEAD = "A Made Up Headline About Widgets"
         "headline_before_site_suffix",
         "headline_sharing_block_with_subtitle",
         "short_full_title",
+        "extra_blank_lines_after_echo",
+        "trailing_newline_stripped",
     ],
 )
 def test_title_echo_strips_heading_shaped_echoes(title: str, body: str, expected: str) -> None:
@@ -3509,12 +3513,20 @@ def test_title_echo_strips_heading_shaped_echoes(title: str, body: str, expected
             "Notes\n\nA paragraph that is long enough to be body text and goes on for a while "
             "without repeating anything.",
         ),
+        (
+            "How to Build Widgets - A Beginner's Guide",
+            "Introduction\n\nA paragraph that is long enough to be body text and goes on for a "
+            "while without repeating anything.",
+        ),
+        (_ECHO_HEAD, f"\n\n{_ECHO_PARA}\n"),
     ],
     ids=[
         "does_not_reach_into_body",
         "never_empties_the_text",
         "short_title_segments_ignored",
         "short_full_title_segment_only",
+        "unrelated_heading_kept",
+        "no_echo_keeps_whitespace",
     ],
 )
 def test_title_echo_leaves_text_unchanged(title: str, body: str) -> None:
