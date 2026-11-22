@@ -258,6 +258,19 @@ def test_book_response_exposes_voice(env: Path, three_voices: None) -> None:
     assert after["voice_id"] == "2"
 
 
+def test_queue_response_reports_stored_voice(env: Path, three_voices: None) -> None:
+    with _client(env) as client:
+        book_id = _split(client).json()["book_id"]
+        queued = client.post(
+            f"/api/v1/books/{book_id}/chapters", json={"chapters": [1], "voice": "2"}
+        )
+        assert queued.status_code == 201
+        assert queued.json()["voice_id"] == "2"
+        split = _split(client, simple_epub(title="Other"), chapters="1", voice="2")
+        assert split.status_code == 201
+        assert split.json()["voice_id"] == "2"
+
+
 def test_book_voice_is_sticky(env: Path, three_voices: None) -> None:
     with _client(env) as client:
         book_id = _split(client).json()["book_id"]

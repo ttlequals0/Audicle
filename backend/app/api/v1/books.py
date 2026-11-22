@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections import Counter
+from dataclasses import replace
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -122,6 +123,7 @@ def queue_selection(
     else:
         voice_id = voices.resolve(conn, voice)
         books.set_voice(conn, book.id, voice_id)
+        book = replace(book, voice_id=voice_id)
     result = books.queue_chapters(conn, book, idxs, voice_id, chapters, statuses)
     idx_by_episode = {c.episode_id: c.idx for c in chapters}
     queued = sorted(idx_by_episode[j.episode_id] for j in result.queued)
