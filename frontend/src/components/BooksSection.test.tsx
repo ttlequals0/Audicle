@@ -1,6 +1,7 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import BooksSection from "./BooksSection";
@@ -39,29 +40,46 @@ const makeBook = (over: Record<string, unknown> = {}) => ({
 
 let books: unknown[] = [];
 let deleteStatus = 204;
+let postStatus = 200;
+let settings: unknown = { values: {}, defaults: {} };
+
+function Harness() {
+  const [open, setOpen] = useState<string | null>(null);
+  return <BooksSection voice="random" openBookId={open} onOpenBook={setOpen} />;
+}
 
 function renderSection() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <BooksSection voice="random" openBookId={null} onOpenBook={vi.fn()} />
+      <Harness />
     </QueryClientProvider>
   );
 }
 
+const booksFetches = () => apiMock.mock.calls.filter(([p]) => p === "/api/v1/books").length;
+const fastPoll = { values: { QUEUE_POLL_INTERVAL_SECONDS: 0.05 }, defaults: {} };
+
 beforeEach(async () => {
   books = [makeBook()];
   deleteStatus = 204;
+  postStatus = 200;
+  settings = { values: {}, defaults: {} };
   const { ApiError } = await import("../lib/api");
   apiMock.mockImplementation((path: string, options?: RequestInit) => {
-    if (path === "/api/v1/settings") return Promise.resolve({ values: {}, defaults: {} });
+    if (path === "/api/v1/settings") return Promise.resolve(settings);
     if (options?.method === "DELETE") {
       return deleteStatus === 204
         ? Promise.resolve(undefined)
         : Promise.reject(new ApiError(deleteStatus, "in flight"));
     }
-    if (options?.method === "POST") return Promise.resolve(makeBook({ queued: [3] }));
+    if (options?.method === "POST") {
+      return postStatus === 200
+        ? Promise.resolve(makeBook({ queued: [3] }))
+        : Promise.reject(new ApiError(postStatus, "boom"));
+    }
     if (path === "/api/v1/books") return Promise.resolve(books);
+    if (path === "/api/v1/books/b1") return Promise.resolve(books[0]);
     return Promise.resolve({});
   });
 });
@@ -128,5 +146,45 @@ describe("BooksSection", () => {
     renderSection();
     await user.click(await screen.findByRole("button", { name: /Delete/ }));
     expect(apiMock.mock.calls.some(([, o]) => o?.method === "DELETE")).toBe(false);
+  });
+
+  it("shows an error when resume fails", async () => {
+    const user = userEvent.setup();
+    postStatus = 500;
+    renderSection();
+    await user.click(await screen.findByRole("button", { name: /Resume/ }));
+    expect(await screen.findByText("resume failed (HTTP 500)")).toBeInTheDocument();
+  });
+
+  it("does not poll when no chapters are queued or processing", async () => {
+    settings = fastPoll;
+    books = [makeBook({ counts: { done: 3 }, can_resume: false })];
+    renderSection();
+    await screen.findByText("Bad Blood");
+    const before = booksFetches();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(booksFetches()).toBe(before);
+  });
+
+  it("polls while chapters are queued", async () => {
+    settings = fastPoll;
+    renderSection();
+    await screen.findByText("Bad Blood");
+    await waitFor(() => expect(booksFetches()).toBeGreaterThanOrEqual(3));
+  });
+
+  it("reflects open state in aria-expanded and returns focus on close", async () => {
+    const user = userEvent.setup();
+    books = [makeBook({ counts: { done: 3 }, can_resume: false })];
+    renderSection();
+    const toggle = await screen.findByRole("button", { name: /Choose chapters/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    const dialog = await screen.findByRole("dialog", { name: "Bad Blood" });
+    await waitFor(() => expect(dialog).toContainElement(document.activeElement as HTMLElement));
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveFocus();
   });
 });

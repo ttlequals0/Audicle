@@ -1,29 +1,13 @@
-import { KeyboardEvent, useState } from "react";
+import { KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError, Book, BookChapter, SettingsPayload } from "../lib/api";
+import { api, ApiError, Book, BookChapter } from "../lib/api";
+import { isBookBusy, useBookPollMs } from "../lib/polling";
 
 const LOCKED = ["done", "queued", "processing"];
 
 const isEnabled = (c: BookChapter) => c.selectable && !LOCKED.includes(c.status);
 const defaultTicks = (chapters: BookChapter[]) =>
   new Set(chapters.filter((c) => isEnabled(c) && c.default_selected).map((c) => c.index));
-
-export function useBookPollMs(): number {
-  const settingsQ = useQuery({
-    queryKey: ["settings"],
-    queryFn: () => api<SettingsPayload>("/api/v1/settings"),
-    staleTime: 60_000,
-  });
-  const seconds = Number(
-    settingsQ.data?.values.QUEUE_POLL_INTERVAL_SECONDS ??
-      settingsQ.data?.defaults.QUEUE_POLL_INTERVAL_SECONDS ??
-      5
-  );
-  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 5000;
-}
-
-export const isBookBusy = (b: Pick<Book, "counts">) =>
-  (b.counts.queued ?? 0) > 0 || (b.counts.processing ?? 0) > 0;
 
 function statusTag(status: string): string {
   switch (status) {
@@ -50,6 +34,9 @@ interface Props {
 export default function ChapterPicker({ bookId, voice, onClose }: Props) {
   const qc = useQueryClient();
   const pollMs = useBookPollMs();
+  const uid = useId();
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => headingRef.current?.focus(), []);
   const bookQ = useQuery({
     queryKey: ["books", bookId],
     queryFn: () => api<Book>(`/api/v1/books/${bookId}`),
@@ -96,6 +83,11 @@ export default function ChapterPicker({ bookId, voice, onClose }: Props) {
     if (e.key === "Escape") onClose();
   };
 
+  const selectAll = () => setEdited(new Set(chapters.filter(isEnabled).map((c) => c.index)));
+  const selectDefaults = () => setEdited(defaultTicks(chapters));
+  const selectNone = () => setEdited(new Set());
+  const submitSelection = () => queueM.mutate([...ticked].sort((a, b) => a - b));
+
   const voiceLabel = voice === "random" ? "random" : voice === "last" ? "last used" : `slot ${voice}`;
 
   return (
@@ -106,15 +98,17 @@ export default function ChapterPicker({ bookId, voice, onClose }: Props) {
       onKeyDown={onKeyDown}
     >
       <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-        <div className="text-sm font-bold truncate min-w-0">{book?.title ?? "Loading..."}</div>
+        <h3 ref={headingRef} tabIndex={-1} className="text-sm font-bold truncate min-w-0">
+          {book?.title ?? "Loading..."}
+        </h3>
         <div className="flex items-center gap-2">
-          <button type="button" className="btn-ghost text-xs" onClick={() => setEdited(new Set(chapters.filter(isEnabled).map((c) => c.index)))}>
+          <button type="button" className="btn-ghost text-xs" onClick={selectAll}>
             Select all
           </button>
-          <button type="button" className="btn-ghost text-xs" onClick={() => setEdited(defaultTicks(chapters))}>
+          <button type="button" className="btn-ghost text-xs" onClick={selectDefaults}>
             Defaults
           </button>
-          <button type="button" className="btn-ghost text-xs" onClick={() => setEdited(new Set())}>
+          <button type="button" className="btn-ghost text-xs" onClick={selectNone}>
             None
           </button>
         </div>
@@ -129,24 +123,30 @@ export default function ChapterPicker({ bookId, voice, onClose }: Props) {
           const enabled = isEnabled(c);
           const note = !c.selectable ? "too short" : c.status !== "not_queued" ? c.status : null;
           return (
-            <li key={c.index}>
-              <label className={`flex items-center gap-3 text-sm py-1${enabled ? " cursor-pointer" : " text-mute"}`}>
-                <input
-                  type="checkbox"
-                  checked={ticked.includes(c.index)}
-                  disabled={!enabled}
-                  onChange={() => toggle(c.index)}
-                  aria-label={`${c.index}. ${c.title}`}
-                />
-                <span className="text-xs text-mute w-6 shrink-0 text-right">{c.index}</span>
-                <span className="flex-1 min-w-0 truncate">{c.title}</span>
-                <span className="text-xs text-mute shrink-0">{c.word_count} words</span>
+            <li key={c.index} className={`flex items-center gap-3 text-sm py-1${enabled ? "" : " text-mute"}`}>
+              <input
+                id={`${uid}-c${c.index}`}
+                type="checkbox"
+                checked={ticked.includes(c.index)}
+                disabled={!enabled}
+                onChange={() => toggle(c.index)}
+                aria-describedby={`${uid}-d${c.index}`}
+              />
+              <span className="text-xs text-mute w-6 shrink-0 text-right">{c.index}</span>
+              <label
+                htmlFor={`${uid}-c${c.index}`}
+                className={`flex-1 min-w-0 truncate${enabled ? " cursor-pointer" : ""}`}
+              >
+                {c.title}
+              </label>
+              <span id={`${uid}-d${c.index}`} className="text-xs text-mute shrink-0">
+                {c.word_count} words
                 {note && (
-                  <span className={`tag ${c.selectable ? statusTag(c.status) : "tag-cancelled"} shrink-0`}>
+                  <span className={`tag ${c.selectable ? statusTag(c.status) : "tag-cancelled"} ml-2`}>
                     {note}
                   </span>
                 )}
-              </label>
+              </span>
             </li>
           );
         })}
@@ -166,7 +166,7 @@ export default function ChapterPicker({ bookId, voice, onClose }: Props) {
             type="button"
             className="btn-primary"
             disabled={ticked.length === 0 || queueM.isPending}
-            onClick={() => queueM.mutate(ticked.sort((a, b) => a - b))}
+            onClick={submitSelection}
           >
             {`Narrate ${ticked.length} chapter${ticked.length === 1 ? "" : "s"}`}
           </button>

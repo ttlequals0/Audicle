@@ -3,11 +3,23 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
+import { ApiError } from "../lib/api";
 import ChapterPicker from "./ChapterPicker";
 
 const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }));
 
-vi.mock("../lib/api", () => ({ api: apiMock }));
+vi.mock("../lib/api", () => ({
+  api: apiMock,
+  ApiError: class ApiError extends Error {
+    status: number;
+    detail: unknown;
+    constructor(status: number, detail: unknown) {
+      super(`HTTP ${status}`);
+      this.status = status;
+      this.detail = detail;
+    }
+  },
+}));
 
 const ch = (index: number, over: Record<string, unknown> = {}) => ({
   index,
@@ -112,5 +124,32 @@ describe("ChapterPicker", () => {
     await waitFor(() => expect(apiMock.mock.calls.some(([, o]) => o?.method === "POST")).toBe(true));
     const call = apiMock.mock.calls.find(([, o]) => o?.method === "POST");
     expect(JSON.parse(call?.[1].body)).toEqual({ chapters: [6, 7] });
+  });
+
+  it("moves focus into the picker when it opens", async () => {
+    renderPicker();
+    const dialog = await screen.findByRole("dialog", { name: "Bad Blood" });
+    await waitFor(() => expect(dialog).toContainElement(document.activeElement as HTMLElement));
+  });
+
+  it("describes a done chapter with its status", async () => {
+    renderPicker();
+    expect(await screen.findByRole("checkbox", { name: "Chapter 8" })).toHaveAccessibleDescription(
+      /done/
+    );
+  });
+
+  it("shows an error and re-enables Narrate when queueing fails", async () => {
+    const user = userEvent.setup();
+    apiMock.mockImplementation((path: string, options?: RequestInit) => {
+      if (options?.method === "POST") return Promise.reject(new ApiError(500, "boom"));
+      if (path === "/api/v1/settings") return Promise.resolve({ values: {}, defaults: {} });
+      return Promise.resolve(book);
+    });
+    const onClose = renderPicker();
+    await user.click(await screen.findByRole("button", { name: "Narrate 2 chapters" }));
+    expect(await screen.findByText("queue failed (HTTP 500)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Narrate 2 chapters" })).toBeEnabled();
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

@@ -5,6 +5,7 @@ import { fileExt, formatBytes, formatDateTime } from "../lib/format";
 import { usePersistentOpen } from "../components/CollapsibleSection";
 import ActionMenu from "../components/ActionMenu";
 import BooksSection from "../components/BooksSection";
+import { pollIntervalMs } from "../lib/polling";
 
 interface SubmitResponse {
   job_id: string;
@@ -29,7 +30,6 @@ type UploadState = "uploading" | "queued" | "failed";
 interface UploadStatus {
   state: UploadState;
   message?: string;
-  note?: string;
 }
 
 // Name plus size identifies a file within one selection, which is also how
@@ -49,6 +49,8 @@ export default function Home() {
   // Reference-voice choice for this submission: "random" (default), "last", or a slot id.
   const [voice, setVoice] = useState("random");
   const [split, setSplit] = useState(false);
+  // Split fallbacks queued fine, so they leave the file list and report here.
+  const [splitNotes, setSplitNotes] = useState<string[]>([]);
   const [openBookId, setOpenBookId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Recents and the per-submission voice picker are collapsed by default; the
@@ -64,18 +66,10 @@ export default function Home() {
     queryFn: () => api<SettingsPayload>("/api/v1/settings"),
     staleTime: 60_000,
   });
-  const configuredPollSeconds = Number(
-    settingsQ.data?.values.QUEUE_POLL_INTERVAL_SECONDS ??
-      settingsQ.data?.defaults.QUEUE_POLL_INTERVAL_SECONDS ??
-      5
-  );
   const jobsQ = useQuery({
     queryKey: ["jobs"],
     queryFn: () => api<JobRow[]>("/api/v1/jobs?per_page=50"),
-    refetchInterval:
-      Number.isFinite(configuredPollSeconds) && configuredPollSeconds > 0
-        ? configuredPollSeconds * 1000
-        : 5000,
+    refetchInterval: pollIntervalMs(settingsQ.data),
   });
   // Filled reference-voice slots drive the optional per-submission voice picker.
   const slotsQ = useQuery({
@@ -99,6 +93,9 @@ export default function Home() {
   // If the picked slot is later cleared, fall back to random so the label, the
   // select, and the submitted value can't disagree. Depend on the stable query
   // data (not the per-render filledSlots array) to avoid re-running every render.
+  useEffect(() => {
+    if (!files.some(canSplit)) setSplit(false);
+  }, [files]);
   useEffect(() => {
     if (voice === "random" || voice === "last") return;
     const stillFilled = (slotsQ.data ?? []).some((s) => s.filled && String(s.slot) === voice);
@@ -144,7 +141,9 @@ export default function Home() {
       // Clear last run's results so a retried file does not show its old
       // failure. A file with no status yet renders its size, as before.
       setStatuses({});
+      setSplitNotes([]);
       const failed: File[] = [];
+      const notes: string[] = [];
       let firstBook: string | null = null;
       for (const f of batch) {
         const key = fileKey(f);
@@ -157,13 +156,10 @@ export default function Home() {
           const res = await postForm<UploadResponse>("/api/v1/upload", fd);
           const isBook = "book_id" in res;
           if (isBook) firstBook ??= res.book_id;
-          const note =
-            !isBook && res.chapters_detected === false
-              ? "no chapters found, queued as one episode"
-              : undefined;
-          setStatuses((prev) => ({ ...prev, [key]: { state: "queued", note } }));
-          // Keep the row so the fallback note stays readable.
-          if (note) failed.push(f);
+          if (!isBook && res.chapters_detected === false) {
+            notes.push(`${f.name}: no chapters found, queued as one episode`);
+          }
+          setStatuses((prev) => ({ ...prev, [key]: { state: "queued" } }));
           if (isBook) qc.invalidateQueries({ queryKey: ["books"] });
           // Refetch per file so the queue fills in during the batch rather than
           // all at once when it ends.
@@ -177,13 +173,15 @@ export default function Home() {
         }
       }
       if (firstBook) setOpenBookId(firstBook);
+      setSplitNotes(notes);
       return failed;
     },
     // One failure does not stop the run, so the mutation itself succeeds and
     // reports which files did not make it. Queued files leave the picker;
-    // failures (and split fallbacks, which carry a note) stay, with their reason.
+    // failures stay, with their reason, so they can be retried or removed.
     onSuccess: (failed) => {
       setFiles(failed);
+      setSplit(false);
       setRejected([]);
       setError(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -296,12 +294,14 @@ export default function Home() {
     setFiles([]);
     setRejected([]);
     setStatuses({});
+    setSplitNotes([]);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const addFiles = (incoming: File[]) => {
     if (!incoming.length) return;
     setError(null);
+    setSplitNotes([]);
     const reasons: string[] = [];
     const next = [...files];
     for (const f of incoming) {
@@ -455,9 +455,6 @@ export default function Home() {
                           {status?.message ? (
                             <div className="text-xs text-danger break-words">{status.message}</div>
                           ) : null}
-                          {status?.note ? (
-                            <div className="text-xs text-mute break-words">{status.note}</div>
-                          ) : null}
                         </div>
                         {status ? (
                           <span className={`tag ${uploadTag(status.state)}`}>{status.state}</span>
@@ -581,6 +578,16 @@ export default function Home() {
             {rejected.map((reason) => (
               <li key={reason} className="break-words">
                 {reason}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {splitNotes.length > 0 && (
+          <ul className="text-xs text-mute mt-2 space-y-1" aria-label="Split notes">
+            {splitNotes.map((note) => (
+              <li key={note} className="break-words">
+                {note}
               </li>
             ))}
           </ul>

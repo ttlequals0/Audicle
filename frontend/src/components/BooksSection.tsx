@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, Book } from "../lib/api";
-import ChapterPicker, { isBookBusy, useBookPollMs } from "./ChapterPicker";
+import { isBookBusy, useBookPollMs } from "../lib/polling";
+import ChapterPicker from "./ChapterPicker";
 
 const SUMMARY_ORDER = ["done", "processing", "queued", "failed", "cancelled", "removed"];
 
@@ -25,6 +26,11 @@ export default function BooksSection({ voice, openBookId, onOpenBook }: Props) {
     refetchInterval: (q) => (q.state.data?.some(isBookBusy) ? pollMs : false),
   });
   const [msg, setMsg] = useState<string | null>(null);
+  const toggleRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const closePicker = (id: string) => {
+    onOpenBook(null);
+    toggleRefs.current[id]?.focus();
+  };
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["books"] });
@@ -80,8 +86,14 @@ export default function BooksSection({ voice, openBookId, onOpenBook }: Props) {
             <div className="flex items-center gap-2 mt-3 flex-wrap">
               <button
                 type="button"
+                ref={(el) => {
+                  toggleRefs.current[b.book_id] = el;
+                }}
                 className="btn-ghost text-xs"
-                onClick={() => onOpenBook(openBookId === b.book_id ? null : b.book_id)}
+                aria-expanded={openBookId === b.book_id}
+                onClick={() =>
+                  openBookId === b.book_id ? closePicker(b.book_id) : onOpenBook(b.book_id)
+                }
                 aria-label={`Choose chapters for ${b.title}`}
               >
                 Choose chapters
@@ -90,7 +102,7 @@ export default function BooksSection({ voice, openBookId, onOpenBook }: Props) {
                 <button
                   type="button"
                   className="btn-ghost text-xs"
-                  disabled={resumeM.isPending}
+                  disabled={resumeM.isPending && resumeM.variables === b.book_id}
                   onClick={() => resumeM.mutate(b.book_id)}
                   aria-label={`Resume ${b.title}`}
                 >
@@ -100,7 +112,7 @@ export default function BooksSection({ voice, openBookId, onOpenBook }: Props) {
               <button
                 type="button"
                 className="btn-ghost text-xs"
-                disabled={deleteM.isPending}
+                disabled={deleteM.isPending && deleteM.variables === b.book_id}
                 onClick={() => {
                   if (confirm(`Delete "${b.title}" and its stored file? Episodes already made stay in the feed.`))
                     deleteM.mutate(b.book_id);
@@ -111,7 +123,7 @@ export default function BooksSection({ voice, openBookId, onOpenBook }: Props) {
               </button>
             </div>
             {openBookId === b.book_id && (
-              <ChapterPicker bookId={b.book_id} voice={voice} onClose={() => onOpenBook(null)} />
+              <ChapterPicker bookId={b.book_id} voice={voice} onClose={() => closePicker(b.book_id)} />
             )}
           </li>
         ))}
