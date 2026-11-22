@@ -1,0 +1,177 @@
+import { KeyboardEvent, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api, ApiError, Book, BookChapter, SettingsPayload } from "../lib/api";
+
+const LOCKED = ["done", "queued", "processing"];
+
+const isEnabled = (c: BookChapter) => c.selectable && !LOCKED.includes(c.status);
+const defaultTicks = (chapters: BookChapter[]) =>
+  new Set(chapters.filter((c) => isEnabled(c) && c.default_selected).map((c) => c.index));
+
+export function useBookPollMs(): number {
+  const settingsQ = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => api<SettingsPayload>("/api/v1/settings"),
+    staleTime: 60_000,
+  });
+  const seconds = Number(
+    settingsQ.data?.values.QUEUE_POLL_INTERVAL_SECONDS ??
+      settingsQ.data?.defaults.QUEUE_POLL_INTERVAL_SECONDS ??
+      5
+  );
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 5000;
+}
+
+export const isBookBusy = (b: Pick<Book, "counts">) =>
+  (b.counts.queued ?? 0) > 0 || (b.counts.processing ?? 0) > 0;
+
+function statusTag(status: string): string {
+  switch (status) {
+    case "done":
+      return "tag-done";
+    case "failed":
+      return "tag-failed";
+    case "cancelled":
+    case "removed":
+      return "tag-cancelled";
+    case "processing":
+      return "tag-processing";
+    default:
+      return "tag-queued";
+  }
+}
+
+interface Props {
+  bookId: string;
+  voice: string;
+  onClose: () => void;
+}
+
+export default function ChapterPicker({ bookId, voice, onClose }: Props) {
+  const qc = useQueryClient();
+  const pollMs = useBookPollMs();
+  const bookQ = useQuery({
+    queryKey: ["books", bookId],
+    queryFn: () => api<Book>(`/api/v1/books/${bookId}`),
+    refetchInterval: (q) => (q.state.data && isBookBusy(q.state.data) ? pollMs : false),
+  });
+  // null until the operator edits, so polling never overwrites their ticks.
+  const [edited, setEdited] = useState<Set<number> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const book = bookQ.data;
+  const chapters = book?.chapters ?? [];
+  const byIndex = new Map(chapters.map((c) => [c.index, c]));
+  // Drop ticks on chapters that became locked while the picker was open.
+  const ticked = [...(edited ?? defaultTicks(chapters))].filter((i) => {
+    const c = byIndex.get(i);
+    return c !== undefined && isEnabled(c);
+  });
+
+  const queueM = useMutation({
+    mutationFn: (indexes: number[]) =>
+      api<Book>(`/api/v1/books/${bookId}/chapters`, {
+        method: "POST",
+        body: JSON.stringify(
+          voice === "random" ? { chapters: indexes } : { chapters: indexes, voice }
+        ),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["books"] });
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+      onClose();
+    },
+    onError: (e) =>
+      setError(e instanceof ApiError ? `queue failed (HTTP ${e.status})` : (e as Error).message),
+  });
+
+  const toggle = (index: number) => {
+    const next = new Set(ticked);
+    if (next.has(index)) next.delete(index);
+    else next.add(index);
+    setEdited(next);
+  };
+
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === "Escape") onClose();
+  };
+
+  const voiceLabel = voice === "random" ? "random" : voice === "last" ? "last used" : `slot ${voice}`;
+
+  return (
+    <section
+      role="dialog"
+      aria-label={book?.title ?? "Chapters"}
+      className="card p-4 mt-3"
+      onKeyDown={onKeyDown}
+    >
+      <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+        <div className="text-sm font-bold truncate min-w-0">{book?.title ?? "Loading..."}</div>
+        <div className="flex items-center gap-2">
+          <button type="button" className="btn-ghost text-xs" onClick={() => setEdited(new Set(chapters.filter(isEnabled).map((c) => c.index)))}>
+            Select all
+          </button>
+          <button type="button" className="btn-ghost text-xs" onClick={() => setEdited(defaultTicks(chapters))}>
+            Defaults
+          </button>
+          <button type="button" className="btn-ghost text-xs" onClick={() => setEdited(new Set())}>
+            None
+          </button>
+        </div>
+      </div>
+      {bookQ.isError && (
+        <p className="text-danger text-sm" role="alert">
+          Chapters could not be loaded.
+        </p>
+      )}
+      <ul className="space-y-1 max-h-96 overflow-y-auto">
+        {chapters.map((c) => {
+          const enabled = isEnabled(c);
+          const note = !c.selectable ? "too short" : c.status !== "not_queued" ? c.status : null;
+          return (
+            <li key={c.index}>
+              <label className={`flex items-center gap-3 text-sm py-1${enabled ? " cursor-pointer" : " text-mute"}`}>
+                <input
+                  type="checkbox"
+                  checked={ticked.includes(c.index)}
+                  disabled={!enabled}
+                  onChange={() => toggle(c.index)}
+                  aria-label={`${c.index}. ${c.title}`}
+                />
+                <span className="text-xs text-mute w-6 shrink-0 text-right">{c.index}</span>
+                <span className="flex-1 min-w-0 truncate">{c.title}</span>
+                <span className="text-xs text-mute shrink-0">{c.word_count} words</span>
+                {note && (
+                  <span className={`tag ${c.selectable ? statusTag(c.status) : "tag-cancelled"} shrink-0`}>
+                    {note}
+                  </span>
+                )}
+              </label>
+            </li>
+          );
+        })}
+      </ul>
+      {error && (
+        <p className="text-danger text-sm mt-2 break-words" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="flex items-center justify-between gap-3 mt-3 flex-wrap">
+        <span className="text-xs text-mute">Voice: {voiceLabel}</span>
+        <div className="flex items-center gap-2">
+          <button type="button" className="btn-ghost text-xs" onClick={onClose}>
+            Close
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={ticked.length === 0 || queueM.isPending}
+            onClick={() => queueM.mutate(ticked.sort((a, b) => a - b))}
+          >
+            {`Narrate ${ticked.length} chapter${ticked.length === 1 ? "" : "s"}`}
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}

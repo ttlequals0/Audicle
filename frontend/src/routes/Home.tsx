@@ -1,19 +1,24 @@
 import { useEffect, useRef, useState, DragEvent, FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError, JobRow, JobStatus, postForm, SettingsPayload, VoiceSlot } from "../lib/api";
+import { api, ApiError, Book, JobRow, JobStatus, postForm, SettingsPayload, VoiceSlot } from "../lib/api";
 import { fileExt, formatBytes, formatDateTime } from "../lib/format";
 import { usePersistentOpen } from "../components/CollapsibleSection";
 import ActionMenu from "../components/ActionMenu";
+import BooksSection from "../components/BooksSection";
 
 interface SubmitResponse {
   job_id: string;
   episode_id: string;
+  chapters_detected?: boolean | null;
 }
+
+// An upload answers with a book when it was split, otherwise a queued job.
+type UploadResponse = SubmitResponse | Book;
 
 type Mode = "url" | "file";
 
 // Kept in sync with file_extraction.ALLOWED_EXTENSIONS on the backend.
-const ACCEPT = ".pdf,.docx,.md,.txt,.html,.htm,.png,.jpg,.jpeg,.webp,.tiff";
+const ACCEPT = ".pdf,.docx,.epub,.md,.txt,.html,.htm,.png,.jpg,.jpeg,.webp,.tiff";
 const ALLOWED_EXTS = ACCEPT.split(",").map((ext) => ext.slice(1));
 // Fallback only until the live UPLOAD_MAX_MB setting loads.
 const DEFAULT_MAX_UPLOAD_MB = 50;
@@ -24,6 +29,7 @@ type UploadState = "uploading" | "queued" | "failed";
 interface UploadStatus {
   state: UploadState;
   message?: string;
+  note?: string;
 }
 
 // Name plus size identifies a file within one selection, which is also how
@@ -42,6 +48,8 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   // Reference-voice choice for this submission: "random" (default), "last", or a slot id.
   const [voice, setVoice] = useState("random");
+  const [split, setSplit] = useState(false);
+  const [openBookId, setOpenBookId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Recents and the per-submission voice picker are collapsed by default; the
   // toggles are remembered across reloads.
@@ -137,15 +145,26 @@ export default function Home() {
       // failure. A file with no status yet renders its size, as before.
       setStatuses({});
       const failed: File[] = [];
+      let firstBook: string | null = null;
       for (const f of batch) {
         const key = fileKey(f);
         setStatuses((prev) => ({ ...prev, [key]: { state: "uploading" } }));
         const fd = new FormData();
         fd.append("file", f);
         fd.append("voice", voice);
+        if (split && canSplit(f)) fd.append("split_chapters", "true");
         try {
-          await postForm<SubmitResponse>("/api/v1/upload", fd);
-          setStatuses((prev) => ({ ...prev, [key]: { state: "queued" } }));
+          const res = await postForm<UploadResponse>("/api/v1/upload", fd);
+          const isBook = "book_id" in res;
+          if (isBook) firstBook ??= res.book_id;
+          const note =
+            !isBook && res.chapters_detected === false
+              ? "no chapters found, queued as one episode"
+              : undefined;
+          setStatuses((prev) => ({ ...prev, [key]: { state: "queued", note } }));
+          // Keep the row so the fallback note stays readable.
+          if (note) failed.push(f);
+          if (isBook) qc.invalidateQueries({ queryKey: ["books"] });
           // Refetch per file so the queue fills in during the batch rather than
           // all at once when it ends.
           qc.invalidateQueries({ queryKey: ["jobs"] });
@@ -157,11 +176,12 @@ export default function Home() {
           }));
         }
       }
+      if (firstBook) setOpenBookId(firstBook);
       return failed;
     },
     // One failure does not stop the run, so the mutation itself succeeds and
     // reports which files did not make it. Queued files leave the picker;
-    // failures stay, with their reason, so they can be retried or removed.
+    // failures (and split fallbacks, which carry a note) stay, with their reason.
     onSuccess: (failed) => {
       setFiles(failed);
       setRejected([]);
@@ -435,6 +455,9 @@ export default function Home() {
                           {status?.message ? (
                             <div className="text-xs text-danger break-words">{status.message}</div>
                           ) : null}
+                          {status?.note ? (
+                            <div className="text-xs text-mute break-words">{status.note}</div>
+                          ) : null}
                         </div>
                         {status ? (
                           <span className={`tag ${uploadTag(status.state)}`}>{status.state}</span>
@@ -476,12 +499,23 @@ export default function Home() {
                   <div className="text-xs text-accent mb-2">Upload files</div>
                   <div className="text-sm text-dim">Drag files here, or browse</div>
                   <div className="text-xs text-mute mt-2">
-                    PDF · DOCX · MD · TXT · HTML · images
+                    PDF · DOCX · EPUB · MD · TXT · HTML · images
                     <br />
                     up to {maxUploadMb} MB each, {MAX_BATCH} at a time
                   </div>
                 </>
               )}
+            </label>
+          )}
+          {mode === "file" && files.some(canSplit) && (
+            <label className="flex items-center gap-2 text-sm text-dim cursor-pointer">
+              <input
+                type="checkbox"
+                checked={split}
+                onChange={(e) => setSplit(e.target.checked)}
+                disabled={uploadM.isPending}
+              />
+              Split into chapters
             </label>
           )}
           <button
@@ -600,6 +634,8 @@ export default function Home() {
         </section>
       )}
 
+      <BooksSection voice={voice} openBookId={openBookId} onOpenBook={setOpenBookId} />
+
       {history.length > 0 && (
         <section className="mt-8">
           <div className="mb-3 flex items-center justify-between gap-3">
@@ -699,6 +735,8 @@ export default function Home() {
     </div>
   );
 }
+
+const canSplit = (f: File) => ["epub", "pdf"].includes(fileExt(f.name));
 
 // Processing time = claim (started_at) to last update. Null/invalid/negative
 // (queued jobs, pre-0.11.0 rows) renders nothing.

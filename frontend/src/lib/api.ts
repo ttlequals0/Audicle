@@ -228,3 +228,41 @@ export interface HealthLive {
   uptime_seconds: number;
   base_url: string;
 }
+
+export type ChapterStatus =
+  | "not_queued"
+  | "queued"
+  | "processing"
+  | "done"
+  | "failed"
+  | "cancelled"
+  | "removed";
+
+export interface BookChapter {
+  index: number;
+  title: string;
+  word_count: number;
+  default_selected: boolean;
+  selectable: boolean;
+  requested: boolean;
+  status: ChapterStatus;
+  episode_id: string | null;
+}
+
+export interface Book {
+  book_id: string;
+  title: string;
+  author: string | null;
+  filename: string;
+  format: string;
+  season_number: number;
+  has_cover: boolean;
+  created_at: string;
+  counts: Record<string, number>;
+  can_resume: boolean;
+  chapters: BookChapter[];
+  queued: number[];
+  skipped: number[];
+}
+
+export type ChapterSelection = "all" | "default" | "remaining" | number[];
