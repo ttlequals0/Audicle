@@ -2161,8 +2161,7 @@ async def _stage_finalize(
             season_number=season_number,
             episode_number=episode_number,
         )
-        # Not atomic with publish: a crash between them is safe, chapter status derives
-        # from the episode row and mark_completed is idempotent.
+        # Idempotent; chapter status derives from the episode row.
         books.mark_completed(conn, job.episode_id)
     finally:
         conn.close()

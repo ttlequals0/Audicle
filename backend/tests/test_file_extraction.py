@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import io
-import zipfile
 from pathlib import Path
 
 import docx
@@ -12,36 +11,10 @@ from app.core import database
 from app.services import book_chapters, books, file_extraction, jobs, ocr
 from app.services.extraction_types import ExtractionPermanentError, ExtractionTooShortError
 from PIL import Image, ImageDraw
-from pypdf import PdfReader, PdfWriter
+
+from tests.conftest import pdf_book, simple_epub, text_page_pdf
 
 _LONG = "Lorem ipsum dolor sit amet consectetur adipiscing elit. " * 20  # ~1100 chars
-
-
-def _make_pdf(text: str) -> bytes:
-    """Build a minimal single-page PDF whose content stream prints ``text`` so
-    pypdf.extract_text returns it. Offsets are computed so the xref is valid."""
-
-    stream = b"BT /F1 24 Tf 72 720 Td (" + text.encode("latin-1") + b") Tj ET"
-    objs = [
-        b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
-        b"/Resources << /Font << /F1 5 0 R >> >> >>",
-        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-    ]
-    out = bytearray(b"%PDF-1.4\n")
-    offsets: list[int] = []
-    for i, body in enumerate(objs, start=1):
-        offsets.append(len(out))
-        out += str(i).encode() + b" 0 obj\n" + body + b"\nendobj\n"
-    xref_pos = len(out)
-    out += b"xref\n0 " + str(len(objs) + 1).encode() + b"\n0000000000 65535 f \n"
-    for off in offsets:
-        out += f"{off:010d} 00000 n \n".encode()
-    out += b"trailer\n<< /Size " + str(len(objs) + 1).encode() + b" /Root 1 0 R >>\n"
-    out += b"startxref\n" + str(xref_pos).encode() + b"\n%%EOF"
-    return bytes(out)
 
 
 def _make_docx(*, title: str | None, author: str | None, body: str) -> bytes:
@@ -142,7 +115,7 @@ async def test_extract_text_falls_back_to_filename_title(env: Path) -> None:
 
 
 async def test_extract_pdf_text_and_filename_title(env: Path) -> None:
-    result = await _run(env, "whitepaper.pdf", _make_pdf(_LONG))
+    result = await _run(env, "whitepaper.pdf", text_page_pdf(_LONG))
     assert "Lorem ipsum" in result.markdown
     assert result.metadata["title"] == "whitepaper"
 
@@ -312,7 +285,7 @@ async def test_extract_scanned_pdf_falls_back_to_ocr(env: Path, monkeypatch) -> 
 
     monkeypatch.setattr(file_extraction, "_parse_pdf", lambda _data: (["tiny"], {0}, {}))
     monkeypatch.setattr(ocr, "ocr_pdf_pages", _fake_ocr_pdf_pages)
-    result = await _run(env, "scan.pdf", _make_pdf("tiny"))
+    result = await _run(env, "scan.pdf", text_page_pdf("tiny"))
     assert called.get("n")
     assert called["pages"] == [0]
     assert "Recovered by OCR" in result.markdown
@@ -334,7 +307,7 @@ async def test_ocr_beat_is_called_off_the_event_loop(env: Path, monkeypatch) -> 
 
     monkeypatch.setattr(file_extraction, "_parse_pdf", lambda _data: (["tiny"], {0}, {}))
     monkeypatch.setattr(ocr, "ocr_pdf_pages", _fake_ocr_pdf_pages)
-    await _run(env, "scan.pdf", _make_pdf("tiny"))
+    await _run(env, "scan.pdf", text_page_pdf("tiny"))
     assert seen.get("off_loop"), "OCR ran on the loop; the per-page beat would be loop-bound"
 
 
@@ -343,7 +316,7 @@ async def test_extract_text_pdf_does_not_invoke_ocr(env: Path, monkeypatch) -> N
         raise AssertionError("OCR must not run for a text PDF")
 
     monkeypatch.setattr(ocr, "ocr_pdf_pages", _boom)
-    result = await _run(env, "whitepaper.pdf", _make_pdf(_LONG))
+    result = await _run(env, "whitepaper.pdf", text_page_pdf(_LONG))
     assert "Lorem ipsum" in result.markdown
 
 
@@ -456,55 +429,13 @@ def test_mixed_pdf_with_ocr_disabled_fails_instead_of_omitting_scans(env, monkey
 
 
 def _epub_three_chapters() -> bytes:
-    xhtml = "application/xhtml+xml"
-    items = '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
-    points = ""
-    files = {}
-    for i, name in enumerate(("One", "Two", "Three"), 1):
-        files[f"ch{i}.xhtml"] = (
-            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title></head><body>'
-            f"<h1>{name}</h1><p>Body of chapter {name.lower()}. {_LONG}</p></body></html>"
-        )
-        items += f'<item id="c{i}" href="ch{i}.xhtml" media-type="{xhtml}"/>'
-        points += (
-            f'<navPoint id="p{i}" playOrder="{i}"><navLabel><text>{name}</text></navLabel>'
-            f'<content src="ch{i}.xhtml"/></navPoint>'
-        )
-    files["toc.ncx"] = (
-        '<?xml version="1.0"?><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">'
-        f"<navMap>{points}</navMap></ncx>"
+    names = ["One", "Two", "Three"]
+    return simple_epub(
+        title="Book",
+        author="Some Author",
+        names=names,
+        bodies=[f"Body of chapter {name.lower()}. {_LONG}" for name in names],
     )
-    refs = "".join(f'<itemref idref="c{i}"/>' for i in (1, 2, 3))
-    files["content.opf"] = (
-        '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0">'
-        '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Book</dc:title>'
-        "<dc:creator>Some Author</dc:creator></metadata>"
-        f'<manifest>{items}</manifest><spine toc="ncx">{refs}</spine></package>'
-    )
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("mimetype", "application/epub+zip")
-        zf.writestr(
-            "META-INF/container.xml",
-            '<?xml version="1.0"?><container version="1.0" '
-            'xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>'
-            '<rootfile full-path="content.opf" media-type="application/oebps-package+xml"/>'
-            "</rootfiles></container>",
-        )
-        for name, content in files.items():
-            zf.writestr(name, content)
-    return buf.getvalue()
-
-
-def _pdf_book(texts: list[str], outline: list[tuple[str, int]]) -> bytes:
-    writer = PdfWriter()
-    for text in texts:
-        writer.add_page(PdfReader(io.BytesIO(_make_pdf(text))).pages[0])
-    for title, page in outline:
-        writer.add_outline_item(title, page)
-    buf = io.BytesIO()
-    writer.write(buf)
-    return buf.getvalue()
 
 
 def _store_book(
@@ -573,7 +504,7 @@ async def test_extract_epub_chapter_returns_only_that_chapter(env: Path) -> None
 
 async def test_extract_pdf_chapter_reads_only_its_pages(env: Path) -> None:
     texts = [f"Marker{n} " + "filler words here. " * 12 for n in range(6)]
-    data = _pdf_book(texts, [("A", 0), ("B", 2), ("C", 4)])
+    data = pdf_book(texts, [("A", 0), ("B", 2), ("C", 4)])
     book, chapters = _store_book(env, "tome.pdf", data)
     assert chapters[1].locator == {"first_page": 2, "last_page": 3}
     result = await file_extraction.extract_file(_chapter_job(book, 2), get_settings())
@@ -588,7 +519,7 @@ async def test_extract_pdf_chapter_ocr_limited_to_range(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     texts = ["tiny"] * 6
-    data = _pdf_book(texts, [("A", 0), ("B", 2), ("C", 4)])
+    data = pdf_book(texts, [("A", 0), ("B", 2), ("C", 4)])
     book, _ = _store_book(env, "scan.pdf", data)
     monkeypatch.setattr(file_extraction, "page_has_image", lambda _page: True)
     seen: dict[str, list[int]] = {}
@@ -680,7 +611,7 @@ async def test_chapter_job_with_corrupt_book_source_is_permanent_error(env: Path
 def test_whole_file_pdf_ocr_indexes_are_unshifted(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    data = _pdf_book(["Native text. " * 20, "tiny", "Native text. " * 20, "tiny"], [])
+    data = pdf_book(["Native text. " * 20, "tiny", "Native text. " * 20, "tiny"], [])
     monkeypatch.setattr(file_extraction, "page_has_image", lambda _page: True)
     seen: dict[str, list[int]] = {}
 

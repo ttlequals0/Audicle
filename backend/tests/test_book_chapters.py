@@ -9,24 +9,10 @@ from app.services.book_chapters import BookFormatError
 from pypdf import PageObject, PdfReader, PdfWriter
 from pypdf.generic import DictionaryObject, NameObject
 
+from tests.conftest import make_epub, text_page_pdf
+
 NCX_TYPE = "application/x-dtbncx+xml"
 XHTML = "application/xhtml+xml"
-
-
-def make_epub(files: dict[str, bytes | str], *, opf_path="content.opf") -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("mimetype", "application/epub+zip")
-        zf.writestr(
-            "META-INF/container.xml",
-            '<?xml version="1.0"?><container version="1.0" '
-            'xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>'
-            f'<rootfile full-path="{opf_path}" media-type="application/oebps-package+xml"/>'
-            "</rootfiles></container>",
-        )
-        for name, content in files.items():
-            zf.writestr(name, content)
-    return buf.getvalue()
 
 
 def opf(items: list[tuple[str, str, str, str]], spine: list[str], *, meta="", toc=None) -> str:
@@ -545,36 +531,12 @@ def test_non_epub_type_attribute_is_not_dropped():
     assert book_chapters.epub_full_markdown(make_epub(files))[0] == "kept text"
 
 
-def _text_page_pdf(text: str) -> bytes:
-    stream = b"BT /F1 24 Tf 72 720 Td (" + text.encode("latin-1") + b") Tj ET"
-    objs = [
-        b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
-        b"/Resources << /Font << /F1 5 0 R >> >> >>",
-        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-    ]
-    out = bytearray(b"%PDF-1.4\n")
-    offsets: list[int] = []
-    for i, body in enumerate(objs, start=1):
-        offsets.append(len(out))
-        out += str(i).encode() + b" 0 obj\n" + body + b"\nendobj\n"
-    xref_pos = len(out)
-    out += b"xref\n0 " + str(len(objs) + 1).encode() + b"\n0000000000 65535 f \n"
-    for off in offsets:
-        out += f"{off:010d} 00000 n \n".encode()
-    out += b"trailer\n<< /Size " + str(len(objs) + 1).encode() + b" /Root 1 0 R >>\n"
-    out += b"startxref\n" + str(xref_pos).encode() + b"\n%%EOF"
-    return bytes(out)
-
-
 def make_pdf(pages: int, outline: list, *, texts: dict[int, str] | None = None) -> bytes:
     """outline entries: (title, page) or (title, page, "child") for a nested item."""
     writer = PdfWriter()
     for n in range(pages):
         text = (texts or {}).get(n, f"Page {n} " + "word " * 40)
-        writer.add_page(PdfReader(io.BytesIO(_text_page_pdf(text))).pages[0])
+        writer.add_page(PdfReader(io.BytesIO(text_page_pdf(text))).pages[0])
     parent = None
     for entry in outline:
         if len(entry) == 3:

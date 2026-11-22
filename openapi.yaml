@@ -2379,6 +2379,11 @@ components:
         has_cover:
           type: boolean
           title: Has Cover
+        voice_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Voice Id
         created_at:
           type: string
           title: Created At
@@ -2416,6 +2421,7 @@ components:
       - format
       - season_number
       - has_cover
+      - voice_id
       - created_at
       - counts
       - can_resume
@@ -2702,6 +2708,11 @@ components:
           - type: string
           - type: 'null'
           title: Source Filename
+        chapter:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Chapter
         reprocess:
           type: boolean
           title: Reprocess
@@ -2720,6 +2731,7 @@ components:
       - updated_at
       - started_at
       - source_filename
+      - chapter
       - reprocess
       title: JobListItem
     LoginRequest:

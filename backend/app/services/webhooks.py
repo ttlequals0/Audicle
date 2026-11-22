@@ -16,7 +16,7 @@ from typing import Any
 import httpx
 
 from app.config import Settings
-from app.services import file_extraction
+from app.services import books, file_extraction
 from app.services.episodes import Episode
 from app.services.jobs import Job
 
@@ -36,7 +36,11 @@ def _source(job: Job, episode: Episode | None) -> dict[str, Any]:
             if episode and episode.source_filename
             else file_extraction.parse_source_uri(job.url)[1]
         )
-        return {"source_type": "upload", "source_filename": filename}
+        return {
+            "source_type": "upload",
+            "source_filename": filename,
+            "chapter": books.split_chapter_uri(job.url)[1],
+        }
     return {"source_type": "url", "url": job.url}
 
 

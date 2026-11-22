@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import io
-import zipfile
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,6 +14,8 @@ from app.services import books, episodes, feed, file_extraction, jobs, runtime_s
 from app.services.book_chapters import DetectedBook, DetectedChapter
 from app.services.episodes import Episode
 from fastapi.testclient import TestClient
+
+from tests.conftest import simple_epub, text_page_pdf
 
 
 def _client(env: Path) -> TestClient:
@@ -354,6 +354,24 @@ def test_reprocess_chapter_episode_uses_book_source(env: Path) -> None:
     assert gone.status_code == 409
 
 
+def test_reprocess_chapter_episode_locks_on_book_id(env: Path, monkeypatch) -> None:
+    book, episode_id = _seed_chapter_episode(env)
+    original_lock = database.upload_staging_lock
+    locked: list[str] = []
+
+    @contextmanager
+    def _recording_lock(data_dir: Path, key: str, *, blocking: bool = True):
+        locked.append(key)
+        with original_lock(data_dir, key, blocking=blocking) as held:
+            yield held
+
+    monkeypatch.setattr(database, "upload_staging_lock", _recording_lock)
+    with _client(env) as client:
+        r = client.post(f"/api/v1/upload/{episode_id}/reprocess")
+    assert r.status_code == 201
+    assert locked == [book.id]
+
+
 def test_reprocess_chapter_episode_keeps_book_voice(env: Path) -> None:
     book, episode_id = _seed_chapter_episode(env)
     conn = database.connect(database.db_path(env))
@@ -366,7 +384,9 @@ def test_reprocess_chapter_episode_keeps_book_voice(env: Path) -> None:
     assert r.status_code == 201
     conn = database.connect(database.db_path(env))
     try:
-        row = conn.execute("SELECT voice_id FROM jobs WHERE id = ?", (r.json()["job_id"],)).fetchone()
+        row = conn.execute(
+            "SELECT voice_id FROM jobs WHERE id = ?", (r.json()["job_id"],)
+        ).fetchone()
     finally:
         conn.close()
     assert row["voice_id"] == "2"
@@ -375,80 +395,15 @@ def test_reprocess_chapter_episode_keeps_book_voice(env: Path) -> None:
 # --- POST /upload with split_chapters -----------------------------------------
 
 
-def _epub(n: int = 3, *, encrypted: bool = False, title: str | None = "Test Book") -> bytes:
-    items = ['<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>']
-    points = ""
-    files: dict[str, str] = {}
-    for i in range(1, n + 1):
-        files[f"ch{i}.xhtml"] = (
-            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title></head>'
-            f"<body><h1>Chapter {i}</h1><p>{'word ' * 60}</p></body></html>"
-        )
-        items.append(f'<item id="c{i}" href="ch{i}.xhtml" media-type="application/xhtml+xml"/>')
-        points += (
-            f'<navPoint id="p{i}" playOrder="{i}"><navLabel><text>Chapter {i}</text></navLabel>'
-            f'<content src="ch{i}.xhtml"/></navPoint>'
-        )
-    files["toc.ncx"] = (
-        '<?xml version="1.0"?><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">'
-        f"<navMap>{points}</navMap></ncx>"
-    )
-    spine = "".join(f'<itemref idref="c{i}"/>' for i in range(1, n + 1))
-    files["content.opf"] = (
-        '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0">'
-        '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
-        f'{f"<dc:title>{title}</dc:title>" if title else ""}</metadata><manifest>{"".join(items)}</manifest><spine toc="ncx">{spine}</spine></package>'
-    )
-    if encrypted:
-        files["META-INF/encryption.xml"] = (
-            '<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container" '
-            'xmlns:enc="http://www.w3.org/2001/04/xmlenc#"><enc:EncryptedData><enc:CipherData>'
-            '<enc:CipherReference URI="ch1.xhtml"/></enc:CipherData></enc:EncryptedData></encryption>'
-        )
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("mimetype", "application/epub+zip")
-        zf.writestr(
-            "META-INF/container.xml",
-            '<?xml version="1.0"?><container version="1.0" '
-            'xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>'
-            '<rootfile full-path="content.opf" media-type="application/oebps-package+xml"/>'
-            "</rootfiles></container>",
-        )
-        for name, content in files.items():
-            zf.writestr(name, content)
-    return buf.getvalue()
-
-
-def _pdf_without_outline() -> bytes:
-    stream = b"BT /F1 24 Tf 72 720 Td (" + b"hello " * 40 + b") Tj ET"
-    objs = [
-        b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
-        b"/Resources << /Font << /F1 5 0 R >> >> >>",
-        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-    ]
-    out = bytearray(b"%PDF-1.4\n")
-    offsets: list[int] = []
-    for i, body in enumerate(objs, start=1):
-        offsets.append(len(out))
-        out += str(i).encode() + b" 0 obj\n" + body + b"\nendobj\n"
-    xref_pos = len(out)
-    out += b"xref\n0 " + str(len(objs) + 1).encode() + b"\n0000000000 65535 f \n"
-    for off in offsets:
-        out += f"{off:010d} 00000 n \n".encode()
-    out += b"trailer\n<< /Size " + str(len(objs) + 1).encode() + b" /Root 1 0 R >>\n"
-    out += b"startxref\n" + str(xref_pos).encode() + b"\n%%EOF"
-    return bytes(out)
-
-
 def _post_epub(client: TestClient, data: bytes | None = None, **form: str):
     return client.post(
         "/api/v1/upload",
         files={
-            "file": ("book.epub", data if data is not None else _epub(), "application/epub+zip")
+            "file": (
+                "book.epub",
+                data if data is not None else simple_epub(),
+                "application/epub+zip",
+            )
         },
         data=form,
     )
@@ -491,7 +446,7 @@ def test_upload_split_pdf_without_outline_falls_back_to_one_job(env: Path) -> No
     with _client(env) as client:
         r = client.post(
             "/api/v1/upload",
-            files={"file": ("doc.pdf", _pdf_without_outline(), "application/pdf")},
+            files={"file": ("doc.pdf", text_page_pdf("hello " * 40), "application/pdf")},
             data={"split_chapters": "true"},
         )
     assert r.status_code == 201
@@ -512,7 +467,7 @@ def test_upload_split_epub_creates_book_and_no_jobs(env: Path) -> None:
 
 def test_upload_split_epub_without_title_uses_filename_stem(env: Path) -> None:
     with _client(env) as client:
-        r = _post_epub(client, _epub(title=None), split_chapters="true")
+        r = _post_epub(client, simple_epub(title=None), split_chapters="true")
     assert r.status_code == 201
     assert r.json()["title"] == "book"
 
@@ -560,7 +515,7 @@ def test_upload_chapters_without_split_is_400(env: Path) -> None:
 
 def test_upload_split_encrypted_epub_is_400_naming_drm(env: Path) -> None:
     with _client(env) as client:
-        r = _post_epub(client, _epub(encrypted=True), split_chapters="true")
+        r = _post_epub(client, simple_epub(encrypted=True), split_chapters="true")
     assert r.status_code == 400
     assert "DRM" in r.json()["error"]
     assert _row_counts(env) == (0, 0, 0)
@@ -574,7 +529,7 @@ def test_upload_split_unknown_chapter_is_400(env: Path) -> None:
 
 
 def test_split_and_unsplit_uploads_of_same_file_coexist(env: Path) -> None:
-    data = _epub()
+    data = simple_epub()
     with _client(env) as client:
         whole = _post_epub(client, data)
         split = _post_epub(client, data, split_chapters="true", chapters="1")
@@ -585,6 +540,10 @@ def test_split_and_unsplit_uploads_of_same_file_coexist(env: Path) -> None:
         whole_again = _post_epub(client, data)
     assert whole_again.status_code == 409
     assert _row_counts(env) == (1, 3, 2)
+    whole_copy = media_dir(get_settings()) / f"{whole.json()['episode_id']}.source.epub"
+    book_copy = books.source_file(get_settings(), split.json()["book_id"], ".epub")
+    assert whole_copy.read_bytes() == data
+    assert book_copy.read_bytes() == data
 
 
 def test_upload_split_removes_book_directory_when_create_fails(
@@ -600,7 +559,7 @@ def test_upload_split_removes_book_directory_when_create_fails(
 
 
 def test_split_upload_with_bad_chapters_writes_nothing_and_keeps_season(env: Path) -> None:
-    data = _epub()
+    data = simple_epub()
     with _client(env) as client:
         bad = _post_epub(client, data, split_chapters="true", chapters="99")
         assert bad.status_code == 400

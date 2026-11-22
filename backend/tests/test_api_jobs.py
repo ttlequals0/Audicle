@@ -6,7 +6,7 @@ from pathlib import Path
 from app.config import get_settings
 from app.core import database
 from app.main import create_app
-from app.services import episodes, file_extraction, jobs
+from app.services import books, episodes, file_extraction, jobs
 from fastapi.testclient import TestClient
 
 
@@ -32,6 +32,18 @@ def test_list_jobs_returns_all_when_no_status_filter(env: Path) -> None:
         response = client.get("/api/v1/jobs")
     assert response.status_code == 200
     assert response.headers["X-Total-Count"] == "1"
+
+
+def test_list_jobs_identifies_chapter_jobs(env: Path) -> None:
+    source_uri = file_extraction.build_source_uri("a" * 16, "novel.epub")
+    _seed_job(env, url=books.chapter_uri(source_uri, 7))
+    _seed_job(env, url=file_extraction.build_source_uri("b" * 16, "plain.pdf"))
+    _seed_job(env, url="https://example.test/a")
+    with _client(env) as client:
+        items = {i["source_filename"] or i["url"]: i for i in client.get("/api/v1/jobs").json()}
+    assert items["novel.epub"]["chapter"] == 7
+    assert items["plain.pdf"]["chapter"] is None
+    assert items["https://example.test/a"]["chapter"] is None
 
 
 def test_list_jobs_filters_by_status(env: Path) -> None:
@@ -154,6 +166,37 @@ def test_requeue_upload_checks_original_and_enqueues_under_upload_lock(
         response = client.post(f"/api/v1/jobs/{created.job.id}/requeue")
     assert response.status_code == 201
     assert response.json()["episode_id"] == episode_id
+
+
+def test_requeue_chapter_job_locks_on_book_id(env: Path, monkeypatch) -> None:
+    source_uri = file_extraction.build_source_uri("a" * 64, "novel.epub")
+    chapter_url = books.chapter_uri(source_uri, 2)
+    database.run_migrations(env)
+    conn = database.connect(database.db_path(env))
+    try:
+        created = jobs.create_job(conn, chapter_url)
+        jobs.mark_failed(conn, created.job.id, stage="extract", error="retry")
+    finally:
+        conn.close()
+    book_id = books.book_id_for(source_uri)
+    source = books.source_file(get_settings(), book_id, ".epub")
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"EPUB")
+
+    original_lock = database.upload_staging_lock
+    locked: list[str] = []
+
+    @contextmanager
+    def _recording_lock(data_dir: Path, key: str, *, blocking: bool = True):
+        locked.append(key)
+        with original_lock(data_dir, key, blocking=blocking) as held:
+            yield held
+
+    monkeypatch.setattr(database, "upload_staging_lock", _recording_lock)
+    with _client(env) as client:
+        response = client.post(f"/api/v1/jobs/{created.job.id}/requeue")
+    assert response.status_code == 201
+    assert locked == [book_id]
 
 
 def test_delete_job_rejects_processing(env: Path) -> None:

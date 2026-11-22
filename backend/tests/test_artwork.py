@@ -167,6 +167,46 @@ async def test_local_cover_is_processed_without_network(
         assert img.size == (get_settings().ARTWORK_SIZE_PX,) * 2
 
 
+async def _render_local_cover(tmp_path: Path, data: bytes):
+    cover = get_settings().DATA_DIR / "books" / "b1" / "cover.png"
+    cover.parent.mkdir(parents=True, exist_ok=True)
+    cover.write_bytes(data)
+    return await artwork.process_artwork(
+        metadata={"book_cover_path": str(cover)},
+        episode_id="chap1",
+        output_dir=tmp_path,
+        settings=get_settings(),
+    )
+
+
+async def test_local_cover_is_padded_not_cropped(env: Path, tmp_path: Path) -> None:
+    img = Image.new("RGB", (600, 900), (0, 0, 255))
+    img.paste((255, 0, 0), (0, 0, 600, 100))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+
+    result = await _render_local_cover(tmp_path, buf.getvalue())
+
+    assert result is not None
+    side = get_settings().ARTWORK_SIZE_PX
+    with Image.open(result.jpg_path) as out:
+        assert out.size == (side, side)
+        rgb = out.convert("RGB")
+        # the title band at the top of the cover survives (a centre crop would cut it)
+        r, _g, b = rgb.getpixel((side // 2, side // 40))
+        assert r > 200 and b < 60
+        # padding columns are the cover's average colour, not cover pixels
+        r, _g, b = rgb.getpixel((2, side // 2))
+        assert 5 < r < 80 and 180 < b < 250
+
+
+async def test_small_local_cover_is_still_used(env: Path, tmp_path: Path) -> None:
+    result = await _render_local_cover(tmp_path, _png_bytes(300, 450))
+    assert result is not None
+    with Image.open(result.jpg_path) as out:
+        assert out.size == (get_settings().ARTWORK_SIZE_PX,) * 2
+
+
 async def test_unreadable_local_cover_falls_back(
     env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

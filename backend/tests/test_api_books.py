@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import zipfile
 from pathlib import Path
 
 import pytest
@@ -12,66 +11,7 @@ from app.services import books, jobs, runtime_settings, voices
 from fastapi.testclient import TestClient
 from PIL import Image
 
-NCX_TYPE = "application/x-dtbncx+xml"
-XHTML = "application/xhtml+xml"
-
-
-def _epub(
-    n: int = 3,
-    *,
-    cover: bytes | None = None,
-    encrypted: bool = False,
-    words: tuple[int, ...] = (),
-) -> bytes:
-    items = [f'<item id="ncx" href="toc.ncx" media-type="{NCX_TYPE}"/>']
-    points = ""
-    files: dict[str, bytes | str] = {}
-    for i in range(1, n + 1):
-        files[f"ch{i}.xhtml"] = (
-            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title></head>'
-            f"<body><h1>Chapter {i}</h1><p>{'word ' * (words[i - 1] if words else 60)}</p></body></html>"
-        )
-        items.append(f'<item id="c{i}" href="ch{i}.xhtml" media-type="{XHTML}"/>')
-        points += (
-            f'<navPoint id="p{i}" playOrder="{i}"><navLabel><text>Chapter {i}</text></navLabel>'
-            f'<content src="ch{i}.xhtml"/></navPoint>'
-        )
-    meta = "<dc:title>Test Book</dc:title><dc:creator>Test Author</dc:creator>"
-    if cover:
-        files["cover.img"] = cover
-        items.append(
-            '<item id="cov" href="cover.img" media-type="image/png" properties="cover-image"/>'
-        )
-        meta += '<meta name="cover" content="cov"/>'
-    spine = "".join(f'<itemref idref="c{i}"/>' for i in range(1, n + 1))
-    files["toc.ncx"] = (
-        '<?xml version="1.0"?><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">'
-        f"<navMap>{points}</navMap></ncx>"
-    )
-    files["content.opf"] = (
-        '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0">'
-        f'<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">{meta}</metadata>'
-        f'<manifest>{"".join(items)}</manifest><spine toc="ncx">{spine}</spine></package>'
-    )
-    if encrypted:
-        files["META-INF/encryption.xml"] = (
-            '<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container" '
-            'xmlns:enc="http://www.w3.org/2001/04/xmlenc#"><enc:EncryptedData><enc:CipherData>'
-            '<enc:CipherReference URI="ch1.xhtml"/></enc:CipherData></enc:EncryptedData></encryption>'
-        )
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("mimetype", "application/epub+zip")
-        zf.writestr(
-            "META-INF/container.xml",
-            '<?xml version="1.0"?><container version="1.0" '
-            'xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>'
-            '<rootfile full-path="content.opf" media-type="application/oebps-package+xml"/>'
-            "</rootfiles></container>",
-        )
-        for name, content in files.items():
-            zf.writestr(name, content)
-    return buf.getvalue()
+from tests.conftest import simple_epub
 
 
 def _png(side: int = 8) -> bytes:
@@ -86,7 +26,7 @@ def _client(env: Path) -> TestClient:
 
 
 def _split(client: TestClient, data: bytes | None = None, **form: str):
-    data = data if data is not None else _epub()
+    data = data if data is not None else simple_epub()
     return client.post(
         "/api/v1/upload",
         files={"file": ("book.epub", data, "application/epub+zip")},
@@ -176,7 +116,7 @@ def test_get_book_reports_chapter_status(env: Path) -> None:
 
 def test_cover_is_reencoded_as_jpeg(env: Path) -> None:
     with _client(env) as client:
-        body = _split(client, _epub(cover=_png())).json()
+        body = _split(client, simple_epub(cover=_png())).json()
     assert body["has_cover"] is True
     cover = books.cover_file(get_settings(), body["book_id"])
     assert Image.open(cover).format == "JPEG"
@@ -184,7 +124,18 @@ def test_cover_is_reencoded_as_jpeg(env: Path) -> None:
 
 def test_unreadable_cover_is_dropped(env: Path) -> None:
     with _client(env) as client:
-        response = _split(client, _epub(cover=b"not an image"))
+        response = _split(client, simple_epub(cover=b"not an image"))
+    assert response.status_code == 201
+    assert response.json()["has_cover"] is False
+    assert not books.cover_file(get_settings(), response.json()["book_id"]).exists()
+
+
+@pytest.mark.parametrize("fmt", ["BMP", "TIFF"])
+def test_split_upload_drops_cover_in_unsupported_format(env: Path, fmt: str) -> None:
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), (200, 10, 10)).save(buf, format=fmt)
+    with _client(env) as client:
+        response = _split(client, simple_epub(cover=buf.getvalue()))
     assert response.status_code == 201
     assert response.json()["has_cover"] is False
     assert not books.cover_file(get_settings(), response.json()["book_id"]).exists()
@@ -253,6 +204,17 @@ def test_queue_rejects_bad_bodies(env: Path) -> None:
         assert client.post(url, json={"chapters": [99]}).status_code == 400
         assert client.post(url, json={"chapters": ["1"]}).status_code == 400
         assert client.post(url, json={"chapters": "all", "extra": 1}).status_code == 400
+
+
+def test_book_response_exposes_voice(env: Path, three_voices: None) -> None:
+    with _client(env) as client:
+        book_id = _split(client).json()["book_id"]
+        before = client.get(f"/api/v1/books/{book_id}").json()
+        url = f"/api/v1/books/{book_id}/chapters"
+        assert client.post(url, json={"chapters": [1], "voice": "2"}).status_code == 201
+        after = client.get(f"/api/v1/books/{book_id}").json()
+    assert before["voice_id"] is None
+    assert after["voice_id"] == "2"
 
 
 def test_book_voice_is_sticky(env: Path, three_voices: None) -> None:
@@ -334,7 +296,7 @@ def test_book_routes_404(env: Path) -> None:
 
 def test_book_chapter_out_reports_unselectable_short_chapter(env: Path) -> None:
     with _client(env) as client:
-        book_id = _split(client, _epub(words=(60, 1, 60))).json()["book_id"]
+        book_id = _split(client, simple_epub(words=(60, 1, 60))).json()["book_id"]
         chapters = client.get(f"/api/v1/books/{book_id}").json()["chapters"]
     short = chapters[1]
     assert short["selectable"] is False
@@ -351,7 +313,7 @@ def test_split_upload_uses_overlay_min_extraction_chars(env: Path) -> None:
         conn.close()
     with TestClient(create_app()) as client:
         # 60 words is ~300 chars: above the 150 default, below the 400 overlay
-        body = _split(client, _epub(words=(60, 120, 60))).json()
+        body = _split(client, simple_epub(words=(60, 120, 60))).json()
     assert {c["index"]: c["selectable"] for c in body["chapters"]} == {1: False, 2: True, 3: False}
 
 
@@ -360,7 +322,7 @@ def test_split_upload_drops_oversized_cover(env: Path, monkeypatch: pytest.Monke
     monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 100)
     with _client(env) as client:
         for side in (12, 15):  # 1x-2x the limit (warns), above 2x (raises)
-            r = _split(client, _epub(cover=_png(side)))
+            r = _split(client, simple_epub(cover=_png(side)))
             assert r.status_code == 201, side
             assert r.json()["has_cover"] is False
             assert not books.cover_file(get_settings(), r.json()["book_id"]).exists()

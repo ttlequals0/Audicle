@@ -17,7 +17,7 @@ from typing import Any
 
 from app.config import Settings
 from app.core.paths import book_dir
-from app.services import jobs
+from app.services import jobs, settings_store
 from app.services.book_chapters import DetectedBook, DetectedChapter
 
 CHAPTER_FRAGMENT = "#chapter="
@@ -119,6 +119,13 @@ def book_id_for(source_uri: str) -> str:
     return jobs.compute_episode_id(source_uri)
 
 
+def staging_lock_key(url: str, episode_id: str) -> str:
+    """Chapter jobs serialize on their book (as book delete and queue do); other uploads on the episode."""
+
+    base, idx = split_chapter_uri(url)
+    return episode_id if idx is None else book_id_for(base)
+
+
 def source_file(settings: Settings, book_id: str, ext: str) -> Path:
     return book_dir(settings, book_id) / f"source{ext}"
 
@@ -140,11 +147,10 @@ def create_book(
     conn.execute("BEGIN IMMEDIATE")
     try:
         # High-water mark in settings so a deleted book's season is never reused.
-        mark = conn.execute(
-            "SELECT value FROM settings WHERE key = ?", (SEASON_HIGH_WATER_KEY,)
-        ).fetchone()
+        mark = settings_store.get(conn, SEASON_HIGH_WATER_KEY)
         live = conn.execute("SELECT COALESCE(MAX(season_number), 0) FROM books").fetchone()[0]
-        season = max(live, int(mark["value"]) if mark else 0) + 1
+        season = max(live, int(mark) if mark else 0) + 1
+        # settings_store.set_ commits, which would end this transaction early.
         conn.execute(
             "INSERT INTO settings (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",

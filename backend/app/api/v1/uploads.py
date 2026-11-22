@@ -55,6 +55,9 @@ async def read_upload_capped(upload: UploadFile, cap: int) -> bytes:
     return b"".join(chunks)
 
 
+_COVER_FORMATS = ("JPEG", "PNG", "GIF", "WEBP")
+
+
 def _prepare_book(
     data: bytes, ext: str, min_chars: int
 ) -> tuple[book_chapters.DetectedBook, bytes | None] | None:
@@ -66,7 +69,7 @@ def _prepare_book(
     cover: bytes | None = None
     if detected.cover:
         try:
-            image = Image.open(io.BytesIO(detected.cover))
+            image = Image.open(io.BytesIO(detected.cover), formats=_COVER_FORMATS)
             limit = Image.MAX_IMAGE_PIXELS
             if not limit or image.width * image.height <= limit:
                 out = io.BytesIO()
@@ -281,7 +284,12 @@ async def reprocess_upload(
 ) -> SubmitResponse:
     if not _EPISODE_ID_RE.fullmatch(episode_id):
         raise HTTPException(status_code=404, detail="episode not found")
-    with database.upload_staging_lock(settings.DATA_DIR, episode_id):
+    episode = episodes_service.get_by_id(conn, episode_id)
+    if episode is None:
+        raise HTTPException(status_code=404, detail="episode not found")
+    with database.upload_staging_lock(
+        settings.DATA_DIR, books.staging_lock_key(episode.original_url, episode_id)
+    ):
         episode = episodes_service.get_by_id(conn, episode_id)
         if episode is None:
             raise HTTPException(status_code=404, detail="episode not found")

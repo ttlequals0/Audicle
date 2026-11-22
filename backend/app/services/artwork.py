@@ -146,9 +146,11 @@ def _render_and_store(
     episode_id: str,
     output_dir: Path,
     settings: Settings,
+    *,
+    pad_square: bool = False,
 ) -> ArtworkResult | None:
     try:
-        rendered = _decode_and_render(data, settings)
+        rendered = _decode_and_render(data, settings, pad_square=pad_square)
     except UnidentifiedImageError:
         _log_fallback("unidentified_format", episode_id, source_url)
         return None
@@ -217,7 +219,7 @@ def _render_and_store(
 def _process_local_cover(
     cover_path: str, episode_id: str, output_dir: Path, settings: Settings
 ) -> ArtworkResult | None:
-    """Render a book cover from local disk; the same checks as a downloaded image."""
+    """Render a book cover from local disk, padded to a square with no minimum source size."""
 
     try:
         path = Path(cover_path).resolve()
@@ -242,7 +244,7 @@ def _process_local_cover(
             error=str(exc),
         )
         return None
-    return _render_and_store(data, cover_path, episode_id, output_dir, settings)
+    return _render_and_store(data, cover_path, episode_id, output_dir, settings, pad_square=True)
 
 
 def _extract_og_image(metadata: dict[str, Any]) -> str | None:
@@ -377,9 +379,10 @@ def _encode_jpeg(img: Image.Image, quality: int) -> bytes:
     return buf.getvalue()
 
 
-def _decode_and_render(data: bytes, settings: Settings) -> _RenderedImage:
-    """Decode ``data``, validate, EXIF-rotate, flatten, crop, resize, encode
-    JPG. Raises typed exceptions; the caller maps each to a fallback reason.
+def _decode_and_render(data: bytes, settings: Settings, *, pad_square: bool) -> _RenderedImage:
+    """Decode ``data``, validate, EXIF-rotate, flatten, crop (or pad, for a book
+    cover), resize, encode JPG. Raises typed exceptions; the caller maps each to a
+    fallback reason.
     """
 
     with Image.open(io.BytesIO(data)) as opened:
@@ -396,14 +399,20 @@ def _decode_and_render(data: bytes, settings: Settings) -> _RenderedImage:
         # ``exif=b""`` strips the only hint clients have.
         oriented = ImageOps.exif_transpose(opened)
         width, height = oriented.size
-        if width < settings.ARTWORK_MIN_SOURCE_PX or height < settings.ARTWORK_MIN_SOURCE_PX:
+        too_small = (
+            width < settings.ARTWORK_MIN_SOURCE_PX or height < settings.ARTWORK_MIN_SOURCE_PX
+        )
+        if too_small and not pad_square:
             raise _SourceTooSmallError(width, height)
 
         flat = _flatten_to_rgb(oriented)
-        square = _center_crop_square(flat)
         target = settings.ARTWORK_SIZE_PX
-        if square.size != (target, target):
-            square = square.resize((target, target), Image.Resampling.LANCZOS)
+        if pad_square:
+            square = _pad_square(flat, target)
+        else:
+            square = _center_crop_square(flat)
+            if square.size != (target, target):
+                square = square.resize((target, target), Image.Resampling.LANCZOS)
 
         quality = settings.ARTWORK_JPG_QUALITY
         # A smaller copy of the same square for embedding into the MP3 (ID3 APIC).
@@ -445,6 +454,20 @@ def _center_crop_square(img: Image.Image) -> Image.Image:
     left = (width - side) // 2
     top = (height - side) // 2
     return img.crop((left, top, left + side, top + side))
+
+
+def _pad_square(img: Image.Image, target: int) -> Image.Image:
+    """Fit ``img`` inside a ``target`` square on a canvas of its average colour."""
+
+    average = img.resize((1, 1), Image.Resampling.BOX).getpixel((0, 0))
+    scale = target / max(img.size)
+    size = (max(1, round(img.width * scale)), max(1, round(img.height * scale)))
+    canvas = Image.new("RGB", (target, target), average)
+    canvas.paste(
+        img.resize(size, Image.Resampling.LANCZOS),
+        ((target - size[0]) // 2, (target - size[1]) // 2),
+    )
+    return canvas
 
 
 def _log_fallback(reason: str, episode_id: str, source_url: str | None, **extra: Any) -> None:

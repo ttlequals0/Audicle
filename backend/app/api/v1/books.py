@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import sqlite3
 from collections import Counter
 from typing import Annotated
@@ -11,12 +10,12 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, StrictInt
 
 from app.api.deps import get_conn, require_voice_loaded
+from app.api.v1.jobs import _EPISODE_ID_RE
 from app.config import Settings, get_settings
 from app.core import database
 from app.services import books, feed_revision, voices
 
 router = APIRouter(prefix="/books", tags=["books"])
-_BOOK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _STATUSES = ("not_queued", "queued", "processing", "done", "failed", "cancelled", "removed")
 
 
@@ -39,6 +38,7 @@ class BookResponse(BaseModel):
     format: str
     season_number: int
     has_cover: bool
+    voice_id: str | None
     created_at: str
     counts: dict[str, int]
     can_resume: bool
@@ -64,6 +64,7 @@ def book_response(
 ) -> BookResponse:
     chapters = books.get_chapters(conn, book.id)
     statuses = books.chapter_statuses(conn, book.id)
+    status_counts = Counter(statuses.values())
     return BookResponse(
         book_id=book.id,
         title=book.title,
@@ -72,8 +73,9 @@ def book_response(
         format=book.format,
         season_number=book.season_number,
         has_cover=book.has_cover,
+        voice_id=book.voice_id,
         created_at=book.created_at,
-        counts={s: Counter(statuses.values())[s] for s in _STATUSES},
+        counts={s: status_counts[s] for s in _STATUSES},
         can_resume=bool(books.parse_selection("remaining", chapters, statuses)),
         chapters=[
             BookChapterOut(
@@ -115,7 +117,7 @@ def queue_selection(
 
 
 def _get_or_404(conn: sqlite3.Connection, book_id: str) -> books.Book:
-    book = books.get_book(conn, book_id) if _BOOK_ID_RE.fullmatch(book_id) else None
+    book = books.get_book(conn, book_id) if _EPISODE_ID_RE.fullmatch(book_id) else None
     if book is None:
         raise HTTPException(status_code=404, detail="book not found")
     return book

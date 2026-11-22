@@ -21,7 +21,7 @@ from app.api.deps import get_conn, require_voice_loaded
 from app.api.v1.submit import SubmitResponse
 from app.config import Settings, get_settings
 from app.core import database
-from app.services import file_extraction, ssrf
+from app.services import books, file_extraction, ssrf
 from app.services import jobs as jobs_service
 
 router = APIRouter(tags=["jobs"])
@@ -56,6 +56,8 @@ class JobListItem(BaseModel):
     # 0.31.0: the uploaded filename (upload jobs only) so Recents can show the source
     # without a broken upload:// link, and whether this run was a reprocess.
     source_filename: str | None
+    # Chapter index for a chapter-split book job, else None.
+    chapter: int | None
     reprocess: bool
 
 
@@ -100,6 +102,7 @@ async def list_jobs(
             updated_at=row["updated_at"],
             started_at=row["started_at"],
             source_filename=_source_filename(row["url"]),
+            chapter=books.split_chapter_uri(row["url"])[1],
             reprocess=bool(row["reprocess"]),
         )
         for row in page_rows
@@ -125,7 +128,9 @@ async def requeue_job(
     if file_extraction.is_upload_source(job.url):
         if not _EPISODE_ID_RE.fullmatch(job.episode_id):
             raise HTTPException(status_code=409, detail="the uploaded source id is invalid")
-        with database.upload_staging_lock(settings.DATA_DIR, job.episode_id):
+        with database.upload_staging_lock(
+            settings.DATA_DIR, books.staging_lock_key(job.url, job.episode_id)
+        ):
             job = jobs_service.get_job(conn, job_id)
             if job is None:
                 raise HTTPException(status_code=404, detail="job not found")
