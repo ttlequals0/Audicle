@@ -35,3 +35,10 @@ CVE-2026-9538
 CVE-2026-119373
 CVE-2026-119374
 CVE-2026-119379
+
+# Owner: Audicle maintainers. Recheck: 2026-12-22. Added 0.63.0.
+# openssl, libssl3t64, openssl-provider-legacy (HIGH): memory-leak denial of
+# service in QUIC. Debian trixie has no fixed package (trivy status "affected").
+# Accepted by the operator on 2026-11-22; the 0.62.1 images carry the same
+# finding. Remove when trixie ships the fix.
+CVE-2026-124709

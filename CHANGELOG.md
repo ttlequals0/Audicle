@@ -31,6 +31,10 @@ work lives under `[Unreleased]`.
 - A book narrates in one voice. The voice is stored the first time chapters are queued and reused on later calls unless `voice` is given, so a `random` default does not change voice between chapters.
 - Bump pydantic to 2.14.3 and ruff to 0.17.5 in all three packages, huggingface-hub to 2.2.0, and the uv build image and CI uv to 0.13.9.
 
+### Security
+
+- Accept three HIGH CVEs that Debian trixie has no fixed package for: CVE-2026-124709 (OpenSSL, all images), CVE-2026-109094 (X.Org server, render) and CVE-2026-109908 (libfontenc, render). The 0.62.1 app and render images carry the same findings. Each has a dated entry in the image's trivy ignorefile with a recheck date of 2026-12-22.
+
 ## [0.62.1] - 2026-11-18
 
 ### Changed
