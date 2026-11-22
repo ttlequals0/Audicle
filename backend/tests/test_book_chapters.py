@@ -6,6 +6,8 @@ import zipfile
 import pytest
 from app.services import book_chapters
 from app.services.book_chapters import BookFormatError
+from pypdf import PdfReader, PdfWriter
+from pypdf.generic import DictionaryObject, NameObject
 
 NCX_TYPE = "application/x-dtbncx+xml"
 XHTML = "application/xhtml+xml"
@@ -538,3 +540,127 @@ def test_non_epub_type_attribute_is_not_dropped():
         "content.opf": opf([("a", "a.xhtml", XHTML, "")], ["a"]),
     }
     assert book_chapters.epub_full_markdown(make_epub(files))[0] == "kept text"
+
+
+def _text_page_pdf(text: str) -> bytes:
+    stream = b"BT /F1 24 Tf 72 720 Td (" + text.encode("latin-1") + b") Tj ET"
+    objs = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+        b"/Resources << /Font << /F1 5 0 R >> >> >>",
+        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets: list[int] = []
+    for i, body in enumerate(objs, start=1):
+        offsets.append(len(out))
+        out += str(i).encode() + b" 0 obj\n" + body + b"\nendobj\n"
+    xref_pos = len(out)
+    out += b"xref\n0 " + str(len(objs) + 1).encode() + b"\n0000000000 65535 f \n"
+    for off in offsets:
+        out += f"{off:010d} 00000 n \n".encode()
+    out += b"trailer\n<< /Size " + str(len(objs) + 1).encode() + b" /Root 1 0 R >>\n"
+    out += b"startxref\n" + str(xref_pos).encode() + b"\n%%EOF"
+    return bytes(out)
+
+
+def make_pdf(pages: int, outline: list, *, texts: dict[int, str] | None = None) -> bytes:
+    """outline entries: (title, page) or (title, page, "child") for a nested item."""
+    writer = PdfWriter()
+    for n in range(pages):
+        text = (texts or {}).get(n, f"Page {n} " + "word " * 40)
+        writer.add_page(PdfReader(io.BytesIO(_text_page_pdf(text))).pages[0])
+    parent = None
+    for entry in outline:
+        if len(entry) == 3:
+            writer.add_outline_item(entry[0], entry[1], parent=parent)
+        else:
+            parent = writer.add_outline_item(entry[0], entry[1])
+    buf = io.BytesIO()
+    writer.write(buf)
+    return buf.getvalue()
+
+
+def ranges(book) -> list[tuple[int, int]]:
+    return [(c.locator["first_page"], c.locator["last_page"]) for c in book.chapters]
+
+
+def test_pdf_outline_page_ranges():
+    data = make_pdf(10, [("One", 0), ("Two", 3), ("Three", 7)])
+    book = book_chapters.detect(data, ".pdf", min_chars=10)
+    assert book.format == "pdf"
+    assert book.cover is None
+    assert ranges(book) == [(0, 2), (3, 6), (7, 9)]
+    assert [c.title for c in book.chapters] == ["One", "Two", "Three"]
+    assert [c.idx for c in book.chapters] == [1, 2, 3]
+    assert all(c.word_count > 0 and c.char_count > 0 for c in book.chapters)
+    assert all(c.default_selected for c in book.chapters)
+
+
+def test_pdf_nested_outline_items_ignored():
+    data = make_pdf(6, [("One", 0), ("Nested", 1, "child"), ("Two", 3)])
+    book = book_chapters.detect(data, ".pdf", min_chars=10)
+    assert [c.title for c in book.chapters] == ["One", "Two"]
+    assert ranges(book) == [(0, 2), (3, 5)]
+
+
+def test_pdf_without_outline_detects_none():
+    assert book_chapters.detect(make_pdf(4, []), ".pdf", min_chars=10) is None
+
+
+def test_pdf_single_outline_item_detects_none():
+    assert book_chapters.detect(make_pdf(4, [("Only", 0)]), ".pdf", min_chars=10) is None
+
+
+def test_pdf_unresolvable_and_out_of_order_items_skipped():
+    data = make_pdf(8, [("One", 0), ("Dup", 0), ("Two", 4), ("Back", 2), ("Three", 6)])
+    reader = PdfReader(io.BytesIO(data))
+    writer = PdfWriter(clone_from=reader)
+    writer.add_outline_item("Nowhere", 0)
+    broken = writer.outline[-1]
+    del broken[NameObject("/Page")]
+    buf = io.BytesIO()
+    writer.write(buf)
+    book = book_chapters.detect(buf.getvalue(), ".pdf", min_chars=10)
+    assert [c.title for c in book.chapters] == ["One", "Two", "Three"]
+    assert ranges(book) == [(0, 3), (4, 5), (6, 7)]
+
+
+def test_corrupt_pdf_raises_book_format_error():
+    with pytest.raises(BookFormatError):
+        book_chapters.detect(b"%PDF-1.4 not really a pdf", ".pdf", min_chars=10)
+
+
+def test_pdf_default_selection_matter_short_text_and_image():
+    texts = {0: "x", 1: "x", 2: "x", 3: "x", 4: "x", 5: "x"}
+    data = make_pdf(
+        8, [("Chapter 1", 0), ("Copyright", 2), ("Chapter 2", 3), ("Scan", 5)], texts=texts
+    )
+    reader = PdfReader(io.BytesIO(data))
+    writer = PdfWriter(clone_from=reader)
+    page = writer.pages[5]
+    image = DictionaryObject({NameObject("/Subtype"): NameObject("/Image")})
+    xobjects = DictionaryObject({NameObject("/Im0"): writer._add_object(image)})
+    page["/Resources"][NameObject("/XObject")] = xobjects
+    buf = io.BytesIO()
+    writer.write(buf)
+    book = book_chapters.detect(buf.getvalue(), ".pdf", min_chars=200)
+    by_title = {c.title: c.default_selected for c in book.chapters}
+    assert by_title == {
+        "Chapter 1": False,
+        "Copyright": False,
+        "Chapter 2": False,
+        "Scan": True,
+    }
+
+
+def test_pdf_metadata_title_and_author():
+    reader = PdfReader(io.BytesIO(make_pdf(4, [("One", 0), ("Two", 2)])))
+    writer = PdfWriter(clone_from=reader)
+    writer.add_metadata({"/Title": "The Book", "/Author": "A. Writer"})
+    buf = io.BytesIO()
+    writer.write(buf)
+    book = book_chapters.detect(buf.getvalue(), ".pdf", min_chars=10)
+    assert (book.title, book.author) == ("The Book", "A. Writer")

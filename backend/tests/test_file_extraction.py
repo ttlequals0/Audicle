@@ -7,7 +7,7 @@ from pathlib import Path
 import docx
 import pytest
 from app.config import get_settings
-from app.services import file_extraction, jobs, ocr
+from app.services import book_chapters, file_extraction, jobs, ocr
 from app.services.extraction_types import ExtractionPermanentError, ExtractionTooShortError
 from PIL import Image, ImageDraw
 
@@ -219,9 +219,9 @@ def test_pdf_image_detection_distinguishes_blank_pages_and_nested_scans() -> Non
             }
         }
     }
-    assert not file_extraction._page_has_image(blank)
-    assert file_extraction._page_has_image(scan)
-    assert file_extraction._page_has_image(nested_scan)
+    assert not book_chapters.page_has_image(blank)
+    assert book_chapters.page_has_image(scan)
+    assert book_chapters.page_has_image(nested_scan)
 
 
 async def test_extract_html_pulls_main_article(env: Path) -> None:

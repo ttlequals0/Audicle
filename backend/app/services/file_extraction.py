@@ -37,6 +37,7 @@ from pypdf.errors import PyPdfError
 from app.config import Settings
 from app.core.paths import media_dir
 from app.services import html_markdown, ocr
+from app.services.book_chapters import page_has_image
 from app.services.extraction_types import (
     ExtractionPermanentError,
     ExtractionResult,
@@ -233,7 +234,7 @@ def _parse_pdf(data: bytes) -> tuple[list[str], set[int], dict[str, Any]]:
         reader = PdfReader(io.BytesIO(data))
         source_pages = list(reader.pages)
         pages = [page.extract_text() or "" for page in source_pages]
-        image_pages = {index for index, page in enumerate(source_pages) if _page_has_image(page)}
+        image_pages = {index for index, page in enumerate(source_pages) if page_has_image(page)}
     except (PyPdfError, ValueError, OSError) as exc:
         raise ExtractionPermanentError(f"could not read PDF: {exc}") from exc
     pages = [page.strip() for page in pages]
@@ -245,32 +246,6 @@ def _parse_pdf(data: bytes) -> tuple[list[str], set[int], dict[str, Any]]:
         if info.author:
             metadata["author"] = str(info.author)
     return pages, image_pages, metadata
-
-
-def _page_has_image(page: Any) -> bool:
-    """Whether a PDF page contains an image XObject, including nested forms."""
-
-    def visit(resources: Any, seen: set[int]) -> bool:
-        if resources is None:
-            return False
-        if hasattr(resources, "get_object"):
-            resources = resources.get_object()
-        xobjects = resources.get("/XObject")
-        if xobjects is None:
-            return False
-        for reference in xobjects.values():
-            item = reference.get_object() if hasattr(reference, "get_object") else reference
-            if id(item) in seen:
-                continue
-            seen.add(id(item))
-            subtype = item.get("/Subtype")
-            if subtype == "/Image":
-                return True
-            if subtype == "/Form" and visit(item.get("/Resources"), seen):
-                return True
-        return False
-
-    return visit(page.get("/Resources"), set())
 
 
 def _parse_docx(data: bytes) -> tuple[str, dict[str, Any]]:

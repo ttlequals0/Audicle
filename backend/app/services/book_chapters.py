@@ -1,7 +1,8 @@
-"""Chapter detection and text extraction for uploaded books (EPUB half).
+"""Chapter detection and text extraction for uploaded books (EPUB and PDF).
 
 Pure functions over file bytes: no database, settings, or network. An EPUB is
-read with zipfile, defusedxml (container, OPF, NCX) and lxml (XHTML, nav).
+read with zipfile, defusedxml (container, OPF, NCX) and lxml (XHTML, nav). A PDF is
+read with pypdf (bookmark outline).
 """
 
 from __future__ import annotations
@@ -20,6 +21,8 @@ import defusedxml.ElementTree as DET
 from defusedxml import DefusedXmlException
 from lxml import etree
 from lxml import html as lxml_html
+from pypdf import PdfReader
+from pypdf.errors import PyPdfError
 
 MAX_UNCOMPRESSED_BYTES = 200 * 1024 * 1024
 MAX_ARCHIVE_ENTRIES = 5000
@@ -110,6 +113,32 @@ class DetectedBook:
     author: str | None
     cover: bytes | None
     chapters: list[DetectedChapter]
+
+
+def page_has_image(page: Any) -> bool:
+    """Whether a PDF page contains an image XObject, including nested forms."""
+
+    def visit(resources: Any, seen: set[int]) -> bool:
+        if resources is None:
+            return False
+        if hasattr(resources, "get_object"):
+            resources = resources.get_object()
+        xobjects = resources.get("/XObject")
+        if xobjects is None:
+            return False
+        for reference in xobjects.values():
+            item = reference.get_object() if hasattr(reference, "get_object") else reference
+            if id(item) in seen:
+                continue
+            seen.add(id(item))
+            subtype = item.get("/Subtype")
+            if subtype == "/Image":
+                return True
+            if subtype == "/Form" and visit(item.get("/Resources"), seen):
+                return True
+        return False
+
+    return visit(page.get("/Resources"), set())
 
 
 def is_front_or_back_matter(title: str) -> bool:
@@ -520,7 +549,66 @@ def _locator(
     }
 
 
+def _default_selected(title: str, char_count: int, has_image: bool, min_chars: int) -> bool:
+    return not is_front_or_back_matter(title) and (char_count >= min_chars or has_image)
+
+
+def _detect_pdf(data: bytes, min_chars: int) -> DetectedBook | None:
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        outline = reader.outline
+        if len(outline) > MAX_ARCHIVE_ENTRIES:
+            raise BookFormatError("The PDF outline has too many entries.")
+        total = len(reader.pages)
+        kept: list[tuple[str, int]] = []
+        for item in outline:
+            if isinstance(item, list):
+                continue
+            try:
+                page = reader.get_destination_page_number(item)
+            except (PyPdfError, ValueError, KeyError, TypeError, AttributeError):
+                continue
+            if not isinstance(page, int) or not 0 <= page < total:
+                continue
+            if kept and page <= kept[-1][1]:
+                continue
+            kept.append((_clean(str(item.title or "")), page))
+        if len(kept) < 2:
+            return None
+        chapters: list[DetectedChapter] = []
+        chars = 0
+        for i, (title, first) in enumerate(kept):
+            last = (kept[i + 1][1] if i + 1 < len(kept) else total) - 1
+            pages = [reader.pages[n] for n in range(first, last + 1)]
+            text = "\n\n".join(t for t in (p.extract_text().strip() for p in pages) if t)
+            chars += len(text)
+            if chars > MAX_EXTRACTED_CHARS:
+                raise BookFormatError("The PDF contains too much text.")
+            title = title or f"Section {i + 1}"
+            has_image = any(page_has_image(p) for p in pages)
+            chapters.append(
+                DetectedChapter(
+                    idx=i + 1,
+                    title=title,
+                    locator={"first_page": first, "last_page": last},
+                    word_count=len(text.split()),
+                    char_count=len(text),
+                    default_selected=_default_selected(title, len(text), has_image, min_chars),
+                )
+            )
+        info = reader.metadata
+    except (PyPdfError, ValueError, OSError, RecursionError) as exc:
+        if isinstance(exc, BookFormatError):
+            raise
+        raise BookFormatError("The PDF could not be read.") from exc
+    title = str(info.title) if info is not None and info.title else None
+    author = str(info.author) if info is not None and info.author else None
+    return DetectedBook("pdf", title, author, None, chapters)
+
+
 def detect(data: bytes, ext: str, *, min_chars: int) -> DetectedBook | None:
+    if ext.lower() == ".pdf":
+        return _detect_pdf(data, min_chars)
     if ext.lower() != ".epub":
         return None
     book = _Epub(data)
@@ -538,7 +626,7 @@ def detect(data: bytes, ext: str, *, min_chars: int) -> DetectedBook | None:
                 locator=locator,
                 word_count=len(text.split()),
                 char_count=len(text),
-                default_selected=not is_front_or_back_matter(title) and len(text) >= min_chars,
+                default_selected=_default_selected(title, len(text), False, min_chars),
             )
         )
     if len(chapters) < 2:
