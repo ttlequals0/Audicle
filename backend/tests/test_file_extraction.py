@@ -30,6 +30,42 @@ def _make_docx(*, title: str | None, author: str | None, body: str) -> bytes:
     return buf.getvalue()
 
 
+def _forbid_docx_parse(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*_a: object, **_k: object) -> None:
+        raise AssertionError("parser reached")
+
+    monkeypatch.setattr(file_extraction.docx, "Document", boom)
+
+
+def test_docx_over_xml_cap_is_rejected_before_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
+    data = _make_docx(title=None, author=None, body="hello")
+    monkeypatch.setattr(file_extraction, "MAX_DOCX_XML_BYTES", 100)
+    _forbid_docx_parse(monkeypatch)
+    with pytest.raises(ExtractionPermanentError, match="too large once uncompressed"):
+        file_extraction._parse_docx(data)
+
+
+def test_docx_over_total_uncompressed_cap_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    data = _make_docx(title=None, author=None, body="hello")
+    monkeypatch.setattr(book_chapters, "MAX_UNCOMPRESSED_BYTES", 100)
+    _forbid_docx_parse(monkeypatch)
+    with pytest.raises(ExtractionPermanentError, match="too large once uncompressed"):
+        file_extraction._parse_docx(data)
+
+
+def test_docx_with_too_many_entries_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    data = _make_docx(title=None, author=None, body="hello")
+    monkeypatch.setattr(book_chapters, "MAX_ARCHIVE_ENTRIES", 1)
+    _forbid_docx_parse(monkeypatch)
+    with pytest.raises(ExtractionPermanentError, match="too many entries"):
+        file_extraction._parse_docx(data)
+
+
+def test_docx_that_is_not_a_zip_is_a_permanent_error() -> None:
+    with pytest.raises(ExtractionPermanentError, match="could not read DOCX"):
+        file_extraction._parse_docx(b"not a zip")
+
+
 def _make_docx_with_table() -> bytes:
     document = docx.Document()
     document.add_paragraph("Before table. " + _LONG)

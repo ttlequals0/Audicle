@@ -21,6 +21,7 @@ import io
 import logging
 import re
 import sqlite3
+import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -67,6 +68,7 @@ ALLOWED_EXTENSIONS: frozenset[str] = frozenset(
 # filename before it is embedded in the synthetic URI / used to derive a path.
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 _MAX_FILENAME_LEN = 255
+MAX_DOCX_XML_BYTES = 50 * 1024 * 1024
 
 
 def is_upload_source(url: str) -> bool:
@@ -346,7 +348,22 @@ def _parse_pdf(
     return pages, image_pages, metadata
 
 
+def _check_docx_size(data: bytes) -> None:
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            infos = archive.infolist()
+    except zipfile.BadZipFile as exc:
+        raise ExtractionPermanentError(f"could not read DOCX: {exc}") from exc
+    if len(infos) > book_chapters.MAX_ARCHIVE_ENTRIES:
+        raise ExtractionPermanentError("DOCX has too many entries")
+    xml_bytes = sum(i.file_size for i in infos if i.filename.lower().endswith((".xml", ".rels")))
+    total = sum(i.file_size for i in infos)
+    if total > book_chapters.MAX_UNCOMPRESSED_BYTES or xml_bytes > MAX_DOCX_XML_BYTES:
+        raise ExtractionPermanentError("DOCX is too large once uncompressed")
+
+
 def _parse_docx(data: bytes) -> tuple[str, dict[str, Any]]:
+    _check_docx_size(data)
     try:
         document = docx.Document(io.BytesIO(data))
     except (PackageNotFoundError, ValueError, KeyError, OSError) as exc:
