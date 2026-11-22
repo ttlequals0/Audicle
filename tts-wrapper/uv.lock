@@ -21,7 +21,7 @@ excludes = ["gradio"]
 name = "resemble-perth"
 version = "1.0.1"
 requires-dist = ["numpy>=1.23.4", "torch", "torchaudio", "librosa>=0.7.2", "pyyaml>=5.4.1", "scipy"]
-requires-python = "==3.14.*"
+requires-python = ">=3.8"
 
 [[package]]
 name = "annotated-doc"
