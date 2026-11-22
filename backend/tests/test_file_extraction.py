@@ -663,3 +663,31 @@ def test_stored_source_path_resolves_through_book(env: Path) -> None:
     assert file_extraction.stored_source_path(settings, uri, "ep") == file_extraction.source_path(
         settings, "ep", "novel.epub"
     )
+
+
+async def test_unsplit_corrupt_epub_is_permanent_error(env: Path) -> None:
+    with pytest.raises(ExtractionPermanentError, match="could not read EPUB"):
+        await _run(env, "broken.epub", b"this is not a zip")
+
+
+async def test_chapter_job_with_corrupt_book_source_is_permanent_error(env: Path) -> None:
+    book, _ = _store_book(env, "novel.epub", _epub_three_chapters())
+    books.source_file(get_settings(), book.id, ".epub").write_bytes(b"this is not a zip")
+    with pytest.raises(ExtractionPermanentError, match="could not read EPUB"):
+        await file_extraction.extract_file(_chapter_job(book, 2), get_settings())
+
+
+def test_whole_file_pdf_ocr_indexes_are_unshifted(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = _pdf_book(["Native text. " * 20, "tiny", "Native text. " * 20, "tiny"], [])
+    monkeypatch.setattr(file_extraction, "page_has_image", lambda _page: True)
+    seen: dict[str, list[int]] = {}
+
+    def _fake_ocr(_data, _settings, _beat, page_indices):
+        seen["indices"] = list(page_indices)
+        return {i: f"Recognized page {i}. " * 20 for i in page_indices}
+
+    monkeypatch.setattr(ocr, "ocr_pdf_pages", _fake_ocr)
+    file_extraction._parse(data, ".pdf", get_settings(), lambda: None)
+    assert seen["indices"] == [1, 3]

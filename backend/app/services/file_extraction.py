@@ -124,22 +124,23 @@ def stored_source_path(settings: Settings, url: str, episode_id: str) -> Path:
     return books.source_file(settings, books.book_id_for(base_uri), extension_of(filename))
 
 
-def _load_chapter(settings: Settings, base_uri: str, idx: int) -> tuple[books.Book, books.Chapter]:
+def _load_chapter(
+    settings: Settings, base_uri: str, idx: int, episode_id: str
+) -> tuple[books.Book, books.Chapter]:
     """Look up a chapter's book and row, closing the connection before any parsing."""
 
     book_id = books.book_id_for(base_uri)
     conn = database.connect(database.db_path(settings.DATA_DIR))
     try:
-        book = books.get_book(conn, book_id)
-        chapter = next((c for c in books.get_chapters(conn, book_id) if c.idx == idx), None)
+        found = books.chapter_for_episode(conn, episode_id)
     finally:
         conn.close()
-    if book is None or chapter is None:
+    if found is None or found[1].idx != idx:
         raise ExtractionPermanentError(
             f"stored upload missing for book {book_id} (chapter {idx}); "
             "re-upload the book to reprocess it"
         )
-    return book, chapter
+    return found
 
 
 async def extract_file(
@@ -156,13 +157,14 @@ async def extract_file(
     base_uri, chapter_idx = books.split_chapter_uri(job.url)
     _, filename = parse_source_uri(base_uri)
     ext = extension_of(filename)
-    book: books.Book | None = None
-    chapter: books.Chapter | None = None
-    if chapter_idx is not None:
-        book, chapter = _load_chapter(settings, base_uri, chapter_idx)
+    found = (
+        _load_chapter(settings, base_uri, chapter_idx, job.episode_id)
+        if chapter_idx is not None
+        else None
+    )
     path = stored_source_path(settings, job.url, job.episode_id)
     if not path.exists():
-        missing = f"book {book.id}" if book else f"episode {job.episode_id}"
+        missing = f"book {found[0].id}" if found else f"episode {job.episode_id}"
         raise ExtractionPermanentError(
             f"stored upload missing for {missing} ({path.name}); "
             "re-upload the document to reprocess it"
@@ -172,11 +174,11 @@ async def extract_file(
     # it. asyncio.to_thread copies the context, so the per-page OCR beat reaches
     # the running job's watchdog.
     markdown, metadata = await asyncio.to_thread(
-        lambda: _parse(path.read_bytes(), ext, settings, beat, chapter.locator if chapter else None)
+        lambda: _parse(path.read_bytes(), ext, settings, beat, found[1].locator if found else None)
     )
     markdown = markdown.strip()
-    if book is not None and chapter is not None:
-        metadata = _chapter_metadata(settings, book, chapter)
+    if found:
+        metadata = _chapter_metadata(settings, *found)
 
     # Filename (minus extension) is the title fallback when the document declares
     # none -- the common case for PDFs, plain text, and bare markdown.
@@ -244,7 +246,7 @@ def _parse(
             raise ExtractionPermanentError(f"could not read EPUB: {exc}") from exc
     if ext == ".pdf":
         # Page indexes below are relative to the range; ``first`` maps them back for OCR.
-        first = locator["first_page"] if locator else 0
+        first = locator["first_page"] if locator is not None else 0
         pages, image_pages, metadata = (
             _parse_pdf(data) if locator is None else _parse_pdf(data, first, locator["last_page"])
         )
