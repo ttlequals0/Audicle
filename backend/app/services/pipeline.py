@@ -47,6 +47,7 @@ from app.services import (
     asr_verify,
     audio,
     audio_analysis,
+    books,
     chunker,
     cleanup_output,
     corrections,
@@ -2111,6 +2112,11 @@ async def _stage_finalize(
         source_type = "url"
         source_filename = None
 
+    season_number = metadata.get("season_number")
+    episode_number = metadata.get("episode_number")
+    if not (isinstance(season_number, int) and isinstance(episode_number, int)):
+        season_number = episode_number = None
+
     conn = database.connect(database.db_path(settings.DATA_DIR))
     try:
         # Snapshot the voice this job used (slot label, "Slot N", or "Default")
@@ -2137,7 +2143,10 @@ async def _stage_finalize(
             source_filename=source_filename,
             voice_label=voice_label,
             chapters_json=chapters_json,
+            season_number=season_number,
+            episode_number=episode_number,
         )
+        books.mark_completed(conn, job.episode_id)
     finally:
         conn.close()
 

@@ -25,6 +25,7 @@ import httpx
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from app.config import Settings
+from app.core.paths import books_dir
 from app.services import ssrf
 from app.services.atomic_write import write_bytes_atomic
 
@@ -51,12 +52,17 @@ async def process_artwork(
     output_dir: Path,
     settings: Settings,
 ) -> ArtworkResult | None:
-    """Download and process the article's ``og:image``.
+    """Process a local book cover when ``book_cover_path`` is set, else download
+    the article's ``og:image``.
 
     Returns the local JPG path on success, ``None`` on any documented failure
     (fall back to feed-level artwork). Never raises -- every error path logs
     the reason and returns ``None``.
     """
+
+    cover_path = metadata.get("book_cover_path") if isinstance(metadata, dict) else None
+    if cover_path:
+        return _process_local_cover(str(cover_path), episode_id, output_dir, settings)
 
     source_url = _extract_og_image(metadata)
     if not source_url:
@@ -127,6 +133,16 @@ async def process_artwork(
         )
         return None
 
+    return _render_and_store(data, source_url, episode_id, output_dir, settings)
+
+
+def _render_and_store(
+    data: bytes,
+    source_url: str,
+    episode_id: str,
+    output_dir: Path,
+    settings: Settings,
+) -> ArtworkResult | None:
     try:
         rendered = _decode_and_render(data, settings)
     except UnidentifiedImageError:
@@ -192,6 +208,37 @@ async def process_artwork(
     return ArtworkResult(
         jpg_path=output_path, source_url=source_url, embed_jpg_bytes=rendered.embed_jpg_bytes
     )
+
+
+def _process_local_cover(
+    cover_path: str, episode_id: str, output_dir: Path, settings: Settings
+) -> ArtworkResult | None:
+    """Render a book cover from local disk; the same checks as a downloaded image."""
+
+    try:
+        path = Path(cover_path).resolve()
+        if not path.is_relative_to(books_dir(settings).resolve()):
+            _log_fallback("local_cover_outside_books_dir", episode_id, cover_path)
+            return None
+        if path.stat().st_size > settings.ARTWORK_MAX_DOWNLOAD_BYTES:
+            _log_fallback(
+                "download_too_large",
+                episode_id,
+                cover_path,
+                limit_bytes=settings.ARTWORK_MAX_DOWNLOAD_BYTES,
+            )
+            return None
+        data = path.read_bytes()
+    except (OSError, ValueError) as exc:
+        _log_fallback(
+            "local_cover_unreadable",
+            episode_id,
+            cover_path,
+            error_class=type(exc).__name__,
+            error=str(exc),
+        )
+        return None
+    return _render_and_store(data, cover_path, episode_id, output_dir, settings)
 
 
 def _extract_og_image(metadata: dict[str, Any]) -> str | None:

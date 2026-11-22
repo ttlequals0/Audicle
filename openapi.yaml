@@ -2339,6 +2339,16 @@ components:
           - type: string
           - type: 'null'
           title: Voice Label
+        season_number:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Season Number
+        episode_number:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Episode Number
       additionalProperties: false
       type: object
       required:

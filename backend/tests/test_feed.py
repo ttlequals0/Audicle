@@ -28,6 +28,8 @@ def _episode(
     revision: int = 1,
     updated_at: str | None = None,
     chapters_json: str | None = None,
+    season_number: int | None = None,
+    episode_number: int | None = None,
 ) -> Episode:
     return Episode(
         id=id,
@@ -45,6 +47,8 @@ def _episode(
         summary=summary,
         revision=revision,
         chapters_json=chapters_json,
+        season_number=season_number,
+        episode_number=episode_number,
     )
 
 
@@ -57,12 +61,14 @@ def _render(
     *,
     env: Path,
     podcast_guid: str = "11111111-2222-3333-4444-555555555555",
+    season_names: dict[int, str] | None = None,
 ) -> bytes:
     return feed.render(
         episodes,
         settings=get_settings(),
         podcast_guid=podcast_guid,
         last_build=_last_build(),
+        season_names=season_names,
     )
 
 
@@ -138,6 +144,45 @@ def test_channel_pc2_tags_precede_items(env: Path) -> None:
         i for i, child in enumerate(channel) if child.tag == f"{{{_PODCAST_NS}}}guid"
     )
     assert pc2_guid_idx < first_item_idx
+
+
+_PC2_NS = "https://podcastindex.org/namespace/1.0"
+
+
+def _season_items(body: bytes) -> list:
+    return DET.fromstring(body).findall("channel/item")
+
+
+def test_feed_season_tags_only_on_chapter_episodes(env: Path) -> None:
+    chapter = _episode(id="chap", season_number=2, episode_number=7)
+    article = _episode(id="art")
+    body = _render([chapter, article], env=env, season_names={2: "Bad Blood"})
+    first, second = _season_items(body)
+
+    assert first.find(f"{{{_ITUNES_NS}}}season").text == "2"
+    assert first.find(f"{{{_ITUNES_NS}}}episode").text == "7"
+    season = first.find(f"{{{_PC2_NS}}}season")
+    assert season.text == "2"
+    assert season.get("name") == "Bad Blood"
+    assert first.find(f"{{{_PC2_NS}}}episode").text == "7"
+    for tag in (
+        f"{{{_ITUNES_NS}}}season",
+        f"{{{_ITUNES_NS}}}episode",
+        f"{{{_PC2_NS}}}season",
+        f"{{{_PC2_NS}}}episode",
+    ):
+        assert second.find(tag) is None
+    assert DET.fromstring(body).find(f"channel/{{{_ITUNES_NS}}}type").text == "episodic"
+
+
+def test_feed_season_tag_without_book_row_has_no_name(env: Path) -> None:
+    body = _render([_episode(id="chap", season_number=2, episode_number=7)], env=env)
+    (item,) = _season_items(body)
+
+    season = item.find(f"{{{_PC2_NS}}}season")
+    assert season.text == "2"
+    assert "name" not in season.attrib
+    assert item.find(f"{{{_PC2_NS}}}episode").text == "7"
 
 
 def test_channel_includes_itunes_type_episodic(env: Path) -> None:

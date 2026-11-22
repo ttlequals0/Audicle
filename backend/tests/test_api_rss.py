@@ -57,6 +57,25 @@ def test_get_rss_returns_200_with_xml_body(env: Path) -> None:
     assert len(items) == 1
 
 
+def test_get_rss_names_season_after_book_title(env: Path) -> None:
+    _seed(env)
+    conn = database.connect(database.db_path(env))
+    try:
+        conn.execute(
+            "INSERT INTO books (id, source_uri, filename, format, title, season_number) "
+            "VALUES ('b1', 'upload://h/b.epub', 'b.epub', 'epub', 'Bad Blood', 4)"
+        )
+        conn.execute("UPDATE episodes SET season_number = 4, episode_number = 1 WHERE id = 'ep'")
+        conn.commit()
+    finally:
+        conn.close()
+    with _client(env) as client:
+        response = client.get("/rss/test_feed.xml")
+    season = DET.fromstring(response.content).find(f"channel/item/{{{_PODCAST_NS}}}season")
+    assert season is not None and season.text == "4"
+    assert season.get("name") == "Bad Blood"
+
+
 def test_feed_projection_renders_same_xml_as_full_rows(env: Path) -> None:
     _seed(env)
     with database.connection(env) as conn:

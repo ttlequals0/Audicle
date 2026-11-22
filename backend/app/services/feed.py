@@ -67,6 +67,7 @@ def render(
     last_build: datetime,
     feed_guid_epoch: int = 0,
     feed_auth_key: str | None = None,
+    season_names: dict[int, str] | None = None,
 ) -> bytes:
     """Render the full RSS document (channel + items + PC2 tags) as bytes.
 
@@ -191,6 +192,10 @@ def render(
             else artwork_url
         )
         item.podcast.itunes_explicit("yes" if settings.FEED_EXPLICIT else "no")
+        if ep.season_number is not None:
+            item.podcast.itunes_season(ep.season_number)
+            if ep.episode_number is not None:
+                item.podcast.itunes_episode(ep.episode_number)
 
     base_xml = fg.rss_str(pretty=False)
     return _inject_pc2_tags(
@@ -199,6 +204,7 @@ def render(
         episodes=episodes,
         settings=settings,
         feed_auth_key=feed_auth_key,
+        season_names=season_names or {},
     )
 
 
@@ -270,6 +276,7 @@ def _inject_pc2_tags(
     episodes: list[Episode],
     settings: Settings,
     feed_auth_key: str | None = None,
+    season_names: dict[int, str] | None = None,
 ) -> bytes:
     """Append the PC2 namespace + channel-level + per-item PC2 elements.
 
@@ -333,6 +340,15 @@ def _inject_pc2_tags(
     # the build fails loudly rather than silently shipping wrong-episode
     # transcripts.
     for item_el, ep in zip(items, episodes, strict=True):
+        if ep.season_number is not None:
+            season_attrib = {}
+            if season_names and ep.season_number in season_names:
+                season_attrib["name"] = season_names[ep.season_number]
+            season_el = ET.SubElement(item_el, f"{{{_PODCAST_NS}}}season", attrib=season_attrib)
+            season_el.text = str(ep.season_number)
+            if ep.episode_number is not None:
+                episode_el = ET.SubElement(item_el, f"{{{_PODCAST_NS}}}episode")
+                episode_el.text = str(ep.episode_number)
         if ep.chapters_json:
             chapters_url = _media_url(
                 settings.BASE_URL,

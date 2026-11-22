@@ -56,6 +56,9 @@ class Episode:
     generation_token: str | None = None
     audio_generation_token: str | None = None
     guid_generation_token: str | None = None
+    # Set for book-chapter episodes only (finalize); NULL for everything else.
+    season_number: int | None = None
+    episode_number: int | None = None
 
 
 # cleaned_text is intentionally NOT in the default select: it's a large text
@@ -66,7 +69,8 @@ _SELECT_COLUMNS = (
     "id, job_id, title, author, original_url, audio_path, artwork_path, "
     "transcript_vtt, duration_secs, pub_date, created_at, updated_at, summary, "
     "audio_size_bytes, revision, source_type, source_filename, voice_label, "
-    "chapters_json, generation_token, audio_generation_token, guid_generation_token"
+    "chapters_json, generation_token, audio_generation_token, guid_generation_token, "
+    "season_number, episode_number"
 )
 
 
@@ -94,6 +98,8 @@ def _row_to_episode(row: sqlite3.Row) -> Episode:
         generation_token=row["generation_token"],
         audio_generation_token=row["audio_generation_token"],
         guid_generation_token=row["guid_generation_token"],
+        season_number=row["season_number"],
+        episode_number=row["episode_number"],
     )
 
 
@@ -380,6 +386,8 @@ def publish_episode_generation(
     source_filename: str | None,
     voice_label: str | None,
     chapters_json: str | None,
+    season_number: int | None = None,
+    episode_number: int | None = None,
 ) -> None:
     """Atomically publish a complete generation if the episode is unchanged."""
 
@@ -400,8 +408,9 @@ def publish_episode_generation(
                     artwork_path, transcript_vtt, duration_secs, summary,
                     cleaned_text, audio_size_bytes, source_type, source_filename,
                     voice_label, chapters_json, generation_token,
-                    audio_generation_token, guid_generation_token
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    audio_generation_token, guid_generation_token,
+                    season_number, episode_number
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     id,
                     job_id,
@@ -422,6 +431,8 @@ def publish_episode_generation(
                     token,
                     token,
                     token,
+                    season_number,
+                    episode_number,
                 ),
             )
         else:
@@ -435,6 +446,7 @@ def publish_episode_generation(
                     audio_size_bytes = ?, source_type = ?, source_filename = ?,
                     voice_label = ?, chapters_json = ?, generation_token = ?,
                     audio_generation_token = ?, guid_generation_token = ?,
+                    season_number = ?, episode_number = ?,
                     revision = revision + 1,
                     pub_date = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
                     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
@@ -458,6 +470,8 @@ def publish_episode_generation(
                     token,
                     token,
                     token,
+                    season_number,
+                    episode_number,
                     id,
                     expected_token,
                 ),

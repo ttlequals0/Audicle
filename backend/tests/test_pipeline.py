@@ -13,6 +13,7 @@ import pytest
 from app.config import get_settings
 from app.core import database
 from app.services import (
+    books,
     cleanup_output,
     episodes,
     extraction,
@@ -24,6 +25,7 @@ from app.services import (
     tts_cache,
     tts_remote,
 )
+from app.services.book_chapters import DetectedBook, DetectedChapter
 from PIL import Image
 
 
@@ -768,6 +770,83 @@ async def test_pipeline_finalize_upserts_episode_row(
     assert row.transcript_vtt and row.transcript_vtt.startswith("WEBVTT")
     # Stubbed encode returns 2.5s; round() uses banker's rounding -> 2.
     assert row.duration_secs == 2
+
+
+async def test_finalize_writes_numbers_and_marks_chapter_completed(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+    source_uri = "upload://hash1/book.epub"
+    conn = database.connect(database.db_path(env))
+    try:
+        book = books.create_book(
+            conn,
+            source_uri=source_uri,
+            filename="book.epub",
+            detected=DetectedBook(
+                format="epub",
+                title="Book",
+                author="Author",
+                cover=None,
+                chapters=[
+                    DetectedChapter(
+                        idx=7,
+                        title="Chapter 7",
+                        locator={"start": 7},
+                        word_count=1000,
+                        char_count=5000,
+                        default_selected=True,
+                        selectable=True,
+                    )
+                ],
+            ),
+            has_cover=False,
+        )
+    finally:
+        conn.close()
+
+    async def _chapter_extract(_job, _settings, **_kw):
+        return extraction.ExtractionResult(
+            markdown="raw " * 250,
+            metadata={
+                "title": "Book: Chapter 7",
+                "season_number": book.season_number,
+                "episode_number": 7,
+            },
+        )
+
+    monkeypatch.setattr(pipeline.file_extraction, "extract_file", _chapter_extract)
+    job = _seed_job(env, books.chapter_uri(source_uri, 7))
+    await pipeline.process_job(job, get_settings())
+
+    assert _job_after(env, job.id).status == "done"
+    conn = database.connect(database.db_path(env))
+    try:
+        ep = episodes.get_by_id(conn, job.episode_id)
+        chapter = books.get_chapters(conn, book.id)[0]
+    finally:
+        conn.close()
+    assert ep is not None
+    assert (ep.season_number, ep.episode_number) == (book.season_number, 7)
+    assert chapter.completed_at is not None
+
+
+async def test_finalize_leaves_numbers_null_for_articles(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+    job = _seed_job(env)
+    await pipeline.process_job(job, get_settings())
+
+    conn = database.connect(database.db_path(env))
+    try:
+        ep = episodes.get_by_id(conn, job.episode_id)
+    finally:
+        conn.close()
+    assert ep is not None
+    assert ep.season_number is None and ep.episode_number is None
 
 
 async def test_failed_first_publication_is_not_servable(

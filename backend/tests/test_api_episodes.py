@@ -175,6 +175,32 @@ def test_list_episodes_returns_voice_label(env: Path) -> None:
     assert rows[0]["voice_label"] == "Morgan"
 
 
+def test_list_episodes_returns_season_and_episode_numbers(env: Path) -> None:
+    database.run_migrations(env)
+    conn = database.connect(database.db_path(env))
+    try:
+        for id_ in ("chap", "plain"):
+            episodes.upsert(
+                conn,
+                id=id_,
+                job_id=None,
+                original_url=f"https://example.test/{id_}",
+                title="t",
+                author="a",
+                audio_path=f"/data/media/{id_}.mp3",
+                artwork_path=None,
+                transcript_vtt=None,
+                duration_secs=10,
+            )
+        conn.execute("UPDATE episodes SET season_number = 2, episode_number = 7 WHERE id = 'chap'")
+    finally:
+        conn.close()
+    with _client(env) as client:
+        rows = {r["id"]: r for r in client.get("/api/v1/episodes").json()}
+    assert (rows["chap"]["season_number"], rows["chap"]["episode_number"]) == (2, 7)
+    assert rows["plain"]["season_number"] is None and rows["plain"]["episode_number"] is None
+
+
 def test_delete_episode_removes_row_and_files(env: Path) -> None:
     _seed(env, id_="del", with_files=True)
     media = media_dir(get_settings())
