@@ -6,6 +6,13 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.63.2] - 2026-11-22
+
+### Fixed
+
+- A book chapter still announced its title twice on 0.63.1. Cleanup can put the chapter number and the title on one line, such as "Chapter Six. A Quiet Start.", and 0.63.1 only compared whole lines. A heading line is now also checked part by part: the part that repeats the title is removed and the rest is kept, so that line becomes "Chapter Six." The same applies to a label and a headline on one line, such as "Technology - Headline". Episodes narrated before this release keep the repeat until they are reprocessed.
+- Three tests that upload the same book twice failed at random. The test EPUB builder stamped its zip entries with the current time, so two builds a few seconds apart were different files. It now uses a fixed timestamp. Uploads were not affected.
+
 ## [0.63.1] - 2026-11-22
 
 ### Fixed
