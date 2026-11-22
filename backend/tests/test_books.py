@@ -223,6 +223,51 @@ def test_mark_completed_first_publish_wins_and_ignores_plain_episodes(conn) -> N
     books.mark_completed(conn, "unrelated")
 
 
+def _revision(conn) -> int:
+    return conn.execute("SELECT revision FROM feed_state WHERE id=1").fetchone()[0]
+
+
+def test_recreated_book_adopts_existing_chapter_episodes(conn) -> None:
+    first = _make(conn, n=3)
+    conn.execute(
+        "INSERT INTO episodes (id, original_url, season_number, episode_number) VALUES (?, ?, ?, ?)",
+        (
+            jobs.compute_episode_id(books.chapter_uri(first.source_uri, 2)),
+            books.chapter_uri(first.source_uri, 2),
+            first.season_number,
+            2,
+        ),
+    )
+    books.delete_book(conn, get_settings(), first.id)
+
+    again = _make(conn, n=3)
+
+    assert again.season_number != first.season_number
+    ep_id = jobs.compute_episode_id(books.chapter_uri(again.source_uri, 2))
+    row = conn.execute(
+        "SELECT season_number, episode_number FROM episodes WHERE id = ?", (ep_id,)
+    ).fetchone()
+    assert (row["season_number"], row["episode_number"]) == (again.season_number, 2)
+    chapters = {c.idx: c for c in books.get_chapters(conn, again.id)}
+    statuses = books.chapter_statuses(conn, again.id)
+    assert statuses == {1: "not_queued", 2: "done", 3: "not_queued"}
+    assert chapters[2].requested and chapters[2].completed_at is not None
+    assert not chapters[1].requested and chapters[1].completed_at is None
+    assert books.parse_selection("remaining", list(chapters.values()), statuses) == []
+
+
+def test_recreated_book_bumps_feed_revision_only_when_adopting(conn) -> None:
+    before = _revision(conn)
+    _make(conn, "a", n=2)
+    assert _revision(conn) == before
+    other = _make(conn, "b", n=2)
+    _episode(conn, other, 1)
+    books.delete_book(conn, get_settings(), other.id)
+    before = _revision(conn)
+    _make(conn, "b", n=2)
+    assert _revision(conn) > before
+
+
 def test_set_voice(conn) -> None:
     book = _make(conn, n=1)
     books.set_voice(conn, book.id, "3")

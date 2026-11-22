@@ -50,7 +50,7 @@ With "Split into chapters" on, an EPUB or PDF becomes a book with one episode pe
 - **Statuses.** A chapter is `not_queued`, `queued`, `processing`, `done`, `failed`, `cancelled` or `removed`. The status is derived from the chapter's newest job and its episode, not stored.
 - **Resume.** Resume queues the chapters you requested earlier that are not done and not running, so a failed chapter runs again and finished ones are not repeated. Finished audio chunks are reused through the [chunk cache](#the-chunk-cache) for `TTS_CACHE_RETENTION_DAYS`; after that, the one failed chapter is synthesized from the start.
 - **One voice.** A book narrates in one voice, stored when chapters are first queued.
-- **Storage.** The original file and cover live in `{DATA_DIR}/books/{book_id}/`, outside the media directory, so the orphan sweep never removes them. They stay until the book is deleted. Deleting the book keeps published chapter episodes in the feed, but they can no longer be reprocessed.
+- **Storage.** The original file and cover live in `{DATA_DIR}/books/{book_id}/`, outside the media directory, so the orphan sweep never removes them. They stay until the book is deleted. Deleting the book keeps published chapter episodes in the feed, but they can no longer be reprocessed. Uploading the same file again picks those episodes up: they show as done and move to the new season.
 - **Cover.** A chapter episode uses the book's cover as its artwork. The cover is scaled to fit a square on a background of its average colour instead of being cropped. A small cover is still used rather than falling back to the show image.
 - **Retention.** Chapter episodes follow `RETENTION_DAYS`. An expired or deleted chapter shows as `removed`, and Resume does not narrate it again.
 

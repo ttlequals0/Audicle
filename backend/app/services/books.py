@@ -18,7 +18,7 @@ from typing import Any
 
 from app.config import Settings
 from app.core.paths import book_dir
-from app.services import jobs, settings_store
+from app.services import feed_revision, jobs, settings_store
 from app.services.book_chapters import DetectedBook, DetectedChapter
 
 CHAPTER_FRAGMENT = "#chapter="
@@ -198,6 +198,21 @@ def create_book(
                 for ch in detected.chapters
             ],
         )
+        # Chapter episodes outlive a deleted book; a re-upload takes them over.
+        adopted = conn.execute(
+            "UPDATE episodes SET season_number = ?, "
+            "episode_number = (SELECT idx FROM book_chapters WHERE episode_id = episodes.id) "
+            "WHERE id IN (SELECT episode_id FROM book_chapters WHERE book_id = ?)",
+            (season, book_id),
+        ).rowcount
+        if adopted:
+            conn.execute(
+                "UPDATE book_chapters SET requested = 1, "
+                "completed_at = (SELECT created_at FROM episodes WHERE id = book_chapters.episode_id) "
+                "WHERE book_id = ? AND episode_id IN (SELECT id FROM episodes)",
+                (book_id,),
+            )
+            feed_revision.bump(conn)
         conn.execute("COMMIT")
     except Exception:
         with suppress(sqlite3.OperationalError):

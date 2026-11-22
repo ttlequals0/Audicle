@@ -22,6 +22,7 @@ work lives under `[Unreleased]`.
 - Add `voice_id` to the book response. The chapter picker shows "Voice: slot N (book's voice)" when Random is chosen and the book already has a voice.
 - Name a book after its filename, without the extension, when the EPUB or PDF has no title.
 - Pad a book cover to a square on the cover's average colour instead of cropping it. A small cover is used rather than falling back to the show image.
+- Uploading a deleted book again picks up its chapter episodes that are still in the feed. They show as done and move to the new season.
 - Add migration `031_books` with the `books` and `book_chapters` tables and nullable `season_number` and `episode_number` columns on `episodes`. It is additive and changes no existing rows.
 
 ### Changed

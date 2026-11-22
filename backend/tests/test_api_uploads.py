@@ -506,6 +506,32 @@ def test_upload_split_again_with_chapters_still_queues(env: Path) -> None:
     assert _row_counts(env) == (1, 3, 1)
 
 
+def test_reuploaded_book_adopts_published_chapter_episode(env: Path) -> None:
+    with _client(env) as client:
+        first = _post_epub(client, split_chapters="true").json()
+        episode_id = {c["index"]: c["episode_id"] for c in first["chapters"]}[2]
+        conn = database.connect(database.db_path(env))
+        try:
+            conn.execute(
+                "INSERT INTO episodes (id, original_url) VALUES (?, ?)", (episode_id, "x-chapter-2")
+            )
+        finally:
+            conn.close()
+        assert client.delete(f"/api/v1/books/{first['book_id']}").status_code == 204
+        again = _post_epub(client, split_chapters="true")
+    assert again.status_code == 201
+    conn = database.connect(database.db_path(env))
+    try:
+        row = conn.execute(
+            "SELECT season_number, episode_number FROM episodes WHERE id = ?", (episode_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    assert (row["season_number"], row["episode_number"]) == (2, 2)
+    statuses = {c["index"]: c["status"] for c in again.json()["chapters"]}
+    assert statuses == {1: "not_queued", 2: "done", 3: "not_queued"}
+
+
 def test_upload_chapters_without_split_is_400(env: Path) -> None:
     with _client(env) as client:
         r = _post_epub(client, chapters="1")
