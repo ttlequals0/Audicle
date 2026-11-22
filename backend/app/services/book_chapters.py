@@ -1,0 +1,523 @@
+"""Chapter detection and text extraction for uploaded books (EPUB half).
+
+Pure functions over file bytes: no database, settings, or network. An EPUB is
+read with zipfile, defusedxml (container, OPF, NCX) and lxml (XHTML, nav).
+"""
+
+from __future__ import annotations
+
+import io
+import posixpath
+import re
+import zipfile
+import zlib
+from dataclasses import dataclass
+from typing import Any
+from urllib.parse import unquote
+
+import defusedxml.ElementTree as DET
+from defusedxml import DefusedXmlException
+from lxml import etree
+from lxml import html as lxml_html
+
+MAX_UNCOMPRESSED_BYTES = 200 * 1024 * 1024
+MAX_ARCHIVE_ENTRIES = 5000
+
+_MATTER_TITLES = frozenset(
+    {
+        "cover",
+        "title page",
+        "half title",
+        "copyright",
+        "contents",
+        "table of contents",
+        "dedication",
+        "epigraph",
+        "notes",
+        "endnotes",
+        "index",
+        "bibliography",
+        "references",
+        "acknowledgments",
+        "acknowledgements",
+        "about the author",
+        "also by",
+        "praise",
+    }
+)
+
+_HEADINGS = {f"h{n}": n for n in range(1, 7)}
+_BLOCKS = frozenset(
+    {
+        "p",
+        "div",
+        "blockquote",
+        "li",
+        "ul",
+        "ol",
+        "dl",
+        "dt",
+        "dd",
+        "table",
+        "thead",
+        "tbody",
+        "tr",
+        "td",
+        "th",
+        "section",
+        "article",
+        "header",
+        "footer",
+        "main",
+        "pre",
+        "figure",
+        "figcaption",
+        "hr",
+        "body",
+        "form",
+        "address",
+        "details",
+        "summary",
+    }
+)
+_DROPPED = frozenset({"script", "style", "nav", "aside"})
+_DROPPED_EPUB_TYPES = frozenset({"pagebreak", "noteref"})
+_NCX_MEDIA_TYPE = "application/x-dtbncx+xml"
+_XML_PARSE_ERRORS = (DET.ParseError, DefusedXmlException)
+
+
+class BookFormatError(ValueError):
+    """Message is shown to the operator in a 400."""
+
+
+@dataclass(frozen=True)
+class DetectedChapter:
+    idx: int
+    title: str
+    locator: dict[str, Any]
+    word_count: int
+    char_count: int
+    default_selected: bool
+
+
+@dataclass(frozen=True)
+class DetectedBook:
+    format: str
+    title: str | None
+    author: str | None
+    cover: bytes | None
+    chapters: list[DetectedChapter]
+
+
+def is_front_or_back_matter(title: str) -> bool:
+    kept = "".join(c for c in title.lower() if c.isalnum() or c == " ")
+    return " ".join(kept.split()) in _MATTER_TITLES
+
+
+def _local(tag: Any) -> str:
+    if not isinstance(tag, str):
+        return ""
+    return tag.rsplit("}", 1)[-1].lower()
+
+
+def _clean(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _epub_types(el: Any) -> set[str]:
+    for key, value in el.attrib.items():
+        if key == "epub:type" or (isinstance(key, str) and key.endswith("}type")):
+            return set(value.split())
+    return set()
+
+
+def _is_dropped(el: Any, tag: str) -> bool:
+    return tag == "" or tag in _DROPPED or bool(_epub_types(el) & _DROPPED_EPUB_TYPES)
+
+
+def _inline(el: Any) -> str:
+    parts = [el.text or ""]
+    for child in el:
+        tag = _local(child.tag)
+        if not _is_dropped(child, tag):
+            parts.append(" " if tag == "br" else _inline(child))
+        parts.append(child.tail or "")
+    return "".join(parts)
+
+
+def _note_anchors(el: Any, out: list[str], marks: dict[str, int]) -> None:
+    for key in (el.get("id"), el.get("name")):
+        if key:
+            marks.setdefault(key, len(out))
+
+
+def _walk(el: Any, out: list[str], marks: dict[str, int]) -> None:
+    buf: list[str] = [el.text or ""]
+
+    def flush() -> None:
+        text = _clean("".join(buf))
+        buf.clear()
+        if text:
+            out.append(text)
+
+    for child in el:
+        tag = _local(child.tag)
+        if _is_dropped(child, tag):
+            pass
+        elif tag in _HEADINGS:
+            flush()
+            for node in child.iter():
+                _note_anchors(node, out, marks)
+            text = _clean(_inline(child))
+            if text:
+                out.append("#" * _HEADINGS[tag] + " " + text)
+        elif tag in _BLOCKS:
+            flush()
+            _note_anchors(child, out, marks)
+            _walk(child, out, marks)
+        else:
+            for node in child.iter():
+                _note_anchors(node, out, marks)
+            buf.append(_inline(child))
+        buf.append(child.tail or "")
+    flush()
+
+
+def _decode(data: bytes) -> str:
+    head = data[:1024].decode("ascii", errors="ignore")
+    match = re.search(r"""(?:encoding|charset)\s*=\s*["']?([\w-]+)""", head, re.I)
+    for enc in (match.group(1) if match else "utf-8", "utf-8", "cp1252"):
+        try:
+            return data.decode(enc)
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return data.decode("utf-8", errors="replace")
+
+
+def _parse_xhtml(data: bytes) -> Any | None:
+    parser = etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False)
+    try:
+        root = etree.fromstring(data, parser)
+        if root is not None:
+            return root
+    except etree.XMLSyntaxError:
+        pass
+    text = re.sub(r"^\s*<\?xml[^>]*\?>", "", _decode(data))
+    try:
+        return lxml_html.document_fromstring(text)
+    except (etree.ParserError, ValueError):
+        return None
+
+
+def _find_body(root: Any) -> Any | None:
+    for el in root.iter():
+        if _local(el.tag) == "body":
+            return el
+    return None
+
+
+def _xml_children(el: Any, name: str) -> list[Any]:
+    return [c for c in el if _local(c.tag) == name]
+
+
+def _xml_find(el: Any, name: str) -> Any | None:
+    for node in el.iter():
+        if _local(node.tag) == name:
+            return node
+    return None
+
+
+def _split_href(base: str, href: str) -> tuple[str, str | None]:
+    path, _, frag = unquote(href).partition("#")
+    if path:
+        path = posixpath.normpath(posixpath.join(posixpath.dirname(base), path))
+    return path, frag or None
+
+
+class _Epub:
+    def __init__(self, data: bytes) -> None:
+        try:
+            self._zf = zipfile.ZipFile(io.BytesIO(data))
+        except zipfile.BadZipFile as exc:
+            raise BookFormatError("The file is not a valid EPUB archive.") from exc
+        self._check_archive()
+        self._docs: dict[int, tuple[list[str], dict[str, int]]] = {}
+        self._read_package()
+        self._check_encryption()
+
+    def _check_archive(self) -> None:
+        infos = self._zf.infolist()
+        if len(infos) > MAX_ARCHIVE_ENTRIES:
+            raise BookFormatError("The EPUB archive has too many entries.")
+        if sum(i.file_size for i in infos) > MAX_UNCOMPRESSED_BYTES:
+            raise BookFormatError("The EPUB archive is too large once uncompressed.")
+        for info in infos:
+            name = info.filename.replace("\\", "/")
+            if name.startswith("/") or ".." in name.split("/"):
+                raise BookFormatError("The EPUB archive contains an unsafe entry name.")
+        self._sizes = {i.filename: i.file_size for i in infos}
+
+    def _read(self, name: str) -> bytes | None:
+        size = self._sizes.get(name)
+        if size is None:
+            return None
+        try:
+            with self._zf.open(name) as fh:
+                buf = fh.read(size + 1)
+        except (zipfile.BadZipFile, NotImplementedError, RuntimeError, zlib.error) as exc:
+            raise BookFormatError("The EPUB archive could not be read.") from exc
+        if len(buf) > size:
+            raise BookFormatError("The EPUB archive has an inconsistent entry size.")
+        return buf
+
+    def _read_xml(self, name: str) -> Any | None:
+        raw = self._read(name)
+        if raw is None:
+            return None
+        try:
+            return DET.fromstring(raw)
+        except _XML_PARSE_ERRORS as exc:
+            raise BookFormatError(f"The EPUB file {name} is not valid XML.") from exc
+
+    def _read_package(self) -> None:
+        container = self._read_xml("META-INF/container.xml")
+        if container is None:
+            raise BookFormatError("The EPUB archive has no META-INF/container.xml.")
+        rootfile = _xml_find(container, "rootfile")
+        self._opf_path = (
+            posixpath.normpath(unquote(rootfile.get("full-path", "")))
+            if rootfile is not None
+            else ""
+        )
+        opf = self._read_xml(self._opf_path) if rootfile is not None else None
+        if opf is None:
+            raise BookFormatError("The EPUB package document could not be found.")
+
+        self.title: str | None = None
+        self.author: str | None = None
+        metadata = _xml_find(opf, "metadata")
+        cover_id = None
+        if metadata is not None:
+            for node in metadata:
+                name = _local(node.tag)
+                text = _clean("".join(node.itertext()))
+                if name == "title" and text and self.title is None:
+                    self.title = text
+                elif name == "creator" and text and self.author is None:
+                    self.author = text
+                elif name == "meta" and node.get("name") == "cover":
+                    cover_id = node.get("content")
+
+        self._manifest: dict[str, dict[str, str]] = {}
+        manifest = _xml_find(opf, "manifest")
+        for item in _xml_children(manifest, "item") if manifest is not None else []:
+            item_id, href = item.get("id"), item.get("href")
+            if item_id and href:
+                path, _ = _split_href(self._opf_path, href)
+                self._manifest[item_id] = {
+                    "path": path,
+                    "type": item.get("media-type", ""),
+                    "props": item.get("properties", ""),
+                }
+
+        spine = _xml_find(opf, "spine")
+        self._ncx_id = spine.get("toc") if spine is not None else None
+        self.spine: list[str] = []
+        for ref in _xml_children(spine, "itemref") if spine is not None else []:
+            entry = self._manifest.get(ref.get("idref", ""))
+            if entry is not None:
+                self.spine.append(entry["path"])
+        if not self.spine:
+            raise BookFormatError("The EPUB has no readable content.")
+        self._spine_index = {path: i for i, path in enumerate(self.spine)}
+
+        if cover_id is None:
+            for item_id, entry in self._manifest.items():
+                if "cover-image" in entry["props"].split():
+                    cover_id = item_id
+                    break
+        cover = self._manifest.get(cover_id or "")
+        self.cover = (
+            self._read(cover["path"]) if cover and cover["type"].startswith("image/") else None
+        )
+
+    def _check_encryption(self) -> None:
+        enc = self._read_xml("META-INF/encryption.xml")
+        if enc is None:
+            return
+        for node in enc.iter():
+            if _local(node.tag) == "cipherreference":
+                path, _ = _split_href("", node.get("URI", ""))
+                if path in self._spine_index:
+                    raise BookFormatError("This EPUB is DRM-protected and cannot be read.")
+
+    def doc(self, spine_idx: int) -> tuple[list[str], dict[str, int]]:
+        if spine_idx not in self._docs:
+            self._docs[spine_idx] = self._parse_doc(spine_idx)
+        return self._docs[spine_idx]
+
+    def _parse_doc(self, spine_idx: int) -> tuple[list[str], dict[str, int]]:
+        path = self.spine[spine_idx]
+        entry = next((m for m in self._manifest.values() if m["path"] == path), None)
+        raw = self._read(path)
+        if raw is None or (entry and entry["type"].startswith("image/")):
+            return [], {}
+        root = _parse_xhtml(raw)
+        body = _find_body(root) if root is not None else None
+        if body is None:
+            return [], {}
+        out: list[str] = []
+        marks: dict[str, int] = {}
+        _note_anchors(body, out, marks)
+        _walk(body, out, marks)
+        return out, marks
+
+    def anchor_pos(self, spine_idx: int, anchor: str | None) -> int | None:
+        return self.doc(spine_idx)[1].get(anchor) if anchor else None
+
+    def markdown(self, locator: dict[str, Any]) -> str:
+        start, end = int(locator["start_spine"]), int(locator["end_spine"])
+        start_anchor, end_anchor = locator.get("start_anchor"), locator.get("end_anchor")
+        last = end if end_anchor else end - 1
+        paras: list[str] = []
+        for s in range(max(start, 0), min(last, len(self.spine) - 1) + 1):
+            doc, marks = self.doc(s)
+            lo = marks.get(start_anchor, 0) if s == start and start_anchor else 0
+            hi = marks.get(end_anchor, len(doc)) if s == end and end_anchor else len(doc)
+            paras.extend(doc[lo:hi])
+        return "\n\n".join(paras)
+
+    def _toc_entries(self) -> list[tuple[str, int, str | None]]:
+        nav = next((m for m in self._manifest.values() if "nav" in m["props"].split()), None)
+        raw: list[tuple[str, str, str]] = []
+        if nav is not None:
+            raw = self._nav_entries(nav["path"])
+        if not raw:
+            ncx = self._manifest.get(self._ncx_id or "") or next(
+                (m for m in self._manifest.values() if m["type"] == _NCX_MEDIA_TYPE), None
+            )
+            if ncx is not None:
+                raw = self._ncx_entries(ncx["path"])
+        entries = []
+        for title, base, href in raw:
+            path, frag = _split_href(base, href)
+            if path in self._spine_index and title:
+                entries.append((title, self._spine_index[path], frag))
+        return entries
+
+    def _nav_entries(self, path: str) -> list[tuple[str, str, str]]:
+        data = self._read(path)
+        root = _parse_xhtml(data) if data is not None else None
+        if root is None:
+            return []
+        navs = [n for n in root.iter() if _local(n.tag) == "nav"]
+        nav = next((n for n in navs if "toc" in _epub_types(n)), navs[0] if navs else None)
+        top = _xml_find(nav, "ol") if nav is not None else None
+        entries = []
+        for li in _xml_children(top, "li") if top is not None else []:
+            link = next((c for c in li if _local(c.tag) in ("a", "span")), None)
+            if link is None:
+                continue
+            anchor = (
+                link
+                if _local(link.tag) == "a"
+                else next((n for n in link.iter() if _local(n.tag) == "a"), None)
+            )
+            if anchor is None or not anchor.get("href"):
+                continue
+            entries.append((_clean(_inline(link)), path, anchor.get("href", "")))
+        return entries
+
+    def _ncx_entries(self, path: str) -> list[tuple[str, str, str]]:
+        root = self._read_xml(path)
+        nav_map = _xml_find(root, "navMap".lower()) if root is not None else None
+        entries = []
+        for point in _xml_children(nav_map, "navpoint") if nav_map is not None else []:
+            label = _xml_find(point, "navlabel")
+            content = next((c for c in point if _local(c.tag) == "content"), None)
+            if label is None or content is None or not content.get("src"):
+                continue
+            entries.append((_clean("".join(label.itertext())), path, content.get("src", "")))
+        return entries
+
+    def chapter_ranges(self) -> list[tuple[str | None, dict[str, Any]]]:
+        """(title, locator) per chapter; title is None for spine-fallback entries without a heading."""
+        entries = self._toc_entries()
+        if not entries:
+            return self._spine_ranges()
+        kept: list[tuple[str, int, str | None]] = []
+        for title, spine_idx, anchor in entries:
+            if kept:
+                prev_spine, prev_anchor = kept[-1][1], kept[-1][2]
+                if spine_idx < prev_spine:
+                    continue
+                if spine_idx == prev_spine:
+                    pos = self.anchor_pos(spine_idx, anchor)
+                    prev_pos = self.anchor_pos(spine_idx, prev_anchor) or 0
+                    if pos is None or pos <= prev_pos:
+                        continue
+            if anchor and self.anchor_pos(spine_idx, anchor) is None:
+                anchor = None
+            kept.append((title, spine_idx, anchor))
+        ranges = []
+        for i, (title, spine_idx, anchor) in enumerate(kept):
+            end_spine, end_anchor = (
+                (kept[i + 1][1], kept[i + 1][2]) if i + 1 < len(kept) else (len(self.spine), None)
+            )
+            ranges.append((title, _locator(spine_idx, anchor, end_spine, end_anchor)))
+        return ranges
+
+    def _spine_ranges(self) -> list[tuple[str | None, dict[str, Any]]]:
+        ranges = []
+        for s in range(len(self.spine)):
+            heading = next((p for p in self.doc(s)[0] if p.startswith("#")), None)
+            title = heading.lstrip("#").strip() if heading else None
+            ranges.append((title, _locator(s, None, s + 1, None)))
+        return ranges
+
+
+def _locator(
+    start: int, start_anchor: str | None, end: int, end_anchor: str | None
+) -> dict[str, Any]:
+    return {
+        "start_spine": start,
+        "start_anchor": start_anchor,
+        "end_spine": end,
+        "end_anchor": end_anchor,
+    }
+
+
+def detect(data: bytes, ext: str, *, min_chars: int) -> DetectedBook | None:
+    if ext.lower() != ".epub":
+        return None
+    book = _Epub(data)
+    chapters: list[DetectedChapter] = []
+    for title, locator in book.chapter_ranges():
+        text = book.markdown(locator)
+        if not text:
+            continue
+        idx = len(chapters) + 1
+        title = title or f"Section {idx}"
+        chapters.append(
+            DetectedChapter(
+                idx=idx,
+                title=title,
+                locator=locator,
+                word_count=len(text.split()),
+                char_count=len(text),
+                default_selected=not is_front_or_back_matter(title) and len(text) >= min_chars,
+            )
+        )
+    if len(chapters) < 2:
+        return None
+    return DetectedBook("epub", book.title, book.author, book.cover, chapters)
+
+
+def epub_chapter_markdown(data: bytes, locator: dict[str, Any]) -> str:
+    return _Epub(data).markdown(locator)
+
+
+def epub_full_markdown(data: bytes) -> tuple[str, dict[str, Any]]:
+    book = _Epub(data)
+    text = book.markdown(_locator(0, None, len(book.spine), None))
+    return text, {"title": book.title, "author": book.author}
