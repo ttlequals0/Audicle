@@ -620,29 +620,74 @@ def _title_key(text: str) -> str:
     return flat.strip(" .:;,-!?\"'")
 
 
+_TITLE_SEPARATORS = re.compile(r": | \| | - ")
+_TITLE_ENUMERATOR = re.compile(r"^(?:chapter\s+)?\d+[.):]?\s+", re.IGNORECASE)
+
+
+def _title_echo_keys(title: str) -> set[str]:
+    """Keys a body heading may match: the title, its segments, and each without
+    a leading chapter number."""
+
+    keys = {_title_key(title)}
+    for part in _TITLE_SEPARATORS.split(title.translate(_TITLE_PUNCT)):
+        key = _title_key(part)
+        if len(key) >= 4:
+            keys.add(key)
+    for key in list(keys):
+        bare = _TITLE_ENUMERATOR.sub("", key)
+        if bare != key and len(bare) >= 4:
+            keys.add(bare)
+    keys.discard("")
+    return keys
+
+
 def _strip_title_echo(cleaned: str, title: str | None) -> str:
-    """Drop a leading line that just repeats the article's own headline.
+    """Drop leading lines that just repeat the article's own headline.
 
     Substack and similar render headline + subtitle, so the body opens with the
     same words the intro read is about to announce and the episode says the title
-    twice. Only a heading-shaped first line is dropped: a real opening paragraph
-    that happens to begin with the headline stays."""
+    twice. The echo may follow a label or chapter number, may be only one segment
+    of the title, and may share a block with its subtitle. Only heading-shaped
+    lines among the first few are dropped: a real opening paragraph that happens
+    to begin with the headline stays, and the walk never looks past body text."""
 
     if not title:
         return cleaned
-    head, sep, rest = cleaned.partition("\n\n")
-    candidate = head.strip()
-    if not candidate or not rest.strip():
+    title_keys = _title_echo_keys(title)
+    if not title_keys:
         return cleaned
-    key, title_key = _title_key(candidate), _title_key(title)
-    if not title_key:
+    longest = max(len(k) for k in title_keys)
+    lines = cleaned.split("\n")
+    echoes: set[int] = set()
+    seen = 0
+    for i, line in enumerate(lines):
+        if not line.strip():
+            continue
+        seen += 1
+        key = _title_key(line)
+        if seen > 5 or len(key) > longest * 1.3:
+            break
+        if any(
+            key == tk
+            or (
+                len(key) <= len(tk) * 1.3
+                and SequenceMatcher(None, key, tk).ratio() >= 0.9
+            )
+            for tk in title_keys
+        ):
+            echoes.add(i)
+    if not echoes:
         return cleaned
-    # A heading restates the title and stops; a paragraph keeps going.
-    if len(key) > len(title_key) * 1.3:
-        return cleaned
-    if key != title_key and SequenceMatcher(None, key, title_key).ratio() < 0.9:
-        return cleaned
-    return rest.strip() if sep else cleaned
+    out: list[str] = []
+    for i, line in enumerate(lines):
+        if i in echoes:
+            continue
+        # Drop blanks that would stack or lead once an echo line is gone.
+        if not line.strip() and i - 1 in echoes and (not out or not out[-1].strip()):
+            continue
+        out.append(line)
+    result = "\n".join(out)
+    return result if result.strip() else cleaned
 
 
 def _intro_read_line(metadata: dict[str, Any] | None, settings: Settings) -> str | None:
