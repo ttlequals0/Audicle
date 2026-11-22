@@ -652,29 +652,16 @@ def _intro_read_line(metadata: dict[str, Any] | None, settings: Settings) -> str
     return f"{title} By {author}." if author else title
 
 
-_BOOK_ONLY_METADATA_KEYS = ("book_cover_path", "season_number", "episode_number")
-
-
-def _drop_book_only_metadata(job: jobs.Job, result: extraction.ExtractionResult) -> None:
-    # Only chapter jobs may set these; a page's own meta must not reach the cover or season.
-    if books.split_chapter_uri(job.url)[1] is None:
-        for key in _BOOK_ONLY_METADATA_KEYS:
-            result.metadata.pop(key, None)
-
-
 async def _stage_extract(job: jobs.Job, settings: Settings) -> extraction.ExtractionResult:
     # Uploaded documents carry a synthetic ``upload://`` source: read and parse the
     # stored file instead of fetching a URL. Everything downstream is identical.
     if file_extraction.is_upload_source(job.url):
-        result = await file_extraction.extract_file(job, settings, beat=_beat)
-        _drop_book_only_metadata(job, result)
-        return result
+        return await file_extraction.extract_file(job, settings, beat=_beat)
     # Build the effective paywall-fallback registry (operator rules over built-ins, plus
     # a global-default catch-all) so extraction routes known paywall hosts through the
     # configured bypass. Shared with the /source-fallbacks/test endpoint.
     registry = source_fallbacks_store.load_registry(settings)
     result = await extraction.extract(job.url, settings, registry)
-    _drop_book_only_metadata(job, result)
     logger.info(
         "Extraction succeeded",
         extra={
@@ -1884,7 +1871,16 @@ async def _stage_artwork(
     """
 
     generation_id = f"{job.episode_id}.{publication_token}"
-    result = await artwork.process_artwork(metadata, generation_id, media_dir(settings), settings)
+    conn = database.connect(database.db_path(settings.DATA_DIR))
+    try:
+        found = books.chapter_for_episode(conn, job.episode_id)
+    finally:
+        conn.close()
+    book = found[0] if found else None
+    local_cover = books.cover_file(settings, book.id) if book and book.has_cover else None
+    result = await artwork.process_artwork(
+        metadata, generation_id, media_dir(settings), settings, local_cover=local_cover
+    )
     if result is None:
         logger.info(
             "Artwork falling back to feed-level art",
@@ -2118,22 +2114,15 @@ async def _stage_finalize(
     # Provenance: an uploaded document's ``original_url`` is the synthetic
     # ``upload://`` identifier; record source_type/source_filename so the feed and
     # UI render the filename instead of treating it as a hyperlink.
-    if file_extraction.is_upload_source(job.url):
-        source_type = "upload"
-        source_filename = file_extraction.parse_source_uri(job.url)[1]
-    else:
-        source_type = "url"
-        source_filename = None
-
-    season_number = metadata.get("season_number")
-    episode_number = metadata.get("episode_number")
-    if not all(
-        isinstance(n, int) and not isinstance(n, bool) for n in (season_number, episode_number)
-    ):
-        season_number = episode_number = None
+    ref = file_extraction.SourceRef.parse(job.url, job.episode_id)
+    source_type = "upload" if ref.is_upload else "url"
 
     conn = database.connect(database.db_path(settings.DATA_DIR))
     try:
+        found = books.chapter_for_episode(conn, job.episode_id)
+        season_number, episode_number = (
+            (found[0].season_number, found[1].idx) if found is not None else (None, None)
+        )
         # Snapshot the voice this job used (slot label, "Slot N", or "Default")
         # so the API, feed UI, and RSS description can show which voice narrated it.
         voice_label = voices.label_for(conn, job.voice_id)
@@ -2155,7 +2144,7 @@ async def _stage_finalize(
             cleaned_text=cleaned_text,
             audio_size_bytes=audio_size_bytes,
             source_type=source_type,
-            source_filename=source_filename,
+            source_filename=ref.filename,
             voice_label=voice_label,
             chapters_json=chapters_json,
             season_number=season_number,

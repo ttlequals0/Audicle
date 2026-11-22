@@ -25,7 +25,6 @@ import httpx
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from app.config import Settings
-from app.core.paths import books_dir
 from app.services import ssrf
 from app.services.atomic_write import write_bytes_atomic
 
@@ -51,9 +50,10 @@ async def process_artwork(
     episode_id: str,
     output_dir: Path,
     settings: Settings,
+    *,
+    local_cover: Path | None = None,
 ) -> ArtworkResult | None:
-    """Process a local book cover when ``book_cover_path`` is set, else download
-    the article's ``og:image``.
+    """Process ``local_cover`` when given, else download the article's ``og:image``.
 
     Returns the local JPG path on success, ``None`` on any documented failure
     (fall back to feed-level artwork). Never raises -- every error path logs
@@ -64,9 +64,8 @@ async def process_artwork(
         _log_fallback("missing_og_image", episode_id, None)
         return None
 
-    cover_path = metadata.get("book_cover_path")
-    if cover_path:
-        return _process_local_cover(str(cover_path), episode_id, output_dir, settings)
+    if local_cover is not None:
+        return _process_local_cover(local_cover, episode_id, output_dir, settings)
 
     source_url = _extract_og_image(metadata)
     if not source_url:
@@ -217,15 +216,12 @@ def _render_and_store(
 
 
 def _process_local_cover(
-    cover_path: str, episode_id: str, output_dir: Path, settings: Settings
+    path: Path, episode_id: str, output_dir: Path, settings: Settings
 ) -> ArtworkResult | None:
     """Render a book cover from local disk, padded to a square with no minimum source size."""
 
+    cover_path = str(path)
     try:
-        path = Path(cover_path).resolve()
-        if not path.is_relative_to(books_dir(settings).resolve()):
-            _log_fallback("local_cover_outside_books_dir", episode_id, cover_path)
-            return None
         if path.stat().st_size > settings.ARTWORK_MAX_DOWNLOAD_BYTES:
             _log_fallback(
                 "download_too_large",

@@ -151,13 +151,11 @@ async def test_local_cover_is_processed_without_network(
     cover.write_bytes(_jpeg_with_exif(800, 1000))
 
     result = await artwork.process_artwork(
-        metadata={
-            "book_cover_path": str(cover),
-            "ogImage": "https://example.test/ignored.jpg",
-        },
+        metadata={"ogImage": "https://example.test/ignored.jpg"},
         episode_id="chap1",
         output_dir=tmp_path,
         settings=get_settings(),
+        local_cover=cover,
     )
 
     assert result is not None
@@ -172,10 +170,11 @@ async def _render_local_cover(tmp_path: Path, data: bytes):
     cover.parent.mkdir(parents=True, exist_ok=True)
     cover.write_bytes(data)
     return await artwork.process_artwork(
-        metadata={"book_cover_path": str(cover)},
+        metadata={},
         episode_id="chap1",
         output_dir=tmp_path,
         settings=get_settings(),
+        local_cover=cover,
     )
 
 
@@ -215,10 +214,11 @@ async def test_unreadable_local_cover_falls_back(
 
     with caplog.at_level(logging.WARNING, logger="app.services.artwork"):
         result = await artwork.process_artwork(
-            metadata={"book_cover_path": str(missing)},
+            metadata={},
             episode_id="chap2",
             output_dir=tmp_path,
             settings=get_settings(),
+            local_cover=missing,
         )
 
     assert result is None
@@ -235,10 +235,11 @@ async def test_unsupported_local_cover_falls_back(
     cover.write_bytes(b"not an image")
 
     result = await artwork.process_artwork(
-        metadata={"book_cover_path": str(cover)},
+        metadata={},
         episode_id="chap3",
         output_dir=tmp_path,
         settings=get_settings(),
+        local_cover=cover,
     )
 
     assert result is None
@@ -255,55 +256,15 @@ async def test_oversized_local_cover_falls_back(
     assert cover.stat().st_size > 1000
 
     result = await artwork.process_artwork(
-        metadata={"book_cover_path": str(cover)},
+        metadata={},
         episode_id="chap5",
         output_dir=tmp_path,
         settings=settings,
+        local_cover=cover,
     )
 
     assert result is None
     assert not (tmp_path / "chap5.jpg").exists()
-
-
-async def test_local_cover_symlink_escape_is_rejected(
-    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _forbid_network(monkeypatch)
-    outside = tmp_path / "outside.jpg"
-    outside.write_bytes(_jpeg_with_exif(800, 800))
-    link = get_settings().DATA_DIR / "books" / "b1" / "cover.jpg"
-    link.parent.mkdir(parents=True)
-    link.symlink_to(outside)
-
-    result = await artwork.process_artwork(
-        metadata={"book_cover_path": str(link)},
-        episode_id="chap6",
-        output_dir=tmp_path,
-        settings=get_settings(),
-    )
-
-    assert result is None
-    assert not (tmp_path / "chap6.jpg").exists()
-
-
-async def test_local_cover_dotdot_escape_is_rejected(
-    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _forbid_network(monkeypatch)
-    books_root = get_settings().DATA_DIR / "books"
-    (books_root / "b1").mkdir(parents=True)
-    outside = get_settings().DATA_DIR / "secret.jpg"
-    outside.write_bytes(_jpeg_with_exif(800, 800))
-
-    result = await artwork.process_artwork(
-        metadata={"book_cover_path": str(books_root / "b1" / ".." / ".." / "secret.jpg")},
-        episode_id="chap7",
-        output_dir=tmp_path,
-        settings=get_settings(),
-    )
-
-    assert result is None
-    assert not (tmp_path / "chap7.jpg").exists()
 
 
 async def test_process_artwork_with_non_dict_metadata_returns_none(
@@ -317,24 +278,6 @@ async def test_process_artwork_with_non_dict_metadata_returns_none(
     )
 
     assert result is None
-
-
-async def test_local_cover_outside_books_dir_is_rejected(
-    env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _forbid_network(monkeypatch)
-    outside = tmp_path / "elsewhere.jpg"
-    outside.write_bytes(_jpeg_with_exif(800, 800))
-
-    result = await artwork.process_artwork(
-        metadata={"book_cover_path": str(outside)},
-        episode_id="chap4",
-        output_dir=tmp_path,
-        settings=get_settings(),
-    )
-
-    assert result is None
-    assert not (tmp_path / "chap4.jpg").exists()
 
 
 # --- fallback paths -------------------------------------------------------

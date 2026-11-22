@@ -772,12 +772,7 @@ async def test_pipeline_finalize_upserts_episode_row(
     assert row.duration_secs == 2
 
 
-async def test_finalize_writes_numbers_and_marks_chapter_completed(
-    env: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    database.run_migrations(env)
-    _stub_full_chain(monkeypatch)
-    source_uri = "upload://hash1/book.epub"
+def _make_chapter_book(env: Path, source_uri: str, *, has_cover: bool = False) -> books.Book:
     conn = database.connect(database.db_path(env))
     try:
         book = books.create_book(
@@ -801,22 +796,30 @@ async def test_finalize_writes_numbers_and_marks_chapter_completed(
                     )
                 ],
             ),
-            has_cover=False,
+            has_cover=has_cover,
         )
     finally:
         conn.close()
+    return book
 
+
+def _stub_chapter_extract(monkeypatch: pytest.MonkeyPatch, **metadata: str) -> None:
     async def _chapter_extract(_job, _settings, **_kw):
         return extraction.ExtractionResult(
-            markdown="raw " * 250,
-            metadata={
-                "title": "Book: Chapter 7",
-                "season_number": book.season_number,
-                "episode_number": 7,
-            },
+            markdown="raw " * 250, metadata={"title": "Book: Chapter 7", **metadata}
         )
 
     monkeypatch.setattr(pipeline.file_extraction, "extract_file", _chapter_extract)
+
+
+async def test_finalize_writes_numbers_and_marks_chapter_completed(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+    source_uri = "upload://hash1/book.epub"
+    book = _make_chapter_book(env, source_uri)
+    _stub_chapter_extract(monkeypatch)
     job = _seed_job(env, books.chapter_uri(source_uri, 7))
     await pipeline.process_job(job, get_settings())
 
@@ -830,14 +833,22 @@ async def test_finalize_writes_numbers_and_marks_chapter_completed(
     assert ep is not None
     assert (ep.season_number, ep.episode_number) == (book.season_number, 7)
     assert chapter.completed_at is not None
+    assert ep.artwork_path is None
 
 
-async def test_finalize_leaves_numbers_null_for_articles(
+async def test_chapter_job_uses_the_book_cover_over_og_image(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     database.run_migrations(env)
     _stub_full_chain(monkeypatch)
-    job = _seed_job(env)
+    source_uri = "upload://hash3/book.epub"
+    book = _make_chapter_book(env, source_uri, has_cover=True)
+    cover = books.cover_file(get_settings(), book.id)
+    cover.parent.mkdir(parents=True)
+    Image.new("RGB", (800, 800), (255, 0, 0)).save(cover, format="JPEG")
+    _stub_chapter_extract(monkeypatch, ogImage="https://example.test/cover.png")
+    _stub_artwork_download(monkeypatch, _png_bytes())
+    job = _seed_job(env, books.chapter_uri(source_uri, 7))
     await pipeline.process_job(job, get_settings())
 
     conn = database.connect(database.db_path(env))
@@ -846,22 +857,16 @@ async def test_finalize_leaves_numbers_null_for_articles(
     finally:
         conn.close()
     assert ep is not None
-    assert ep.season_number is None and ep.episode_number is None
+    with Image.open(ep.artwork_path) as art:
+        r, _g, b = art.convert("RGB").getpixel((art.width // 2, art.height // 2))
+    assert r > 200 and b < 60
 
 
-async def test_finalize_ignores_boolean_season_numbers(
+async def test_finalize_leaves_numbers_null_for_articles(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     database.run_migrations(env)
     _stub_full_chain(monkeypatch)
-
-    async def _bool_extract(_url, _settings, _registry=None):
-        return extraction.ExtractionResult(
-            markdown="raw " * 250,
-            metadata={"title": "T", "season_number": True, "episode_number": 7},
-        )
-
-    monkeypatch.setattr(extraction, "extract", _bool_extract)
     job = _seed_job(env)
     await pipeline.process_job(job, get_settings())
 

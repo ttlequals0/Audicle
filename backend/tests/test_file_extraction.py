@@ -498,8 +498,7 @@ async def test_extract_epub_chapter_returns_only_that_chapter(env: Path) -> None
     assert "Body of chapter three" not in result.markdown
     assert result.metadata["title"] == "Book: Two"
     assert result.metadata["author"] == "Some Author"
-    assert result.metadata["season_number"] == book.season_number == 1
-    assert result.metadata["episode_number"] == 2
+    assert set(result.metadata) == {"title", "author"}
 
 
 async def test_extract_pdf_chapter_reads_only_its_pages(env: Path) -> None:
@@ -535,30 +534,6 @@ async def test_extract_pdf_chapter_ocr_limited_to_range(
     assert "Recognized page 4" not in result.markdown
 
 
-async def test_chapter_cover_path_in_metadata_only_when_book_has_cover(env: Path) -> None:
-    data = _epub_three_chapters()
-    with_cover, _ = _store_book(env, "novel.epub", data, has_cover=True)
-    result = await file_extraction.extract_file(_chapter_job(with_cover, 1), get_settings())
-    assert result.metadata["book_cover_path"] == str(
-        books.cover_file(get_settings(), with_cover.id)
-    )
-    # A second book (different hash) without a cover.
-    conn = database.connect(database.db_path(env))
-    try:
-        detected = book_chapters.detect(data, ".epub", min_chars=10)
-        uri = file_extraction.build_source_uri("d" * 16, "other.epub")
-        plain = books.create_book(
-            conn, source_uri=uri, filename="other.epub", detected=detected, has_cover=False
-        )
-    finally:
-        conn.close()
-    path = books.source_file(get_settings(), plain.id, ".epub")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(data)
-    result = await file_extraction.extract_file(_chapter_job(plain, 1), get_settings())
-    assert "book_cover_path" not in result.metadata
-
-
 async def test_chapter_job_with_missing_book_source_is_permanent_error(env: Path) -> None:
     book, _ = _store_book(env, "novel.epub", _epub_three_chapters())
     books.source_file(get_settings(), book.id, ".epub").unlink()
@@ -584,16 +559,23 @@ async def test_chapter_job_with_missing_book_row_is_permanent_error(env: Path) -
         await file_extraction.extract_file(job, get_settings())
 
 
-def test_stored_source_path_resolves_through_book(env: Path) -> None:
+def test_source_ref_stored_path_and_lock_key(env: Path) -> None:
     settings = get_settings()
     uri = file_extraction.build_source_uri("f" * 16, "novel.epub")
     book_id = books.book_id_for(uri)
-    assert file_extraction.stored_source_path(
-        settings, books.chapter_uri(uri, 3), "ep"
-    ) == books.source_file(settings, book_id, ".epub")
-    assert file_extraction.stored_source_path(settings, uri, "ep") == file_extraction.source_path(
-        settings, "ep", "novel.epub"
-    )
+    chapter = file_extraction.SourceRef.parse(books.chapter_uri(uri, 3), "ep")
+    assert chapter.chapter == 3 and chapter.book_id == book_id
+    assert chapter.stored_path(settings) == books.source_file(settings, book_id, ".epub")
+    assert chapter.lock_key() == book_id
+    plain = file_extraction.SourceRef.parse(uri, "ep")
+    assert plain.chapter is None and plain.book_id is None
+    assert plain.stored_path(settings) == file_extraction.source_path(settings, "ep", "novel.epub")
+    assert plain.lock_key() == "ep"
+
+
+def test_source_ref_for_a_web_url() -> None:
+    ref = file_extraction.SourceRef.parse("https://example.test/a", "ep")
+    assert (ref.is_upload, ref.filename, ref.chapter, ref.book_id) == (False, None, None, None)
 
 
 async def test_unsplit_corrupt_epub_is_permanent_error(env: Path) -> None:

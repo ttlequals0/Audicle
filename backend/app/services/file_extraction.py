@@ -20,7 +20,9 @@ import asyncio
 import io
 import logging
 import re
+import sqlite3
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote
@@ -37,14 +39,13 @@ from pypdf.errors import PyPdfError
 from app.config import Settings
 from app.core import database
 from app.core.paths import media_dir
-from app.services import book_chapters, books, html_markdown, ocr
+from app.services import book_chapters, books, html_markdown, jobs, ocr
 from app.services.book_chapters import BookFormatError, page_has_image
 from app.services.extraction_types import (
     ExtractionPermanentError,
     ExtractionResult,
     ExtractionTooShortError,
 )
-from app.services.jobs import Job
 
 logger = logging.getLogger("app.services.file_extraction")
 
@@ -114,37 +115,77 @@ def source_path(settings: Settings, episode_id: str, filename: str) -> Path:
     return media_dir(settings) / f"{episode_id}.source{extension_of(filename)}"
 
 
-def stored_source_path(settings: Settings, url: str, episode_id: str) -> Path:
-    """Where the original for ``url`` lives: the book source for a chapter, else the upload."""
+@dataclass(frozen=True)
+class SourceRef:
+    """What a job's ``url`` points at: an upload (maybe one chapter of a book) or a web page."""
 
-    base_uri, chapter_idx = books.split_chapter_uri(url)
-    _, filename = parse_source_uri(base_uri)
-    if chapter_idx is None:
-        return source_path(settings, episode_id, filename)
-    return books.source_file(settings, books.book_id_for(base_uri), extension_of(filename))
+    is_upload: bool
+    filename: str | None
+    base_uri: str
+    chapter: int | None
+    book_id: str | None
+    episode_id: str
+
+    @classmethod
+    def parse(cls, url: str, episode_id: str) -> SourceRef:
+        base_uri, chapter = books.split_chapter_uri(url)
+        is_upload = is_upload_source(url)
+        return cls(
+            is_upload=is_upload,
+            filename=parse_source_uri(base_uri)[1] if is_upload else None,
+            base_uri=base_uri,
+            chapter=chapter,
+            book_id=books.book_id_for(base_uri) if chapter is not None else None,
+            episode_id=episode_id,
+        )
+
+    def stored_path(self, settings: Settings) -> Path:
+        """Where the original lives: the book source for a chapter, else the upload."""
+
+        if self.book_id is None:
+            return source_path(settings, self.episode_id, self.filename)
+        return books.source_file(settings, self.book_id, extension_of(self.filename))
+
+    def lock_key(self) -> str:
+        """Chapter jobs serialize on their book (as book delete and queue do); others on the episode."""
+
+        return self.book_id or self.episode_id
 
 
-def _load_chapter(
-    settings: Settings, base_uri: str, idx: int, episode_id: str
-) -> tuple[books.Book, books.Chapter]:
+class StoredSourceMissingError(Exception):
+    """The stored original of an upload is no longer on disk."""
+
+
+def requeue_stored(
+    conn: sqlite3.Connection, settings: Settings, url: str, episode_id: str, voice_id: str | None
+) -> jobs.CreateJobResult:
+    """Re-run a stored upload; raises StoredSourceMissingError or jobs.DuplicateSubmissionError."""
+
+    ref = SourceRef.parse(url, episode_id)
+    with database.upload_staging_lock(settings.DATA_DIR, ref.lock_key()):
+        if not ref.stored_path(settings).exists():
+            raise StoredSourceMissingError(url)
+        return jobs.create_job(conn, url, reprocess=True, voice_id=voice_id)
+
+
+def _load_chapter(settings: Settings, ref: SourceRef) -> tuple[books.Book, books.Chapter]:
     """Look up a chapter's book and row, closing the connection before any parsing."""
 
-    book_id = books.book_id_for(base_uri)
     conn = database.connect(database.db_path(settings.DATA_DIR))
     try:
-        found = books.chapter_for_episode(conn, episode_id)
+        found = books.chapter_for_episode(conn, ref.episode_id)
     finally:
         conn.close()
-    if found is None or found[1].idx != idx:
+    if found is None or found[1].idx != ref.chapter:
         raise ExtractionPermanentError(
-            f"stored upload missing for book {book_id} (chapter {idx}); "
+            f"stored upload missing for book {ref.book_id} (chapter {ref.chapter}); "
             "re-upload the book to reprocess it"
         )
     return found
 
 
 async def extract_file(
-    job: Job, settings: Settings, beat: Callable[[], None] = lambda: None
+    job: jobs.Job, settings: Settings, beat: Callable[[], None] = lambda: None
 ) -> ExtractionResult:
     """Read and parse the stored upload for ``job`` into article markdown + metadata.
 
@@ -154,15 +195,11 @@ async def extract_file(
     loop, so whatever is passed has to tolerate it.
     """
 
-    base_uri, chapter_idx = books.split_chapter_uri(job.url)
-    _, filename = parse_source_uri(base_uri)
+    ref = SourceRef.parse(job.url, job.episode_id)
+    filename = ref.filename
     ext = extension_of(filename)
-    found = (
-        _load_chapter(settings, base_uri, chapter_idx, job.episode_id)
-        if chapter_idx is not None
-        else None
-    )
-    path = stored_source_path(settings, job.url, job.episode_id)
+    found = _load_chapter(settings, ref) if ref.chapter is not None else None
+    path = ref.stored_path(settings)
     if not path.exists():
         missing = f"book {found[0].id}" if found else f"episode {job.episode_id}"
         raise ExtractionPermanentError(
@@ -178,7 +215,7 @@ async def extract_file(
     )
     markdown = markdown.strip()
     if found:
-        metadata = _chapter_metadata(settings, *found)
+        metadata = _chapter_metadata(*found)
 
     # Filename (minus extension) is the title fallback when the document declares
     # none -- the common case for PDFs, plain text, and bare markdown.
@@ -211,18 +248,8 @@ async def extract_file(
     return ExtractionResult(markdown=markdown, metadata=metadata, article_chars=None)
 
 
-def _chapter_metadata(
-    settings: Settings, book: books.Book, chapter: books.Chapter
-) -> dict[str, Any]:
-    metadata: dict[str, Any] = {
-        "title": f"{book.title}: {chapter.title}",
-        "author": book.author,
-        "season_number": book.season_number,
-        "episode_number": chapter.idx,
-    }
-    if book.has_cover:
-        metadata["book_cover_path"] = str(books.cover_file(settings, book.id))
-    return metadata
+def _chapter_metadata(book: books.Book, chapter: books.Chapter) -> dict[str, Any]:
+    return {"title": f"{book.title}: {chapter.title}", "author": book.author}
 
 
 def _parse(

@@ -194,8 +194,7 @@ def render(
         item.podcast.itunes_explicit("yes" if settings.FEED_EXPLICIT else "no")
         if ep.season_number is not None:
             item.podcast.itunes_season(ep.season_number)
-            if ep.episode_number is not None:
-                item.podcast.itunes_episode(ep.episode_number)
+            item.podcast.itunes_episode(ep.episode_number)
 
     base_xml = fg.rss_str(pretty=False)
     return _inject_pc2_tags(
@@ -346,9 +345,8 @@ def _inject_pc2_tags(
                 season_attrib["name"] = season_names[ep.season_number]
             season_el = ET.SubElement(item_el, f"{{{_PODCAST_NS}}}season", attrib=season_attrib)
             season_el.text = str(ep.season_number)
-            if ep.episode_number is not None:
-                episode_el = ET.SubElement(item_el, f"{{{_PODCAST_NS}}}episode")
-                episode_el.text = str(ep.episode_number)
+            episode_el = ET.SubElement(item_el, f"{{{_PODCAST_NS}}}episode")
+            episode_el.text = str(ep.episode_number)
         if ep.chapters_json:
             chapters_url = _media_url(
                 settings.BASE_URL,

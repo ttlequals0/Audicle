@@ -12,24 +12,19 @@ stored original with no re-upload -- the reason the original is kept on disk.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
-import io
 import re
-import shutil
 import sqlite3
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
-from PIL import Image, UnidentifiedImageError
 
 from app.api.deps import get_conn, require_voice_loaded
 from app.api.v1.books import BookResponse, book_response, queue_selection
 from app.api.v1.submit import SubmitResponse
 from app.config import Settings, get_settings
 from app.core import database
-from app.core.paths import book_dir
-from app.services import book_chapters, books, file_extraction, jobs, runtime_settings, voices
+from app.services import book_upload, books, file_extraction, jobs, runtime_settings, voices
 from app.services import episodes as episodes_service
 from app.services.atomic_write import write_bytes_atomic
 
@@ -55,118 +50,17 @@ async def read_upload_capped(upload: UploadFile, cap: int) -> bytes:
     return b"".join(chunks)
 
 
-_COVER_FORMATS = ("JPEG", "PNG", "GIF", "WEBP")
-
-
-def _prepare_book(
-    data: bytes, ext: str, min_chars: int
-) -> tuple[book_chapters.DetectedBook, bytes | None] | None:
-    """CPU-bound: detect chapters and re-encode the cover as JPEG (None when unreadable)."""
-
-    detected = book_chapters.detect(data, ext, min_chars=min_chars)
-    if detected is None:
-        return None
-    cover: bytes | None = None
-    if detected.cover:
+def _queue_chapters(
+    conn: sqlite3.Connection, settings: Settings, book_id: str, chapters: str, voice: str | None
+) -> BookResponse:
+    with database.upload_staging_lock(settings.DATA_DIR, book_id):
+        book = books.get_book(conn, book_id)
+        if book is None:
+            raise HTTPException(status_code=409, detail="the book changed during upload; retry")
         try:
-            image = Image.open(io.BytesIO(detected.cover), formats=_COVER_FORMATS)
-            limit = Image.MAX_IMAGE_PIXELS
-            if not limit or image.width * image.height <= limit:
-                out = io.BytesIO()
-                image.convert("RGB").save(out, format="JPEG")
-                cover = out.getvalue()
-        except (UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError):
-            cover = None
-    return detected, cover
-
-
-def _create_book(
-    conn: sqlite3.Connection,
-    settings: Settings,
-    *,
-    data: bytes,
-    ext: str,
-    source_uri: str,
-    filename: str,
-    detected: book_chapters.DetectedBook,
-    cover: bytes | None,
-) -> books.Book:
-    book_id = books.book_id_for(source_uri)
-    try:
-        write_bytes_atomic(books.source_file(settings, book_id, ext), data)
-        if cover is not None:
-            write_bytes_atomic(books.cover_file(settings, book_id), cover)
-        return books.create_book(
-            conn,
-            source_uri=source_uri,
-            filename=filename,
-            detected=detected,
-            has_cover=cover is not None,
-        )
-    except Exception:
-        shutil.rmtree(book_dir(settings, book_id), ignore_errors=True)
-        raise
-
-
-async def _split_upload(
-    conn: sqlite3.Connection,
-    settings: Settings,
-    response: Response,
-    *,
-    data: bytes,
-    ext: str,
-    filename: str,
-    source_uri: str,
-    chapters: str | None,
-    voice: str | None,
-    min_chars: int,
-) -> BookResponse | None:
-    """Create or fetch the book and queue ``chapters``. None means no chapters were found.
-
-    Detection runs off the event loop and never while the flock is held (a blocking
-    flock across an await would stall the loop for a second request on the same file).
-    """
-
-    book_id = books.book_id_for(source_uri)
-    prepared = None
-    for _attempt in range(2):
-        if prepared is None and books.get_book(conn, book_id) is None:
-            try:
-                prepared = await asyncio.to_thread(_prepare_book, data, ext, min_chars)
-            except book_chapters.BookFormatError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            if prepared is None:
-                return None
-            try:
-                if chapters is not None:
-                    books.validate_selection(chapters, prepared[0].chapters)
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-        with database.upload_staging_lock(settings.DATA_DIR, book_id):
-            book = books.get_book(conn, book_id)
-            if book is None and prepared is None:
-                continue  # deleted since the pre-check: prepare, then retry under the lock
-            created = book is None
-            if book is None:
-                detected, cover = prepared
-                book = _create_book(
-                    conn,
-                    settings,
-                    data=data,
-                    ext=ext,
-                    source_uri=source_uri,
-                    filename=filename,
-                    detected=detected,
-                    cover=cover,
-                )
-            response.status_code = 201 if created else 200
-            if chapters is None:
-                return book_response(conn, book)
-            try:
-                return queue_selection(conn, book, chapters, voice)
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-    raise HTTPException(status_code=409, detail="the book changed during upload; retry")
+            return queue_selection(conn, book, chapters, voice)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post(
@@ -218,24 +112,31 @@ async def upload(
     source_uri = file_extraction.build_source_uri(content_hash, filename)
     episode_id = jobs.compute_episode_id(source_uri)
 
-    chapters_detected = None
     if split_chapters:
-        book_result = await _split_upload(
-            conn,
-            settings,
-            response,
-            data=data,
-            ext=ext,
-            filename=filename,
-            source_uri=source_uri,
-            chapters=chapters,
-            voice=voice,
-            min_chars=effective.MIN_EXTRACTION_CHARS,
-        )
-        if book_result is not None:
-            return book_result
+        try:
+            found = await book_upload.ensure_book(
+                conn,
+                settings,
+                data=data,
+                ext=ext,
+                filename=filename,
+                source_uri=source_uri,
+                chapters=chapters,
+                min_chars=effective.MIN_EXTRACTION_CHARS,
+            )
+        except ValueError as exc:  # BookFormatError or a bad `chapters` selection
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except book_upload.BookChangedError as exc:
+            raise HTTPException(
+                status_code=409, detail="the book changed during upload; retry"
+            ) from exc
+        if found is not None:
+            book, created = found
+            response.status_code = 201 if created else 200
+            if chapters is None:
+                return book_response(conn, book)
+            return _queue_chapters(conn, settings, book.id, chapters, voice)
         # No chapters found: the `chapters` value is ignored and the file is one episode.
-        chapters_detected = False
 
     with database.upload_staging_lock(settings.DATA_DIR, episode_id):
         voice_id = voices.resolve(conn, voice)
@@ -266,7 +167,7 @@ async def upload(
         episode_id=job.episode_id,
         status=job.status,
         replaced_previous=result.replaced_previous,
-        chapters_detected=chapters_detected,
+        chapters_detected=False if split_chapters else None,
     )
 
 
@@ -287,35 +188,33 @@ async def reprocess_upload(
     episode = episodes_service.get_by_id(conn, episode_id)
     if episode is None:
         raise HTTPException(status_code=404, detail="episode not found")
-    with database.upload_staging_lock(
-        settings.DATA_DIR, books.staging_lock_key(episode.original_url, episode_id)
-    ):
-        episode = episodes_service.get_by_id(conn, episode_id)
-        if episode is None:
-            raise HTTPException(status_code=404, detail="episode not found")
-        if episode.source_type != "upload":
-            raise HTTPException(
-                status_code=400,
-                detail="episode was not created from an uploaded file; reprocess it via its URL",
-            )
-        stored = file_extraction.stored_source_path(settings, episode.original_url, episode_id)
-        if not stored.exists():
-            raise HTTPException(
-                status_code=409,
-                detail="the stored original is no longer on disk; re-upload the document to reprocess",
-            )
-        chapter = books.chapter_for_episode(conn, episode_id)
-        voice_id = chapter[0].voice_id if chapter else None
-        try:
-            result = jobs.create_job(conn, episode.original_url, reprocess=True, voice_id=voice_id)
-        except jobs.DuplicateSubmissionError as exc:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "error": "Reprocess already in flight",
-                    "details": {"episode_id": exc.episode_id, "reason": exc.reason},
-                },
-            ) from exc
+    if episode.source_type != "upload":
+        raise HTTPException(
+            status_code=400,
+            detail="episode was not created from an uploaded file; reprocess it via its URL",
+        )
+    chapter = books.chapter_for_episode(conn, episode_id)
+    try:
+        result = file_extraction.requeue_stored(
+            conn,
+            settings,
+            episode.original_url,
+            episode_id,
+            chapter[0].voice_id if chapter else None,
+        )
+    except file_extraction.StoredSourceMissingError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the stored original is no longer on disk; re-upload the document to reprocess",
+        ) from exc
+    except jobs.DuplicateSubmissionError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "Reprocess already in flight",
+                "details": {"episode_id": exc.episode_id, "reason": exc.reason},
+            },
+        ) from exc
     return SubmitResponse(
         job_id=result.job.id,
         episode_id=result.job.episode_id,
