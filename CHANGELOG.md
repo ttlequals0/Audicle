@@ -6,6 +6,12 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.63.3] - 2026-11-22
+
+### Fixed
+
+- A title could still be announced twice when the repeated heading carried a markdown marker, such as "# Sunny", "## Sunny" or "**Sunny**". The check runs before leftover markers are removed, and it compared the heading with its marker attached, so short titles and bold titles did not match. The comparison now ignores heading and emphasis markers. Episodes narrated before this release keep the repeat until they are reprocessed.
+
 ## [0.63.2] - 2026-11-22
 
 ### Fixed
