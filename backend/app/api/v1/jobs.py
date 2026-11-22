@@ -129,8 +129,7 @@ async def requeue_job(
             job = jobs_service.get_job(conn, job_id)
             if job is None:
                 raise HTTPException(status_code=404, detail="job not found")
-            _, filename = file_extraction.parse_source_uri(job.url)
-            if not file_extraction.source_path(settings, job.episode_id, filename).exists():
+            if not file_extraction.stored_source_path(settings, job.url, job.episode_id).exists():
                 raise HTTPException(
                     status_code=409,
                     detail="the uploaded file is no longer on disk; re-upload it to reprocess",

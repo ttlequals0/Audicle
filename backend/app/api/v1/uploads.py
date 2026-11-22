@@ -138,7 +138,7 @@ async def reprocess_upload(
                 status_code=400,
                 detail="episode was not created from an uploaded file; reprocess it via its URL",
             )
-        stored = file_extraction.source_path(settings, episode_id, episode.source_filename or "")
+        stored = file_extraction.stored_source_path(settings, episode.original_url, episode_id)
         if not stored.exists():
             raise HTTPException(
                 status_code=409,

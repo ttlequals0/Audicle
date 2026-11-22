@@ -35,9 +35,10 @@ from pypdf import PdfReader
 from pypdf.errors import PyPdfError
 
 from app.config import Settings
+from app.core import database
 from app.core.paths import media_dir
-from app.services import html_markdown, ocr
-from app.services.book_chapters import page_has_image
+from app.services import book_chapters, books, html_markdown, ocr
+from app.services.book_chapters import BookFormatError, page_has_image
 from app.services.extraction_types import (
     ExtractionPermanentError,
     ExtractionResult,
@@ -58,7 +59,7 @@ IMAGE_EXTENSIONS: tuple[str, ...] = (".png", ".jpg", ".jpeg", ".webp", ".tiff")
 # constant (not an operator setting): adding a type without a parser would
 # accept files the pipeline then can't read.
 ALLOWED_EXTENSIONS: frozenset[str] = frozenset(
-    {".pdf", ".docx", ".md", ".txt", ".html", ".htm"} | set(IMAGE_EXTENSIONS)
+    {".pdf", ".docx", ".epub", ".md", ".txt", ".html", ".htm"} | set(IMAGE_EXTENSIONS)
 )
 
 # Strip directory components and control characters from a client-supplied
@@ -102,7 +103,7 @@ def build_source_uri(content_hash: str, filename: str) -> str:
 def parse_source_uri(uri: str) -> tuple[str, str]:
     """Inverse of :func:`build_source_uri`: ``(content_hash, filename)``."""
 
-    body = uri[len(SOURCE_SCHEME) :]
+    body = books.split_chapter_uri(uri)[0][len(SOURCE_SCHEME) :]
     content_hash, _, raw_name = body.partition("/")
     return content_hash, unquote(raw_name)
 
@@ -111,6 +112,34 @@ def source_path(settings: Settings, episode_id: str, filename: str) -> Path:
     """Where the original upload is stored: ``{media}/{episode_id}.source{ext}``."""
 
     return media_dir(settings) / f"{episode_id}.source{extension_of(filename)}"
+
+
+def stored_source_path(settings: Settings, url: str, episode_id: str) -> Path:
+    """Where the original for ``url`` lives: the book source for a chapter, else the upload."""
+
+    base_uri, chapter_idx = books.split_chapter_uri(url)
+    _, filename = parse_source_uri(base_uri)
+    if chapter_idx is None:
+        return source_path(settings, episode_id, filename)
+    return books.source_file(settings, books.book_id_for(base_uri), extension_of(filename))
+
+
+def _load_chapter(settings: Settings, base_uri: str, idx: int) -> tuple[books.Book, books.Chapter]:
+    """Look up a chapter's book and row, closing the connection before any parsing."""
+
+    book_id = books.book_id_for(base_uri)
+    conn = database.connect(database.db_path(settings.DATA_DIR))
+    try:
+        book = books.get_book(conn, book_id)
+        chapter = next((c for c in books.get_chapters(conn, book_id) if c.idx == idx), None)
+    finally:
+        conn.close()
+    if book is None or chapter is None:
+        raise ExtractionPermanentError(
+            f"stored upload missing for book {book_id} (chapter {idx}); "
+            "re-upload the book to reprocess it"
+        )
+    return book, chapter
 
 
 async def extract_file(
@@ -124,12 +153,18 @@ async def extract_file(
     loop, so whatever is passed has to tolerate it.
     """
 
-    _, filename = parse_source_uri(job.url)
+    base_uri, chapter_idx = books.split_chapter_uri(job.url)
+    _, filename = parse_source_uri(base_uri)
     ext = extension_of(filename)
-    path = source_path(settings, job.episode_id, filename)
+    book: books.Book | None = None
+    chapter: books.Chapter | None = None
+    if chapter_idx is not None:
+        book, chapter = _load_chapter(settings, base_uri, chapter_idx)
+    path = stored_source_path(settings, job.url, job.episode_id)
     if not path.exists():
+        missing = f"book {book.id}" if book else f"episode {job.episode_id}"
         raise ExtractionPermanentError(
-            f"stored upload missing for episode {job.episode_id} ({path.name}); "
+            f"stored upload missing for {missing} ({path.name}); "
             "re-upload the document to reprocess it"
         )
 
@@ -137,9 +172,11 @@ async def extract_file(
     # it. asyncio.to_thread copies the context, so the per-page OCR beat reaches
     # the running job's watchdog.
     markdown, metadata = await asyncio.to_thread(
-        lambda: _parse(path.read_bytes(), ext, settings, beat)
+        lambda: _parse(path.read_bytes(), ext, settings, beat, chapter.locator if chapter else None)
     )
     markdown = markdown.strip()
+    if book is not None and chapter is not None:
+        metadata = _chapter_metadata(settings, book, chapter)
 
     # Filename (minus extension) is the title fallback when the document declares
     # none -- the common case for PDFs, plain text, and bare markdown.
@@ -172,13 +209,45 @@ async def extract_file(
     return ExtractionResult(markdown=markdown, metadata=metadata, article_chars=None)
 
 
-def _parse(
-    data: bytes, ext: str, settings: Settings, beat: Callable[[], None]
-) -> tuple[str, dict[str, Any]]:
-    """Dispatch raw bytes to the per-format parser. Returns ``(markdown, metadata)``."""
+def _chapter_metadata(
+    settings: Settings, book: books.Book, chapter: books.Chapter
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "title": f"{book.title}: {chapter.title}" if book.title else chapter.title,
+        "author": book.author,
+        "season_number": book.season_number,
+        "episode_number": chapter.idx,
+    }
+    if book.has_cover:
+        metadata["book_cover_path"] = str(books.cover_file(settings, book.id))
+    return metadata
 
+
+def _parse(
+    data: bytes,
+    ext: str,
+    settings: Settings,
+    beat: Callable[[], None],
+    locator: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Dispatch raw bytes to the per-format parser. Returns ``(markdown, metadata)``.
+
+    ``locator`` restricts a book source to one chapter (EPUB spine range or PDF page range).
+    """
+
+    if ext == ".epub":
+        try:
+            if locator is not None:
+                return book_chapters.epub_chapter_markdown(data, locator), {}
+            return book_chapters.epub_full_markdown(data)
+        except BookFormatError as exc:
+            raise ExtractionPermanentError(f"could not read EPUB: {exc}") from exc
     if ext == ".pdf":
-        pages, image_pages, metadata = _parse_pdf(data)
+        # Page indexes below are relative to the range; ``first`` maps them back for OCR.
+        first = locator["first_page"] if locator else 0
+        pages, image_pages, metadata = (
+            _parse_pdf(data) if locator is None else _parse_pdf(data, first, locator["last_page"])
+        )
         markdown = "\n\n".join(page for page in pages if page)
         sparse_image_pages = [
             index
@@ -201,13 +270,14 @@ def _parse(
                 )
             try:
                 recognized = (
-                    ocr.ocr_pdf_pages(data, settings, beat, sparse_image_pages)
+                    ocr.ocr_pdf_pages(data, settings, beat, [first + i for i in sparse_image_pages])
                     if sparse_image_pages
                     else {}
                 )
             except ocr.OcrError as exc:
                 raise ExtractionPermanentError(f"Could not read scanned PDF pages: {exc}") from exc
-            for index, text in recognized.items():
+            for absolute, text in recognized.items():
+                index = absolute - first
                 if text.strip():
                     pages[index] = "\n\n".join(part for part in (pages[index], text) if part)
             markdown = "\n\n".join(page for page in pages if page)
@@ -229,10 +299,12 @@ def _parse(
     return _parse_text(data)
 
 
-def _parse_pdf(data: bytes) -> tuple[list[str], set[int], dict[str, Any]]:
+def _parse_pdf(
+    data: bytes, first: int = 0, last: int | None = None
+) -> tuple[list[str], set[int], dict[str, Any]]:
     try:
         reader = PdfReader(io.BytesIO(data))
-        source_pages = list(reader.pages)
+        source_pages = list(reader.pages)[first : None if last is None else last + 1]
         pages = [page.extract_text() or "" for page in source_pages]
         image_pages = {index for index, page in enumerate(source_pages) if page_has_image(page)}
     except (PyPdfError, ValueError, OSError) as exc:

@@ -10,7 +10,8 @@ from app.config import get_settings
 from app.core import database
 from app.core.paths import media_dir
 from app.main import create_app
-from app.services import episodes, feed, file_extraction, jobs, runtime_settings, voices
+from app.services import books, episodes, feed, file_extraction, jobs, runtime_settings, voices
+from app.services.book_chapters import DetectedBook, DetectedChapter
 from app.services.episodes import Episode
 from fastapi.testclient import TestClient
 
@@ -289,3 +290,57 @@ def test_feed_render_upload_episode_has_no_synthetic_link(env: Path) -> None:
     )
     assert b"upload://" not in body
     assert b"My Report.pdf" in body
+
+
+def test_reprocess_chapter_episode_uses_book_source(env: Path) -> None:
+    database.run_migrations(env)
+    detected = DetectedBook(
+        format="epub",
+        title="Book",
+        author=None,
+        cover=None,
+        chapters=[
+            DetectedChapter(
+                idx=1,
+                title="One",
+                locator={},
+                word_count=10,
+                char_count=50,
+                default_selected=True,
+                selectable=True,
+            )
+        ],
+    )
+    uri = file_extraction.build_source_uri("a" * 16, "novel.epub")
+    chapter_url = books.chapter_uri(uri, 1)
+    episode_id = jobs.compute_episode_id(chapter_url)
+    conn = database.connect(database.db_path(env))
+    try:
+        book = books.create_book(
+            conn, source_uri=uri, filename="novel.epub", detected=detected, has_cover=False
+        )
+        episodes.upsert(
+            conn,
+            id=episode_id,
+            job_id=None,
+            original_url=chapter_url,
+            title="Book: One",
+            author="A",
+            audio_path=None,
+            artwork_path=None,
+            transcript_vtt="WEBVTT\n",
+            duration_secs=10,
+            source_type="upload",
+            source_filename="novel.epub",
+        )
+    finally:
+        conn.close()
+    path = books.source_file(get_settings(), book.id, ".epub")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"EPUB")
+    with _client(env) as client:
+        ok = client.post(f"/api/v1/upload/{episode_id}/reprocess")
+        path.unlink()
+        gone = client.post(f"/api/v1/upload/{episode_id}/reprocess")
+    assert ok.status_code == 201
+    assert gone.status_code == 409

@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import io
+import zipfile
 from pathlib import Path
 
 import docx
 import pytest
 from app.config import get_settings
-from app.services import book_chapters, file_extraction, jobs, ocr
+from app.core import database
+from app.services import book_chapters, books, file_extraction, jobs, ocr
 from app.services.extraction_types import ExtractionPermanentError, ExtractionTooShortError
 from PIL import Image, ImageDraw
+from pypdf import PdfReader, PdfWriter
 
 _LONG = "Lorem ipsum dolor sit amet consectetur adipiscing elit. " * 20  # ~1100 chars
 
@@ -447,3 +450,216 @@ def test_mixed_pdf_with_ocr_disabled_fails_instead_of_omitting_scans(env, monkey
     monkeypatch.setattr(file_extraction, "_parse_pdf", lambda data: ([_LONG, ""], {1}, {}))
     with pytest.raises(ExtractionPermanentError, match="Enable OCR_ENABLED"):
         file_extraction._parse(b"pdf", ".pdf", get_settings(), lambda: None)
+
+
+# --- chapter jobs (books) ------------------------------------------------------
+
+
+def _epub_three_chapters() -> bytes:
+    xhtml = "application/xhtml+xml"
+    items = '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
+    points = ""
+    files = {}
+    for i, name in enumerate(("One", "Two", "Three"), 1):
+        files[f"ch{i}.xhtml"] = (
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title></head><body>'
+            f"<h1>{name}</h1><p>Body of chapter {name.lower()}. {_LONG}</p></body></html>"
+        )
+        items += f'<item id="c{i}" href="ch{i}.xhtml" media-type="{xhtml}"/>'
+        points += (
+            f'<navPoint id="p{i}" playOrder="{i}"><navLabel><text>{name}</text></navLabel>'
+            f'<content src="ch{i}.xhtml"/></navPoint>'
+        )
+    files["toc.ncx"] = (
+        '<?xml version="1.0"?><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">'
+        f"<navMap>{points}</navMap></ncx>"
+    )
+    refs = "".join(f'<itemref idref="c{i}"/>' for i in (1, 2, 3))
+    files["content.opf"] = (
+        '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0">'
+        '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Book</dc:title>'
+        "<dc:creator>Some Author</dc:creator></metadata>"
+        f'<manifest>{items}</manifest><spine toc="ncx">{refs}</spine></package>'
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("mimetype", "application/epub+zip")
+        zf.writestr(
+            "META-INF/container.xml",
+            '<?xml version="1.0"?><container version="1.0" '
+            'xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>'
+            '<rootfile full-path="content.opf" media-type="application/oebps-package+xml"/>'
+            "</rootfiles></container>",
+        )
+        for name, content in files.items():
+            zf.writestr(name, content)
+    return buf.getvalue()
+
+
+def _pdf_book(texts: list[str], outline: list[tuple[str, int]]) -> bytes:
+    writer = PdfWriter()
+    for text in texts:
+        writer.add_page(PdfReader(io.BytesIO(_make_pdf(text))).pages[0])
+    for title, page in outline:
+        writer.add_outline_item(title, page)
+    buf = io.BytesIO()
+    writer.write(buf)
+    return buf.getvalue()
+
+
+def _store_book(
+    env: Path, filename: str, data: bytes, *, has_cover: bool = False
+) -> tuple[books.Book, list[books.Chapter]]:
+    settings = get_settings()
+    detected = book_chapters.detect(data, file_extraction.extension_of(filename), min_chars=10)
+    assert detected is not None
+    database.run_migrations(env)
+    conn = database.connect(database.db_path(env))
+    try:
+        uri = file_extraction.build_source_uri("c" * 16, filename)
+        book = books.create_book(
+            conn, source_uri=uri, filename=filename, detected=detected, has_cover=has_cover
+        )
+        chapters = books.get_chapters(conn, book.id)
+    finally:
+        conn.close()
+    path = books.source_file(settings, book.id, file_extraction.extension_of(filename))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return book, chapters
+
+
+def _chapter_job(book: books.Book, idx: int) -> jobs.Job:
+    uri = books.chapter_uri(book.source_uri, idx)
+    return jobs.Job(
+        id="job1",
+        url=uri,
+        episode_id=jobs.compute_episode_id(uri),
+        status="processing",
+        stage="extract",
+        error=None,
+        created_at="t",
+        updated_at="t",
+    )
+
+
+def test_parse_source_uri_ignores_chapter_fragment() -> None:
+    uri = file_extraction.build_source_uri("abc123", "My Book.epub")
+    assert file_extraction.parse_source_uri(books.chapter_uri(uri, 4)) == (
+        "abc123",
+        "My Book.epub",
+    )
+
+
+async def test_extract_epub_whole_book(env: Path) -> None:
+    result = await _run(env, "novel.epub", _epub_three_chapters())
+    assert result.metadata["title"] == "Book"
+    assert result.metadata["author"] == "Some Author"
+    for name in ("one", "two", "three"):
+        assert f"Body of chapter {name}" in result.markdown
+
+
+async def test_extract_epub_chapter_returns_only_that_chapter(env: Path) -> None:
+    book, _ = _store_book(env, "novel.epub", _epub_three_chapters())
+    result = await file_extraction.extract_file(_chapter_job(book, 2), get_settings())
+    assert "Body of chapter two" in result.markdown
+    assert "Body of chapter one" not in result.markdown
+    assert "Body of chapter three" not in result.markdown
+    assert result.metadata["title"] == "Book: Two"
+    assert result.metadata["author"] == "Some Author"
+    assert result.metadata["season_number"] == book.season_number == 1
+    assert result.metadata["episode_number"] == 2
+
+
+async def test_extract_pdf_chapter_reads_only_its_pages(env: Path) -> None:
+    texts = [f"Marker{n} " + "filler words here. " * 12 for n in range(6)]
+    data = _pdf_book(texts, [("A", 0), ("B", 2), ("C", 4)])
+    book, chapters = _store_book(env, "tome.pdf", data)
+    assert chapters[1].locator == {"first_page": 2, "last_page": 3}
+    result = await file_extraction.extract_file(_chapter_job(book, 2), get_settings())
+    assert "Marker2" in result.markdown
+    assert "Marker3" in result.markdown
+    for n in (0, 1, 4, 5):
+        assert f"Marker{n}" not in result.markdown
+    assert result.metadata["title"] == "B"
+
+
+async def test_extract_pdf_chapter_ocr_limited_to_range(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    texts = ["tiny"] * 6
+    data = _pdf_book(texts, [("A", 0), ("B", 2), ("C", 4)])
+    book, _ = _store_book(env, "scan.pdf", data)
+    monkeypatch.setattr(file_extraction, "page_has_image", lambda _page: True)
+    seen: dict[str, list[int]] = {}
+
+    def _fake_ocr(_data, _settings, _beat, page_indices):
+        seen["indices"] = list(page_indices)
+        return {i: f"Recognized page {i}. " * 20 for i in page_indices}
+
+    monkeypatch.setattr(ocr, "ocr_pdf_pages", _fake_ocr)
+    result = await file_extraction.extract_file(_chapter_job(book, 2), get_settings())
+    assert seen["indices"] == [2, 3]
+    assert "Recognized page 2" in result.markdown
+    assert "Recognized page 4" not in result.markdown
+
+
+async def test_chapter_cover_path_in_metadata_only_when_book_has_cover(env: Path) -> None:
+    data = _epub_three_chapters()
+    with_cover, _ = _store_book(env, "novel.epub", data, has_cover=True)
+    result = await file_extraction.extract_file(_chapter_job(with_cover, 1), get_settings())
+    assert result.metadata["book_cover_path"] == str(
+        books.cover_file(get_settings(), with_cover.id)
+    )
+    # A second book (different hash) without a cover.
+    conn = database.connect(database.db_path(env))
+    try:
+        detected = book_chapters.detect(data, ".epub", min_chars=10)
+        uri = file_extraction.build_source_uri("d" * 16, "other.epub")
+        plain = books.create_book(
+            conn, source_uri=uri, filename="other.epub", detected=detected, has_cover=False
+        )
+    finally:
+        conn.close()
+    path = books.source_file(get_settings(), plain.id, ".epub")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    result = await file_extraction.extract_file(_chapter_job(plain, 1), get_settings())
+    assert "book_cover_path" not in result.metadata
+
+
+async def test_chapter_job_with_missing_book_source_is_permanent_error(env: Path) -> None:
+    book, _ = _store_book(env, "novel.epub", _epub_three_chapters())
+    books.source_file(get_settings(), book.id, ".epub").unlink()
+    with pytest.raises(ExtractionPermanentError, match="stored upload missing") as exc:
+        await file_extraction.extract_file(_chapter_job(book, 1), get_settings())
+    assert book.id in str(exc.value)
+
+
+async def test_chapter_job_with_missing_book_row_is_permanent_error(env: Path) -> None:
+    database.run_migrations(env)
+    uri = file_extraction.build_source_uri("e" * 16, "ghost.epub")
+    job = jobs.Job(
+        id="job1",
+        url=books.chapter_uri(uri, 1),
+        episode_id="x",
+        status="processing",
+        stage="extract",
+        error=None,
+        created_at="t",
+        updated_at="t",
+    )
+    with pytest.raises(ExtractionPermanentError, match="stored upload missing"):
+        await file_extraction.extract_file(job, get_settings())
+
+
+def test_stored_source_path_resolves_through_book(env: Path) -> None:
+    settings = get_settings()
+    uri = file_extraction.build_source_uri("f" * 16, "novel.epub")
+    book_id = books.book_id_for(uri)
+    assert file_extraction.stored_source_path(
+        settings, books.chapter_uri(uri, 3), "ep"
+    ) == books.source_file(settings, book_id, ".epub")
+    assert file_extraction.stored_source_path(settings, uri, "ep") == file_extraction.source_path(
+        settings, "ep", "novel.epub"
+    )
