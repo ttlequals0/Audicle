@@ -620,17 +620,17 @@ def _title_key(text: str) -> str:
     return flat.strip(" .:;,-!?\"'")
 
 
-_TITLE_SEPARATORS = re.compile(r": | \| | - ")
+_TITLE_SEPARATORS = re.compile(r": | \| | [-\u2013\u2014] ")
 _TITLE_ENUMERATOR = re.compile(r"^(?:chapter\s+)?\d+[.):]?\s+", re.IGNORECASE)
-# Title separators plus the sentence boundary, capturing so kept text rebuilds verbatim.
-_HEADING_PARTS = re.compile(r"(: | \| | - |\. )")
+# Title separators plus the space after a sentence period; captured so kept text rebuilds verbatim.
+_HEADING_PARTS = re.compile(rf"({_TITLE_SEPARATORS.pattern}|(?<=\.) )")
 
 
 def _title_echo_keys(title: str) -> set[str]:
     """Keys a body heading may match: the title, its segments, each minus a chapter number."""
 
     full = _title_key(title)
-    keys = {_title_key(p) for p in _TITLE_SEPARATORS.split(title.translate(_TITLE_PUNCT))} | {full}
+    keys = {_title_key(p) for p in _TITLE_SEPARATORS.split(title)} | {full}
     keys |= {_TITLE_ENUMERATOR.sub("", k) for k in keys}
     return {k for k in keys if len(k) >= 4 or (k and k == full)}
 
@@ -639,30 +639,16 @@ def _is_title_key(key: str, title_keys: set[str]) -> bool:
     return any(key == tk or SequenceMatcher(None, key, tk).ratio() >= 0.9 for tk in title_keys)
 
 
-def _drop_echo_parts(line: str, title_keys: set[str]) -> str | None:
-    """The line minus its title-echo parts; None when no part echoes, "" when all do."""
+def _drop_echo_parts(line: str, title_keys: set[str]) -> str:
+    """The line minus its title-echo parts; "" when every part echoes."""
 
-    # translate() is 1:1 per character, so offsets from the normalised line slice the original.
-    pieces = _HEADING_PARTS.split(line.translate(_TITLE_PUNCT))
-    texts: list[str] = []
-    pos = 0
-    for piece in pieces:
-        texts.append(line[pos : pos + len(piece)])
-        pos += len(piece)
-    parts, seps = texts[0::2], texts[1::2]
-    echo = [_is_title_key(_title_key(p), title_keys) for p in parts]
-    kept = [i for i, p in enumerate(parts) if not echo[i] and p.strip()]
+    pieces = _HEADING_PARTS.split(line)
+    pairs = list(zip(["", *pieces[1::2]], pieces[0::2], strict=True))
+    echo = [_is_title_key(_title_key(part), title_keys) for _, part in pairs]
     if not any(echo):
-        return None
-    if not kept:
-        return ""
-    out = parts[kept[0]]
-    for k in kept[1:]:
-        out += seps[k - 1] + parts[k]
-    # Keep the sentence period that preceded the removed trailing part.
-    if kept[-1] < len(seps) and seps[kept[-1]].startswith("."):
-        out = out.rstrip() + "."
-    return out.strip()
+        return line
+    kept = [pair for pair, e in zip(pairs, echo, strict=True) if not e and pair[1].strip()]
+    return (kept[0][1] + "".join(sep + part for sep, part in kept[1:])).strip() if kept else ""
 
 
 def _strip_title_echo(cleaned: str, title: str | None) -> str:
@@ -676,7 +662,6 @@ def _strip_title_echo(cleaned: str, title: str | None) -> str:
         return cleaned
     longest = max(len(k) for k in title_keys)
     lines = cleaned.split("\n")
-    echoes: set[int] = set()
     edits: dict[int, str] = {}
     seen = 0
     for i, line in enumerate(lines):
@@ -687,28 +672,26 @@ def _strip_title_echo(cleaned: str, title: str | None) -> str:
         if seen > 5 or len(key) > longest * 2:
             break
         if _is_title_key(key, title_keys):
-            echoes.add(i)
+            edits[i] = ""
             continue
-        trimmed = _drop_echo_parts(line, title_keys)
-        if trimmed is None:
-            continue
-        if trimmed:
-            edits[i] = trimmed
-        else:
-            echoes.add(i)
-    if not echoes and not edits:
+        new = _drop_echo_parts(line, title_keys)
+        if new != line:
+            edits[i] = new
+    if not edits:
         return cleaned
     out: list[str] = []
     after_echo = False
     for i, line in enumerate(lines):
-        if i in echoes:
-            after_echo = True
-            continue
+        if i in edits:
+            line = edits[i]
+            if not line:
+                after_echo = True
+                continue
         # Drop blanks that would stack or lead once an echo line is gone.
-        if after_echo and not line.strip() and (not out or not out[-1].strip()):
+        elif after_echo and not line.strip() and (not out or not out[-1].strip()):
             continue
         after_echo = False
-        out.append(edits.get(i, line))
+        out.append(line)
     return "\n".join(out).strip() or cleaned
 
 

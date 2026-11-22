@@ -3444,6 +3444,7 @@ _ECHO_LONG = (
 )
 _ECHO_BODY = "Body paragraph that is clearly longer than the headline and carries on for a while."
 _ECHO_HEAD = "A Made Up Headline About Widgets"
+_ECHO_BOOK = "The Widget Book: 6. A Quiet Start"
 
 
 @pytest.mark.parametrize(
@@ -3478,12 +3479,12 @@ _ECHO_HEAD = "A Made Up Headline About Widgets"
         (_ECHO_HEAD, f"{_ECHO_HEAD}\n\n\n\n{_ECHO_BODY}", _ECHO_BODY),
         (_ECHO_HEAD, f"{_ECHO_HEAD}\n\n{_ECHO_BODY}\n", _ECHO_BODY),
         (
-            "The Widget Book: 6. A Quiet Start",
+            _ECHO_BOOK,
             f"Chapter Six. A Quiet Start.\n\n{_ECHO_BODY}",
             f"Chapter Six.\n\n{_ECHO_BODY}",
         ),
         (
-            "The Widget Book: 6. A Quiet Start",
+            _ECHO_BOOK,
             f"Chapter Six: A Quiet Start\n\n{_ECHO_BODY}",
             f"Chapter Six\n\n{_ECHO_BODY}",
         ),
@@ -3502,6 +3503,21 @@ _ECHO_HEAD = "A Made Up Headline About Widgets"
             f"Chapter Six. Sunny.\n\n{_ECHO_BODY}",
             f"Chapter Six.\n\n{_ECHO_BODY}",
         ),
+        (
+            _ECHO_BOOK,
+            f"Part Two. A Quiet Start. 1998.\n\n{_ECHO_BODY}",
+            f"Part Two. 1998.\n\n{_ECHO_BODY}",
+        ),
+        (
+            _ECHO_HEAD,
+            f"Technology \u2013 {_ECHO_HEAD}\n\n{_ECHO_BODY}",
+            f"Technology\n\n{_ECHO_BODY}",
+        ),
+        (
+            "Widgets \u2014 A Field Guide",
+            f"A Field Guide\n\n{_ECHO_BODY}",
+            _ECHO_BODY,
+        ),
     ],
     ids=[
         "after_leading_label",
@@ -3517,6 +3533,9 @@ _ECHO_HEAD = "A Made Up Headline About Widgets"
         "site_name_before_headline_on_one_line",
         "label_and_headline_on_one_line",
         "one_word_chapter_title_on_one_line",
+        "title_between_two_other_parts",
+        "en_dash_between_label_and_headline",
+        "em_dash_title_separator_segment",
     ],
 )
 def test_title_echo_strips_heading_shaped_echoes(title: str, body: str, expected: str) -> None:
@@ -3550,7 +3569,7 @@ def test_title_echo_strips_heading_shaped_echoes(title: str, body: str, expected
         ),
         (_ECHO_HEAD, f"\n\n{_ECHO_PARA}\n"),
         (
-            "The Widget Book: 6. A Quiet Start",
+            _ECHO_BOOK,
             f"Chapter Six. The Long Road.\n\n{_ECHO_BODY}",
         ),
         (
@@ -3559,6 +3578,7 @@ def test_title_echo_strips_heading_shaped_echoes(title: str, body: str, expected
             f"well past the length of any heading.\n\n{_ECHO_BODY}",
         ),
         (_ECHO_HEAD, f"It rained all week. Nobody minded at first.\n\n{_ECHO_BODY}"),
+        ("Widgets \u2014 A Field Guide", f"Introduction\n\n{_ECHO_BODY}"),
     ],
     ids=[
         "does_not_reach_into_body",
@@ -3570,6 +3590,7 @@ def test_title_echo_strips_heading_shaped_echoes(title: str, body: str, expected
         "heading_with_parts_that_do_not_match",
         "opening_sentences_are_not_split",
         "short_paragraph_under_the_wider_gate",
+        "em_dash_title_separator_segments_still_match_nothing_here",
     ],
 )
 def test_title_echo_leaves_text_unchanged(title: str, body: str) -> None:
