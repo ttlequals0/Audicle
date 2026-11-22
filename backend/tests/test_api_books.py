@@ -120,6 +120,38 @@ def test_list_summaries_match_each_book_detail(env: Path) -> None:
     assert rows[ids[1]]["can_resume"] is False
 
 
+def test_list_and_detail_agree_on_counts_and_can_resume(env: Path) -> None:
+    with _client(env) as client:
+        body = _split(client, simple_epub(8), chapters="1-7").json()
+        book_id = body["book_id"]
+        ep = {c["index"]: c["episode_id"] for c in body["chapters"]}
+        _set_job(env, ep[2], "processing")
+        _publish(env, ep[3])
+        _set_job(env, ep[3], "done")
+        _set_job(env, ep[4], "failed")
+        _set_job(env, ep[5], "cancelled")
+        _publish(env, ep[6])
+        _set_job(env, ep[6], "done")
+        assert client.delete(f"/api/v1/episodes/{ep[6]}").status_code == 200
+
+        def both() -> tuple[dict, dict]:
+            item = next(r for r in client.get("/api/v1/books").json() if r["book_id"] == book_id)
+            return item, client.get(f"/api/v1/books/{book_id}").json()
+
+        item, detail = both()
+        assert item["counts"] == detail["counts"]
+        assert item["can_resume"] == detail["can_resume"]
+        assert sum(detail["counts"].values()) == len(detail["chapters"]) == 8
+        assert sum(1 for n in detail["counts"].values() if n) >= 4
+        assert detail["counts"]["removed"] == 1
+        _publish(env, ep[4])
+        _set_job(env, ep[4], "done")
+        item, detail = both()
+        assert item["counts"] == detail["counts"]
+        assert item["can_resume"] == detail["can_resume"]
+        assert detail["counts"]["done"] == 2
+
+
 def test_list_books_statement_count_does_not_grow_with_books(env: Path) -> None:
     def statements() -> int:
         seen: list[str] = []
