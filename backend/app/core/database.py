@@ -745,6 +745,41 @@ def _m030_episode_audio_generation(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m031_books(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS books ("
+        "id TEXT PRIMARY KEY, "
+        "source_uri TEXT NOT NULL UNIQUE, "
+        "filename TEXT NOT NULL, "
+        "format TEXT NOT NULL, "
+        "title TEXT, "
+        "author TEXT, "
+        "season_number INTEGER NOT NULL UNIQUE, "
+        "has_cover INTEGER NOT NULL DEFAULT 0, "
+        "voice_id TEXT, "
+        "created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')))"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS book_chapters ("
+        "book_id TEXT NOT NULL, "
+        "idx INTEGER NOT NULL, "
+        "title TEXT NOT NULL, "
+        "locator TEXT NOT NULL, "
+        "word_count INTEGER NOT NULL, "
+        "char_count INTEGER NOT NULL, "
+        "selectable INTEGER NOT NULL, "
+        "default_selected INTEGER NOT NULL, "
+        "requested INTEGER NOT NULL DEFAULT 0, "
+        "episode_id TEXT NOT NULL UNIQUE, "
+        "completed_at TEXT, "
+        "PRIMARY KEY (book_id, idx))"
+    )
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(episodes)")}
+    for column in ("season_number", "episode_number"):
+        if column not in columns:
+            conn.execute(f"ALTER TABLE episodes ADD COLUMN {column} INTEGER")
+
+
 def _m025_episode_chapters_json(conn: sqlite3.Connection) -> None:
     """0.51.0: Podcasting 2.0 chapters document per episode, stored like
     transcript_vtt. NULL for every pre-existing row (chapters are generated
@@ -832,6 +867,7 @@ MIGRATIONS: list[tuple[str, Migration]] = [
     ("028_lexicon_generations", _m028_lexicon_generations),
     ("029_feed_revision", _m029_feed_revision),
     ("030_episode_audio_generation", _m030_episode_audio_generation),
+    ("031_books", _m031_books),
 ]
 
 

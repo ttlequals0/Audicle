@@ -41,6 +41,7 @@ def test_run_migrations_creates_tables(tmp_path: Path) -> None:
         "028_lexicon_generations",
         "029_feed_revision",
         "030_episode_audio_generation",
+        "031_books",
     ]
 
     conn = database.connect(database.db_path(tmp_path))
@@ -87,6 +88,7 @@ def test_second_run_is_a_noop(tmp_path: Path) -> None:
         "028_lexicon_generations",
         "029_feed_revision",
         "030_episode_audio_generation",
+        "031_books",
     ]
     assert second == []
 
@@ -588,5 +590,38 @@ def test_lexicon_input_text_index_exists(env: Path) -> None:
             "EXPLAIN QUERY PLAN SELECT * FROM lexicon WHERE case_sensitive = 1 AND input_text = 'x'"
         ).fetchall()
         assert any("idx_lexicon_input_text" in row["detail"] for row in plan)
+    finally:
+        conn.close()
+
+
+def test_m031_is_additive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    full = database.MIGRATIONS
+    cutoff = next(i for i, (name, _) in enumerate(full) if name == "031_books")
+    monkeypatch.setattr(database, "MIGRATIONS", full[:cutoff])
+    database.run_migrations(tmp_path)
+    conn = database.connect(database.db_path(tmp_path))
+    try:
+        conn.executescript(
+            """
+            INSERT INTO jobs (id, url, episode_id, status, voice_id)
+              VALUES ('j1','https://x/1','e1','done','3');
+            INSERT INTO episodes (id, job_id, original_url, title)
+              VALUES ('e1','j1','https://x/1','T');
+            """
+        )
+        before_job = tuple(conn.execute("SELECT * FROM jobs").fetchone())
+        before_ep = dict(conn.execute("SELECT * FROM episodes").fetchone())
+    finally:
+        conn.close()
+    monkeypatch.setattr(database, "MIGRATIONS", full)
+    assert database.run_migrations(tmp_path) == ["031_books"]
+    conn = database.connect(database.db_path(tmp_path))
+    try:
+        assert tuple(conn.execute("SELECT * FROM jobs").fetchone()) == before_job
+        after_ep = dict(conn.execute("SELECT * FROM episodes").fetchone())
+        assert after_ep.pop("season_number") is None
+        assert after_ep.pop("episode_number") is None
+        assert after_ep == before_ep
+        database._m031_books(conn)  # idempotent re-run
     finally:
         conn.close()
