@@ -12,12 +12,16 @@ work lives under `[Unreleased]`.
 
 - Accept `.epub` uploads. Without the split option, the whole book is narrated in reading order as one episode.
 - Split an EPUB or PDF into one episode per chapter. `POST /api/v1/upload` takes two new form fields: `split_chapters` and `chapters` (`all`, `default`, or a list such as `1,3,5-9`). Chapters come from the EPUB table of contents (EPUB 3 nav document, then EPUB 2 `toc.ncx`, then one chapter per spine document) or the PDF bookmark outline, top-level entries only. A chapter with a front or back matter title (copyright, contents, notes, index and similar) is unticked by default. A chapter shorter than `MIN_EXTRACTION_CHARS` cannot be selected.
-- Add the books API. `GET /api/v1/books` and `GET /api/v1/books/{book_id}` return a `BookResponse` with a status for each chapter (`not_queued`, `queued`, `processing`, `done`, `failed`, `cancelled`, `removed`). `POST /api/v1/books/{book_id}/chapters` queues chapters from `all`, `default`, `remaining` or a list of numbers, and reports skipped chapters that are already done or in flight. `DELETE /api/v1/books/{book_id}` returns 409 while a chapter is processing.
+- Add the books API. `GET /api/v1/books` and `GET /api/v1/books/{book_id}` return a `BookResponse` with a status for each chapter (`not_queued`, `queued`, `processing`, `done`, `failed`, `cancelled`, `removed`). `POST /api/v1/books/{book_id}/chapters` queues chapters from `all`, `default`, `remaining` or a list of numbers, and reports skipped chapters that are already done or in flight. `DELETE /api/v1/books/{book_id}` returns 409 while any chapter is queued or processing.
 - Return `chapters_detected: false` from `POST /api/v1/upload` when `split_chapters` is set and the file has no chapters. The file is queued as one episode.
 - Add a "Split into chapters" checkbox to the Home upload area for EPUB and PDF files, a Books section with Choose chapters, Resume and Delete, and a chapter picker with Select all, Defaults and None.
 - Tag chapter episodes with `itunes:season`, `itunes:episode`, `podcast:season` (named after the book) and `podcast:episode`. The season is allocated per book and the episode number is the chapter's position in the full table of contents. The feed stays `episodic`.
 - Store each book's original and cover under `{DATA_DIR}/books/{book_id}/`, outside the media directory, so the orphan sweep leaves them alone. They stay until the book is deleted. Reprocess and requeue of a chapter episode read the source from there.
 - Reject EPUBs whose spine documents are encrypted (DRM) with a 400. Font-only `encryption.xml` entries are ignored. Archives are capped at `MAX_UNCOMPRESSED_BYTES` (200 MiB), `MAX_ARCHIVE_ENTRIES` (5000 entries) and `MAX_EXTRACTED_CHARS` (50 MiB of text).
+- Add `chapter` (the chapter number, or null) to `GET /api/v1/jobs` items and to upload webhook payloads. The Queue and Recents rows show "filename, chapter N" for a chapter job.
+- Add `voice_id` to the book response. The chapter picker shows "Voice: slot N (book's voice)" when Random is chosen and the book already has a voice.
+- Name a book after its filename, without the extension, when the EPUB or PDF has no title.
+- Pad a book cover to a square on the cover's average colour instead of cropping it. A small cover is used rather than falling back to the show image.
 - Add migration `031_books` with the `books` and `book_chapters` tables and nullable `season_number` and `episode_number` columns on `episodes`. It is additive and changes no existing rows.
 
 ### Changed

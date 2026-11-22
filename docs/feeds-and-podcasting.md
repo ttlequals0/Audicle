@@ -8,7 +8,7 @@ Episodes carry a Podcasting 2.0 `podcast:transcript` (WebVTT), `podcast:chapters
 
 ## Books and seasons
 
-Each chapter of a chapter-split book is an ordinary episode in the same feed. Chapter episodes carry `itunes:season`, `itunes:episode`, `podcast:season` and `podcast:episode`; `podcast:season` has a `name` attribute holding the book title. Other episodes have none of these tags. The channel stays `episodic`.
+Each chapter of a chapter-split book is an ordinary episode in the same feed. Chapter episodes carry `itunes:season`, `itunes:episode`, `podcast:season` and `podcast:episode`; `podcast:season` has a `name` attribute holding the book title while the book exists. Other episodes have none of these tags. The channel stays `episodic`.
 
 | Tag | Value |
 |---|---|

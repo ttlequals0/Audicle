@@ -63,7 +63,8 @@ curl -b cookies.txt -H "X-CSRF-Token: $CSRF" \
   "format": "epub",
   "season_number": 1,
   "has_cover": true,
-  "created_at": "2026-11-21T09:30:00",
+  "voice_id": null,
+  "created_at": "2026-11-21T09:30:00Z",
   "counts": {"not_queued": 27, "queued": 0, "processing": 0, "done": 0, "failed": 0, "cancelled": 0, "removed": 0},
   "can_resume": false,
   "chapters": [
@@ -75,7 +76,7 @@ curl -b cookies.txt -H "X-CSRF-Token: $CSRF" \
 }
 ```
 
-`GET /books` returns the same objects without `chapters`. A chapter's `status` is one of `not_queued`, `queued`, `processing`, `done`, `failed`, `cancelled` or `removed`. It is read from the chapter's newest job; `removed` means the episode was published and has since been deleted by you or by retention.
+`GET /books` returns the same objects with `chapters` as an empty list. `title` is the title stored in the file, or the filename without its extension when the file has none. `voice_id` is the voice slot the book narrates in, or null until chapters are first queued. A chapter's `status` is one of `not_queued`, `queued`, `processing`, `done`, `failed`, `cancelled` or `removed`. It is read from the chapter's newest job; `removed` means the episode was published and has since been deleted by you or by retention.
 
 `POST /books/{book_id}/chapters` queues chapters and requires a loaded voice, like upload:
 
@@ -90,9 +91,11 @@ curl -b cookies.txt -H "X-CSRF-Token: $CSRF" \
 | `remaining` | chapters you queued earlier that are not done and not running (failed, cancelled), skipping any chapter whose episode was deleted after it was published |
 | `[1,3,5]` or `"1,3,5-9"` | those chapters |
 
-The response is the book with `queued` (chapter numbers) and `skipped` (chapters already done or in flight, or not selectable). A failed or cancelled chapter listed by number is queued again. A chapter number out of range, a too-short chapter named explicitly, or a malformed value returns 400; an unknown book returns 404. A book narrates in one voice: `voice` is stored on the book the first time chapters are queued, and later calls reuse it unless `voice` is given.
+The response is the book with `queued` (chapter numbers) and `skipped` (chapters already done or in flight, not selectable, or already requested by another call). A failed or cancelled chapter listed by number is queued again. A chapter number out of range, a too-short chapter named explicitly, or a malformed value returns 400; an unknown book returns 404. A book narrates in one voice: `voice` is stored on the book the first time chapters are queued, and later calls reuse it unless `voice` is given.
 
-`DELETE /books/{book_id}` returns 204, or 409 while any chapter is processing. It removes the book and its stored original and cover. Published chapter episodes stay in the feed but can no longer be reprocessed. To re-run one chapter, use `POST /upload/{episode_id}/reprocess` or `POST /jobs/{id}/requeue`; both read the source from the book.
+`DELETE /books/{book_id}` returns 204, or 409 while any chapter is queued or processing. It removes the book and its stored original and cover. Published chapter episodes stay in the feed but can no longer be reprocessed. To re-run one chapter, use `POST /upload/{episode_id}/reprocess` or `POST /jobs/{id}/requeue`; both read the source from the book.
+
+In `GET /jobs`, a chapter job has `source_filename` set to the book's filename and `chapter` set to its number. `chapter` is null for every other job.
 
 Media is served under `/media/`: `{id}.mp3`, `{id}.vtt`, `{id}.chapters.json`, `{id}.txt` (the cleaned article), and `{id}.jpg`. Published URLs add `?v=<generation>` to non-artwork media. Artwork carries the generation in its filename.
 
@@ -111,6 +114,7 @@ Payload fields:
 | `source_type` | string | always | `url` or `upload` |
 | `url` | string | url jobs | the source article URL |
 | `source_filename` | string | upload jobs | the uploaded document's name |
+| `chapter` | integer or null | upload jobs | the chapter number for a job from a chapter-split book, else null |
 | `reprocess` | bool | always | true if this run was a reprocess, not a first pass |
 | `time_to_process_secs` | number or null | processed | seconds from claim to finish (null for very old jobs) |
 | `time_to_process` | string or null | processed | the same time as `mm:ss` |
@@ -151,7 +155,7 @@ A failed job:
 }
 ```
 
-An upload episode is the same shape with `"source_type": "upload"` and a `"source_filename"` instead of `url`. The test button's payload adds `"test": true` so your receiver can tell it from a real run.
+An upload episode is the same shape with `"source_type": "upload"` and a `"source_filename"` and `"chapter"` instead of `url`. The test button's payload adds `"test": true` so your receiver can tell it from a real run.
 
 Delivery is fire-and-forget: a background task with a short timeout (`WEBHOOK_TIMEOUT_SECONDS`, default 10s) and a few retries with backoff, so a dead or slow receiver never delays or fails the episode. To test from the API, `POST /api/v1/webhooks/test` returns `{ "delivered", "status_code", "error" }`.
 
