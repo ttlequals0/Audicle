@@ -13,7 +13,7 @@ RUN apt-get update \
     && printf 'Package: audicle-libcups-stub\nVersion: 1.0\nArchitecture: all\nMaintainer: Audicle <noreply@example.invalid>\nProvides: libcups2t64 (= 2.4.99)\nConflicts: libcups2t64\nReplaces: libcups2t64\nDescription: empty stand-in for libcups2t64\n GTK depends on CUPS for printing only; this package ships no files.\n' > control \
     && equivs-build control
 
-FROM python:3.14-slim AS runtime
+FROM python:3.15-slim AS runtime
 COPY --from=uv /uv /bin/
 
 ENV PYTHONUNBUFFERED=1 \
