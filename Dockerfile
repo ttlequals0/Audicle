@@ -51,7 +51,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends xz-utils \
     && rm -rf /tmp/ffmpeg.tar.xz /tmp/ffmpeg-* /var/lib/apt/lists/*
 
 # ---- Stage 3: Python runtime ----
-FROM python:3.14-slim AS runtime
+FROM python:3.15-slim AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
