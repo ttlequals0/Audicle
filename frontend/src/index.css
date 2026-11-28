@@ -526,6 +526,8 @@
     top: 0;
     left: 0;
     right: 0;
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
     z-index: 30;
     display: flex;
     justify-content: center;
@@ -749,6 +751,10 @@
   .safe-top {
     padding-top: env(safe-area-inset-top);
   }
+  .safe-x {
+    padding-left: calc(1rem + env(safe-area-inset-left));
+    padding-right: calc(1rem + env(safe-area-inset-right));
+  }
   .safe-bottom {
     padding-bottom: calc(env(safe-area-inset-bottom) + 1rem);
   }
@@ -949,7 +955,7 @@
 .skip-link {
   position: absolute;
   top: 0.5rem;
-  left: 0.5rem;
+  left: calc(0.5rem + env(safe-area-inset-left));
   z-index: 100;
   transform: translateY(-200%);
   padding: 0.75rem 1rem;

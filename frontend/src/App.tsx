@@ -82,7 +82,7 @@ function Shell() {
   if (loading) return <div className="min-h-screen bg-ink" />;
   if (failed) {
     return (
-      <main className="min-h-screen px-4 py-10 text-danger">
+      <main className="min-h-screen safe-x py-10 text-danger">
         <h1 className="text-xl font-bold mb-2">Authentication status unavailable</h1>
         <p className="text-fg text-sm mb-4" role="alert">The app could not verify your session.</p>
         <button className="btn-ghost" onClick={() => refresh()}>
@@ -95,7 +95,7 @@ function Shell() {
   // only thing rendered -- no header, nav, or page content.
   if (status?.password_set && !status.authenticated) {
     return (
-      <main className="min-h-screen px-4">
+      <main className="min-h-screen safe-x">
         <Login />
       </main>
     );
@@ -116,7 +116,7 @@ function Shell() {
         Skip to main content
       </a>
       <header className="safe-top sticky top-0 z-20 bg-ink/95 backdrop-blur-md border-b border-line">
-        <div className={`${pageWidth} mx-auto px-4`}>
+        <div className={`${pageWidth} mx-auto safe-x`}>
           <div className="flex items-center justify-between py-3.5">
             <NavLink to="/" className="flex items-center gap-2.5 text-accent">
               <Mark className="shrink-0" />
@@ -165,7 +165,7 @@ function Shell() {
         ref={mainRef}
         id="main-content"
         tabIndex={-1}
-        className={`flex-1 ${pageWidth} mx-auto w-full px-4 py-6 relative z-10 safe-bottom`}
+        className={`flex-1 ${pageWidth} mx-auto w-full safe-x py-6 relative z-10 safe-bottom`}
       >
         <Routes>
           <Route path="/" element={<Home />} />
