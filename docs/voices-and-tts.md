@@ -56,7 +56,7 @@ One consequence: a remote speech endpoint returns audio only, no transcript, so 
 
 ### Endpoint addresses
 
-By default the endpoint must resolve to a public address. To use a server on your LAN or another container, set `TTS_API_ALLOW_PRIVATE=true` in the environment. It then also accepts `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10` (Tailscale), and `fc00::/7`. Loopback and link-local addresses (including `169.254.169.254`) are never allowed. It applies to both the TTS and ASR endpoints, and it is not editable in Settings or the API, so an admin session cannot widen it.
+By default the endpoint must resolve to a public address. To use a server on your LAN or another container, set `TTS_API_ALLOW_PRIVATE=true` in the environment. It then also accepts `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10` (Tailscale), and `fc00::/7`. Loopback, link-local, and cloud metadata addresses are never allowed. It applies to both the TTS and ASR endpoints, and it is not editable in Settings or the API, so an admin session cannot widen it.
 
 ## ASR verification
 

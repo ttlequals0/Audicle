@@ -65,6 +65,13 @@ _PRIVATE_ALLOWED_NETWORKS = tuple(
 )
 
 
+# Cloud metadata addresses that sit inside the ranges above and stay refused.
+_ALWAYS_BLOCKED_NETWORKS = (
+    ipaddress.ip_network("100.100.100.200/32"),
+    ipaddress.ip_network("fd00:ec2::254/128"),
+)
+
+
 async def resolve_public_host(host: str, *, allow_private: bool = False) -> str:
     """SSRF guard: resolve ``host`` and refuse private/loopback/link-local/
     multicast/reserved addresses. Returns the resolved IP literal so the
@@ -99,7 +106,9 @@ async def resolve_public_host(host: str, *, allow_private: bool = False) -> str:
             raise BlockedHostError(host, f"invalid_ip_{addr}") from None
         classified = getattr(ip, "ipv4_mapped", None) or ip
         if (not classified.is_global or classified.is_multicast) and not (
-            allow_private and any(classified in net for net in _PRIVATE_ALLOWED_NETWORKS)
+            allow_private
+            and not any(classified in net for net in _ALWAYS_BLOCKED_NETWORKS)
+            and any(classified in net for net in _PRIVATE_ALLOWED_NETWORKS)
         ):
             raise BlockedHostError(host, f"non_public_address_{ip}")
         if public_ip is None:
