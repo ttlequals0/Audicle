@@ -4,13 +4,11 @@ Configure the app in Settings or through the authenticated API. Saved settings o
 
 An empty text field saves an explicit empty value, so it can disable an optional service even when the environment supplies a URL. Resetting a field removes its override and restores its environment or code default. The API uses `null` for reset.
 
-Before removing legacy `BASE_URL` or `UI_BASE_URL` environment values, save and verify the desired values in Settings. Once removed, resetting those settings returns to their code defaults.
-
-Only deployment settings stay outside the UI: storage paths, worker count, session signing key, device assignment, and container networking. The [configuration reference](environment-variables.md) lists defaults and application timing. Existing environment files remain supported.
+Only deployment settings stay outside the UI: storage paths, worker count, session signing key, device assignment, and container networking. The [configuration reference](environment-variables.md) lists every variable with its default and whether it is runtime-editable, and covers moving legacy `BASE_URL` and `UI_BASE_URL` values out of an environment file.
 
 ## The Settings page
 
-Settings are grouped by the question you are answering, not by which mechanism stores them:
+Settings are grouped by the question you are answering:
 
 | Category | Groups |
 |---|---|
@@ -29,7 +27,7 @@ Switching categories, collapsing a section or searching preserves unsaved edits 
 ## Content
 
 - **Extraction**: the engine (`direct` or `firecrawl`), fetch timeouts and user agent, the extraction floor (`MIN_EXTRACTION_CHARS`), the automatic reader, wallhop and archive fallbacks, the registration-wall email, and the Firecrawl content flags.
-- **site overrides**: per-host paywall rules; see [Paywalled articles](paywalls.md).
+- **Site overrides**: per-host paywall rules; see [Paywalled articles](paywalls.md).
 - **Cleanup** and **cleanup prompt**: the cleanup window (`LLM_CLEANUP_WINDOW_CHARS`), minimum article length, prompt-size cap and editable cleanup prompt.
 - **Uploads**: the per-file size cap and the `OCR_*` knobs for scanned documents.
 
@@ -40,7 +38,7 @@ Everything that shapes how an episode sounds, in setup order: pick a [voice](voi
 - **TTS generation** is the Chatterbox sampling group: lower temperature reads steadier, raise the repetition penalty if words loop, seed 0 is random. It also holds the [chunk cache](how-it-works.md#the-chunk-cache) toggles (`TTS_CHUNK_CACHE_ENABLED`, `TTS_CACHE_RETENTION_DAYS`; note that seed 0 disables caching) and [adaptive chunk sizing](how-it-works.md#adaptive-chunk-sizing) (`TTS_ADAPTIVE_MAX_CHARS_ENABLED`).
 - **Verification** and **Audio analysis** are the [quality gates](how-it-works.md#the-quality-gates).
 - **Audio output** covers silence handling, loudness normalization, and the MP3 encode.
-- **TTS delivery** is how long to keep trying when the wrapper is slow or restarting; see [the memory ladder](how-it-works.md#the-wrappers-memory-ladder) for why the connect budget must outlast a 90-second restart. The idle restart toggle (`TTS_IDLE_RESTART_ENABLED`) lives here too.
+- **TTS delivery** is how long to keep trying when the wrapper is slow or restarting; see [the memory ladder](how-it-works.md#the-wrappers-memory-ladder) for why the connect budget must outlast a wrapper restart. The idle restart toggle (`TTS_IDLE_RESTART_ENABLED`) lives here too.
 
 ### Pronunciation corrections
 
@@ -52,15 +50,14 @@ A table for words the narrator mispronounces. Each row is a match term, the spok
 
 ## Publishing
 
-The podcast as subscribers receive it: feed metadata, [artwork](feeds-and-podcasting.md#episode-artwork), [chapters](feeds-and-podcasting.md#chapters), the RSS cache window, [authenticated feeds](feeds-and-podcasting.md#authenticated-feeds), and retention (`RETENTION_DAYS`; a daily sweep deletes older episodes).
+The podcast as subscribers receive it: feed metadata, [artwork](feeds-and-podcasting.md#episode-artwork), [chapters](feeds-and-podcasting.md#chapters), the RSS cache window, [authenticated feeds](feeds-and-podcasting.md#authenticated-feeds), and retention (`RETENTION_DAYS`; a daily sweep deletes older episodes, and `MIGRATION_BACKUP_RETENTION_DAYS` sets how long database migration snapshots are kept).
 
 ## Services
 
 - **LLM**: the [provider](llm-providers.md), model, keys, and tuning.
-- **Connections**: the URLs of everything the app talks to: Firecrawl, the TTS wrapper, FlareSolverr, the render sidecar, the reader proxy, the wallhop proxy. All live-tunable so you can point at an external service without an env edit and restart.
-- **Timeouts**: per-request budgets for the extraction cascade. Raise one when an upstream is slow rather than losing the article.
+- **Connections**: the URLs of everything the app talks to: Firecrawl, the TTS wrapper, FlareSolverr, the render sidecar, the reader proxy, the wallhop proxy, plus the public base URLs (`BASE_URL`, `UI_BASE_URL`). All live-tunable, so you can point at an external service without an env edit and restart.
+- **Timeouts**: per-request budgets for Firecrawl, the render sidecar, FlareSolverr, the web archive and the webhook. Raise one when an upstream is slow instead of losing the article.
 - **Webhooks**: the notification URL and a test button; see [API and webhooks](api-and-webhooks.md#webhooks).
-
 - **Sidecar settings**: renderer and TTS wrapper controls, including memory limits, model unloading, verification and logging. Use Save sidecar settings to apply these drafts. Offline sidecars keep their saved overrides; pending changes apply when the service returns. See [sidecar configuration](api-and-webhooks.md#sidecar-settings).
 
 ## System

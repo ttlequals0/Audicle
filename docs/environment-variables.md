@@ -2,13 +2,13 @@
 
 Only `BUILD_VERSION` is required in the stock Compose `.env` file. Set it to an existing release tag. Configure the app through Settings or the authenticated API after startup.
 
-Saved settings override legacy environment values, which override code defaults. Existing deployments can keep their environment files. Sending `null` to `PUT /api/v1/settings` removes an override; an empty string is an explicit empty value for text settings. Secrets are masked in API responses.
+Saved settings override legacy environment values, which override code defaults. Existing deployments can keep their environment files. Sending `null` to `PUT /api/v1/settings` removes an override; an empty string is an explicit empty value for text settings. Secrets (the LLM, Firecrawl, reader, TTS and Whisper API keys) are masked in API responses.
 
 Before removing legacy `BASE_URL` or `UI_BASE_URL` values from an environment file, save and verify the desired values in Settings. After the environment values are removed, resetting either setting returns to its code default.
 
-Storage paths, worker count, the session signing key, hardware assignment, and container networking are deployment settings. Changing them requires recreating the relevant container. `.env.example` lists these optional overrides. Application controls below are available at runtime unless marked env-only; job settings apply to the next job.
+Storage paths, worker count, the session signing key, hardware assignment, and container networking are deployment settings. Changing them requires recreating the relevant container. `.env.example` lists these optional overrides. Every variable below is runtime-editable unless marked env-only; job settings apply to the next job.
 
-The defaults below come from the backend configuration model. A deployed server's `GET /api/v1/settings` response reports its environment defaults and saved overrides.
+The defaults below come from the backend configuration model (`backend/app/config.py`). A deployed server's `GET /api/v1/settings` response reports its environment defaults and saved overrides.
 
 ## Identity and feed
 
@@ -57,7 +57,7 @@ See [LLM providers](llm-providers.md). Keys are masked in API responses; protect
 
 ## Extraction and paywalls
 
-The cascade and its budgets. See the paywalls page.
+The cascade and its budgets. See [Paywalled articles](paywalls.md).
 
 | Variable | Default | Runtime |
 |---|---|---|
@@ -224,7 +224,7 @@ The quality gates. WHISPER_BACKEND selects where ASR runs.
 
 ## Security
 
-Login protection and cookie policy are runtime settings. Only the signing key stays outside the API; when omitted, Audicle generates and persists it. Keep proxy trust disabled unless a trusted reverse proxy supplies the client address.
+Login protection and cookie policy are runtime settings. Only the signing key stays outside the API; when omitted, Audicle generates and persists it. Keep proxy trust off unless a trusted reverse proxy supplies the client address.
 
 | Variable | Default | Runtime |
 |---|---|---|
@@ -239,7 +239,7 @@ Login protection and cookie policy are runtime settings. Only the signing key st
 
 ## TTS wrapper settings
 
-Use the TTS wrapper controls in Settings or `PUT /api/v1/settings/sidecars`. The app stores these values in its database and reapplies them before claiming the next queued job. For wrapper TTS, jobs with saved settings stay queued until those settings can be applied. A wrapper restart during an active job restores its environment defaults until the next job sync. Keep intentional startup values such as `WHISPER_ENABLED` in Compose. Device allocation, reference paths, and the allocator remain deployment settings.
+Use the TTS wrapper controls in Settings or `PUT /api/v1/settings/sidecars`. The app stores these values in its database and reapplies them before claiming the next queued job. For wrapper TTS, jobs with saved settings stay queued until those settings can be applied. A wrapper restart during an active job restores its environment defaults until the next job sync. Keep intentional startup values such as `WHISPER_ENABLED` in Compose. Every variable below is editable this way except `TTS_DEVICE`, `TTS_LANGUAGE`, `TTS_REFERENCE_PATH`, `TTS_SAMPLE_RATE` and `MALLOC_ARENA_MAX`, which stay deployment settings. `TTS_MEMORY_SOFT_LIMIT_MB` must not exceed `TTS_MEMORY_HARD_LIMIT_MB` unless one is 0.
 
 | Variable | Default | What it does |
 |---|---|---|
@@ -281,7 +281,7 @@ The renderer network and firewall settings remain deployment configuration:
 | Variable | Default | What it does |
 |---|---|---|
 | `RENDER_PROXY_IP` | `172.30.0.3` | Fixed IPv4 address of the renderer egress proxy on its internal network |
-| `RENDER_PROXY_PORT` | `3128` | Proxy listener port |
+| `RENDER_PROXY_PORT` | `3128` | Port the renderer's firewall allows to the proxy; the bundled proxy always listens on 3128 and Compose does not pass this variable, so leave it unset |
 | `RENDER_NETWORK_SUBNET` | `172.30.0.0/24` | Dedicated internal renderer-control subnet |
 | `RENDER_CLIENT_IP` | `172.30.0.2` | Fixed renderer IPv4 address allowed by the proxy |
 
