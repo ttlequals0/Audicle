@@ -43,6 +43,8 @@ Every release gets a CHANGELOG.md section. If a branch bumps the version more th
    The GPU wrapper uses CUDA 12.6 wheels. Confirm the deployment host driver
    exposes CUDA 12.6 or newer before promoting the GPU tag.
 
+   If `python -m camoufox fetch` hits the GitHub API rate limit while building the render image, pass a token as an optional BuildKit secret: `GITHUB_TOKEN=<token> docker build --secret id=github_token,env=GITHUB_TOKEN ... render/`. It is mounted for that one step only and never stored in the image. Plain builds without it work as before.
+
    Never retag an old build as a new version: retagging freezes the apt-upgrade security layer.
 4. Run the CVE gate. `scripts/trivy_gate.sh X.Y.Z` scans all five tags (the four stack images plus the `-cpu` wrapper) with the correct per-image ignorefile. Read the output before treating a failure as a CVE because Trivy also returns a failure for scan errors. This gate runs locally at release time.
 5. Smoke the images as containers, not just the code. Run the app image and hit `/health/live`; confirm `import main` works inside the wrapper image. Tests import from the source tree, so a file missing from a Dockerfile COPY line only surfaces here (0.55.0 shipped that way and could not start; a wrapper test now guards the COPY list, but the principle stands for every image).

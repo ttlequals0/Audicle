@@ -62,7 +62,12 @@ HTTPServer(("0.0.0.0", 80), Handler).serve_forever()
 PY
 
 docker build -t audicle-render-egress:integration render/egress-proxy >/dev/null
-docker build -t audicle-render:integration render >/dev/null
+# Forward a token (when set) as a BuildKit secret so camoufox fetch avoids the anonymous rate limit.
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+    docker build --secret id=github_token,env=GITHUB_TOKEN -t audicle-render:integration render >/dev/null
+else
+    docker build -t audicle-render:integration render >/dev/null
+fi
 # Internal like the deployed render-control network: no route out and no external DNS.
 docker network create --internal --subnet 172.31.0.0/24 "$control" >/dev/null
 docker network create --subnet 11.77.0.0/24 "$public_net" >/dev/null
