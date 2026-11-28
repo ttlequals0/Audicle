@@ -6,12 +6,13 @@ Resolution chain: code default -> env var -> runtime_settings DB row.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Hosts that ship with the "render" Site-override strategy (the headful render
@@ -36,6 +37,29 @@ RENDER_BUILTIN_HOSTS: tuple[str, ...] = (
     "crainsnewyork.com",
     "bostonglobe.com",
 )
+
+
+EXTRA_BODY_RESERVED_KEYS = frozenset({"model", "input", "voice", "response_format"})
+EXTRA_BODY_MAX_CHARS = 4096
+
+
+def check_extra_body(raw: str) -> str:
+    """Validate TTS_API_EXTRA_BODY: empty, or a JSON object without the core request fields."""
+
+    if not raw:
+        return raw
+    if len(raw) > EXTRA_BODY_MAX_CHARS:
+        raise ValueError(f"TTS_API_EXTRA_BODY must be at most {EXTRA_BODY_MAX_CHARS} characters")
+    try:
+        parsed = json.loads(raw)
+    except ValueError as exc:
+        raise ValueError(f"TTS_API_EXTRA_BODY is not valid JSON: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("TTS_API_EXTRA_BODY must be a JSON object")
+    reserved = sorted(EXTRA_BODY_RESERVED_KEYS & parsed.keys())
+    if reserved:
+        raise ValueError(f"TTS_API_EXTRA_BODY cannot set {', '.join(reserved)}")
+    return raw
 
 
 class Settings(BaseSettings):
@@ -304,6 +328,11 @@ class Settings(BaseSettings):
     # Voice name on the remote server. Reference-voice slots are a wrapper
     # concept: a remote server manages its own voices, so this names one.
     TTS_API_VOICE: str = "alloy"
+    # JSON object of extra fields sent with each speech request; empty means none.
+    TTS_API_EXTRA_BODY: str = ""
+    # Env-only: the endpoints are editable in the UI, so the switch that widens
+    # where they may point must be something a hijacked admin session cannot flip.
+    TTS_API_ALLOW_PRIVATE: bool = False
 
     # Where post-TTS ASR verification runs. Independent of TTS_BACKEND on
     # purpose: local synthesis with remote ASR is a legitimate pairing.
@@ -534,6 +563,11 @@ class Settings(BaseSettings):
                 with contextlib.suppress(ValueError):
                     self.UPLOAD_MAX_MB = max(1, int(legacy) // (1024 * 1024))
         return self
+
+    @field_validator("TTS_API_EXTRA_BODY")
+    @classmethod
+    def _validate_extra_body(cls, value: str) -> str:
+        return check_extra_body(value)
 
     @model_validator(mode="after")
     def _validate_backends(self) -> Settings:

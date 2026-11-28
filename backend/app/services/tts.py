@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import io
+import json
 import logging
 import wave
 from collections.abc import Awaitable, Callable
@@ -145,6 +146,11 @@ def cache_identity(settings: Settings, slot: int | None) -> tuple[str, str, str]
         fingerprint = (
             f"{settings.TTS_API_BASE_URL}:{settings.TTS_API_MODEL}:{settings.TTS_API_VOICE}"
         )
+        if settings.TTS_API_EXTRA_BODY:
+            extra = json.dumps(
+                json.loads(settings.TTS_API_EXTRA_BODY), sort_keys=True, separators=(",", ":")
+            )
+            fingerprint = f"{fingerprint}:{extra}"
         return settings.TTS_BACKEND, settings.TTS_API_MODEL, fingerprint
     if not settings.TTS_MODEL or slot is None or settings.CHATTERBOX_SEED == 0:
         return None

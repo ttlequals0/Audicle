@@ -125,6 +125,7 @@ const GROUPS: Record<string, string[]> = {
     "TTS_API_BASE_URL",
     "TTS_API_MODEL",
     "TTS_API_VOICE",
+    "TTS_API_EXTRA_BODY",
     "TTS_API_KEY",
     "WHISPER_BACKEND",
     "WHISPER_API_BASE_URL",
@@ -528,7 +529,8 @@ const GROUP_NOTES: Record<string, string> = {
   Feed: "Changes appear when the podcast app next refreshes the feed.",
   "TTS backend":
     "The wrapper runs locally. The openai-api backend uses another speech server and its voices. " +
-    "Choose its voice with TTS API voice. Remote speech needs remote verification or verification turned off.",
+    "Choose its voice with TTS API voice. TTS API extra body adds JSON fields to each speech request sent to a remote server, for example {\"speed\": 1.1}. " +
+    "Remote speech needs remote verification or verification turned off.",
   "TTS delivery":
     "Set how long to retry a slow or restarting wrapper. The connection retry budget must outlast model loading after a restart.",
   "Job timeouts":
@@ -586,6 +588,7 @@ const TTS_REMOTE_KEYS = new Set([
   "TTS_API_KEY",
   "TTS_API_MODEL",
   "TTS_API_VOICE",
+  "TTS_API_EXTRA_BODY",
 ]);
 const WHISPER_REMOTE_KEYS = new Set([
   "WHISPER_API_BASE_URL",

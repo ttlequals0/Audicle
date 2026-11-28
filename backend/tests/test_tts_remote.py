@@ -403,3 +403,86 @@ async def test_remote_transcription_tolerates_an_unexpected_shape(
     )
     _patch_client(monkeypatch, httpx.MockTransport(lambda r: httpx.Response(200, json=["nope"])))
     assert await tts_remote.transcribe(_wav_bytes(), settings) is None
+
+
+# --- LAN endpoints and extra body ------------------------------------------
+
+
+@pytest.mark.real_ssrf
+async def test_lan_endpoint_refused_by_default(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tts_remote._guard_cache.clear()
+    settings = _remote_env(monkeypatch, TTS_API_BASE_URL="http://192.168.1.50:8000/v1")
+    _patch_client(
+        monkeypatch, httpx.MockTransport(lambda r: httpx.Response(200, content=_wav_bytes()))
+    )
+    with pytest.raises(tts_remote.ssrf.BlockedHostError):
+        await tts_remote.synthesize("hello", "ep1", 0, settings)
+
+
+@pytest.mark.real_ssrf
+async def test_lan_endpoint_accepted_with_allow_private(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tts_remote._guard_cache.clear()
+    settings = _remote_env(
+        monkeypatch,
+        TTS_API_BASE_URL="http://192.168.1.50:8000/v1",
+        TTS_API_ALLOW_PRIVATE="true",
+    )
+    _patch_client(
+        monkeypatch, httpx.MockTransport(lambda r: httpx.Response(200, content=_wav_bytes()))
+    )
+    path, _ = await tts_remote.synthesize("hello", "ep1", 0, settings)
+    assert path.exists()
+    tts_remote._guard_cache.clear()
+
+
+@pytest.mark.real_ssrf
+async def test_loopback_refused_even_with_allow_private(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tts_remote._guard_cache.clear()
+    settings = _remote_env(
+        monkeypatch, TTS_API_BASE_URL="http://127.0.0.1:8000/v1", TTS_API_ALLOW_PRIVATE="true"
+    )
+    with pytest.raises(tts_remote.ssrf.BlockedHostError):
+        await tts_remote.synthesize("hello", "ep1", 0, settings)
+
+
+async def test_extra_body_is_merged_and_core_fields_win(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _remote_env(monkeypatch, TTS_API_EXTRA_BODY='{"speed": 1.1, "lang": "en"}')
+    seen: dict = {}
+
+    def handler(request):
+        import json as _json
+
+        seen.clear()
+        seen.update(_json.loads(request.content))
+        return httpx.Response(200, content=_wav_bytes())
+
+    _patch_client(monkeypatch, httpx.MockTransport(handler))
+    await tts_remote.synthesize("hello", "ep1", 0, settings)
+    assert seen["speed"] == 1.1
+    assert seen["lang"] == "en"
+    assert seen["input"] == "hello"
+    assert seen["response_format"] == "wav"
+
+    # Validation already rejects reserved keys; the merge order is the backstop.
+    forged = settings.model_copy(update={"TTS_API_EXTRA_BODY": '{"input": "x", "speed": 2}'})
+    await tts_remote.synthesize("hello", "ep1", 1, forged)
+    assert seen["input"] == "hello"
+    assert seen["speed"] == 2
+
+
+def test_extra_body_validation(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TTS_API_EXTRA_BODY", '{"speed": 1.1}')
+    get_settings.cache_clear()
+    assert get_settings().TTS_API_EXTRA_BODY == '{"speed": 1.1}'
+    for bad in ["not json", "[1]", '{"voice": "x"}', '{"model": 1}', '{"a": "' + "x" * 5000 + '"}']:
+        monkeypatch.setenv("TTS_API_EXTRA_BODY", bad)
+        get_settings.cache_clear()
+        with pytest.raises(ValueError):
+            get_settings()
+    get_settings.cache_clear()

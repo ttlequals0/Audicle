@@ -116,6 +116,8 @@ The wrapper connection, model, chunking, generation, and the delivery budgets th
 | `TTS_API_KEY` | `` | yes |
 | `TTS_API_MODEL` | `tts-1` | yes |
 | `TTS_API_VOICE` | `alloy` | yes |
+| `TTS_API_EXTRA_BODY` | `` | yes |
+| `TTS_API_ALLOW_PRIVATE` | `False` | env-only |
 | `TTS_MODEL` | `` | yes |
 | `TTS_LANGUAGE` | `en` | yes |
 | `TTS_HTTP_TIMEOUT_SECONDS` | `120` | yes |
