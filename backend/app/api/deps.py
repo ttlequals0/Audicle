@@ -20,6 +20,7 @@ from fastapi import Depends, HTTPException, Request
 from app.api.access_log import safe_path
 from app.config import Settings, get_settings
 from app.core import database
+from app.core.net import normalize_ip
 from app.services import auth, csrf, feed_auth, runtime_settings, voices
 
 logger = logging.getLogger("app.api.deps")
@@ -49,16 +50,16 @@ def get_conn(
         yield conn
 
 
-def _normalize_ip(value: str) -> str | None:
-    """Return the IP with an IPv4-mapped IPv6 form unwrapped, or None if invalid."""
+def _limiter_key(value: str) -> str | None:
+    """Plain IPv4 for IPv4 and mapped peers; the /64 network for real IPv6."""
 
-    try:
-        ip = ipaddress.ip_address(value)
-    except ValueError:
+    normalized = normalize_ip(value)
+    if normalized is None:
         return None
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
-        return str(ip.ipv4_mapped)
-    return str(ip)
+    ip = ipaddress.ip_address(normalized)
+    if isinstance(ip, ipaddress.IPv6Address):
+        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+    return normalized
 
 
 def client_ip(request: Request, settings: Settings) -> str:
@@ -68,7 +69,8 @@ def client_ip(request: Request, settings: Settings) -> str:
     ``TRUSTED_PROXY_HOPS`` from the right -- the hop our own proxy appended --
     rather than the client-controlled leftmost value, which an attacker could
     spoof to evade the limit. Falls back to the socket peer when the header is
-    absent, the flag is off, or the candidate isn't a valid IP.
+    absent, the flag is off, or the candidate isn't a valid IP. IPv6 clients
+    are keyed by their /64 so one client cannot rotate addresses to evade.
     """
 
     if settings.TRUST_PROXY_HEADERS:
@@ -78,13 +80,13 @@ def client_ip(request: Request, settings: Settings) -> str:
             hops = settings.TRUSTED_PROXY_HOPS
             if len(parts) >= hops:
                 candidate = parts[-hops]
-                normalized = _normalize_ip(candidate)
+                normalized = _limiter_key(candidate)
                 if normalized:
                     return normalized
     if not request.client:
         return "unknown"
     # A dual-stack listener reports IPv4 peers as ::ffff:a.b.c.d.
-    return _normalize_ip(request.client.host) or request.client.host
+    return _limiter_key(request.client.host) or request.client.host
 
 
 def require_admin(

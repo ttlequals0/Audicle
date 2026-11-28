@@ -51,7 +51,7 @@ networks:
 
 The link from `render` to `render-egress` is IPv4 only by design. It uses a fixed IPv4 address on an internal network, and the renderer blocks all other IPv6 traffic.
 
-If you set `FORWARDED_ALLOW_IPS` for uvicorn, list IPv4 proxies in mapped form too (for example `::ffff:172.18.0.2`) or use a network range. Audicle's own login rate limit and lockout already treat mapped addresses as plain IPv4.
+If you set `FORWARDED_ALLOW_IPS` for uvicorn, list IPv4 proxies in mapped form too (for example `::ffff:172.18.0.2`) or use a network range. Audicle's own login rate limit and lockout already treat mapped addresses as plain IPv4. Login rate limiting and lockout count IPv6 clients per /64, since one client usually controls a whole /64.
 
 ## File permissions
 

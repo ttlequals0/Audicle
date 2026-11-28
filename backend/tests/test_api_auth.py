@@ -106,6 +106,25 @@ def test_runtime_proxy_and_lockout_settings_reach_auth_path(env: Path) -> None:
     assert row is not None and row["lockout_until"]
 
 
+def test_ipv6_failures_in_one_slash_64_share_a_lockout_bucket(env: Path) -> None:
+    database.run_migrations(env)
+    _set_password(env, PASSWORD)
+    with database.connection(env) as conn:
+        runtime_settings.set_value(conn, "TRUST_PROXY_HEADERS", True)
+        runtime_settings.set_value(conn, "TRUSTED_PROXY_HOPS", 1)
+        runtime_settings.set_value(conn, "LOCKOUT_MAX_FAILED_ATTEMPTS", 5)
+    with _client() as client:
+        for addr in ("2001:db8:1:2::1", "2001:db8:1:2::2"):
+            client.post(
+                "/api/v1/auth/login",
+                json={"password": "wrong"},
+                headers={"X-Forwarded-For": addr},
+            )
+    with database.connection(env) as conn:
+        rows = conn.execute("SELECT identifier, failed_attempts FROM auth_lockout").fetchall()
+    assert [(r["identifier"], r["failed_attempts"]) for r in rows] == [("2001:db8:1:2::/64", 2)]
+
+
 def test_runtime_cookie_policy_applies_to_new_session(env: Path) -> None:
     database.run_migrations(env)
     with database.connection(env) as conn:
