@@ -13,7 +13,7 @@ Paste a URL, or switch to the File tab and drop documents.
 
 - The file tab takes up to 20 files per batch (PDF including scanned, DOCX, EPUB, Markdown, text, HTML, or an image). Files upload one at a time, and each becomes its own queued job. One bad file does not sink the batch: an unsupported type or an oversized file is rejected by name at selection, and a duplicate reports "already in the feed" while the rest go through. Failed rows stay in the picker with their reason so you can retry or remove them.
 - Each submission picks its narration voice from the picker under the Submit button: Random (a random filled slot), Last used, or a specific slot. See [Voices and TTS](voices-and-tts.md).
-- The queue shows running and waiting jobs with per-stage progress; a queued or processing job can be cancelled. A chapter job shows as "filename, chapter N" in the queue and in Articles. Articles lists finished and failed jobs: a failed job can be requeued from here (URL jobs re-fetch, uploads re-run from the stored original), and a finished one can regenerate its chapters without re-synthesizing audio.
+- The queue shows running and waiting jobs with per-stage progress; a queued or processing job can be cancelled. A chapter job shows as "filename, chapter N" in the queue and in Articles. Articles lists finished and failed jobs: a failed job can be requeued from here (URL jobs re-fetch, uploads re-run from the stored original), and a finished one can regenerate its chapters without re-synthesizing audio. When the section is open, "clear failed" removes failed and cancelled runs from the list and "clear all" removes every finished run; each asks for a second click to confirm, and episodes are not affected.
 - The Books and Articles sections are both collapsed by default and remember whether you opened them.
 
 ### Books
@@ -45,7 +45,7 @@ Your episodes, with inline players, transcripts, and per-episode actions.
 
 ## Settings
 
-Choose Content, Voice, Publishing, Services or System from the side navigation. On mobile, use the category selector. Each section has a short description of what it controls.
+Choose Content, Voice, Publishing, Services or System from the side navigation. On mobile, use the category selector.
 
 <p align="center">
   <img src="screenshots/settings-desktop.png" alt="Settings, desktop" width="600">

@@ -20,25 +20,25 @@ The wrapper unloads its TTS and Whisper models after 300 idle seconds by default
 
 ## End-of-episode chime
 
-Under Settings > Voice > End chime, upload one short clip that plays at the end of every episode, so back-to-back episodes are easy to tell apart on autoplay. Turn it on with the toggle in that same section (`CHIME_ENABLED`); the clip is transcoded and loudness-matched to the narration. Upload WAV/MP3/M4A/FLAC/OGG, trimmed to about 15 seconds. Delete it to stop.
+Under Settings > Voice > End chime, upload one short clip that plays at the end of every episode, so back-to-back episodes are easy to tell apart on autoplay. Turn it on with the toggle in that same section (`CHIME_ENABLED`); the clip is transcoded and loudness-matched to the narration. Upload WAV, MP3, M4A, FLAC, or OGG, up to 10 MB; audio past 15 seconds is cut off. Delete the clip to stop.
 
 ## Running TTS on another host
 
-By default the bundled wrapper does the synthesis (`TTS_BACKEND=wrapper`). If you already run Chatterbox (or any speech server with an OpenAI-compatible API) on another machine, point Audicle at it:
+By default the bundled wrapper does the synthesis (`TTS_BACKEND=wrapper`). If you already run a speech server with an OpenAI-compatible API on another machine, point Audicle at it. It must follow the request and response rules below.
 
 | Setting | What it is |
 |---|---|
-| `TTS_BACKEND` | `wrapper` or `openai-api` |
-| `TTS_API_BASE_URL` | The remote server's `/v1` endpoint |
+| `TTS_BACKEND` | `wrapper` (default) or `openai-api` |
+| `TTS_API_BASE_URL` | The remote server's API root, for example `http://tts-host:8000/v1`. Required when `TTS_BACKEND=openai-api` |
 | `TTS_API_KEY` | Bearer token, if the server wants one (masked in API responses) |
-| `TTS_API_MODEL` | Model name to request |
-| `TTS_API_VOICE` | Voice name on the remote server |
+| `TTS_API_MODEL` | Model name to request (default `tts-1`) |
+| `TTS_API_VOICE` | Voice name on the remote server (default `alloy`) |
 | `TTS_API_EXTRA_BODY` | JSON object of extra fields sent with each speech request, for example `{"speed": 1.1}`. Empty sends none |
 | `TTS_API_ALLOW_PRIVATE` | Environment only. Set to `true` to allow a LAN endpoint (see below) |
 
-The remote server manages its own voices, so the local voice slots do not apply and `TTS_API_VOICE` names the one to use. The client receives audio bytes and writes them where the pipeline expects, so everything downstream (audio analysis, chapters, transcripts) works identically.
+The remote server manages its own voices, so the local voice slots do not apply and `TTS_API_VOICE` names the one to use. The client writes the returned audio where the pipeline expects it, so audio analysis, chapters, and transcripts work as with the wrapper.
 
-Audicle appends `/audio/speech` to `TTS_API_BASE_URL` (and `/audio/transcriptions` to `WHISPER_API_BASE_URL` for ASR), so the base URL must include whatever prefix the server uses, for example `http://tts-host:8000/v1`.
+All of these except `TTS_API_ALLOW_PRIVATE` are also editable under Settings > Voice > TTS backend. Audicle appends `/audio/speech` to `TTS_API_BASE_URL` (and `/audio/transcriptions` to `WHISPER_API_BASE_URL` for ASR), so the base URL must include whatever prefix the server uses.
 
 Each speech request is a JSON POST with this body:
 
@@ -52,7 +52,7 @@ Audicle asks for WAV and requires the response to be a WAV container. The audio 
 
 The Chatterbox generation settings (temperature, repetition penalty, top-p, top-k, seed, character cap) go only to the bundled wrapper and are never sent to a remote server. Tune a remote server on the server itself, or pass fields it understands through `TTS_API_EXTRA_BODY`.
 
-One consequence: a remote speech endpoint returns audio only, no transcript, so ASR verification cannot come from the bundled wrapper. That is what `WHISPER_BACKEND` is for.
+A remote speech endpoint returns audio only, no transcript, so ASR verification cannot come from the bundled wrapper. Set `WHISPER_BACKEND` instead (see [ASR verification](#asr-verification)).
 
 ### Endpoint addresses
 
@@ -70,9 +70,9 @@ Verification transcribes each generated chunk and compares the transcript to the
 | `openai-api` | A remote OpenAI-compatible `/v1/audio/transcriptions` | `WHISPER_API_BASE_URL` (and optionally a key, model, timeout) |
 | `off` | Nowhere; verification is skipped | nothing |
 
-The two backends are independent: local synthesis with remote transcription is a valid pairing. The one combination that cannot work, remote synthesis with wrapper verification, is rejected at startup with a message naming the fix. The reason is plumbing, not hardware: the bundled wrapper transcribes what it just synthesized, and audio made on another host never passes through it, so it has nothing to transcribe.
+The two backends are independent: local synthesis with remote transcription is a valid pairing. The one combination that cannot work, remote synthesis with wrapper verification, is rejected at startup with a message naming the fix: audio made on another host never passes through the wrapper, so it has nothing to transcribe.
 
-A transcription failure normally never fails a chunk that synthesized fine; the chunk just goes unverified, the same as the wrapper path behaves. On the remote backend, `WHISPER_API_STRICT` (default off) reverses that: a chunk whose transcription cannot be obtained fails instead of shipping unverified. Turn it on when an unverified chunk is worse for you than a failed job, for example on feeds where a hallucinated run slipping through matters more than latency.
+A transcription failure normally does not fail a chunk that synthesized fine; the chunk goes unverified. With the remote ASR backend, `WHISPER_API_STRICT` (default off) reverses that: a chunk whose transcription cannot be obtained fails instead of shipping unverified. Turn it on when an unverified chunk is worse than a failed job.
 
 The strictness knobs (divergence threshold, divergent-run length, minimum words, short-chunk bar) are live-tunable in the Verification group.
 

@@ -1,6 +1,6 @@
 # API and webhooks
 
-The API lives under `/api/v1`, with interactive docs at `/api/v1/docs` (linked from Settings > System > System info) and a checked-in schema at `openapi.yaml`. Mutating endpoints need the session cookie plus the CSRF double-submit header; until an admin password is set, the app runs in open convenience mode.
+The API lives under `/api/v1`, with interactive docs at `/api/v1/docs` (linked from Settings > System > System info) and a checked-in schema at `openapi.yaml`. Every `/api/v1` endpoint except `/auth/*` needs the session cookie once an admin password is set, and mutating requests also need the CSRF double-submit header (`X-CSRF-Token`, echoing the `audicle_csrf` cookie or the `csrf_token` from login). Without a password the app runs in open convenience mode and needs neither. A missing or expired session returns 401, a bad CSRF token 403.
 
 ## Sidecar settings
 
@@ -18,14 +18,19 @@ Send `null` for an individual setting to reset it. The app stores desired values
 
 | Area | Endpoints |
 |---|---|
-| Submit | `POST /submit` (URL), `POST /upload` (one file per request; the UI loops for batches), `POST /upload/{episode_id}/reprocess` |
+| Auth | `GET /auth/status`, `POST /auth/login` (rate limited; 423 while locked out), `POST /auth/logout`, `PUT /auth/password`, `POST /auth/revoke-sessions` |
+| Submit | `POST /submit` (URL), `POST /upload` (one file per request; the UI loops for batches), `POST /upload/{episode_id}/reprocess`, `GET /status/{job_id}` |
 | Books | `GET /books`, `GET /books/{book_id}`, `POST /books/{book_id}/chapters`, `DELETE /books/{book_id}` |
-| Jobs | `GET /jobs`, `POST /jobs/{id}/requeue`, `POST /jobs/{id}/cancel`, `DELETE /jobs/{id}`, `DELETE /jobs?scope=all` |
+| Jobs | `GET /jobs?status=&page=&per_page=` (`X-Total-Count` header), `POST /jobs/{id}/requeue`, `POST /jobs/{id}/cancel`, `DELETE /jobs/{id}`, `DELETE /jobs?scope=all` or `failed` (finished runs only; queued and processing jobs are kept) |
 | Episodes | `GET /episodes?page=&per_page=&q=` (paginated, `X-Total-Count` header carries the filtered total; `q` matches title, source URL, and uploaded filename), `DELETE /episodes/{id}`, `POST /episodes/{id}/chapters` |
-| Feed | `GET/POST /feed-auth`, `POST /feed-auth/regenerate`, `POST /feed/recreate?confirm=true` (global GUID reset: every subscriber re-downloads) |
-| Settings | `GET/PUT /settings` (the runtime allowlist), `GET/PUT /prompt`, corrections, source-fallbacks, reference voice slots, chime |
-| Ops | `POST /purge?confirm=true&older_than_days=N`, `POST /webhooks/test` |
-| Health | `GET /health/live`, `GET /health/ready`, `GET /health/ingestion` (outside `/api/v1`) |
+| Feed | `GET/POST /feed-auth`, `POST /feed-auth/regenerate`, `POST /feed/recreate?confirm=true` (global GUID reset: every subscriber re-downloads; returns `podcast_guid` and `guid_epoch`) |
+| Settings | `GET/PUT /settings` (the runtime allowlist), `GET/PUT /settings/sidecars`, `GET /settings/ocr/languages`, `GET/PUT/DELETE /prompt?kind=` (`cleanup`, `summary`, `pronunciation`, `chapters`), `/corrections` (GET, PUT, DELETE, plus `/seed`, `/lookup`, `/export`), `GET/PUT /source-fallbacks`, `POST /source-fallbacks/test` |
+| Voice | `/reference/slots` (list, upload, delete, rename, preview, audition), `/chime` (GET, POST, DELETE, `/preview`), `GET /tts/models` |
+| LLM | `GET /llm/models`, `POST /llm/models/refresh`, `POST /llm/test` |
+| Ops | `POST /purge?confirm=true&older_than_days=N` (default `0` wipes every episode; returns the removed ids), `POST /webhooks/test` |
+| Health | `GET /health/live`, `GET /health/ready` (also `/health`), `GET /health/ingestion` (outside `/api/v1`, no login) |
+
+`POST /submit` and `POST /upload` take an optional `voice` (a slot number 1 to 5, `last`, or `random`) and a `reprocess` flag; a duplicate source returns 409 unless `reprocess` is true. Both return 400 until a voice slot is filled, unless TTS runs on a [remote backend](voices-and-tts.md#running-tts-on-another-host).
 
 The interactive docs and `openapi.yaml` list every route and its request schema.
 
@@ -97,11 +102,11 @@ The response is the book with `queued` (chapter numbers) and `skipped` (chapters
 
 In `GET /jobs`, a chapter job has `source_filename` set to the book's filename and `chapter` set to its number. `chapter` is null for every other job.
 
-Media is served under `/media/`: `{id}.mp3`, `{id}.vtt`, `{id}.chapters.json`, `{id}.txt` (the cleaned article), and `{id}.jpg`. Published URLs add `?v=<generation>` to non-artwork media. Artwork carries the generation in its filename.
+The feed is served at `/rss/{slug}.xml` and media under `/media/`: `{id}.mp3`, `{id}.vtt`, `{id}.chapters.json`, `{id}.txt` (the cleaned article), and `{id}.jpg`. Both are outside `/api/v1` and, with [authenticated feeds](feeds-and-podcasting.md#authenticated-feeds) on, need the feed key. Published URLs add `?v=<generation>` to non-artwork media; artwork carries the generation in its filename.
 
 ## Webhooks
 
-Audicle can POST a JSON payload to a URL of yours every time an episode finishes (`episode.processed`) or fails (`episode.failed`): handy for a Slack/Discord ping, a dashboard, or a downstream trigger. Set `WEBHOOK_URL` under Settings > Services > Webhooks; leave it blank to turn it off. The "Send test webhook" button fires a sample at the saved URL and shows the response, so you can wire up a receiver first.
+Audicle can POST a JSON payload to a URL of yours every time an episode finishes (`episode.processed`) or fails (`episode.failed`), for example to ping Slack or start a downstream job. Set `WEBHOOK_URL` under Settings > Services > Webhooks; leave it blank to turn it off. The "Send test webhook" button fires a sample at the saved URL and shows the response, so you can wire up a receiver first.
 
 Payload fields:
 
@@ -157,6 +162,6 @@ A failed job:
 
 An upload episode is the same shape with `"source_type": "upload"` and a `"source_filename"` and `"chapter"` instead of `url`. The test button's payload adds `"test": true` so your receiver can tell it from a real run.
 
-Delivery is fire-and-forget: a background task with a short timeout (`WEBHOOK_TIMEOUT_SECONDS`, default 10s) and a few retries with backoff, so a dead or slow receiver never delays or fails the episode. To test from the API, `POST /api/v1/webhooks/test` returns `{ "delivered", "status_code", "error" }`.
+Delivery is fire-and-forget: a background task with a timeout (`WEBHOOK_TIMEOUT_SECONDS`, default 10 s), so a dead or slow receiver never delays or fails the episode. A connection error or a 5xx response is retried up to 3 attempts in total with backoff; a 4xx response is logged and not retried. Payloads are not signed. `POST /api/v1/webhooks/test` sends the sample once, with no retries, and returns `{ "delivered", "status_code", "error" }`, or 409 when no `WEBHOOK_URL` is set.
 
 [< Docs index](README.md)
