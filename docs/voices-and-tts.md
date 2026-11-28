@@ -4,7 +4,7 @@
 
 The wrapper narrates each episode by conditioning on a short reference clip you supply. Manage clips under Settings > Voice > Voices: five labelled slots. Each row plays its stored clip and can audition a TTS sample, so you hear a voice before you use it.
 
-Each episode picks a voice at submit time from the picker under the Submit button on Home: Random (a random filled slot), Last used, or a specific slot. At least one slot must stay filled: submit and upload are rejected with a 400 until a voice is loaded (unless TTS runs on a [remote backend](#running-tts-on-another-host), which manages its own voices). A job with no recorded voice falls back to the lowest filled slot at synthesis time.
+Each episode picks a voice at submit time from the picker under the Submit button on Home: Random (a random filled slot), Last used, or a specific slot. At least one slot must stay filled: submit and upload are rejected with a 400 until a voice is loaded. A [remote backend](#running-tts-on-another-host) is exempt because it manages its own voices. A job with no recorded voice falls back to the lowest filled slot at synthesis time.
 
 Recommended clip: mono, 24 kHz, 8 to 12 seconds, roughly 250 kB to 1 MB. Upload limits are 3 to 60 seconds and 5 MB. WAV, MP3, M4A/AAC, FLAC, and OGG/Opus are accepted; anything that is not already a WAV is converted with ffmpeg before storage. See `backend/app/reference/README.md` for the sourcing playbook.
 
@@ -58,6 +58,37 @@ A remote speech endpoint returns audio only, no transcript, so ASR verification 
 
 By default the endpoint must resolve to a public address. To use a server on your LAN or another container, set `TTS_API_ALLOW_PRIVATE=true` in the environment. It then also accepts `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10` (Tailscale), and `fc00::/7`. Loopback, link-local, and cloud metadata addresses are never allowed. It applies to both the TTS and ASR endpoints, and it is not editable in Settings or the API, so an admin session cannot widen it.
 
+### JSON values in config files
+
+`TTS_API_EXTRA_BODY` holds JSON, and some config formats drop or misread its double quotes. Saving it under Settings > Voice > TTS backend needs no quoting. In a file, write it like this:
+
+| Where | Line |
+|---|---|
+| `.env` | `TTS_API_EXTRA_BODY={"speed": 1.1}` |
+| Compose `environment:` list | `- 'TTS_API_EXTRA_BODY={"speed": 1.1}'` |
+| systemd unit or Quadlet `.container` | `Environment='TTS_API_EXTRA_BODY={"speed": 1.1}'` |
+
+Without the single quotes, Compose cannot parse the file and systemd strips the double quotes or rejects the line. If the value that reaches Audicle is not a valid JSON object, the app does not start and the error names `TTS_API_EXTRA_BODY`.
+
+### Example: OpenVINO Model Server
+
+A user reported this setup working with Kokoro on OpenVINO Model Server (OVMS) in [#216](https://github.com/ttlequals0/Audicle/issues/216). The project has not tested it.
+
+```
+TTS_BACKEND=openai-api
+TTS_API_BASE_URL=http://ovms-host:8000/v3
+TTS_API_MODEL=Kokoro-82M-int8-ov
+TTS_API_VOICE=af_bella
+TTS_API_ALLOW_PRIVATE=true
+WHISPER_BACKEND=off
+```
+
+- OVMS serves its OpenAI-compatible API under `/v3`, so the base URL ends there.
+- `TTS_API_MODEL` is the name OVMS was started with (`--model_name`).
+- `TTS_API_VOICE` is one of the voices Kokoro ships.
+- `TTS_API_ALLOW_PRIVATE=true` is needed when OVMS runs on your LAN or in another container.
+- `WHISPER_BACKEND=off` skips ASR verification.
+
 ## ASR verification
 
 Verification transcribes each generated chunk and compares the transcript to the text that was requested; a chunk that diverges too far is regenerated. How the comparison works is covered in [How it works](how-it-works.md#the-quality-gates).
@@ -70,10 +101,10 @@ Verification transcribes each generated chunk and compares the transcript to the
 | `openai-api` | A remote OpenAI-compatible `/v1/audio/transcriptions` | `WHISPER_API_BASE_URL` (and optionally a key, model, timeout) |
 | `off` | Nowhere; verification is skipped | nothing |
 
-The two backends are independent: local synthesis with remote transcription is a valid pairing. The one combination that cannot work, remote synthesis with wrapper verification, is rejected at startup with a message naming the fix: audio made on another host never passes through the wrapper, so it has nothing to transcribe.
+The two backends are independent: local synthesis with remote transcription is a valid pairing. The one combination that cannot work, remote synthesis with wrapper verification, is rejected at startup with a message naming the fix. Audio made on another host never passes through the wrapper, so it has nothing to transcribe.
 
 A transcription failure normally does not fail a chunk that synthesized fine; the chunk goes unverified. With the remote ASR backend, `WHISPER_API_STRICT` (default off) reverses that: a chunk whose transcription cannot be obtained fails instead of shipping unverified. Turn it on when an unverified chunk is worse than a failed job.
 
-The strictness knobs (divergence threshold, divergent-run length, minimum words, short-chunk bar) are live-tunable in the Verification group.
+The strictness knobs (divergence threshold, divergent-run length, minimum words, short-chunk bar) can be tuned live in the Verification group.
 
 [< Docs index](README.md)
