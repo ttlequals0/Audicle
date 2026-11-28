@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, Book } from "../lib/api";
 import { isBookBusy, useBookPollMs } from "../lib/polling";
 import ChapterPicker from "./ChapterPicker";
+import SectionToggle from "./SectionToggle";
 import { usePersistentOpen } from "./CollapsibleSection";
 
 const SUMMARY_ORDER = ["done", "processing", "queued", "failed", "cancelled", "removed"];
@@ -73,10 +74,9 @@ export default function BooksSection({ voice, openBookId, onOpenBook }: Props) {
   return (
     <section className="mt-8" aria-label="Books">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <button
-          type="button"
-          className="text-xs text-mute flex items-center gap-1.5 hover:text-fg"
-          onClick={() => {
+        <SectionToggle
+          expanded={expanded}
+          onToggle={() => {
             if (expanded) {
               setOpen(false);
               onOpenBook(null);
@@ -84,13 +84,9 @@ export default function BooksSection({ voice, openBookId, onOpenBook }: Props) {
               setOpen(true);
             }
           }}
-          aria-expanded={expanded}
         >
-          <span className={`transition-transform ${expanded ? "rotate-90" : ""}`}>
-            &rsaquo;
-          </span>
           Books ({books.length})
-        </button>
+        </SectionToggle>
       </div>
       {msg && (
         <p className="text-xs text-danger mb-2" role="alert">

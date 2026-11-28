@@ -62,11 +62,6 @@ def parse_extra_body(raw: str) -> dict:
     return parsed
 
 
-def check_extra_body(raw: str) -> str:
-    parse_extra_body(raw)
-    return raw
-
-
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -572,7 +567,8 @@ class Settings(BaseSettings):
     @field_validator("TTS_API_EXTRA_BODY")
     @classmethod
     def _validate_extra_body(cls, value: str) -> str:
-        return check_extra_body(value)
+        parse_extra_body(value)
+        return value
 
     @model_validator(mode="after")
     def _validate_backends(self) -> Settings:
