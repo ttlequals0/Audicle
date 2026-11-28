@@ -21,31 +21,19 @@ For application layouts, component states, accessibility and settings navigation
 
 ## Palette
 
-| Token | Hex | Role |
-|-------|-----|------|
-| primary | `#1ce783` | Brand accent. Mark on dark, UI highlights. |
-| background | `#040405` | Page background. |
-| paper | `#0a0a0c` | Card/section background. |
-| surface | `#15151a` | Input fields. |
-| line | `#26262e` | Borders, dividers. |
-| text | `#f5f5f5` | Primary text. |
-| text_dim | `#9a9aaa` | Secondary text. |
-| text_mute | `#9a9aaa` | Helper text and muted labels. |
-| danger | `#ff5252` | Errors, destructive actions. |
-
-Palette inspired by Hulu's brand identity (green-on-black, single accent, no gradients).
+Brand accent `#1ce783` (primary) on rich black `#040405`, a single accent with no
+gradients, inspired by Hulu's brand identity. The full token set (surfaces, lines,
+text, status colors) and contrast ratios are in `tokens.json` and the
+[design guide](design-guide.md#color).
 
 ## Typography
 
-Use Satoshi throughout the interface, including Home and Feed metadata. Use system monospace only for code editors and raw diagnostic values.
-
-**Sans (display, navigation, labels, UI body):** Satoshi. Loaded via Fontshare. Weights: 400, 500, 700, 900. This is the approved fallback for Hulu's Graphik; Graphik is not bundled.
-
-**Mono (code and diagnostics):** the system monospace stack. Do not use it for page navigation, notices, episode metadata or player controls.
-
-Inter is explicitly avoided to keep the brand distinctive.
-
-Wordmark uses Satoshi 700 with letter-spacing -0.02em, lowercase.
+Satoshi (weights 400, 500, 700, 900, loaded via Fontshare) is used throughout the
+interface. It is the approved fallback for Hulu's Graphik, which is not bundled.
+Inter is avoided to keep the brand distinctive. The system monospace stack is for
+code editors and raw diagnostic values only. The wordmark is lowercase Satoshi 700
+with letter-spacing -0.02em. Sizes and rules are in the
+[design guide](design-guide.md#typography).
 
 ## Primary Lockup
 
