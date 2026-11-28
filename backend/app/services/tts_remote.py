@@ -35,7 +35,7 @@ from app.services.atomic_write import write_bytes_atomic
 logger = logging.getLogger("app.services.tts_remote")
 
 _GUARD_TTL_SECONDS = 60.0
-_guard_cache: dict[str, float] = {}
+_guard_cache: dict[tuple[str, bool], float] = {}
 
 
 def _auth_headers(api_key: str) -> dict[str, str]:
@@ -66,11 +66,12 @@ async def guard_endpoint(url: str, allow_private: bool) -> None:
     if not host:
         return
     now = time.monotonic()
-    expiry = _guard_cache.get(host)
+    key = (host, allow_private)
+    expiry = _guard_cache.get(key)
     if expiry is not None and now < expiry:
         return
     await ssrf.resolve_public_host(host, allow_private=allow_private)
-    _guard_cache[host] = now + _GUARD_TTL_SECONDS
+    _guard_cache[key] = now + _GUARD_TTL_SECONDS
 
 
 async def synthesize(

@@ -6,6 +6,33 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.64.0] - 2026-11-27
+
+### Added
+
+- The app, `tts-wrapper` and `render` containers listen on IPv6 and IPv4 when the container can bind `::`, and on IPv4 only when it cannot. Each one logs the address it chose at start. Reaching them over IPv6 still needs IPv6 turned on for the Docker network; see the IPv6 section of the installation guide. The link from `render` to `render-egress` stays IPv4 only.
+- `TTS_API_ALLOW_PRIVATE` lets the remote TTS and ASR endpoints point at a server on your LAN or in another container. With it on, addresses in `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10` and `fc00::/7` are accepted. Loopback, link-local and cloud metadata addresses are still refused. It is off by default and can only be set in the environment, not in Settings.
+- `TTS_API_EXTRA_BODY` sends extra JSON fields with each speech request to a remote TTS server, for example `{"speed": 1.1}`. It is editable in Settings under the TTS backend group. It must be a JSON object of at most 4096 characters and cannot set `model`, `input`, `voice` or `response_format`. Changing it changes the chunk cache key, so audio cached under other values is not reused.
+- The render image build takes an optional BuildKit secret, `github_token`, which authenticates the browser download from GitHub. A build without it works as before.
+
+### Changed
+
+- The Books section on Home is collapsed by default and remembers whether you opened it. It opens by itself when a chapter picker is open.
+- The "Recent" section on Home is now called "Articles", and its row action is "Remove from articles".
+- Login rate limiting and lockout count an IPv6 client by its /64 network, so one client cannot get a fresh allowance by changing address inside its own prefix. IPv4 clients are counted as before.
+- An IPv4 client reaches a dual-stack listener as `::ffff:a.b.c.d`. It is logged and rate limited under its plain IPv4 address.
+- `/health/ingestion` applies the same address rule to the remote TTS and ASR endpoints as synthesis does. An endpoint the rule refuses reports `blocked_non_public_address` and no request is sent to it. It used to report `ok` for an endpoint that every synthesis call would refuse.
+- Dependencies: fastapi 0.165.0, ruff 0.17.6 and pytest 9.2.0 in the backend, `tts-wrapper` and `render`; torch 2.15.0 and huggingface-hub 2.4.0 in the backend.
+- The documentation was checked against the code and corrected. The API page now lists the endpoints it was missing, and the paywall page includes the render sidecar step. The pipeline page describes the spoken intro, the pronunciation pass and the chunk cache as they work. The remote TTS section states the exact request Audicle sends and that the server must return WAV.
+- Older changelog entries were reworded for plainer phrasing. No entry was added or removed.
+
+### Fixed
+
+- The iOS shortcut showed "Submit failed: " with no reason, because it read a `detail` field and the API returns `error`. The build script now reads `error`. `Audicle.shortcut` in the repository has to be rebuilt on macOS to pick this up.
+- Dependabot pull requests for `tts-wrapper` failed with a lockfile mismatch. The `resemble-perth` metadata override now declares the Python range the lockfile records.
+- Dependabot no longer proposes the Python 3.15 base image. onnxruntime and lxml have no 3.15 wheels yet.
+- Dependency review failed on torch 2.15.0 because its license expression includes Zlib. Zlib is now on the allowed list.
+
 ## [0.63.4] - 2026-11-22
 
 ### Security

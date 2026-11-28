@@ -35,11 +35,11 @@ code editors and raw diagnostic values only. The wordmark is lowercase Satoshi 7
 with letter-spacing -0.02em. Sizes and rules are in the
 [design guide](design-guide.md#typography).
 
-## Primary Lockup
+## Primary lockup
 
 Green mark on rich-black background. Used for podcast artwork, README header, and any "official" Audicle context.
 
-## Mark Construction
+## Mark construction
 
 Custom letter "A" with a five-bar audio waveform replacing the crossbar. Bars are symmetric, center-tallest: 12 / 26 / 38 / 26 / 12 units at 160-unit icon scale.
 

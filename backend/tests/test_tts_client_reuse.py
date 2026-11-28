@@ -69,4 +69,21 @@ async def test_guard_failure_does_not_populate_cache(monkeypatch: pytest.MonkeyP
 
     with pytest.raises(tts_remote.ssrf.BlockedHostError):
         await tts_remote.guard_endpoint("http://example.com/x", False)
-    assert "example.com" not in tts_remote._guard_cache
+    assert not tts_remote._guard_cache
+
+
+async def test_guard_cache_is_keyed_by_allow_private(monkeypatch: pytest.MonkeyPatch) -> None:
+    tts_remote._guard_cache.clear()
+    seen: list[bool] = []
+
+    async def fake_resolve(_host: str, *, allow_private: bool = False) -> str:
+        seen.append(allow_private)
+        return "192.168.1.5"
+
+    monkeypatch.setattr(tts_remote.ssrf, "resolve_public_host", fake_resolve)
+
+    await tts_remote.guard_endpoint("http://tts-host/x", True)
+    await tts_remote.guard_endpoint("http://tts-host/x", False)
+    await tts_remote.guard_endpoint("http://tts-host/x", True)
+    assert seen == [True, False]
+

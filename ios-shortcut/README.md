@@ -53,9 +53,9 @@ The shortcut runs login then submit in a single pass (password mode):
    resent automatically by the Shortcuts cookie store; the shortcut adds the
    `X-CSRF-Token` header using the `csrf_token` from step 2.
 4. If the response has a `job_id`, it notifies "Queued for processing."
-   Otherwise it notifies "Submit failed: " followed by the response's `detail`
-   field. The API reports errors in an `error` field, so that message currently
-   comes out blank; use the verify script below to read the real error.
+   Otherwise it notifies "Submit failed: " followed by the response's `error`
+   field. The prebuilt `Audicle.shortcut` was built before the script read that
+   field and shows a blank message; rebuild it on macOS to get the error text.
 
 It does not poll for completion.
 
@@ -77,8 +77,8 @@ on `201` (queued) or `409` (already in your library, so auth still worked). A
 
 ## Troubleshooting
 
-Run the verify script first; it prints the server's `error` text, which the shortcut
-notification does not.
+Run the verify script first; it prints the server's `error` text and the HTTP
+status, which the shortcut notification does not.
 
 | Symptom | Cause / fix |
 |---------|-------------|
