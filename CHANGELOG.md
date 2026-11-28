@@ -6,6 +6,16 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.64.5] - 2026-11-28
+
+### Changed
+
+- Short chapters (under `MIN_EXTRACTION_CHARS`) can now be ticked and narrated, such as a dedication or a one-line chapter (#243). They stay unticked by default, and the picker marks them "short". Only a chapter with no text cannot be selected. Select all and `chapters=all` now include short chapters. A chapter shorter than `MIN_CLEANUP_CHARS` skips LLM cleanup and the summary, and its extracted text is narrated.
+
+### Fixed
+
+- An upload with too little text failed with a message that also blamed OCR and blank pages, even when OCR was on and the file had readable text (#243). The message now stops after the character count and the minimum. A cause is added only when no text was found at all.
+
 ## [0.64.4] - 2026-11-28
 
 ### Fixed

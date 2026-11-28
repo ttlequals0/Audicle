@@ -443,7 +443,8 @@ async def _run_stages(
     expected_token = previous.generation_token if previous else None
     create_episode = previous is None
     chapter = None
-    if file_extraction.SourceRef.parse(job.url, job.episode_id).chapter is not None:
+    is_chapter_job = file_extraction.SourceRef.parse(job.url, job.episode_id).chapter is not None
+    if is_chapter_job:
         conn = database.connect(database.db_path(settings.DATA_DIR))
         try:
             chapter = books.chapter_for_episode(conn, job.episode_id)
@@ -458,24 +459,42 @@ async def _run_stages(
         extraction_result = await _run_stage(
             "extract", lambda: _stage_extract(job, settings), job.id, settings
         )
-        cleaned = await _run_stage(
-            "cleanup",
-            lambda: _stage_cleanup(job.id, extraction_result.markdown, settings),
-            job.id,
-            settings,
-        )
+        short_chapter = is_chapter_job and len(extraction_result.markdown) < settings.MIN_CLEANUP_CHARS
+        if short_chapter:
+            # Models answer conversationally when handed a few words; use the
+            # deterministic strip the cleanup fallback uses instead.
+            cleaned = (
+                article_prep.strip_boilerplate(extraction_result.markdown)
+                or extraction_result.markdown
+            )
+            logger.info(
+                "Short chapter, skipping LLM cleanup",
+                extra={
+                    "event": "cleanup_skipped_short_chapter",
+                    "input_chars": len(extraction_result.markdown),
+                },
+            )
+        else:
+            cleaned = await _run_stage(
+                "cleanup",
+                lambda: _stage_cleanup(job.id, extraction_result.markdown, settings),
+                job.id,
+                settings,
+            )
         intro = _intro_read_line(extraction_result.metadata, settings)
         if intro:
             cleaned = _strip_title_echo(
                 cleaned, _coerce_str(extraction_result.metadata.get("title"))
             )
             cleaned = f"{intro}\n\n{cleaned}"
-        summary = await _run_stage(
-            "summary",
-            lambda: _stage_summary(cleaned, settings),
-            job.id,
-            settings,
-        )
+        summary = None
+        if not short_chapter:
+            summary = await _run_stage(
+                "summary",
+                lambda: _stage_summary(cleaned, settings),
+                job.id,
+                settings,
+            )
         chunks = await _run_stage(
             "chunk",
             lambda: _stage_chunk(cleaned, settings),

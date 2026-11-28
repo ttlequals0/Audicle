@@ -1,6 +1,6 @@
 # API and webhooks
 
-The API lives under `/api/v1`, with interactive docs at `/api/v1/docs` (linked from Settings > System > System info) and a checked-in schema at `openapi.yaml`. Every `/api/v1` endpoint except `/auth/*` needs the session cookie once an admin password is set, and mutating requests also need the CSRF double-submit header (`X-CSRF-Token`, echoing the `audicle_csrf` cookie or the `csrf_token` from login). Without a password the app runs in open convenience mode and needs neither. A missing or expired session returns 401, a bad CSRF token 403.
+The API lives under `/api/v1`, with interactive docs at `/api/v1/docs` (linked from Settings > System > System info) and a checked-in schema at `openapi.yaml`. Every `/api/v1` endpoint except `/auth/*` needs the session cookie once an admin password is set. Mutating requests also need the CSRF double-submit header (`X-CSRF-Token`, echoing the `audicle_csrf` cookie or the `csrf_token` from login). Without a password the app runs in open convenience mode and needs neither. A missing or expired session returns 401, a bad CSRF token 403.
 
 ## Sidecar settings
 
@@ -74,7 +74,7 @@ curl -b cookies.txt -H "X-CSRF-Token: $CSRF" \
   "can_resume": false,
   "chapters": [
     {"index": 1, "title": "Prologue", "word_count": 1952, "default_selected": true,
-     "selectable": true, "requested": false, "status": "not_queued", "episode_id": "c7d8e9f0a1b2"}
+     "selectable": true, "short": false, "requested": false, "status": "not_queued", "episode_id": "c7d8e9f0a1b2"}
   ],
   "queued": [],
   "skipped": []
@@ -91,12 +91,12 @@ curl -b cookies.txt -H "X-CSRF-Token: $CSRF" \
 
 | `chapters` | Queues |
 |---|---|
-| `all` | every selectable chapter |
+| `all` | every selectable chapter, including short ones |
 | `default` | the chapters ticked by default |
 | `remaining` | chapters you queued earlier that are not done and not running (failed, cancelled), skipping any chapter whose episode was deleted after it was published |
 | `[1,3,5]` or `"1,3,5-9"` | those chapters |
 
-The response is the book with `queued` (chapter numbers) and `skipped` (chapters already done or in flight, not selectable, or already requested by another call). A failed or cancelled chapter listed by number is queued again. A chapter number out of range, a too-short chapter named explicitly, or a malformed value returns 400; an unknown book returns 404. A book narrates in one voice: `voice` is stored on the book the first time chapters are queued, and later calls reuse it unless `voice` is given.
+The response is the book with `queued` (chapter numbers) and `skipped` (chapters already done or in flight, not selectable, or already requested by another call). A failed or cancelled chapter listed by number is queued again. A chapter number out of range, a chapter with no text named explicitly, or a malformed value returns 400; an unknown book returns 404. A book narrates in one voice: `voice` is stored on the book the first time chapters are queued, and later calls reuse it unless `voice` is given.
 
 `DELETE /books/{book_id}` returns 204, or 409 while any chapter is queued or processing. It removes the book and its stored original and cover. Published chapter episodes stay in the feed but can no longer be reprocessed. To re-run one chapter, use `POST /upload/{episode_id}/reprocess` or `POST /jobs/{id}/requeue`; both read the source from the book.
 

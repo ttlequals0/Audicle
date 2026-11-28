@@ -844,6 +844,10 @@ def _m032_job_recovery_count(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE jobs ADD COLUMN recovery_count INTEGER NOT NULL DEFAULT 0")
 
 
+def _m033_short_chapters_selectable(conn: sqlite3.Connection) -> None:
+    conn.execute("UPDATE book_chapters SET selectable = 1 WHERE selectable = 0 AND char_count > 0")
+
+
 MIGRATIONS: list[tuple[str, Migration]] = [
     ("001_initial_schema", _m001_initial_schema),
     ("002_settings_kv", _m002_settings_kv),
@@ -877,6 +881,7 @@ MIGRATIONS: list[tuple[str, Migration]] = [
     ("030_episode_audio_generation", _m030_episode_audio_generation),
     ("031_books", _m031_books),
     ("032_job_recovery_count", _m032_job_recovery_count),
+    ("033_short_chapters_selectable", _m033_short_chapters_selectable),
 ]
 
 

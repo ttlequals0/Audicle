@@ -386,8 +386,28 @@ async def test_extract_html_pulls_main_article(env: Path) -> None:
 
 
 async def test_extract_too_short_raises(env: Path) -> None:
-    with pytest.raises(ExtractionTooShortError):
+    with pytest.raises(ExtractionTooShortError) as exc:
         await _run(env, "tiny.txt", b"hello")
+    assert str(exc.value) == "uploaded .txt yielded only 5 characters of text (minimum 150)"
+
+
+@pytest.mark.parametrize(
+    ("filename", "ocr", "reason"),
+    [
+        ("blank.txt", "false", "the document has no extractable text"),
+        ("blank.pdf", "true", "no readable text was found"),
+        ("blank.pdf", "false", "scanned pages need OCR_ENABLED"),
+    ],
+)
+async def test_extract_empty_upload_names_the_cause(
+    env: Path, monkeypatch: pytest.MonkeyPatch, filename: str, ocr: str, reason: str
+) -> None:
+    monkeypatch.setenv("OCR_ENABLED", ocr)
+    get_settings.cache_clear()
+    monkeypatch.setattr(file_extraction, "_parse", lambda *_: ("", {}))
+    with pytest.raises(ExtractionTooShortError) as exc:
+        await _run(env, filename, b"x")
+    assert str(exc.value).endswith(f"(minimum 150); {reason}")
 
 
 async def test_extract_missing_file_raises_permanent(env: Path) -> None:
@@ -654,6 +674,18 @@ def _chapter_job(book: books.Book, idx: int) -> jobs.Job:
         created_at="t",
         updated_at="t",
     )
+
+
+async def test_chapter_job_extracts_short_chapter(env: Path) -> None:
+    data = simple_epub(
+        title="Book",
+        author="A",
+        names=["One", "Two"],
+        bodies=[f"Body of one. {_LONG}", "Hi there."],
+    )
+    book, _ = _store_book(env, "novel.epub", data)
+    result = await file_extraction.extract_file(_chapter_job(book, 2), get_settings())
+    assert "Hi there." in result.markdown
 
 
 def test_parse_source_uri_ignores_chapter_fragment() -> None:

@@ -246,6 +246,7 @@ export interface BookChapter {
   word_count: number;
   default_selected: boolean;
   selectable: boolean;
+  short: boolean;
   requested: boolean;
   status: ChapterStatus;
   episode_id: string;

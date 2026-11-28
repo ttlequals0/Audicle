@@ -8,13 +8,13 @@ from dataclasses import replace
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from pydantic import BaseModel, ConfigDict, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from app.api.deps import get_conn, require_voice_loaded
 from app.api.v1.jobs import _EPISODE_ID_RE
 from app.config import Settings, get_settings
 from app.core import database
-from app.services import books, feed_revision, voices
+from app.services import books, feed_revision, runtime_settings, voices
 
 router = APIRouter(prefix="/books", tags=["books"])
 _STATUSES = ("not_queued", "queued", "processing", "done", "failed", "cancelled", "removed")
@@ -26,6 +26,7 @@ class BookChapterOut(BaseModel):
     word_count: int
     default_selected: bool
     selectable: bool
+    short: bool = Field(description="Shorter than MIN_EXTRACTION_CHARS; selectable but not ticked by default.")
     requested: bool
     status: str
     episode_id: str
@@ -89,6 +90,7 @@ def book_response(
 ) -> BookResponse:
     chapters = books.get_chapters(conn, book.id)
     statuses = books.chapter_statuses(conn, book.id)
+    min_chars = runtime_settings.overlay_from_conn(get_settings(), conn).MIN_EXTRACTION_CHARS
     summary = books.BookSummary(
         counts=dict(Counter(statuses.values())),
         can_resume=bool(books.parse_selection("remaining", chapters, statuses)),
@@ -100,6 +102,7 @@ def book_response(
             word_count=c.word_count,
             default_selected=c.default_selected,
             selectable=c.selectable,
+            short=c.char_count < min_chars and not c.default_selected,
             requested=c.requested,
             status=statuses[c.idx],
             episode_id=c.episode_id,

@@ -563,8 +563,9 @@ def _locator(
 
 def _flags(title: str, char_count: int, has_image: bool, min_chars: int) -> tuple[bool, bool]:
     """(default_selected, selectable)."""
-    selectable = char_count >= min_chars or has_image
-    return selectable and not is_front_or_back_matter(title), selectable
+    selectable = char_count > 0 or has_image
+    default = (char_count >= min_chars or has_image) and not is_front_or_back_matter(title)
+    return default, selectable
 
 
 def _detect_pdf(data: bytes, min_chars: int) -> DetectedBook | None:
