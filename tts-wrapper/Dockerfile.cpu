@@ -59,7 +59,7 @@ RUN pkgs='libsqlite3-0=3.54.1-2' \
 WORKDIR /app
 COPY pyproject.toml uv.lock LICENSE ./
 # Every module main.py imports must be listed here (see Dockerfile).
-COPY config.py engine.py log_setup.py main.py memory.py chatterbox_engine.py whisper_verify.py install_engine.sh entrypoint.sh ./
+COPY config.py engine.py log_setup.py main.py memory.py chatterbox_engine.py whisper_verify.py install_engine.sh entrypoint.sh listen.py ./
 # Install torch and torchaudio from the CPU index before the remaining locked
 # dependencies. TorchAudio 2.11 uses PyTorch's stable ABI for PyTorch 2.11+.
 # build-essential: spacy-pkuseg publishes no cp314 wheel and is compiled from its

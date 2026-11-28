@@ -38,17 +38,7 @@ setpriv --reuid=1000 --regid=1000 --init-groups --inh-caps=-all --bounding-set=-
   Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp &
 export DISPLAY=:99
 
-# Dual-stack when the container can bind "::" with V6ONLY off, else IPv4 only.
-HOST=$(python -I -c 'import socket as s
-try:
-    k = s.socket(s.AF_INET6, s.SOCK_STREAM)
-    k.bind(("::", 0))
-    dual = k.getsockopt(s.IPPROTO_IPV6, s.IPV6_V6ONLY) == 0
-except OSError:
-    dual = False
-print("::" if dual else "0.0.0.0")') || HOST=0.0.0.0
-echo "render: listening on ${HOST}" >&2
-
+# listen.py opens the dual-stack socket as uid 1000 and runs uvicorn in-process (still PID 1).
 exec setpriv --reuid=1000 --regid=1000 --init-groups --inh-caps=-all \
   --bounding-set=-all --no-new-privs \
-  uvicorn main:create_app --factory --host "$HOST" --port 8000 --workers 1
+  python listen.py
