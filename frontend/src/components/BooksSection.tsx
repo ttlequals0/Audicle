@@ -5,19 +5,10 @@ import { isBookBusy, useBookPollMs } from "../lib/polling";
 import ChapterPicker from "./ChapterPicker";
 import { usePersistentOpen } from "./CollapsibleSection";
 
-const SUMMARY_ORDER = [
-  "done",
-  "processing",
-  "queued",
-  "failed",
-  "cancelled",
-  "removed",
-];
+const SUMMARY_ORDER = ["done", "processing", "queued", "failed", "cancelled", "removed"];
 
 function summary(b: Book): string {
-  const parts = SUMMARY_ORDER.filter((s) => b.counts[s] > 0).map(
-    (s) => `${b.counts[s]} ${s}`,
-  );
+  const parts = SUMMARY_ORDER.filter((s) => b.counts[s] > 0).map((s) => `${b.counts[s]} ${s}`);
   return parts.length ? parts.join(", ") : "not started";
 }
 
@@ -57,14 +48,10 @@ export default function BooksSection({ voice, openBookId, onOpenBook }: Props) {
       setMsg(null);
       refresh();
     },
-    onError: (e) =>
-      setMsg(
-        `resume failed${e instanceof ApiError ? ` (HTTP ${e.status})` : ""}`,
-      ),
+    onError: (e) => setMsg(`resume failed${e instanceof ApiError ? ` (HTTP ${e.status})` : ""}`),
   });
   const deleteM = useMutation({
-    mutationFn: (id: string) =>
-      api(`/api/v1/books/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) => api(`/api/v1/books/${id}`, { method: "DELETE" }),
     onSuccess: (_r, id) => {
       setMsg(null);
       if (openBookId === id) onOpenBook(null);
@@ -74,7 +61,7 @@ export default function BooksSection({ voice, openBookId, onOpenBook }: Props) {
       setMsg(
         e instanceof ApiError && e.status === 409
           ? "chapters are still queued or processing"
-          : `delete failed${e instanceof ApiError ? ` (HTTP ${e.status})` : ""}`,
+          : `delete failed${e instanceof ApiError ? ` (HTTP ${e.status})` : ""}`
       ),
   });
 
@@ -99,9 +86,7 @@ export default function BooksSection({ voice, openBookId, onOpenBook }: Props) {
           }}
           aria-expanded={expanded}
         >
-          <span
-            className={`transition-transform ${expanded ? "rotate-90" : ""}`}
-          >
+          <span className={`transition-transform ${expanded ? "rotate-90" : ""}`}>
             &rsaquo;
           </span>
           Books ({books.length})
@@ -131,9 +116,7 @@ export default function BooksSection({ voice, openBookId, onOpenBook }: Props) {
                   className="btn-ghost text-xs"
                   aria-expanded={openBookId === b.book_id}
                   onClick={() =>
-                    openBookId === b.book_id
-                      ? closePicker(b.book_id)
-                      : onOpenBook(b.book_id)
+                    openBookId === b.book_id ? closePicker(b.book_id) : onOpenBook(b.book_id)
                   }
                   aria-label={`Choose chapters for ${b.title}`}
                 >
@@ -143,9 +126,7 @@ export default function BooksSection({ voice, openBookId, onOpenBook }: Props) {
                   <button
                     type="button"
                     className="btn-ghost text-xs"
-                    disabled={
-                      resumeM.isPending && resumeM.variables === b.book_id
-                    }
+                    disabled={resumeM.isPending && resumeM.variables === b.book_id}
                     onClick={() => resumeM.mutate(b.book_id)}
                     aria-label={`Resume ${b.title}`}
                   >
@@ -155,15 +136,9 @@ export default function BooksSection({ voice, openBookId, onOpenBook }: Props) {
                 <button
                   type="button"
                   className="btn-ghost text-xs"
-                  disabled={
-                    deleteM.isPending && deleteM.variables === b.book_id
-                  }
+                  disabled={deleteM.isPending && deleteM.variables === b.book_id}
                   onClick={() => {
-                    if (
-                      confirm(
-                        `Delete "${b.title}" and its stored file? Episodes already made stay in the feed.`,
-                      )
-                    )
+                    if (confirm(`Delete "${b.title}" and its stored file? Episodes already made stay in the feed.`))
                       deleteM.mutate(b.book_id);
                   }}
                   aria-label={`Delete ${b.title}`}
@@ -172,11 +147,7 @@ export default function BooksSection({ voice, openBookId, onOpenBook }: Props) {
                 </button>
               </div>
               {openBookId === b.book_id && (
-                <ChapterPicker
-                  bookId={b.book_id}
-                  voice={voice}
-                  onClose={() => closePicker(b.book_id)}
-                />
+                <ChapterPicker bookId={b.book_id} voice={voice} onClose={() => closePicker(b.book_id)} />
               )}
             </li>
           ))}
