@@ -536,3 +536,46 @@ def test_put_rejects_a_malformed_registration_email(env: Path) -> None:
     assert bad.status_code == 400
     assert ok.json()["values"]["REGISTRATION_EMAIL"] == "reader@example.test"
     assert "REGISTRATION_EMAIL" not in cleared.json()["values"]
+
+
+def test_allow_private_is_not_runtime_editable(env: Path) -> None:
+    assert "TTS_API_ALLOW_PRIVATE" not in runtime_settings.ALLOWED_KEYS
+    with _client(env) as client:
+        assert "TTS_API_ALLOW_PRIVATE" not in client.get("/api/v1/settings").json()["allowlist"]
+        response = client.put("/api/v1/settings", json={"TTS_API_ALLOW_PRIVATE": True})
+    assert response.status_code == 400
+
+
+def test_extra_body_saves_and_round_trips(env: Path) -> None:
+    with _client(env) as client:
+        response = client.put("/api/v1/settings", json={"TTS_API_EXTRA_BODY": '{"speed": 1.1}'})
+        assert response.status_code == 200
+        values = client.get("/api/v1/settings").json()["values"]
+        cleared = client.put("/api/v1/settings", json={"TTS_API_EXTRA_BODY": ""})
+    assert values["TTS_API_EXTRA_BODY"] == '{"speed": 1.1}'
+    assert cleared.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "not json",
+        "[1, 2]",
+        '"text"',
+        '{"model": "x"}',
+        '{"input": "x"}',
+        '{"voice": "x"}',
+        '{"response_format": "mp3"}',
+        '{"a": "' + "x" * 5000 + '"}',
+        {"speed": 1.1},
+    ],
+)
+def test_extra_body_rejects_bad_values(env: Path, bad) -> None:
+    with _client(env) as client:
+        response = client.put("/api/v1/settings", json={"TTS_API_EXTRA_BODY": bad})
+        values = client.get("/api/v1/settings").json()["values"]
+    assert response.status_code == 400
+    assert isinstance(response.json()["error"], str)
+    if isinstance(bad, dict):
+        assert "encoded as a string" in response.json()["error"]
+    assert "TTS_API_EXTRA_BODY" not in values

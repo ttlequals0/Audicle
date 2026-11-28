@@ -5,6 +5,7 @@ import { fileExt, formatBytes, formatDateTime, statusTag } from "../lib/format";
 import { usePersistentOpen } from "../components/CollapsibleSection";
 import ActionMenu from "../components/ActionMenu";
 import BooksSection from "../components/BooksSection";
+import SectionToggle from "../components/SectionToggle";
 import { pollIntervalMs } from "../lib/polling";
 
 interface SubmitResponse {
@@ -53,7 +54,7 @@ export default function Home() {
   const [splitNotes, setSplitNotes] = useState<string[]>([]);
   const [openBookId, setOpenBookId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // Recents and the per-submission voice picker are collapsed by default; the
+  // Articles and the per-submission voice picker are collapsed by default; the
   // toggles are remembered across reloads.
   const [recentOpen, setRecentOpen] = usePersistentOpen("home.recents.open", false);
   const [voiceOpen, setVoiceOpen] = usePersistentOpen("home.voice.open", false);
@@ -188,7 +189,7 @@ export default function Home() {
     onError,
   });
 
-  // Reprocess a terminal job from Recents (uniform for url + upload; the backend
+  // Reprocess a terminal job from Articles (uniform for url + upload; the backend
   // branches on the job url and reads the stored upload file when needed).
   const [recentMsg, setRecentMsg] = useState<string | null>(null);
   const requeueM = useMutation({
@@ -536,17 +537,9 @@ export default function Home() {
           )}
           {effectiveTtsBackend === "wrapper" && (
             <div>
-              <button
-              type="button"
-              className="text-xs text-mute flex items-center gap-1.5 hover:text-fg"
-              onClick={() => setVoiceOpen(!voiceOpen)}
-              aria-expanded={voiceOpen}
-            >
-              <span className={`transition-transform ${voiceOpen ? "rotate-90" : ""}`}>
-                &rsaquo;
-              </span>
-              Voice: {voiceChoiceLabel}
-              </button>
+              <SectionToggle expanded={voiceOpen} onToggle={() => setVoiceOpen(!voiceOpen)}>
+                Voice: {voiceChoiceLabel}
+              </SectionToggle>
               {voiceOpen && (
                 <>
                 <select
@@ -647,16 +640,9 @@ export default function Home() {
       {history.length > 0 && (
         <section className="mt-8">
           <div className="mb-3 flex items-center justify-between gap-3">
-            <button
-              className="text-xs text-mute flex items-center gap-1.5 hover:text-fg"
-              onClick={() => setRecentOpen(!recentOpen)}
-              aria-expanded={recentOpen}
-            >
-              <span className={`transition-transform ${recentOpen ? "rotate-90" : ""}`}>
-                &rsaquo;
-              </span>
-              Recent ({history.length})
-            </button>
+            <SectionToggle expanded={recentOpen} onToggle={() => setRecentOpen(!recentOpen)}>
+              Articles ({history.length})
+            </SectionToggle>
             {recentOpen && (
               <div className="flex items-center gap-3">
                 {failedHistoryCount > 0 && (
@@ -717,7 +703,7 @@ export default function Home() {
                             ]
                           : []),
                         {
-                          label: "Remove from recents",
+                          label: "Remove from articles",
                           hint: "the episode is not affected",
                           run: () => removeJobM.mutate(j.id),
                         },

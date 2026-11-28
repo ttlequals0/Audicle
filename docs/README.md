@@ -1,6 +1,6 @@
 # Audicle documentation
 
-Full documentation for Audicle. Start with the [project README](../README.md) for the pitch, screenshots, and a quick install, then come here for the details.
+The [project README](../README.md) has the overview, screenshots, and a quick install. The pages below cover the details.
 
 ## Contents
 

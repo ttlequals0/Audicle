@@ -2,7 +2,10 @@
 
 The container starts via:
 
-    xvfb-run -a uvicorn main:create_app --factory --host 0.0.0.0 --port 8000
+    python listen.py
+
+listen.py (run by render/entrypoint.sh) opens a dual-stack "::" socket, or an IPv4
+0.0.0.0 one when IPv6 is unavailable, and serves uvicorn on it in-process.
 
 ``create_app`` takes an optional renderer so tests can inject a fake; in the image
 it defaults to the Camoufox driver. The default is imported lazily so the app

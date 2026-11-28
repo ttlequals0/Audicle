@@ -59,7 +59,7 @@ RUN pkgs='libsqlite3-0=3.54.1-2' \
 WORKDIR /app
 COPY pyproject.toml uv.lock LICENSE ./
 # Every module main.py imports must be listed here (see Dockerfile).
-COPY config.py engine.py log_setup.py main.py memory.py chatterbox_engine.py whisper_verify.py install_engine.sh ./
+COPY config.py engine.py log_setup.py main.py memory.py chatterbox_engine.py whisper_verify.py install_engine.sh entrypoint.sh listen.py ./
 # Install torch and torchaudio from the CPU index before the remaining locked
 # dependencies. TorchAudio 2.11 uses PyTorch's stable ABI for PyTorch 2.11+.
 # build-essential: spacy-pkuseg publishes no cp314 wheel and is compiled from its
@@ -95,4 +95,4 @@ ENV AUDICLE_WRAPPER_VERSION=${WRAPPER_VERSION}
 # HuggingFace before the model loads and /health/live turns 200.
 HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=300s \
     CMD python -I -c "import urllib.request,sys; sys.exit(0 if 200 <= urllib.request.urlopen('http://localhost:8000/health/live', timeout=4).status < 300 else 1)"
-CMD ["uvicorn", "main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--timeout-keep-alive", "300"]
+CMD ["sh", "/app/entrypoint.sh"]

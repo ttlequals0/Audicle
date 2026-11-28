@@ -43,6 +43,10 @@ updates:
       interval: weekly
       day: monday
     open-pull-requests-limit: 3
+    ignore:
+      # onnxruntime and lxml ship no 3.15 wheels and tts-wrapper/render cap requires-python at 3.14.
+      - dependency-name: python
+        update-types: ["version-update:semver-minor"]
     labels:
       - dependencies
       - docker

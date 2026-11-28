@@ -1,8 +1,8 @@
 # LLM providers
 
-The LLM does four jobs: cleaning the extracted page down to the article, the pronunciation pass in normalize, the episode summary, and picking chapter titles. All four go through one configured provider.
+The LLM does four jobs: cleaning the extracted page down to the article, the pronunciation pass in normalize, the episode summary, and choosing chapter boundaries and titles. All four go through one configured provider.
 
-Set the provider, model, and key under Settings > Services > LLM (or env; see [Environment variables](environment-variables.md#llm-provider)). Everything here is live-tunable: switch providers and the next job uses the new one. Keys are stored masked. The model dropdown fetches the provider's live model list and sorts it alphabetically. Use "Test provider" before saving to check a draft URL and credential without generating content.
+Set the provider, model, and key under Settings > Services > LLM (or env; see [Environment variables](environment-variables.md#llm-provider)). Everything here is live-tunable: switch providers and the next job uses the new one. API keys are masked when read back. The model dropdown fetches the provider's live model list and sorts it alphabetically. Use "Test provider" before saving to check a draft URL and credential without generating content.
 
 | Provider | Needs | Notes |
 |---|---|---|
@@ -11,14 +11,16 @@ Set the provider, model, and key under Settings > Services > LLM (or env; see [E
 | `openrouter` | `OPENROUTER_API_KEY` | Base URL is fixed |
 | `ollama` | `OLLAMA_BASE_URL` | Typically `http://host.docker.internal:11434/v1` for Ollama on the compose host |
 
-Provider-specific fields only show in the UI under their selected provider, so the form never asks for a key the current provider cannot use.
+Provider-specific fields show in the UI only under their selected provider.
 
 ## Tuning
 
-`LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `LLM_TIMEOUT_SECONDS`, and `LLM_RETRY_COUNT` apply to every call. `LLM_CLEANUP_WINDOW_CHARS` bounds how much of a long article each cleanup call sees, and `LLM_PRONUNCIATION_CONCURRENCY` parallelizes the normalize pass.
+`LLM_TEMPERATURE` (default 0.7), `LLM_MAX_TOKENS` (16000), `LLM_TIMEOUT_SECONDS` (300), and `LLM_RETRY_COUNT` (3) apply to every call. `LLM_REASONING_EFFORT` (`none` by default) controls reasoning on models that support it. Leave it at `none`: a thinking model can spend its token budget before it writes the narration text.
 
-A local model is entirely workable: cleanup and summary are not demanding tasks. If cleaned articles come back truncated or mangled, look at the model's context length against your typical article size before blaming the prompt.
+`LLM_CLEANUP_WINDOW_CHARS` (12000) bounds how much of a long article each cleanup call sees, and `LLM_PRONUNCIATION_CONCURRENCY` (4) parallelizes the normalize pass.
 
-The cleanup prompt itself is editable under Settings > Content > Cleanup prompt, and the chapter prompt via `/api/v1/prompt?kind=chapters`.
+A local model works: cleanup and summary are not demanding tasks. If cleaned articles come back truncated or mangled, look at the model's context length against your typical article size before blaming the prompt.
+
+The cleanup prompt is editable under Settings > Content > Cleanup prompt. All four prompts (`cleanup`, `summary`, `pronunciation`, `chapters`) can be read, replaced, and reset through `/api/v1/prompt?kind=<name>`; `cleanup` is the default.
 
 [< Docs index](README.md)

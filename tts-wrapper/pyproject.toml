@@ -1,6 +1,6 @@
 [project]
 name = "audicle-tts-wrapper"
-version = "0.63.4"
+version = "0.64.2"
 description = "FastAPI TTS wrapper for Audicle (Chatterbox)."
 requires-python = ">=3.14,<3.15"
 # The wrapper image uses Python 3.14. Keep the tested upper bound separate from
@@ -83,7 +83,7 @@ requires-dist = [
     "PyYAML>=5.4.1",
     "scipy",
 ]
-requires-python = ">=3.8"
+requires-python = "==3.14.*"
 
 # Dev/CI installs resolve torch from the CPU index: the lockfile otherwise pins
 # PyPI torch, whose Linux wheels can pull the full NVIDIA dependency set,

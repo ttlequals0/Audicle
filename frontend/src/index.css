@@ -3,6 +3,12 @@
 @config "../tailwind.config.cjs";
 
 @layer base {
+  /* Used by the action menu popup to stay clear of side cutouts. */
+  :root {
+    --safe-left: env(safe-area-inset-left, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+  }
+
   button:not(:disabled) {
     cursor: pointer;
   }
@@ -27,6 +33,10 @@
   :focus-visible {
     outline: 3px solid var(--audicle-color-primary);
     outline-offset: 3px;
+  }
+  /* Programmatic focus targets (main, headings) are not controls: no ring. */
+  [tabindex="-1"]:focus-visible {
+    outline: none;
   }
   button {
     min-height: 44px;
@@ -526,6 +536,8 @@
     top: 0;
     left: 0;
     right: 0;
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
     z-index: 30;
     display: flex;
     justify-content: center;
@@ -575,7 +587,7 @@
     border-radius: var(--audicle-radius-md);
     padding: 0.25rem;
     min-width: 15rem;
-    max-width: calc(100vw - 3rem);
+    max-width: calc(100vw - 3rem - var(--safe-left) - var(--safe-right));
   }
   .menu-item {
     display: grid;
@@ -748,6 +760,10 @@
 
   .safe-top {
     padding-top: env(safe-area-inset-top);
+  }
+  .safe-x {
+    padding-left: calc(1rem + env(safe-area-inset-left));
+    padding-right: calc(1rem + env(safe-area-inset-right));
   }
   .safe-bottom {
     padding-bottom: calc(env(safe-area-inset-bottom) + 1rem);
@@ -949,7 +965,7 @@
 .skip-link {
   position: absolute;
   top: 0.5rem;
-  left: 0.5rem;
+  left: calc(0.5rem + env(safe-area-inset-left));
   z-index: 100;
   transform: translateY(-200%);
   padding: 0.75rem 1rem;

@@ -5,7 +5,7 @@ submits the URL to /api/v1/submit, and notifies that it was queued.
 Fire-and-forget: it does not poll for processing completion.
 
 After importing the signed shortcut, edit the two Text actions at the top to set
-your server URL and admin password (see docs/ios-shortcut.md).
+your server URL and admin password (see ios-shortcut/README.md).
 """
 import os
 import plistlib
@@ -182,7 +182,7 @@ actions.append(act("is.workflow.actions.getvalueforkey", {
 }))
 actions.append(act("is.workflow.actions.setvariable", {"WFVariableName": "jobid"}))
 
-# If job_id present -> queued, else surface the error detail.
+# If job_id present -> queued, else surface the error.
 actions.append(act("is.workflow.actions.conditional", {
     "GroupingIdentifier": GID_IF_QUEUED,
     "WFControlFlowMode": 0,
@@ -200,12 +200,12 @@ actions.append(act("is.workflow.actions.conditional", {
 }))
 actions.append(act("is.workflow.actions.getvalueforkey", {
     "WFInput": var_ref("submitDict"),
-    "WFDictionaryKey": "detail",
+    "WFDictionaryKey": "error",
 }))
-actions.append(act("is.workflow.actions.setvariable", {"WFVariableName": "detail"}))
+actions.append(act("is.workflow.actions.setvariable", {"WFVariableName": "error"}))
 actions.append(act("is.workflow.actions.notification", {
     "WFNotificationActionTitle": "Audicle",
-    "WFNotificationActionBody": text_with_vars([("Submit failed: ", None), ("", "detail")]),
+    "WFNotificationActionBody": text_with_vars([("Submit failed: ", None), ("", "error")]),
 }))
 # End If queued
 actions.append(act("is.workflow.actions.conditional", {

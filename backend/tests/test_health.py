@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from app.config import get_settings
 from app.core import database
 from app.main import create_app
@@ -195,3 +196,39 @@ def test_health_ready_503_when_db_unreachable(env: Path, monkeypatch) -> None:
     body = response.json()
     assert body["ok"] is False
     assert "error" in body["checks"]["db"]
+
+
+@pytest.mark.real_ssrf
+@pytest.mark.parametrize(
+    ("base", "allow", "expected", "sent"),
+    [
+        ("http://192.168.1.50:8000/v1", False, "blocked_non_public_address", 0),
+        ("http://192.168.1.50:8000/v1", True, "ok", 1),
+        ("http://127.0.0.1:8000/v1", True, "blocked_non_public_address", 0),
+        ("http://8.8.8.8:8000/v1", False, "ok", 1),
+        ("http://nonexistent.invalid/v1", False, "unreachable_dns_resolution", 0),
+    ],
+)
+async def test_remote_speech_probe_uses_the_client_guard(
+    monkeypatch, base: str, allow: bool, expected: str, sent: int
+) -> None:
+    import httpx
+    from app.api import health as health_mod
+    from app.services import tts_remote
+
+    tts_remote._guard_cache.clear()
+    requests: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        requests.append(str(req.url))
+        return httpx.Response(200)
+
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        health_mod.httpx,
+        "AsyncClient",
+        lambda **kw: original(transport=httpx.MockTransport(handler), **kw),
+    )
+    assert await health_mod._probe_remote_speech(base, "k", allow) == expected
+    assert len(requests) == sent
+    tts_remote._guard_cache.clear()

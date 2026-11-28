@@ -11,16 +11,15 @@ tap to import, then jump to **Set up**.
 
 ## Build it (optional)
 
-The shortcut is generated programmatically (signed plists silently drop hand-set
-parameters, so it must be built with the formats known to survive signing).
+The shortcut is generated programmatically and signed with `shortcuts sign`, so
+the build needs macOS.
 
 ```bash
 python3 build-audicle-shortcut.py
 # Output: Audicle.shortcut (in this folder)
 ```
 
-`shortcuts sign` (macOS) produces a signed `.shortcut` you can import on any iOS
-device.
+The signed `.shortcut` imports on any iOS device.
 
 ## Set up
 
@@ -53,10 +52,12 @@ The shortcut runs login then submit in a single pass (password mode):
 3. `POST /api/v1/submit` with `{"url": ...}`. The `audicle_session` cookie is
    resent automatically by the Shortcuts cookie store; the shortcut adds the
    `X-CSRF-Token` header using the `csrf_token` from step 2.
-4. If the response has a `job_id` -> "Queued for processing." Otherwise it shows
-   the server's error `detail`.
+4. If the response has a `job_id`, it notifies "Queued for processing."
+   Otherwise it notifies "Submit failed: " followed by the response's `error`
+   field. The prebuilt `Audicle.shortcut` was built before the script read that
+   field and shows a blank message; rebuild it on macOS to get the error text.
 
-It does not poll for completion -- submitting is enough; the feed does the rest.
+It does not poll for completion.
 
 ## Verify the server side first
 
@@ -71,23 +72,27 @@ AUDICLE_TEST_URL=https://example.com/some-article \
 ```
 
 It logs in with a cookie jar, echoes the CSRF token on submit, and reports PASS
-on `201` (queued) or `409` (already in your library -- auth still worked). A
+on `201` (queued) or `409` (already in your library, so auth still worked). A
 `401`/`403` means the session cookie or CSRF header was rejected.
 
 ## Troubleshooting
 
+Run the verify script first; it prints the server's `error` text and the HTTP
+status, which the shortcut notification does not.
+
 | Symptom | Cause / fix |
 |---------|-------------|
-| "Login failed -- check the password" | Wrong password in the Text action, or the server has no password set (convenience mode -- this shortcut targets password mode). |
-| "Submit failed: login required" | The session cookie was not resent. iOS Shortcuts normally shares cookies across requests in a run; if this persists, confirm with `verify-audicle-api.sh` that the server side works. |
-| "Submit failed: csrf token mismatch" | The `X-CSRF-Token` header did not survive signing or was not echoed. Rebuild with `build-audicle-shortcut.py`. |
-| "Submit failed" with a 409-style message | The URL already has an episode. By design the shortcut does not reprocess; submit it from the web UI with reprocess if you want to replace it. |
-| Nothing in the Share Sheet | Re-import the shortcut; make sure you are sharing a link/web page, not plain text. |
+| "Login failed" notification | Wrong password in the Text action, or the server has no password set (convenience mode; this shortcut targets password mode). |
+| Submit fails, server error `login required` (401) | The session cookie was not resent. iOS Shortcuts normally shares cookies across requests in a run; if this persists, confirm with `verify-audicle-api.sh` that the server side works. |
+| Submit fails, server error `csrf token mismatch` (403) | The `X-CSRF-Token` header did not survive signing or was not echoed. Rebuild with `build-audicle-shortcut.py`. |
+| Submit fails, server error `Episode already exists` (409) | The URL already has an episode. The shortcut never sends `reprocess`; resubmit from the web UI with reprocess to replace it. |
+| Submit fails with 400 | The URL resolves to a non-public address, or every voice slot is empty. |
+| Nothing in the Share Sheet | Re-import the shortcut; make sure you are sharing a link or web page, not plain text. |
 
 ## API reference
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
 | `/api/v1/auth/login` | POST | `{"password"}` -> sets session + CSRF cookies, returns `csrf_token` |
-| `/api/v1/submit` | POST | `{"url"}` + `X-CSRF-Token` header -> `{job_id, episode_id, status}` (201) |
+| `/api/v1/submit` | POST | `{"url"}` + `X-CSRF-Token` header -> `{job_id, episode_id, status, replaced_previous}` (201) |
 | `/api/v1/auth/status` | GET | Reports `password_set` / `authenticated` (handy to check your mode) |

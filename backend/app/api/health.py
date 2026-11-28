@@ -23,7 +23,7 @@ from app.api.v1 import llm as llm_api
 from app.config import Settings, get_settings
 from app.core import database
 from app.core.paths import media_dir
-from app.services import runtime_settings
+from app.services import runtime_settings, ssrf, tts_remote
 from app.version import __version__
 
 logger = logging.getLogger("app.api.health")
@@ -133,8 +133,12 @@ async def health_ingestion(request: Request, response: Response) -> dict[str, An
         ),
         _probe_llm_provider(settings, 2.0),
         _probe_render(settings.RENDER_URL, 2.0),
-        _probe_http(remote_tts_url, "/models", 2.0, _bearer(settings.TTS_API_KEY)),
-        _probe_http(remote_asr_url, "/models", 2.0, _bearer(settings.WHISPER_API_KEY)),
+        _probe_remote_speech(
+            remote_tts_url, settings.TTS_API_KEY, settings.TTS_API_ALLOW_PRIVATE
+        ),
+        _probe_remote_speech(
+            remote_asr_url, settings.WHISPER_API_KEY, settings.TTS_API_ALLOW_PRIVATE
+        ),
         return_exceptions=True,
     )
     tts_check, tts_detail = _coerce_tts(tts_result)
@@ -210,6 +214,18 @@ def _reachable(status: str) -> bool:
     """True only when a configured dependency answered successfully."""
 
     return status == "ok"
+
+
+async def _probe_remote_speech(base: str | None, api_key: str | None, allow_private: bool) -> str:
+    """Probe a remote speech endpoint only if the client's own SSRF guard allows it."""
+
+    if not base:
+        return "skipped"
+    try:
+        await tts_remote.guard_endpoint(base, allow_private)
+    except ssrf.BlockedHostError as exc:
+        return "blocked_non_public_address" if exc.blocked else "unreachable_dns_resolution"
+    return await _probe_http(base, "/models", 2.0, _bearer(api_key))
 
 
 def _bearer(api_key: str | None) -> dict[str, str]:

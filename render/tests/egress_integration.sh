@@ -62,7 +62,12 @@ HTTPServer(("0.0.0.0", 80), Handler).serve_forever()
 PY
 
 docker build -t audicle-render-egress:integration render/egress-proxy >/dev/null
-docker build -t audicle-render:integration render >/dev/null
+# Forward a token (when set) as a BuildKit secret so camoufox fetch avoids the anonymous rate limit.
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+    docker build --secret id=github_token,env=GITHUB_TOKEN -t audicle-render:integration render >/dev/null
+else
+    docker build -t audicle-render:integration render >/dev/null
+fi
 # Internal like the deployed render-control network: no route out and no external DNS.
 docker network create --internal --subnet 172.31.0.0/24 "$control" >/dev/null
 docker network create --subnet 11.77.0.0/24 "$public_net" >/dev/null
@@ -114,6 +119,10 @@ for _ in $(seq 1 60); do
     sleep 1
 done
 test "$ready" -eq 1 || { echo "renderer not ready after 60s" >&2; exit 1; }
+# When the listener came up dual-stack, the IPv6 loopback answers too.
+if docker logs "$renderer" 2>&1 | grep -q 'listening on ::'; then
+    renderer_req 4 http://[::1]:8000/health/live >/dev/null
+fi
 for url in http://11.77.0.10/redirect http://11.77.0.10/subresources http://rebound.test/; do
     renderer_req 30 http://127.0.0.1:8000/render "{\"url\":\"$url\",\"expand\":false}" >/dev/null
 done

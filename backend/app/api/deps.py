@@ -20,6 +20,7 @@ from fastapi import Depends, HTTPException, Request
 from app.api.access_log import safe_path
 from app.config import Settings, get_settings
 from app.core import database
+from app.core.net import normalize_ip, parse_ip
 from app.services import auth, csrf, feed_auth, runtime_settings, voices
 
 logger = logging.getLogger("app.api.deps")
@@ -49,22 +50,14 @@ def get_conn(
         yield conn
 
 
-def _is_ip(value: str) -> bool:
-    try:
-        ipaddress.ip_address(value)
-        return True
-    except ValueError:
-        return False
-
-
 def client_ip(request: Request, settings: Settings) -> str:
-    """Resolve the client IP for rate-limiting and lockout.
+    """Resolve the normalized client address (IPv4-mapped IPv6 unwrapped).
 
     When ``TRUST_PROXY_HEADERS`` is set, take the ``X-Forwarded-For`` entry
     ``TRUSTED_PROXY_HOPS`` from the right -- the hop our own proxy appended --
     rather than the client-controlled leftmost value, which an attacker could
-    spoof to evade the limit. Falls back to the socket peer when the header is
-    absent, the flag is off, or the candidate isn't a valid IP.
+    spoof. Falls back to the socket peer when the header is absent, the flag is
+    off, or the candidate isn't a valid IP.
     """
 
     if settings.TRUST_PROXY_HEADERS:
@@ -73,10 +66,23 @@ def client_ip(request: Request, settings: Settings) -> str:
             parts = [p.strip() for p in xff.split(",") if p.strip()]
             hops = settings.TRUSTED_PROXY_HOPS
             if len(parts) >= hops:
-                candidate = parts[-hops]
-                if _is_ip(candidate):
-                    return candidate
-    return request.client.host if request.client else "unknown"
+                normalized = normalize_ip(parts[-hops])
+                if normalized:
+                    return normalized
+    if not request.client:
+        return "unknown"
+    # A dual-stack listener reports IPv4 peers as ::ffff:a.b.c.d.
+    return normalize_ip(request.client.host) or request.client.host
+
+
+def limiter_key(request: Request, settings: Settings) -> str:
+    """Client address, with real IPv6 reduced to its /64 (a client controls the whole /64)."""
+
+    ip = client_ip(request, settings)
+    parsed = parse_ip(ip)
+    if isinstance(parsed, ipaddress.IPv6Address):
+        return str(ipaddress.ip_network(f"{parsed}/64", strict=False))
+    return ip
 
 
 def require_admin(

@@ -30,7 +30,7 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
-COPY main.py renderer.py camoufox_renderer.py log_config.py entrypoint.sh ./
+COPY main.py renderer.py camoufox_renderer.py log_config.py entrypoint.sh listen.py ./
 
 # Install the app + the browser extra, then let Playwright pull Firefox's OS
 # dependencies (it maintains the correct per-distro package list, so we don't
@@ -96,7 +96,11 @@ RUN useradd --create-home --uid 1000 render \
 ENV HOME=/home/render
 # `camoufox fetch` exits 0 even when extraction fails (e.g. a full disk), so verify the
 # browser binary landed; otherwise the build "succeeds" with a renderer that can't start.
-RUN setpriv --reuid=1000 --regid=1000 --init-groups python -m camoufox fetch \
+# An optional BuildKit secret (id github_token) authenticates the GitHub API calls so shared CI
+# runners do not hit the unauthenticated rate limit; camoufox reads GITHUB_TOKEN. Absent = anonymous.
+RUN --mount=type=secret,id=github_token,required=false,uid=1000 \
+    GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
+    setpriv --reuid=1000 --regid=1000 --init-groups python -m camoufox fetch \
     && find /home/render/.cache/camoufox/browsers -name camoufox-bin -type f -perm -u+x | grep -q . \
     || { echo "ERROR: Camoufox installation failed" >&2; exit 1; }
 

@@ -239,6 +239,7 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "TTS_API_KEY",
         "TTS_API_MODEL",
         "TTS_API_VOICE",
+        "TTS_API_EXTRA_BODY",
         "WHISPER_BACKEND",
         "WHISPER_API_BASE_URL",
         "WHISPER_API_KEY",

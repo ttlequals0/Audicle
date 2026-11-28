@@ -700,3 +700,24 @@ async def test_provider_error_still_bounded_by_attempt_count(
     with pytest.raises(tts.TTSProviderError):
         await tts.generate_chunk_with_retry("hi", "ep", 0, get_settings())
     assert calls["n"] == 3
+
+
+def test_cache_identity_remote_extra_body(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TTS_BACKEND", "openai-api")
+    monkeypatch.setenv("TTS_API_BASE_URL", "https://tts.example.test/v1")
+    monkeypatch.setenv("WHISPER_BACKEND", "off")
+
+    def fingerprint(extra: str) -> str:
+        monkeypatch.setenv("TTS_API_EXTRA_BODY", extra)
+        get_settings.cache_clear()
+        identity = tts.cache_identity(get_settings(), None)
+        assert identity is not None
+        return identity[2]
+
+    empty = fingerprint("")
+    assert empty == "https://tts.example.test/v1:tts-1:alloy"
+    a = fingerprint('{"speed": 1.1, "lang": "en"}')
+    assert a != empty
+    assert a == fingerprint('{ "lang": "en",  "speed": 1.1 }')
+    assert a != fingerprint('{"speed": 1.2, "lang": "en"}')
+    get_settings.cache_clear()

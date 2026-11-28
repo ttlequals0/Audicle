@@ -40,6 +40,19 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe("App safe-area gutters", () => {
+  it("uses safe-x instead of px-4 on the header and main containers", async () => {
+    renderApp();
+    await screen.findByRole("heading", { name: "Home page" });
+
+    const headerInner = screen.getByRole("banner").firstElementChild as HTMLElement;
+    for (const el of [headerInner, screen.getByRole("main")]) {
+      expect(el).toHaveClass("safe-x");
+      expect(el).not.toHaveClass("px-4");
+    }
+  });
+});
+
 describe("App main focus", () => {
   it("returns to the top before focusing the main landmark after route changes", async () => {
     const user = userEvent.setup();

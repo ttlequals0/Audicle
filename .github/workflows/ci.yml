@@ -146,6 +146,9 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
           platforms: linux/arm64
+          # Authenticates the render image's camoufox fetch; ignored by the other images.
+          secrets: |
+            github_token=${{ github.token }}
           build-args: ${{ matrix.wrapper_version && format('WRAPPER_VERSION={0}', steps.version.outputs.value) || '' }}
           tags: audicle-${{ matrix.name }}-arm64-ci
           push: false
@@ -159,3 +162,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: sh render/tests/egress_integration.sh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

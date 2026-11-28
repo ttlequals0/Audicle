@@ -58,7 +58,7 @@ def _stub_ssrf_resolver(request: pytest.FixtureRequest, monkeypatch: pytest.Monk
 
     from app.services import ssrf
 
-    async def _resolve_public(_host: str) -> str:
+    async def _resolve_public(_host: str, *, allow_private: bool = False) -> str:
         return "203.0.113.1"
 
     monkeypatch.setattr(ssrf, "resolve_public_host", _resolve_public)

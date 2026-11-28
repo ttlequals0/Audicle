@@ -10,13 +10,15 @@ Every term the app uses, in plain words, with a link to the part of the docs tha
 
 **Audio analysis** - The signal-level quality gate over every chunk: it catches drones, noise, dead air, pacing problems, and pitch drift, and triggers a regeneration. [How it works > The quality gates](how-it-works.md#the-quality-gates)
 
+**Articles** - The Home section listing finished and failed jobs, where a failed job can be requeued and a finished one can regenerate its chapters. Running and waiting jobs show in the queue above it. [Web interface > Home](web-interface.md#home)
+
 **Audition** - Playing a short TTS sample of a voice slot from Settings before using it for an episode. [Voices and TTS](voices-and-tts.md#reference-voice-slots)
 
 **Authenticated feeds** - An optional 64-hex key on every feed and media URL so only clients holding it can read your feed. [Feeds > Authenticated feeds](feeds-and-podcasting.md#authenticated-feeds)
 
 ## B
 
-**Book** - An EPUB or PDF uploaded with "Split into chapters". It holds one row per chapter, a season number, one narration voice, and the stored original under `{DATA_DIR}/books/`. [How it works > Books and chapters](how-it-works.md#books-and-chapters)
+**Book** - An EPUB or PDF uploaded with "Split into chapters", listed in the Books section on Home. It holds one row per chapter, a season number, one narration voice, and the stored original under `{DATA_DIR}/books/`. [How it works > Books and chapters](how-it-works.md#books-and-chapters)
 
 ## C
 
@@ -32,7 +34,7 @@ Every term the app uses, in plain words, with a link to the part of the docs tha
 
 **Cleanup** - The LLM pass that strips an extracted page down to the article. Its prompt is editable. [How it works](how-it-works.md#cleanup-summary-chunking-and-pronunciation)
 
-**Convenience mode** - The state before an admin password is set: every admin endpoint is open. Fine on a private network, warned about loudly otherwise. [Installation](installation.md#required-configuration)
+**Convenience mode** - The state before an admin password is set: every admin endpoint is open. Fine on a private network; the UI warns otherwise. [Installation](installation.md#required-configuration)
 
 **Cookie jar** - Your logged-in session cookies for a subscribed site, stored against its FlareSolverr or render rule so articles fetch as you. [Paywalls > Subscriber paywalls](paywalls.md#subscriber-paywalls-cookie-jar)
 
@@ -60,7 +62,7 @@ Every term the app uses, in plain words, with a link to the part of the docs tha
 
 ## J
 
-**Job** - One run of the pipeline for one submission. Queued, processing, done, failed, or cancelled; visible on Home. [How it works > The job queue](how-it-works.md#the-job-queue)
+**Job** - One run of the pipeline for one submission. Staging, queued, processing, done, failed, or cancelled; running jobs show in the Home queue, finished and failed ones under Articles. [How it works > The job queue](how-it-works.md#the-job-queue)
 
 **Job timeouts** - The watchdog policy: a job dies for stalling (no progress for `JOB_STALL_SECONDS`), with an absolute ceiling on top. [How it works > The job queue](how-it-works.md#the-job-queue)
 
@@ -72,13 +74,13 @@ Every term the app uses, in plain words, with a link to the part of the docs tha
 
 **Normalize** - The pipeline stage that rewrites cleaned text for narration: an LLM pronunciation pass plus the base lexicon and your corrections. [How it works](how-it-works.md#cleanup-summary-chunking-and-pronunciation)
 
-## P
-
-**Pronunciation scope** - What each pronunciation LLM call sends: the whole chunk (default), or only the sentences that matched a correction term, spliced back after respelling. [How it works](how-it-works.md#cleanup-summary-chunking-and-pronunciation)
-
 ## O
 
 **OCR** - On-device text recognition for scanned PDFs and image uploads (RapidOCR, CPU, models shipped in the image). [How it works > Extraction](how-it-works.md#extraction)
+
+## P
+
+**Pronunciation scope** - What each pronunciation LLM call sends: the whole chunk (default), or only the sentences that matched a term, spliced back after respelling. [How it works](how-it-works.md#cleanup-summary-chunking-and-pronunciation)
 
 ## R
 

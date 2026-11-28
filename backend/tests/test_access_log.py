@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 
 import pytest
+from app.api.access_log import AccessLogMiddleware
 from app.core import database
 from app.main import create_app
 from fastapi.testclient import TestClient
@@ -49,3 +51,37 @@ def test_access_log_redacts_query_and_artwork_key_candidates(
     assert candidate not in records[1].path
     assert records[2].path == "/media/default-[REDACTED].jpg"
     assert candidate not in records[2].path
+
+
+@pytest.mark.parametrize(
+    ("peer", "expected"),
+    [
+        (("::ffff:203.0.113.7", 1234), "203.0.113.7"),
+        (("2001:db8::1", 1234), "2001:db8::1"),
+        (("unix-socket", 0), "unix-socket"),
+        (None, None),
+    ],
+)
+def test_access_log_client_unwraps_mapped_ipv4(
+    caplog: pytest.LogCaptureFixture, peer: tuple[str, int] | None, expected: str | None
+) -> None:
+    async def inner(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    async def noop(*_args):
+        return {"type": "http.request"}
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/x",
+        "query_string": b"",
+        "headers": [(b"x-forwarded-for", b"::ffff:1.2.3.4")],
+        "client": peer,
+    }
+    with caplog.at_level(logging.INFO, logger="app.access"):
+        asyncio.run(AccessLogMiddleware(inner)(scope, noop, noop))
+    rec = _access_records(caplog)[-1]
+    assert rec.client == expected
+    assert rec.forwarded_for == "::ffff:1.2.3.4"

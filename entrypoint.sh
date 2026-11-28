@@ -29,10 +29,8 @@ cleanup() {
 }
 trap cleanup TERM INT
 
-uvicorn app.main:app \
-    --host 0.0.0.0 \
-    --port 8000 \
-    --workers "${WEB_WORKERS:-2}" &
+# app.listen opens the dual-stack socket and runs uvicorn in-process: WEB_PID is the server, or its supervisor with more than one worker.
+python -m app.listen &
 WEB_PID=$!
 
 python -m app.worker &

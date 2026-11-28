@@ -18,6 +18,11 @@ CVE-2026-9538
 # terminal handling in base; Audicle runs headless in a container.
 CVE-2025-69720
 
+# openssl (libssl3t64, openssl, openssl-provider-legacy) (HIGH x1):
+# CVE-2026-107494 is a denial of service through unbounded QUIC frame queueing.
+# No service uses OpenSSL's QUIC stack: uvicorn and httpx speak TLS over TCP only.
+CVE-2026-107494
+
 # libacl1 (HIGH x1): POSIX ACL library in base; no ACL operations in Audicle.
 CVE-2026-54369
 
