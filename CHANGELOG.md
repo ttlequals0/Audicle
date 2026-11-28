@@ -26,6 +26,11 @@ work lives under `[Unreleased]`.
 - The documentation was checked against the code and corrected. The API page now lists the endpoints it was missing, and the paywall page includes the render sidecar step. The pipeline page describes the spoken intro, the pronunciation pass and the chunk cache as they work. The remote TTS section states the exact request Audicle sends and that the server must return WAV.
 - Older changelog entries were reworded for plainer phrasing. No entry was added or removed.
 
+### Security
+
+- CVE-2026-107494 (OpenSSL, denial of service through QUIC frame queueing) is accepted in all images. Debian has no fixed package yet, and no Audicle service uses QUIC. It is due for recheck on 2026-12-17.
+- The render egress image was rebuilt without cache to pick up the fixed `libzstd1` (CVE-2026-124851).
+
 ### Fixed
 
 - The iOS shortcut showed "Submit failed: " with no reason, because it read a `detail` field and the API returns `error`. The build script now reads `error`. `Audicle.shortcut` in the repository has to be rebuilt on macOS to pick this up.

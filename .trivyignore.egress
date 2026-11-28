@@ -27,6 +27,12 @@ CVE-2025-69720
 # archives. The process runs as a nonroot UID with no capabilities.
 CVE-2026-9538
 
+# Owner: Audicle maintainers. Recheck: 2026-12-17. Added 0.64.0.
+# Debian 13 has no fixed openssl package. CVE-2026-107494 is a denial of
+# service through unbounded QUIC frame queueing; tinyproxy forwards TCP and
+# has no QUIC support.
+CVE-2026-107494
+
 # Owner: Audicle maintainers. Recheck: 2026-12-17. Added 0.62.1.
 # libsqlite3-0 (HIGH x3): the image installs 3.54.1-2 from Debian sid, which the
 # Debian security tracker lists as the fixed version, and the Dockerfile build
