@@ -380,14 +380,16 @@ def test_book_routes_404(env: Path) -> None:
             assert r.status_code == 404
 
 
-def test_book_chapter_out_reports_unselectable_short_chapter(env: Path) -> None:
+def test_book_chapter_out_reports_selectable_unticked_short_chapter(env: Path) -> None:
     with _client(env) as client:
         book_id = _split(client, simple_epub(words=(60, 1, 60))).json()["book_id"]
         chapters = client.get(f"/api/v1/books/{book_id}").json()["chapters"]
     short = chapters[1]
-    assert short["selectable"] is False
+    assert short["selectable"] is True
+    assert short["short"] is True
     assert short["default_selected"] is False
     assert chapters[0]["selectable"] is True
+    assert chapters[0]["short"] is False
 
 
 def test_split_upload_uses_overlay_min_extraction_chars(env: Path) -> None:
@@ -400,7 +402,7 @@ def test_split_upload_uses_overlay_min_extraction_chars(env: Path) -> None:
     with TestClient(create_app()) as client:
         # 60 words is ~300 chars: above the 150 default, below the 400 overlay
         body = _split(client, simple_epub(words=(60, 120, 60))).json()
-    assert {c["index"]: c["selectable"] for c in body["chapters"]} == {1: False, 2: True, 3: False}
+    assert {c["index"]: c["selectable"] for c in body["chapters"]} == {1: True, 2: True, 3: True}
 
 
 @pytest.mark.filterwarnings("ignore::PIL.Image.DecompressionBombWarning")

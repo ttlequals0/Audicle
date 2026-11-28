@@ -358,7 +358,7 @@ def _explicit_selection(
         if chapter is None:
             raise ValueError(f"unknown chapter index: {idx}")
         if not chapter.selectable:
-            raise ValueError(f"chapter {idx} is too short to narrate")
+            raise ValueError(f"chapter {idx} has no text to narrate")
     return sorted(set(requested))
 
 

@@ -717,7 +717,7 @@ def test_selectable_epub_follows_min_chars():
     }
     book = detect_epub(make_epub(files), min_chars=10)
     flags = {c.title: (c.selectable, c.default_selected) for c in book.chapters}
-    assert flags == {"Short": (False, False), "Normal": (True, True)}
+    assert flags == {"Short": (True, False), "Normal": (True, True)}
 
 
 def test_selectable_pdf_image_only_chapter():
@@ -732,6 +732,22 @@ def test_selectable_pdf_image_only_chapter():
     book = book_chapters.detect(buf.getvalue(), ".pdf", min_chars=200)
     flags = {c.title: (c.selectable, c.default_selected) for c in book.chapters}
     assert flags == {"Scan": (True, True), "Empty": (False, False)}
+
+
+@pytest.mark.parametrize(
+    ("title", "chars", "image", "expected"),
+    [
+        ("Chapter", 0, False, (False, False)),
+        ("Chapter", 5, False, (False, True)),
+        ("Dedication", 5, False, (False, True)),
+        ("Chapter", 500, False, (True, True)),
+        ("Copyright", 500, False, (False, True)),
+        ("Chapter", 0, True, (True, True)),
+    ],
+)
+def test_flags_truth_table(title, chars, image, expected):
+    # (default_selected, selectable) with min_chars=150
+    assert book_chapters._flags(title, chars, image, 150) == expected
 
 
 XHTML11_DOCTYPE = (

@@ -23,6 +23,7 @@ vi.mock("../lib/api", () => ({
 
 const ch = (index: number, over: Record<string, unknown> = {}) => ({
   index,
+  short: false,
   title: `Chapter ${index}`,
   word_count: 1000,
   default_selected: false,
@@ -49,7 +50,7 @@ const book = {
   skipped: [],
   chapters: [
     ch(1, { title: "Title Page", word_count: 4, selectable: false }),
-    ch(2),
+    ch(2, { short: true }),
     ch(6, { default_selected: true }),
     ch(7, { default_selected: true, status: "failed" }),
     ch(8, { default_selected: true, status: "done" }),
@@ -88,12 +89,23 @@ describe("ChapterPicker", () => {
     expect(screen.getByRole("checkbox", { name: /Chapter 8/ })).not.toBeChecked();
   });
 
-  it("disables done and too-short rows", async () => {
+  it("disables done and no-text rows", async () => {
     renderPicker();
     expect(await screen.findByRole("checkbox", { name: /Title Page/ })).toBeDisabled();
-    expect(screen.getByText("too short")).toBeInTheDocument();
+    expect(screen.getByText("no text")).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: /Chapter 8/ })).toBeDisabled();
     expect(screen.getByRole("checkbox", { name: /Chapter 7/ })).toBeEnabled();
+  });
+
+  it("marks a short chapter and lets it be ticked", async () => {
+    const user = userEvent.setup();
+    renderPicker();
+    const box = await screen.findByRole("checkbox", { name: /Chapter 2/ });
+    expect(screen.getByText("short")).toBeInTheDocument();
+    expect(box).toBeEnabled();
+    expect(box).not.toBeChecked();
+    await user.click(box);
+    expect(box).toBeChecked();
   });
 
   it("Select all ticks only enabled rows", async () => {

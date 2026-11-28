@@ -111,7 +111,13 @@ export default function ChapterPicker({ bookId, voice, onClose }: Props) {
       <ul className="space-y-1 max-h-96 overflow-y-auto">
         {chapters.map((c) => {
           const enabled = isEnabled(c);
-          const note = !c.selectable ? "too short" : c.status !== "not_queued" ? c.status : null;
+          const note = !c.selectable
+            ? "no text"
+            : c.status !== "not_queued"
+              ? c.status
+              : c.short
+                ? "short"
+                : null;
           return (
             <li key={c.index} className={`flex items-center gap-3 text-sm py-1${enabled ? "" : " text-mute"}`}>
               <input
@@ -132,7 +138,7 @@ export default function ChapterPicker({ bookId, voice, onClose }: Props) {
               <span id={`${uid}-d${c.index}`} className="text-xs text-mute shrink-0">
                 {c.word_count} words
                 {note && (
-                  <span className={`tag ${c.selectable ? statusTag(c.status) : "tag-cancelled"} ml-2`}>
+                  <span className={`tag ${c.selectable && c.status !== "not_queued" ? statusTag(c.status) : "tag-cancelled"} ml-2`}>
                     {note}
                   </span>
                 )}

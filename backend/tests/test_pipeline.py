@@ -1509,6 +1509,37 @@ async def test_cleanup_ships_real_article_when_model_refuses_via_no_article(
     assert "UTC" not in cleaned
 
 
+async def test_short_chapter_job_skips_cleanup_and_summary(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.run_migrations(env)
+    _stub_full_chain(monkeypatch)
+    prompts: list[str] = []
+
+    async def _recording_llm(_system, user, _settings, **_kwargs):
+        prompts.append(user)
+        return "unused"
+
+    async def _short_chapter(_job, _settings, beat=None):
+        return extraction.ExtractionResult(
+            markdown="For my mother.\n\nSign up for our newsletter.", metadata={}
+        )
+
+    monkeypatch.setattr(llm, "generate", _recording_llm)
+    monkeypatch.setattr(pipeline.file_extraction, "extract_file", _short_chapter)
+    uri = books.chapter_uri(pipeline.file_extraction.build_source_uri("c" * 16, "novel.epub"), 1)
+    job = _seed_job(env, uri)
+    await pipeline.process_job(job, get_settings())
+
+    assert _job_after(env, job.id).status == "done"
+    assert not any(p.startswith(("Clean the article", "Summarize the article")) for p in prompts)
+    conn = database.connect(database.db_path(env))
+    try:
+        assert episodes.get_cleaned_text(conn, job.episode_id) == "For my mother."
+    finally:
+        conn.close()
+
+
 async def test_cleanup_fails_when_page_is_only_boilerplate(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

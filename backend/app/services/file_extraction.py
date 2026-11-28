@@ -232,7 +232,7 @@ async def extract_file(
         if stem:
             metadata["title"] = stem
 
-    floor = settings.MIN_EXTRACTION_CHARS
+    floor = 1 if found else settings.MIN_EXTRACTION_CHARS
     if len(markdown) < floor:
         message = (
             f"uploaded {ext or 'file'} yielded only {len(markdown)} characters of text "

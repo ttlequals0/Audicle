@@ -43,6 +43,7 @@ def test_run_migrations_creates_tables(tmp_path: Path) -> None:
         "030_episode_audio_generation",
         "031_books",
         "032_job_recovery_count",
+        "033_short_chapters_selectable",
     ]
 
     conn = database.connect(database.db_path(tmp_path))
@@ -91,6 +92,7 @@ def test_second_run_is_a_noop(tmp_path: Path) -> None:
         "030_episode_audio_generation",
         "031_books",
         "032_job_recovery_count",
+        "033_short_chapters_selectable",
     ]
     assert second == []
 
@@ -616,7 +618,11 @@ def test_m031_is_additive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     finally:
         conn.close()
     monkeypatch.setattr(database, "MIGRATIONS", full)
-    assert database.run_migrations(tmp_path) == ["031_books", "032_job_recovery_count"]
+    assert database.run_migrations(tmp_path) == [
+        "031_books",
+        "032_job_recovery_count",
+        "033_short_chapters_selectable",
+    ]
     conn = database.connect(database.db_path(tmp_path))
     try:
         assert tuple(conn.execute("SELECT * FROM jobs").fetchone())[: len(before_job)] == before_job
@@ -667,7 +673,10 @@ def test_migration_032_adds_recovery_count_and_keeps_rows(
     finally:
         conn.close()
     monkeypatch.setattr(database, "MIGRATIONS", full)
-    assert database.run_migrations(tmp_path) == ["032_job_recovery_count"]
+    assert database.run_migrations(tmp_path) == [
+        "032_job_recovery_count",
+        "033_short_chapters_selectable",
+    ]
     conn = database.connect(database.db_path(tmp_path))
     try:
         after = dict(conn.execute("SELECT * FROM jobs").fetchone())
@@ -675,6 +684,32 @@ def test_migration_032_adds_recovery_count_and_keeps_rows(
         assert after == before
     finally:
         conn.close()
+
+
+def test_migration_033_makes_short_chapters_selectable(tmp_path: Path) -> None:
+    database.run_migrations(tmp_path)
+    conn = database.connect(database.db_path(tmp_path))
+    try:
+        conn.execute(
+            "INSERT INTO books (id, source_uri, filename, format, season_number) "
+            "VALUES ('b', 'u', 'f.epub', 'epub', 1)"
+        )
+        rows = [(1, 5, 0, 0, 1), (2, 0, 0, 0, 0), (3, 500, 1, 1, 0)]
+        for idx, chars, sel, default, requested in rows:
+            conn.execute(
+                "INSERT INTO book_chapters (book_id, idx, title, locator, word_count, char_count, "
+                "selectable, default_selected, requested, episode_id) "
+                "VALUES ('b', ?, 't', 'l', 1, ?, ?, ?, ?, ?)",
+                (idx, chars, sel, default, requested, f"e{idx}"),
+            )
+        database._m033_short_chapters_selectable(conn)
+        got = {
+            r["idx"]: (r["selectable"], r["default_selected"], r["requested"])
+            for r in conn.execute("SELECT * FROM book_chapters")
+        }
+    finally:
+        conn.close()
+    assert got == {1: (1, 0, 1), 2: (0, 0, 0), 3: (1, 1, 0)}
 
 
 def test_reset_processing_requeues_and_counts(tmp_path: Path) -> None:

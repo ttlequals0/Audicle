@@ -2334,6 +2334,11 @@ components:
         selectable:
           type: boolean
           title: Selectable
+        short:
+          type: boolean
+          title: Short
+          description: Shorter than MIN_EXTRACTION_CHARS; selectable but not ticked
+            by default.
         requested:
           type: boolean
           title: Requested
@@ -2350,6 +2355,7 @@ components:
       - word_count
       - default_selected
       - selectable
+      - short
       - requested
       - status
       - episode_id

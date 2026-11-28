@@ -676,6 +676,18 @@ def _chapter_job(book: books.Book, idx: int) -> jobs.Job:
     )
 
 
+async def test_chapter_job_extracts_short_chapter(env: Path) -> None:
+    data = simple_epub(
+        title="Book",
+        author="A",
+        names=["One", "Two"],
+        bodies=[f"Body of one. {_LONG}", "Hi there."],
+    )
+    book, _ = _store_book(env, "novel.epub", data)
+    result = await file_extraction.extract_file(_chapter_job(book, 2), get_settings())
+    assert "Hi there." in result.markdown
+
+
 def test_parse_source_uri_ignores_chapter_fragment() -> None:
     uri = file_extraction.build_source_uri("abc123", "My Book.epub")
     assert file_extraction.parse_source_uri(books.chapter_uri(uri, 4)) == (
