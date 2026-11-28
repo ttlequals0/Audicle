@@ -6,6 +6,13 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.64.3] - 2026-11-28
+
+### Changed
+
+- Dependencies: pytest-asyncio 1.5.0 in the backend, `tts-wrapper` and `render`; pypdf 7.1.1, trafilatura 2.4.0, tenacity 9.2.1 and pypdfium2 5.15.2 in the backend. trafilatura 2.4.0 no longer pulls in babel, justext, lxml-html-clean or tld, and courlan moves to 1.5.0 and charset-normalizer to 3.5.3 with it. No behaviour change for operators; the only code change is in the test helpers that build PDF outlines, which now pass keyword arguments to pypdf.
+- The uv build image and CI uv move to 0.13.10 in the app, `tts-wrapper` (GPU and CPU) and `render` images.
+
 ## [0.64.2] - 2026-11-28
 
 ### Fixed

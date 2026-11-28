@@ -270,7 +270,7 @@ def pdf_book(texts: list[str], outline: list[tuple[str, int]]) -> bytes:
     for text in texts:
         writer.add_page(PdfReader(io.BytesIO(text_page_pdf(text))).pages[0])
     for title, page in outline:
-        writer.add_outline_item(title, page)
+        writer.add_outline_item(title=title, page_number=page)
     buf = io.BytesIO()
     writer.write(buf)
     return buf.getvalue()
