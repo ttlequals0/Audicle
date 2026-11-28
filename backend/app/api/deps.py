@@ -49,12 +49,16 @@ def get_conn(
         yield conn
 
 
-def _is_ip(value: str) -> bool:
+def _normalize_ip(value: str) -> str | None:
+    """Return the IP with an IPv4-mapped IPv6 form unwrapped, or None if invalid."""
+
     try:
-        ipaddress.ip_address(value)
-        return True
+        ip = ipaddress.ip_address(value)
     except ValueError:
-        return False
+        return None
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        return str(ip.ipv4_mapped)
+    return str(ip)
 
 
 def client_ip(request: Request, settings: Settings) -> str:
@@ -74,9 +78,13 @@ def client_ip(request: Request, settings: Settings) -> str:
             hops = settings.TRUSTED_PROXY_HOPS
             if len(parts) >= hops:
                 candidate = parts[-hops]
-                if _is_ip(candidate):
-                    return candidate
-    return request.client.host if request.client else "unknown"
+                normalized = _normalize_ip(candidate)
+                if normalized:
+                    return normalized
+    if not request.client:
+        return "unknown"
+    # A dual-stack listener reports IPv4 peers as ::ffff:a.b.c.d.
+    return _normalize_ip(request.client.host) or request.client.host
 
 
 def require_admin(

@@ -28,6 +28,31 @@ The backend and wrapper share a `/data` volume so the backend can read the audio
 
 Size the `./data` volume for the TTS chunk cache too: it keeps roughly 170 MB per hour of narrated audio under `data/tts_cache`, for `TTS_CACHE_RETENTION_DAYS` (default 7) days.
 
+## IPv6
+
+The app, `tts-wrapper`, and `render` listen on both IPv6 and IPv4 when the container can bind `::`. If it cannot, they fall back to IPv4 only. Each service logs the address it chose at start. IPv4 clients keep working in both cases.
+
+Docker networks are IPv4 only by default, so reaching a service over IPv6 needs two more steps:
+
+- Turn on IPv6 for the Compose network (`enable_ipv6: true`) and make sure the Docker daemon supports it. On older daemons you must also give the network an IPv6 subnet under `ipam`.
+- Publish the port on an IPv6 host address next to the IPv4 one.
+
+```yaml
+services:
+  app:
+    ports:
+      - "127.0.0.1:8000:8000"
+      - "[::1]:8000:8000"
+
+networks:
+  app-network:
+    enable_ipv6: true
+```
+
+The link from `render` to `render-egress` is IPv4 only by design. It uses a fixed IPv4 address on an internal network, and the renderer blocks all other IPv6 traffic.
+
+If you set `FORWARDED_ALLOW_IPS` for uvicorn, list IPv4 proxies in mapped form too (for example `::ffff:172.18.0.2`) or use a network range. Audicle's own login rate limit and lockout already treat mapped addresses as plain IPv4.
+
 ## File permissions
 
 The app and TTS wrapper run as uid 1000. The renderer starts with limited privileges to configure its firewall, then drops to uid 1000. If you bind-mount host directories (or set `user:` in compose), make them writable by uid 1000 so the app can write the database and media and seed the default prompt and corrections:
