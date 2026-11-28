@@ -47,8 +47,12 @@ export default function ActionMenu({
     const below = rect.bottom + 4;
     // Flip above the trigger when the panel would run off the bottom.
     const top = height && below + height > window.innerHeight - 8 ? rect.top - height - 4 : below;
-    const left = width ? Math.min(rect.left, window.innerWidth - width - 12) : rect.left;
-    setPos({ left: Math.max(8, left), top: Math.max(8, top) });
+    const root = getComputedStyle(document.documentElement);
+    const safeLeft = parseFloat(root.getPropertyValue("--safe-left")) || 0;
+    const safeRight = parseFloat(root.getPropertyValue("--safe-right")) || 0;
+    const maxLeft = window.innerWidth - safeRight - width - 12;
+    const left = width ? Math.min(rect.left, maxLeft) : rect.left;
+    setPos({ left: Math.max(8 + safeLeft, left), top: Math.max(8, top) });
   };
 
   useLayoutEffect(() => {

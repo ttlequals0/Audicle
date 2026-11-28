@@ -33,6 +33,7 @@ work lives under `[Unreleased]`.
 
 ### Fixed
 
+- Page content sat under a cutout on the left or right edge of the screen, such as the camera bump on a foldable phone's cover screen. The header, banners, page content and row action menus now stay clear of it.
 - The iOS shortcut showed "Submit failed: " with no reason, because it read a `detail` field and the API returns `error`. The build script now reads `error`. `Audicle.shortcut` in the repository has to be rebuilt on macOS to pick this up.
 - Dependabot pull requests for `tts-wrapper` failed with a lockfile mismatch. The `resemble-perth` metadata override now declares the Python range the lockfile records.
 - Dependabot no longer proposes the Python 3.15 base image. onnxruntime and lxml have no 3.15 wheels yet.
