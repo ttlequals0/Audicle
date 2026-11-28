@@ -28,7 +28,7 @@ Size the `./data` volume for the TTS chunk cache too: it keeps roughly 170 MB pe
 
 ## IPv6
 
-The app, `tts-wrapper`, and `render` listen on both IPv6 and IPv4 when the container can bind `::`. If it cannot, they fall back to IPv4 only. Each service logs the address it chose at start. IPv4 clients keep working in both cases.
+The app, `tts-wrapper`, and `render` listen on both IPv6 and IPv4 when the container can bind `::`. If it cannot, they fall back to IPv4 only. Each service opens its own listening socket at start (so IPv4 is never dropped) and logs the address it chose. IPv4 clients keep working in both cases.
 
 Docker networks are IPv4 only by default, so reaching a service over IPv6 needs two more steps:
 

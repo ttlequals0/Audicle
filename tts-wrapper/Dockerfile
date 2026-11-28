@@ -90,7 +90,7 @@ COPY pyproject.toml uv.lock LICENSE ./
 # Every module main.py imports must be listed here. A missing one is not caught
 # by tests (they import from the source tree) and only surfaces as an
 # ImportError crash-loop after deploy.
-COPY config.py engine.py log_setup.py main.py memory.py chatterbox_engine.py whisper_verify.py install_engine.sh entrypoint.sh ./
+COPY config.py engine.py log_setup.py main.py memory.py chatterbox_engine.py whisper_verify.py install_engine.sh entrypoint.sh listen.py ./
 # install_engine.sh is shared with Dockerfile.cpu.
 # spacy-pkuseg (a chatterbox dependency for Chinese segmentation) publishes no
 # cp314 wheel, so it is compiled from the locked sdist. git is needed so the

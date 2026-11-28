@@ -1208,6 +1208,15 @@ def test_dockerfiles_copy_every_local_module_main_imports() -> None:
         assert not missing, f"{dockerfile} does not COPY: {missing}"
 
 
+def test_dockerfiles_copy_the_listener_entrypoint_uses() -> None:
+    root = Path(__file__).resolve().parent.parent
+    assert "listen.py" in (root / "entrypoint.sh").read_text()
+    for dockerfile in ("Dockerfile", "Dockerfile.cpu"):
+        lines = (root / dockerfile).read_text().splitlines()
+        copied = " ".join(line for line in lines if line.startswith("COPY"))
+        assert "listen.py" in copied, f"{dockerfile} does not COPY listen.py"
+
+
 def test_dockerfiles_purge_git_in_the_layer_that_installs_the_engine() -> None:
     """git is only needed to fetch resemble-perth during the engine install and
     carries unpatched CVEs, so each Dockerfile installs and purges it in that one RUN

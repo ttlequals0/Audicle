@@ -2,10 +2,10 @@
 
 The container starts via:
 
-    uvicorn main:create_app --factory --host 0.0.0.0 --port 8000
+    python -I listen.py tts-wrapper 8000 main:create_app --factory --workers 1
 
-The image runs entrypoint.sh, which binds "::" (dual-stack) when the container
-supports it and 0.0.0.0 otherwise.
+listen.py (run by entrypoint.sh) opens a dual-stack "::" socket, or an IPv4
+0.0.0.0 one when IPv6 is unavailable, and hands it to uvicorn with --fd.
 
 so the lifespan can load the engine once at startup, fail the process on a
 missing reference voice or model load error, and serve ``/generate`` /
