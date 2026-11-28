@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import os
+import signal
 import socket
+import subprocess
+import sys
 import threading
 import time
+import urllib.request
+from pathlib import Path
 
 import pytest
 import uvicorn
@@ -93,3 +99,41 @@ def test_serve_sets_tcp_nodelay_on_accepted_connections(monkeypatch: pytest.Monk
     finally:
         servers[0].should_exit = True
         thread.join(5)
+
+
+_CHILD = """
+import uvicorn
+from app import listen
+
+sock, _ = listen.listen_socket(0)
+print(sock.getsockname()[1], flush=True)
+config = uvicorn.Config("listen_asgi_app:app", workers=2, lifespan="off", log_level="warning")
+listen.serve(config, sock)
+"""
+
+
+def test_serve_multiworker_answers_and_stops_cleanly() -> None:
+    tests_dir = Path(__file__).parent
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(tests_dir.parent), str(tests_dir)])}
+    proc = subprocess.Popen(
+        [sys.executable, "-c", _CHILD], stdout=subprocess.PIPE, env=env, cwd=tests_dir, text=True
+    )
+    try:
+        port = int(proc.stdout.readline())
+        deadline = time.monotonic() + 15
+        body = None
+        while body is None:
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=2) as r:
+                    assert r.status == 200
+                    body = r.read()
+            except OSError:
+                assert time.monotonic() < deadline, "multi-worker server never answered"
+                time.sleep(0.05)
+        assert body == b"ok"
+        proc.send_signal(signal.SIGTERM)
+        assert proc.wait(timeout=10) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()

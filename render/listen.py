@@ -1,7 +1,9 @@
 """Open the listening socket ourselves and serve uvicorn on it, dual-stack when possible.
 
-Run as `python listen.py` from /app. uvicorn would bind "::" itself, but asyncio sets IPV6_V6ONLY on
-every AF_INET6 socket it creates (single worker), which silently drops IPv4. `--fd` is no
+Run as `python listen.py` from /app. With one worker uvicorn would bind "::" itself, but asyncio
+sets IPV6_V6ONLY on that socket, which silently drops IPv4 (with more workers uvicorn binds it and
+leaves the option at the system default). Setting it explicitly also removes the dependence on
+the net.ipv6.bindv6only sysctl. `--fd` is no
 alternative: uvicorn labels that socket AF_UNIX, so asyncio skips TCP_NODELAY. So we start
 the server in-process with our socket, as `uvicorn.run` does. This file is duplicated in
 backend/ and tts-wrapper/ (separate Docker build contexts).

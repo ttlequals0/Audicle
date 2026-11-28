@@ -33,6 +33,17 @@ describe("UpdateBanner", () => {
     expect(update).toHaveBeenCalledTimes(1);
   });
 
+  it("pads its content with the safe-area gutter", () => {
+    render(<UpdateBanner pageWidth="max-w-2xl" />);
+    act(() => {
+      offerAppUpdate(vi.fn());
+    });
+
+    const content = screen.getByRole("status").firstElementChild;
+    expect(content).toHaveClass("safe-x");
+    expect(content).not.toHaveClass("px-4");
+  });
+
   it("disables the reload while a draft is unsaved", () => {
     render(
       <>
