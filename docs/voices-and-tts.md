@@ -33,10 +33,30 @@ By default the bundled wrapper does the synthesis (`TTS_BACKEND=wrapper`). If yo
 | `TTS_API_KEY` | Bearer token, if the server wants one (masked in API responses) |
 | `TTS_API_MODEL` | Model name to request |
 | `TTS_API_VOICE` | Voice name on the remote server |
+| `TTS_API_EXTRA_BODY` | JSON object of extra fields sent with each speech request, for example `{"speed": 1.1}`. Empty sends none |
+| `TTS_API_ALLOW_PRIVATE` | Environment only. Set to `true` to allow a LAN endpoint (see below) |
 
 The remote server manages its own voices, so the local voice slots do not apply and `TTS_API_VOICE` names the one to use. The client receives audio bytes and writes them where the pipeline expects, so everything downstream (audio analysis, chapters, transcripts) works identically.
 
+Audicle appends `/audio/speech` to `TTS_API_BASE_URL` (and `/audio/transcriptions` to `WHISPER_API_BASE_URL` for ASR), so the base URL must include whatever prefix the server uses, for example `http://tts-host:8000/v1`.
+
+Each speech request is a JSON POST with this body:
+
+```json
+{"model": "tts-1", "input": "<chunk text>", "voice": "alloy", "response_format": "wav"}
+```
+
+Fields from `TTS_API_EXTRA_BODY` are merged in first, so those four always win. The setting must be a JSON object of at most 4096 characters and cannot contain `model`, `input`, `voice`, or `response_format`; a save that breaks these rules is rejected. Changing it changes the TTS cache key, so earlier cached audio is not reused for the new parameters.
+
+Audicle asks for WAV and requires the response to be a WAV container. The audio inside can use any codec ffmpeg reads (PCM, IMA ADPCM, and so on) and is converted to 16-bit PCM; a non-WAV response such as MP3 is rejected as invalid audio.
+
+The Chatterbox generation settings (temperature, repetition penalty, top-p, top-k, seed, character cap) go only to the bundled wrapper and are never sent to a remote server. Tune a remote server on the server itself, or pass fields it understands through `TTS_API_EXTRA_BODY`.
+
 One consequence: a remote speech endpoint returns audio only, no transcript, so ASR verification cannot come from the bundled wrapper. That is what `WHISPER_BACKEND` is for.
+
+### Endpoint addresses
+
+By default the endpoint must resolve to a public address. To use a server on your LAN or another container, set `TTS_API_ALLOW_PRIVATE=true` in the environment. It then also accepts `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10` (Tailscale), and `fc00::/7`. Loopback and link-local addresses (including `169.254.169.254`) are never allowed. It applies to both the TTS and ASR endpoints, and it is not editable in Settings or the API, so an admin session cannot widen it.
 
 ## ASR verification
 

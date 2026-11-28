@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import SettingsRoute from "./Settings";
+import { ApiError } from "../lib/api";
 
 const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }));
 
@@ -232,5 +233,42 @@ describe("SettingsRoute saves", () => {
     await waitFor(() => expect(apiMock).toHaveBeenCalledWith("/api/v1/settings", {
       method: "PUT", body: JSON.stringify({ CHAPTERS_TARGET_SECONDS: null }),
     }));
+  });
+
+  it("renders and saves the TTS API extra body, showing a server rejection", async () => {
+    const user = userEvent.setup();
+    const ttsSettings = {
+      ...settings,
+      allowlist: ["TTS_BACKEND", "TTS_API_EXTRA_BODY"],
+      values: { TTS_BACKEND: "openai-api" } as Record<string, string>,
+      defaults: { TTS_BACKEND: "wrapper", TTS_API_EXTRA_BODY: "" },
+    };
+    let reject = true;
+    const implementation = apiMock.getMockImplementation()!;
+    apiMock.mockImplementation((path: string, options?: RequestInit) => {
+      if (path === "/api/v1/settings") {
+        if (options?.method === "PUT") {
+          if (reject) {
+            reject = false;
+            return Promise.reject(Object.assign(new ApiError(400, {}), { detail: { error: "TTS_API_EXTRA_BODY must be a JSON object" } }));
+          }
+          Object.assign(ttsSettings.values, JSON.parse(String(options.body)));
+        }
+        return Promise.resolve({ ...ttsSettings, values: { ...ttsSettings.values } });
+      }
+      return implementation(path, options);
+    });
+    renderSettings(createClient(), "voice");
+    await user.click(await screen.findByRole("button", { name: /^TTS backend/ }));
+    const field = await screen.findByLabelText("TTS API extra body");
+    fireEvent.change(field, { target: { value: '{"speed": 1.1}' } });
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("must be a JSON object");
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(apiMock).toHaveBeenCalledWith("/api/v1/settings", {
+      method: "PUT", body: JSON.stringify({ TTS_API_EXTRA_BODY: '{"speed": 1.1}' }),
+    }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Save settings" })).not.toBeInTheDocument());
+    expect(field).toHaveValue('{"speed": 1.1}');
   });
 });

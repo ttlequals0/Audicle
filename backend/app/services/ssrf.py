@@ -51,7 +51,21 @@ def pin_url_to_ip(url: str, ip: str) -> str:
     return parts._replace(netloc=netloc).geturl()
 
 
-async def resolve_public_host(host: str) -> str:
+# LAN ranges an operator can opt into; ``ip.is_private`` is avoided because it
+# also matches loopback and link-local (including the cloud metadata address).
+_PRIVATE_ALLOWED_NETWORKS = tuple(
+    ipaddress.ip_network(n)
+    for n in (
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "100.64.0.0/10",
+        "fc00::/7",
+    )
+)
+
+
+async def resolve_public_host(host: str, *, allow_private: bool = False) -> str:
     """SSRF guard: resolve ``host`` and refuse private/loopback/link-local/
     multicast/reserved addresses. Returns the resolved IP literal so the
     caller can pin the connection to that IP -- closing the DNS-rebinding
@@ -62,6 +76,8 @@ async def resolve_public_host(host: str) -> str:
     httpx still sends the original ``Host:`` header (preserved via
     ``Request.headers``) so the upstream sees the operator-controlled name
     and TLS SNI works correctly.
+
+    ``allow_private`` additionally accepts RFC 1918, CGNAT and ULA addresses.
     """
 
     if not host:
@@ -82,7 +98,9 @@ async def resolve_public_host(host: str) -> str:
         except ValueError:
             raise BlockedHostError(host, f"invalid_ip_{addr}") from None
         classified = getattr(ip, "ipv4_mapped", None) or ip
-        if not classified.is_global or classified.is_multicast:
+        if (not classified.is_global or classified.is_multicast) and not (
+            allow_private and any(classified in net for net in _PRIVATE_ALLOWED_NETWORKS)
+        ):
             raise BlockedHostError(host, f"non_public_address_{ip}")
         if public_ip is None:
             public_ip = str(ip)

@@ -26,7 +26,7 @@ from pathlib import Path
 
 import httpx
 
-from app.config import Settings
+from app.config import Settings, parse_extra_body
 from app.core.paths import media_dir
 from app.services import audio as audio_service
 from app.services import ssrf
@@ -43,7 +43,7 @@ def _auth_headers(api_key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {key}"} if key else {}
 
 
-async def _guard(url: str) -> None:
+async def guard_endpoint(url: str, allow_private: bool) -> None:
     """Run the SSRF guard over an operator-supplied endpoint.
 
     Both endpoints are configured through the Settings UI, so a hostile or
@@ -69,7 +69,7 @@ async def _guard(url: str) -> None:
     expiry = _guard_cache.get(host)
     if expiry is not None and now < expiry:
         return
-    await ssrf.resolve_public_host(host)
+    await ssrf.resolve_public_host(host, allow_private=allow_private)
     _guard_cache[host] = now + _GUARD_TTL_SECONDS
 
 
@@ -98,8 +98,9 @@ async def synthesize(
 
     base = settings.TTS_API_BASE_URL.rstrip("/")
     endpoint = f"{base}/audio/speech"
-    await _guard(endpoint)
+    await guard_endpoint(endpoint, settings.TTS_API_ALLOW_PRIVATE)
     payload = {
+        **parse_extra_body(settings.TTS_API_EXTRA_BODY),
         "model": settings.TTS_API_MODEL,
         "input": text,
         "voice": settings.TTS_API_VOICE,
@@ -165,7 +166,7 @@ async def transcribe(audio: bytes, settings: Settings) -> str | None:
     base = settings.WHISPER_API_BASE_URL.rstrip("/")
     endpoint = f"{base}/audio/transcriptions"
     try:
-        await _guard(endpoint)
+        await guard_endpoint(endpoint, settings.TTS_API_ALLOW_PRIVATE)
     except Exception as exc:
         logger.warning(
             "Remote ASR endpoint rejected by the SSRF guard",

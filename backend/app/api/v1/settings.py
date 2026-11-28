@@ -21,7 +21,7 @@ from limits.util import parse as parse_rate_limit
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.api.deps import get_conn
-from app.config import RUNTIME_SETTING_BOUNDS, Settings, get_settings
+from app.config import RUNTIME_SETTING_BOUNDS, Settings, check_extra_body, get_settings
 from app.services import (
     chapters,
     feed,
@@ -388,6 +388,17 @@ def _validate_value(key: str, value: Any, settings: Settings) -> None:
             valid = False
         if not valid:
             raise HTTPException(status_code=400, detail=f"{key} must be an absolute HTTP(S) URL")
+        return
+    if key == "TTS_API_EXTRA_BODY":
+        if not isinstance(value, str):
+            raise HTTPException(
+                status_code=400,
+                detail="TTS_API_EXTRA_BODY must be a JSON object encoded as a string",
+            )
+        try:
+            check_extra_body(value)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return
     if key in ("READER_PROXY_TEMPLATE", "WALLHOP_PROXY_TEMPLATE"):
         if value == "":

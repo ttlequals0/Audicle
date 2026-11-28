@@ -7,6 +7,7 @@ Operational reference for a running Audicle. Domains below are placeholders; sub
 - `GET /health/live` is a flat liveness probe: `{"ok": true, "version": "..."}`. The fastest way to confirm which version is actually running.
 - `GET /health/ready` checks the database and published-media directory. Podcast delivery stays ready during ingestion-provider outages.
 - `GET /health/ingestion` checks the selected LLM, extraction, synthesis, and transcription dependencies. Optional renderer status appears under `components` without failing the check.
+  - Remote speech and transcription endpoints (`tts_remote`, `asr_remote`) report `ok`, `http_<status>`, `unreachable_<error>`, `unreachable_dns_resolution`, or `blocked_non_public_address`. The last means the endpoint resolves to a private address and `TTS_API_ALLOW_PRIVATE` is off (or the address is loopback or link-local, which is never allowed); no request is sent.
 
 Model loading time depends on the host and cached weights. `/health/ingestion` reports it unavailable until its own health endpoint succeeds. Job requests use `TTS_REACHABILITY_GRACE_SECONDS` while waiting for startup.
 

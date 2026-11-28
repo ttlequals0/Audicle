@@ -87,3 +87,53 @@ def test_pin_url_to_ip_rewrites_host_preserving_path_and_port() -> None:
 
 def test_pin_url_to_ip_brackets_ipv6() -> None:
     assert ssrf.pin_url_to_ip("https://example.com/x", "2001:db8::1") == "https://[2001:db8::1]/x"
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "10.1.2.3",
+        "172.16.0.1",
+        "172.31.255.254",
+        "192.168.1.5",
+        "100.64.0.1",
+        "100.127.255.254",
+        "fc00::1",
+        "fd12:3456::1",
+        "::ffff:192.168.1.5",
+    ],
+)
+async def test_allow_private_accepts_lan_ranges(host: str) -> None:
+    assert await ssrf.resolve_public_host(host, allow_private=True)
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "127.0.0.1",
+        "::1",
+        "169.254.169.254",
+        "169.254.0.1",
+        "fe80::1",
+        "224.0.0.1",
+        "ff02::1",
+        "0.0.0.0",
+        "240.0.0.1",
+        "192.0.2.1",
+        "::ffff:127.0.0.1",
+        "::ffff:169.254.169.254",
+    ],
+)
+async def test_allow_private_still_blocks_dangerous_ranges(host: str) -> None:
+    with pytest.raises(ssrf.BlockedHostError):
+        await ssrf.resolve_public_host(host, allow_private=True)
+
+
+async def test_allow_private_still_accepts_public() -> None:
+    assert await ssrf.resolve_public_host("8.8.8.8", allow_private=True) == "8.8.8.8"
+
+
+@pytest.mark.parametrize("host", ["10.1.2.3", "fd12:3456::1", "::ffff:192.168.1.5"])
+async def test_default_still_blocks_lan_ranges(host: str) -> None:
+    with pytest.raises(ssrf.BlockedHostError):
+        await ssrf.resolve_public_host(host)
