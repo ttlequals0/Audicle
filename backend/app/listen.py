@@ -54,7 +54,7 @@ def serve(config: uvicorn.Config, sock: socket.socket) -> None:
 
 
 def main() -> None:
-    config = uvicorn.Config("app.main:app", workers=int(os.environ.get("WEB_WORKERS", "2")))
+    config = uvicorn.Config("app.main:app", workers=int(os.environ.get("WEB_WORKERS") or "2"))
     sock, host = listen_socket(8000)
     print(f"audicle: listening on {host}", file=sys.stderr, flush=True)
     serve(config, sock)
