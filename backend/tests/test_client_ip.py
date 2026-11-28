@@ -57,3 +57,36 @@ def test_falls_back_to_peer_when_hops_exceed_chain() -> None:
 def test_returns_unknown_when_no_peer_and_no_header() -> None:
     req = _request(xff=None, peer=None)
     assert client_ip(req, _settings(trust=True, hops=1)) == "unknown"
+
+
+def test_unwraps_ipv4_mapped_socket_peer() -> None:
+    req = _request(xff=None, peer="::ffff:203.0.113.7")
+    assert client_ip(req, _settings(trust=False)) == "203.0.113.7"
+
+
+def test_keys_real_ipv6_socket_peer_by_slash_64() -> None:
+    req = _request(xff=None, peer="2001:db8:1:2::1")
+    assert client_ip(req, _settings(trust=False)) == "2001:db8:1:2::/64"
+
+
+def test_same_slash_64_shares_key_and_other_differs() -> None:
+    a = client_ip(_request(peer="2001:db8:1:2::1"), _settings())
+    b = client_ip(_request(peer="2001:db8:1:2:ffff::9"), _settings())
+    c = client_ip(_request(peer="2001:db8:1:3::1"), _settings())
+    assert a == b
+    assert a != c
+
+
+def test_unwraps_ipv4_mapped_xff_entry() -> None:
+    req = _request(xff="6.6.6.6, ::ffff:203.0.113.7")
+    assert client_ip(req, _settings(trust=True, hops=1)) == "203.0.113.7"
+
+
+def test_keys_real_ipv6_xff_entry_by_slash_64() -> None:
+    req = _request(xff="6.6.6.6, 2001:db8:1:2::abcd")
+    assert client_ip(req, _settings(trust=True, hops=1)) == "2001:db8:1:2::/64"
+
+
+def test_mapped_peer_falls_back_when_xff_invalid() -> None:
+    req = _request(xff="not-an-ip", peer="::ffff:9.9.9.9")
+    assert client_ip(req, _settings(trust=True, hops=1)) == "9.9.9.9"

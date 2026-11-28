@@ -39,6 +39,12 @@ The wrapper starts without a voice: the model loads, `/health` reports
 first job's `/select-voice` (or a `/reload`) then encodes it with no restart. Only a
 model-load failure exits the process.
 
+## Network
+
+The wrapper listens on port 8000, dual-stack (IPv6 plus IPv4) when the container
+can bind `::`, and IPv4 only (`0.0.0.0`) otherwise. `entrypoint.sh` picks the
+address at start and logs it.
+
 ## Local dev
 
 CUDA hosts (compose pulls the published image and has no `build:` stanza, so build directly):

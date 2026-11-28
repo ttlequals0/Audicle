@@ -20,6 +20,12 @@ The backend calls this only for a host whose Site-override rule is the `render`
 strategy (or a solved page that still looks truncated), and never on the request
 path of a normal extraction.
 
+## Network
+
+The container listens on port 8000, dual-stack (IPv6 plus IPv4) when it can bind
+`::`, and IPv4 only (`0.0.0.0`) otherwise. `entrypoint.sh` picks the address at
+start and logs it. The leg from this service to the egress proxy stays IPv4.
+
 ## Layout
 
 - `renderer.py` -- the result shape and the browser-agnostic helpers (expand-control

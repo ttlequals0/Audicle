@@ -16,6 +16,7 @@ import uuid
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from app.core.net import normalize_ip
 from app.utils.logging import request_id_ctx
 
 logger = logging.getLogger("app.access")
@@ -81,7 +82,7 @@ class AccessLogMiddleware:
                     "query": query,
                     "status": status_holder["code"],
                     "duration_ms": duration_ms,
-                    "client": client[0] if client else None,
+                    "client": (normalize_ip(client[0]) or client[0]) if client else None,
                     "forwarded_for": forwarded.decode("latin-1") if forwarded else None,
                 },
             )

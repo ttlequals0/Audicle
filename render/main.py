@@ -4,6 +4,9 @@ The container starts via:
 
     xvfb-run -a uvicorn main:create_app --factory --host 0.0.0.0 --port 8000
 
+The image runs render/entrypoint.sh, which binds "::" (dual-stack) when the
+container supports it and 0.0.0.0 otherwise.
+
 ``create_app`` takes an optional renderer so tests can inject a fake; in the image
 it defaults to the Camoufox driver. The default is imported lazily so the app
 (and its tests) stay importable without Camoufox installed.
