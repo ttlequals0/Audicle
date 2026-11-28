@@ -1,17 +1,20 @@
-"""Open the listening socket and exec uvicorn on it (`--fd`), dual-stack when possible.
+"""Open the listening socket ourselves and serve uvicorn on it, dual-stack when possible.
 
-Usage: python -I listen.py NAME PORT UVICORN_ARGS...
-
-uvicorn would bind "::" itself, but asyncio sets IPV6_V6ONLY on every AF_INET6 socket it creates
-(single worker), which silently drops IPv4. Creating the socket here keeps that option under
-our control. This file is duplicated in backend/ and render/ (separate Docker build contexts).
+Run as `python listen.py` from /app. uvicorn would bind "::" itself, but asyncio sets IPV6_V6ONLY on
+every AF_INET6 socket it creates (single worker), which silently drops IPv4. `--fd` is no
+alternative: uvicorn labels that socket AF_UNIX, so asyncio skips TCP_NODELAY. So we start
+the server in-process with our socket, as `uvicorn.run` does. This file is duplicated in
+backend/ and render/ (separate Docker build contexts).
 """
 
 from __future__ import annotations
 
-import os
 import socket
 import sys
+
+import uvicorn
+from uvicorn.config import STARTUP_FAILURE
+from uvicorn.supervisors import Multiprocess
 
 
 def listen_socket(port: int) -> tuple[socket.socket, str]:
@@ -33,13 +36,28 @@ def listen_socket(port: int) -> tuple[socket.socket, str]:
     return sock, "0.0.0.0"
 
 
-def main(argv: list[str]) -> None:
-    name, port, *uvicorn_args = argv
-    sock, host = listen_socket(int(port))
+def serve(config: uvicorn.Config, sock: socket.socket) -> None:
+    """Serve on `sock` the way uvicorn.run does after it binds."""
+
     sock.set_inheritable(True)
-    print(f"{name}: listening on {host}", file=sys.stderr, flush=True)
-    os.execvp("uvicorn", ["uvicorn", *uvicorn_args, "--fd", str(sock.fileno())])
+    server = uvicorn.Server(config)
+    try:
+        if config.workers > 1:
+            Multiprocess(config, sockets=[sock]).run()
+        else:
+            server.run(sockets=[sock])
+    except KeyboardInterrupt:
+        pass
+    if config.workers == 1 and not server.started:
+        sys.exit(STARTUP_FAILURE)
+
+
+def main() -> None:
+    config = uvicorn.Config("main:create_app", factory=True, workers=1, timeout_keep_alive=300)
+    sock, host = listen_socket(8000)
+    print(f"tts-wrapper: listening on {host}", file=sys.stderr, flush=True)
+    serve(config, sock)
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    main()

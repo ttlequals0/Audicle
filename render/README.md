@@ -31,7 +31,7 @@ path of a normal extraction.
 
 The container listens on port 8000, dual-stack (IPv6 plus IPv4) when it can bind
 `::`, and IPv4 only (`0.0.0.0`) otherwise. `listen.py` opens the socket at start,
-logs the address, and hands it to uvicorn. Never publish this port; the backend reaches it on the internal
+logs the address, and serves uvicorn on it. Never publish this port; the backend reaches it on the internal
 network.
 
 The browser has no direct route out. `entrypoint.sh` runs as root with only the

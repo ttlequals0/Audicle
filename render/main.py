@@ -2,10 +2,10 @@
 
 The container starts via:
 
-    python -I listen.py render 8000 main:create_app --factory --workers 1
+    python listen.py
 
 listen.py (run by render/entrypoint.sh) opens a dual-stack "::" socket, or an IPv4
-0.0.0.0 one when IPv6 is unavailable, and hands it to uvicorn with --fd.
+0.0.0.0 one when IPv6 is unavailable, and serves uvicorn on it in-process.
 
 ``create_app`` takes an optional renderer so tests can inject a fake; in the image
 it defaults to the Camoufox driver. The default is imported lazily so the app

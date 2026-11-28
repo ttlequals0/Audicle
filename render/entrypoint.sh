@@ -38,7 +38,7 @@ setpriv --reuid=1000 --regid=1000 --init-groups --inh-caps=-all --bounding-set=-
   Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp &
 export DISPLAY=:99
 
-# listen.py opens the dual-stack socket as uid 1000 and execs uvicorn on it (still PID 1).
+# listen.py opens the dual-stack socket as uid 1000 and runs uvicorn in-process (still PID 1).
 exec setpriv --reuid=1000 --regid=1000 --init-groups --inh-caps=-all \
   --bounding-set=-all --no-new-privs \
-  python -I listen.py render 8000 main:create_app --factory --workers 1
+  python listen.py

@@ -29,8 +29,8 @@ cleanup() {
 }
 trap cleanup TERM INT
 
-# app.listen opens the (dual-stack) socket and execs uvicorn on it, so WEB_PID is uvicorn.
-python -m app.listen audicle 8000 app.main:app --workers "${WEB_WORKERS:-2}" &
+# app.listen opens the (dual-stack) socket and runs uvicorn in-process, so WEB_PID is uvicorn.
+python -m app.listen &
 WEB_PID=$!
 
 python -m app.worker &

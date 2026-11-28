@@ -48,7 +48,7 @@ model-load failure exits the process.
 
 The wrapper listens on port 8000, dual-stack (IPv6 plus IPv4) when the container
 can bind `::`, and IPv4 only (`0.0.0.0`) otherwise. `listen.py` opens the socket
-at start, logs the address, and hands it to uvicorn.
+at start, logs the address, and serves uvicorn on it.
 
 ## Local dev
 
