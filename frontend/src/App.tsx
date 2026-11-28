@@ -165,7 +165,7 @@ function Shell() {
         ref={mainRef}
         id="main-content"
         tabIndex={-1}
-        className={`flex-1 ${pageWidth} mx-auto w-full safe-x py-6 relative z-10 safe-bottom outline-none`}
+        className={`flex-1 ${pageWidth} mx-auto w-full safe-x py-6 relative z-10 safe-bottom`}
       >
         <Routes>
           <Route path="/" element={<Home />} />

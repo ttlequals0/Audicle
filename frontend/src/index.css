@@ -34,6 +34,10 @@
     outline: 3px solid var(--audicle-color-primary);
     outline-offset: 3px;
   }
+  /* Programmatic focus targets (main, headings) are not controls: no ring. */
+  [tabindex="-1"]:focus-visible {
+    outline: none;
+  }
   button {
     min-height: 44px;
   }

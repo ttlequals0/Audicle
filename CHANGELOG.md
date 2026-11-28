@@ -10,7 +10,7 @@ work lives under `[Unreleased]`.
 
 ### Fixed
 
-- Switching tabs could draw a green focus outline down both sides of the page content on a wide screen. The content area no longer shows a focus ring.
+- Switching tabs could draw a green focus outline down both sides of the page content on a wide screen. The content area and the chapter picker's heading, which receive focus without being controls, no longer show a focus ring.
 
 ## [0.64.1] - 2026-11-27
 
