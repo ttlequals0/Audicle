@@ -175,12 +175,12 @@ describe("Home job rows", () => {
     });
   }
 
-  it("shows the filename and chapter number in the Queue and Recents rows", async () => {
+  it("shows the filename and chapter number in the Queue and Articles rows", async () => {
     const user = userEvent.setup();
     serveJobs([job({}), job({ id: "j2", status: "done", chapter: 8 })]);
     renderHome();
     expect(await screen.findByText("book.epub, chapter 7")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Recent \(1\)/ }));
+    await user.click(screen.getByRole("button", { name: /Articles \(1\)/ }));
     expect(await screen.findByText("book.epub, chapter 8")).toBeInTheDocument();
   });
 
@@ -199,7 +199,7 @@ describe("Home job rows", () => {
     const user = userEvent.setup();
     serveJobs([job({ status: "failed" })]);
     renderHome();
-    await user.click(await screen.findByRole("button", { name: /Recent \(1\)/ }));
+    await user.click(await screen.findByRole("button", { name: /Articles \(1\)/ }));
     await user.click(await screen.findByRole("button", { name: /Redo actions for book.epub, chapter 7/ }));
     const before = booksFetches;
     await user.click(await screen.findByRole("menuitem", { name: /Reprocess article/ }));

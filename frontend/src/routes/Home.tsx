@@ -53,7 +53,7 @@ export default function Home() {
   const [splitNotes, setSplitNotes] = useState<string[]>([]);
   const [openBookId, setOpenBookId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // Recents and the per-submission voice picker are collapsed by default; the
+  // Articles and the per-submission voice picker are collapsed by default; the
   // toggles are remembered across reloads.
   const [recentOpen, setRecentOpen] = usePersistentOpen("home.recents.open", false);
   const [voiceOpen, setVoiceOpen] = usePersistentOpen("home.voice.open", false);
@@ -188,7 +188,7 @@ export default function Home() {
     onError,
   });
 
-  // Reprocess a terminal job from Recents (uniform for url + upload; the backend
+  // Reprocess a terminal job from Articles (uniform for url + upload; the backend
   // branches on the job url and reads the stored upload file when needed).
   const [recentMsg, setRecentMsg] = useState<string | null>(null);
   const requeueM = useMutation({
@@ -655,7 +655,7 @@ export default function Home() {
               <span className={`transition-transform ${recentOpen ? "rotate-90" : ""}`}>
                 &rsaquo;
               </span>
-              Recent ({history.length})
+              Articles ({history.length})
             </button>
             {recentOpen && (
               <div className="flex items-center gap-3">
@@ -717,7 +717,7 @@ export default function Home() {
                             ]
                           : []),
                         {
-                          label: "Remove from recents",
+                          label: "Remove from articles",
                           hint: "the episode is not affected",
                           run: () => removeJobM.mutate(j.id),
                         },

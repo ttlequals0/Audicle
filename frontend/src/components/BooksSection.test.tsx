@@ -55,16 +55,16 @@ let deleteStatus = 204;
 let postStatus = 200;
 let settings: unknown = { values: {}, defaults: {} };
 
-function Harness() {
-  const [open, setOpen] = useState<string | null>(null);
+function Harness({ initialOpen = null }: { initialOpen?: string | null }) {
+  const [open, setOpen] = useState<string | null>(initialOpen);
   return <BooksSection voice="random" openBookId={open} onOpenBook={setOpen} />;
 }
 
-function renderSection() {
+function renderSection(initialOpen: string | null = null) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <Harness />
+      <Harness initialOpen={initialOpen} />
     </QueryClientProvider>
   );
 }
@@ -73,6 +73,8 @@ const booksFetches = () => apiMock.mock.calls.filter(([p]) => p === "/api/v1/boo
 const fastPoll = { values: { QUEUE_POLL_INTERVAL_SECONDS: 0.05 }, defaults: {} };
 
 beforeEach(async () => {
+  localStorage.clear();
+  localStorage.setItem("home.books.open", "true");
   books = [makeBook()];
   deleteStatus = 204;
   postStatus = 200;
@@ -198,5 +200,41 @@ describe("BooksSection", () => {
     await user.click(screen.getByRole("button", { name: "Close" }));
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(toggle).toHaveFocus();
+  });
+});
+
+describe("BooksSection collapse", () => {
+  beforeEach(() => localStorage.removeItem("home.books.open"));
+  const header = () => screen.findByRole("button", { name: /Books \(1\)/ });
+
+  it("is collapsed by default", async () => {
+    renderSection();
+    expect(await header()).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Bad Blood")).not.toBeInTheDocument();
+  });
+
+  it("expands on click and remembers it", async () => {
+    const user = userEvent.setup();
+    renderSection();
+    await user.click(await header());
+    expect(await screen.findByText("Bad Blood")).toBeInTheDocument();
+    expect(await header()).toHaveAttribute("aria-expanded", "true");
+    expect(localStorage.getItem("home.books.open")).toBe("true");
+  });
+
+  it("shows the list while a picker is open even when collapsed", async () => {
+    renderSection("b1");
+    expect(await header()).toHaveAttribute("aria-expanded", "true");
+    expect(await screen.findByRole("dialog", { name: "Bad Blood" })).toBeInTheDocument();
+  });
+
+  it("collapsing closes an open picker", async () => {
+    const user = userEvent.setup();
+    renderSection("b1");
+    await screen.findByRole("dialog", { name: "Bad Blood" });
+    await user.click(await header());
+    expect(await header()).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Bad Blood")).not.toBeInTheDocument();
+    expect(localStorage.getItem("home.books.open")).toBe("false");
   });
 });

@@ -11,7 +11,7 @@ export interface MenuAction {
 }
 
 /**
- * Row-action menu used by Recents and the Feed.
+ * Row-action menu used by Articles and the Feed.
  *
  * Rendered through a portal on purpose: the rows are `.card`, which sets
  * `overflow: hidden`, so an absolutely-positioned panel inside one gets clipped
