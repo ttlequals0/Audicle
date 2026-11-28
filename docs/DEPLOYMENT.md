@@ -4,12 +4,12 @@ Operational reference for a running Audicle. Domains below are placeholders; sub
 
 ## Health
 
-- `GET /health/live` is a flat liveness probe: `{"ok": true, "version": "..."}`. The fastest way to confirm which version is actually running.
-- `GET /health/ready` checks the database and published-media directory. Podcast delivery stays ready during ingestion-provider outages.
-- `GET /health/ingestion` checks the selected LLM, extraction, synthesis, and transcription dependencies. Optional renderer status appears under `components` without failing the check.
+- `GET /health/live` is a liveness probe with no dependency checks. It returns `ok`, `version`, `uptime_seconds`, and `base_url`, so it is the fastest way to confirm which version is running.
+- `GET /health/ready` checks the database and published-media directory (503 when either fails). Podcast delivery stays ready during ingestion-provider outages. `/health` is an alias.
+- `GET /health/ingestion` checks the selected LLM, extraction, synthesis, and transcription dependencies. The renderer is optional: its status appears under `components` and never fails the check. A 503 means a selected dependency is not `ok`.
   - Remote speech and transcription endpoints (`tts_remote`, `asr_remote`) report `ok`, `http_<status>`, `unreachable_<error>`, `unreachable_dns_resolution`, or `blocked_non_public_address`. The last means the endpoint resolves to a private address and `TTS_API_ALLOW_PRIVATE` is off (or the address is loopback or link-local, which is never allowed); no request is sent.
 
-Model loading time depends on the host and cached weights. `/health/ingestion` reports it unavailable until its own health endpoint succeeds. Job requests use `TTS_REACHABILITY_GRACE_SECONDS` while waiting for startup.
+Model loading time depends on the host and cached weights. `/health/ingestion` reports the wrapper unavailable until its own `/health` succeeds, and job requests wait up to `TTS_REACHABILITY_GRACE_SECONDS` (default 60 s) for startup.
 
 ## Logs
 
@@ -32,7 +32,7 @@ Events worth alerting on or graphing:
 - **`TTS unreachable: All connection attempts failed`** - nothing was listening at `TTS_URL` for longer than the connect budget (`TTS_CONNECT_RETRY_MAX_SECONDS`, default 180 s). A wrapper restart is covered by that budget; exceeding it means the wrapper is staying down. Check its logs, then the host's kernel log for an OOM kill.
 - **A job failed at `extract`** - the error names the fix: a hard block with no solver points at `FLARESOLVERR_URL`; a solver that could not clear it means the site needs a login; a short teaser means add a [site override](paywalls.md).
 - **A job killed by the watchdog** - the error says whether the stall window or the absolute ceiling fired; both are tunable under Settings > System > Job timeouts.
-- **The wrapper restarts periodically during a very long job** - that is the memory ladder's hard limit doing its job at a chunk boundary, and the connect budget rides it out. Only worry if jobs fail, or the kernel log shows the OOM killer rather than a `tts_memory_restart` event.
+- **The wrapper restarts periodically during a very long job** - that is the memory ladder's hard limit firing at a chunk boundary, and the connect budget covers the restart. Investigate only if jobs fail, or the kernel log shows the OOM killer rather than a `tts_memory_restart` event.
 
 ## Rolling back
 
@@ -49,7 +49,7 @@ Version tags are immutable and stay on Docker Hub, so a rollback needs no rebuil
 ## Disk
 
 - **Before any build**: run `df -h /` and `docker system df`. Do not prune unrelated images or caches unless the output shows that space is needed.
-- `docker builder prune -af` reclaims the build cache (about 18 GB after a full build). `docker image prune` reclaims nothing when every local image still carries a named tag; remove superseded version tags with `docker rmi` instead. Keep the deployed version and one rollback candidate.
+- `docker builder prune -af` reclaims the build cache. `docker image prune` reclaims nothing when every local image still carries a named tag; remove superseded version tags with `docker rmi` instead. Keep the deployed version and one rollback candidate.
 - The `./data` volume holds the SQLite DB, media, and the model caches (`hf_cache/`, `tts_home/`, about 2 GB). Retention (`RETENTION_DAYS`) bounds media growth.
 
 ## Data safety
@@ -80,7 +80,7 @@ tar -czf "$AUDICLE_BACKUP_DIR/files.tgz" data/media backend/app/reference
 install -m 600 .env "$AUDICLE_BACKUP_DIR/environment"
 ```
 
-Test restoration in a separate data directory. Copy the database snapshot, extract its matching files, and restore the saved environment securely. The example preserves the repository-relative bind-mount layout. Run the restored Compose stack from a separate checkout with these directories in place. Open the restored database read-only and check its integrity before starting the target image:
+Test restoration in a separate data directory: copy the database snapshot, extract its matching files, and restore the saved environment. The example keeps the repository-relative bind-mount layout, so run the restored Compose stack from a separate checkout with these directories in place. Check the restored database read-only before starting the target image:
 
 ```bash
 umask 077
@@ -105,7 +105,7 @@ PY
 ## Security posture
 
 - Set the admin password (Settings > System > Admin access) before exposing anything. Until then the app runs in open convenience mode and says so in the UI.
-- Login is rate limited (`LOGIN_RATE_LIMIT`) with an IP lockout on repeated failures. Behind a reverse proxy, set `TRUST_PROXY_HEADERS=true` and `TRUSTED_PROXY_HOPS` or every client shares the proxy's IP for lockout purposes; do not enable it without a trusted proxy in front.
+- Login is rate limited (`LOGIN_RATE_LIMIT`, default `10/minute`) with an IP lockout on repeated failures. IPv6 clients are keyed by their /64 network, so rotating addresses inside one /64 does not evade either. Behind a reverse proxy, set `TRUST_PROXY_HEADERS=true` and `TRUSTED_PROXY_HOPS` or every client shares the proxy's IP for lockout purposes; do not enable it without a trusted proxy in front.
 - [Authenticated feeds](feeds-and-podcasting.md#authenticated-feeds) gate the public feed and media. The render sidecar and TTS wrapper are internal-only; never expose them.
 
 Publish only `GET` and `HEAD` for the configured RSS path and referenced `/media/` assets. Keep `/`, `/api/v1/`, `/redoc`, health routes, and port 8000 on the private administration origin. Preserve feed-key query parameters and keyed artwork paths at the edge. Protected responses use `private, no-store`; bypass and purge shared caches when rotating a feed key.

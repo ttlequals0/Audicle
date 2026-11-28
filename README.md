@@ -67,7 +67,7 @@ https://github.com/user-attachments/assets/b7dbbcd5-902d-4fed-a2df-32c972f4589f
 
 ## Quickstart
 
-You need Docker and docker-compose. The app boots unconfigured: set the LLM provider, feed metadata, and admin password, and upload a reference voice, from the Settings UI after it starts.
+You need Docker with Compose. The app boots unconfigured: set the LLM provider, feed metadata, and admin password, and upload a reference voice, from the Settings UI after it starts.
 
 ```bash
 git clone https://github.com/ttlequals0/Audicle && cd Audicle
@@ -78,25 +78,21 @@ docker compose up -d
 
 The web UI is at `http://localhost:8000/`, and it installs as a PWA on a phone home screen. The Feed page shows the exact RSS URL to paste into a podcatcher.
 
-Full setup, including CPU-only deployment and file permissions, is in [Installation](docs/installation.md).
+Full setup, including CPU-only deployment, IPv6, and file permissions, is in [Installation](docs/installation.md).
 
 ## Documentation
 
-The full index is [docs/README.md](docs/README.md). The short version:
+The full index is [docs/README.md](docs/README.md). Start with these:
 
 | Topic | Covers |
 |---|---|
 | [How it works](docs/how-it-works.md) | Pipeline from URL to episode, extraction cascade, quality gates |
-| [Installation](docs/installation.md) | Requirements, quick start, CPU-only and Apple Silicon |
+| [Installation](docs/installation.md) | Requirements, CPU-only, Apple Silicon, IPv6 |
 | [Web interface](docs/web-interface.md) | Home, Feed, and Settings pages |
-| [UI design guide](branding/design-guide.md) | Colors, fonts, controls and UI review checks |
 | [Configuration](docs/configuration.md) | Every settings category, what saves where |
 | [Environment variables](docs/environment-variables.md) | Every variable, runtime-editable ones flagged |
 | [Voices and TTS](docs/voices-and-tts.md) | Voice cloning, running Chatterbox or Whisper on other hosts |
-| [Paywalled articles](docs/paywalls.md) | What happens when a site serves a teaser instead of the article |
 | [Feeds and Podcasting 2.0](docs/feeds-and-podcasting.md) | RSS feed, authenticated feeds, chapters, artwork, retention |
-| [API and webhooks](docs/api-and-webhooks.md) | REST surface and episode webhooks |
-| [Glossary](docs/glossary.md) | Every term the app uses |
 | [Releasing](docs/releasing.md) | Versioning, build, CVE gate, ship |
 | [Deployment runbook](docs/DEPLOYMENT.md) | Health checks, logs, rollback, disk |
 
@@ -143,10 +139,7 @@ CodeQL runs on every PR through GitHub's default-setup code scanning (there is n
 The application code is MIT. A few things downstream of it have their own terms:
 
 - **Chatterbox** is the TTS engine. The `chatterbox-tts` library and its model weights are MIT, so there's no non-commercial restriction on the model itself. Every output carries Resemble's inaudible PerTh watermark for provenance, with no flag to turn it off.
-- **Wrapper runtime**: the wrapper runs Python 3.11 from `python:3.11-slim`.
-  Its GPU image uses the CUDA 12.6 torch wheels and requires a host driver that
-  exposes CUDA 12.6 or newer. The backend is separate: Python `>=3.13`, shipped
-  on `python:3.14-slim`.
+- **Runtimes**: the backend needs Python `>=3.13` and ships on `python:3.14-slim`. The wrapper and render images also use Python 3.14. The GPU wrapper image uses the CUDA 12.6 torch wheels and needs a host driver that exposes CUDA 12.6 or newer.
 
 The Audicle name and logo are reserved; see `branding/README.md`.
 
