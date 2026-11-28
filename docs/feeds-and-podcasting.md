@@ -21,7 +21,7 @@ Apps that read season tags can group a book's chapters and order them by episode
 
 The feed is open by default: anyone with the URL can read it. Settings > Publishing > Authenticated feeds puts a 64-hex key on every feed and media URL: `?key=<key>` on the RSS, MP3, transcript, chapters, and text URLs, and `/media/<id>-v<generation>-<key>.jpg` for artwork. Podcast apps can drop query strings from image URLs, so artwork carries both tokens in the path. With the toggle on, a request without a valid key gets a 401. Protected responses use `Cache-Control: private, no-store`, so a shared cache cannot keep serving a revoked key.
 
-The Feed page shows the subscribe URL with the key included. Regenerating the key changes every protected URL, so existing subscriptions need the new feed URL. Disabling authentication removes the key from generated URLs. The same controls sit behind `GET`/`POST /api/v1/feed-auth` and `POST /api/v1/feed-auth/regenerate`.
+The Feed page shows the subscribe URL with the key included. Regenerating the key changes every protected URL, so existing subscriptions need the new feed URL. Disabling authentication removes the key from generated URLs. The same controls sit behind `GET`/`POST /api/v1/feed-auth` and `POST /api/v1/feed-auth/regenerate`. Regeneration returns 409 while authentication is off and is rate limited to 3 per hour. Re-enabling reuses the stored key.
 
 ## Episode artwork
 
@@ -31,7 +31,7 @@ Each episode's cover goes into the feed (`itunes:image`) and is embedded in the 
 
 Episodes at least 10 minutes long are eligible for chapters by default. The LLM reads the full transcript text in 45-minute windows and marks topic changes, aiming for chapters around 10 minutes long. A 3-hour episode uses 4 windows, so its chapter count can grow with its length. A window continues the previous topic rather than adding a chapter just because a new window starts. Empty windows and windows shorter than the target are skipped, including a short final window. An eligible episode shorter than the target produces no chapters.
 
-Chapter timestamps come from the measured audio timeline used by the transcript. Boundaries less than 60 seconds apart are deduplicated, and chapters shorter than the configured minimum merge into the previous chapter. The opening chapter at zero is always retained; a missing opening title becomes "Introduction". All eligible windows are analyzed before the boundary cap is applied. If the cap removes boundaries, the remaining changes are spread across the analyzed topics. Topic targets are guidance, not quotas; an episode with fewer topic changes can have fewer chapters.
+Chapter timestamps come from the measured audio timeline used by the transcript. Boundaries less than 60 seconds apart are deduplicated, and chapters shorter than the configured minimum merge into the previous chapter. The opening chapter at zero is always retained; a missing opening title becomes "Introduction". All eligible windows are analyzed before the boundary cap is applied. If the cap removes boundaries, the remaining changes are spread across the analyzed topics. An episode with fewer topic changes can have fewer chapters than the target implies.
 
 Chapters ship as both a Podcasting 2.0 `podcast:chapters` JSON document in the feed and ID3 chapter frames in the MP3, because clients differ in what they read.
 
@@ -56,7 +56,7 @@ Episodes also open with a spoken "{title}. By {author}." line (`INTRO_READ_ENABL
 
 ## Valid iTunes categories
 
-Apple's parser rejects anything not on its list. The current set (from Apple's RSS spec, May 2026):
+`FEED_CATEGORY` (default `News`) is not validated by Audicle, but Apple's parser rejects anything not on its list. The current set (from Apple's RSS spec, May 2026):
 
 ```
 Arts, Business, Comedy, Education, Fiction, Government, History,
@@ -64,10 +64,10 @@ Health & Fitness, Kids & Family, Leisure, Music, News, Religion & Spirituality,
 Science, Society & Culture, Sports, Technology, True Crime, TV & Film
 ```
 
-Subcategories are not surfaced in the UI; set the top-level category and you are done. If Apple Podcasts shows your feed as "Unknown" after submission, it is almost always a category typo.
+Subcategories are not surfaced in the UI; set the top-level category. If Apple Podcasts shows your feed as "Unknown" after submission, it is almost always a category typo.
 
 ## Retention
 
-A daily sweep runs from the worker at `RETENTION_SWEEP_HOUR_UTC`, deleting episodes older than `RETENTION_DAYS`. `POST /api/v1/purge?confirm=true&older_than_days=N` does the same on demand; the default `older_than_days=0` wipes every episode, so pass a cutoff when you mean one.
+A daily sweep runs from the worker at `RETENTION_SWEEP_HOUR_UTC` (default 07, UTC), deleting episodes and finished jobs older than `RETENTION_DAYS` (default 90). `0` keeps everything. `POST /api/v1/purge?confirm=true&older_than_days=N` does the same on demand; the default `older_than_days=0` wipes every episode, so pass a cutoff when you mean one.
 
 [< Docs index](README.md)
