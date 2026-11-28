@@ -51,6 +51,12 @@ describe("App safe-area gutters", () => {
       expect(el).not.toHaveClass("px-4");
     }
   });
+
+  it("draws no focus ring on main, which is focused on every route change", async () => {
+    renderApp();
+    await screen.findByRole("heading", { name: "Home page" });
+    expect(screen.getByRole("main")).toHaveClass("outline-none");
+  });
 });
 
 describe("App main focus", () => {
