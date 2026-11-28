@@ -18,17 +18,22 @@ generated audio commercially.
 
 ## Endpoints
 
-| Method | Path           | Purpose                                                             |
-|--------|----------------|---------------------------------------------------------------------|
-| POST   | /generate      | Synthesize a chunk. Body: `{text, episode_id, chunk_index, seed?, verify?, temperature?, repetition_penalty?, top_p?, top_k?, max_chars?}` (the generation knobs below, per request). |
-| GET    | /health/live   | Liveness: `{ok, model_loaded}`. 503 until the model loads; ignores the reference voice. The compose healthcheck hits this. |
-| GET    | /health        | `{ok, model_loaded, reference_loaded}`. 503 until everything is ready. |
-| POST   | /select-voice  | Switch the active voice to a slot. Body: `{slot}` (1-5).            |
-| POST   | /reload        | Re-encode the resting voice (the lowest filled slot) into the speaker conditionals. |
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | /generate | Synthesize a chunk. Body: `text` (1-4000 chars), `episode_id`, `chunk_index`, plus optional `slot` (1-5), `language`, `verify` and the generation knobs below. Returns `{wav_path, duration_secs, sample_rate, transcript, inference_ms, verify_ms, rss_mb}`. |
+| GET | /health/live | Liveness: `{ok, model_loaded}`. 503 until the model loads; ignores the reference voice. The compose healthcheck hits this. |
+| GET | /health | Readiness: `ok`, `model_loaded`, `reference_loaded`, version, device, engine, Whisper state, `rss_mb` and `restart_recommended`. 503 until a model and a voice are loaded. |
+| POST | /select-voice | Switch the active voice to a slot. Body: `{slot}` (1-5). 404 if the slot is empty. |
+| POST | /reload | Re-encode the resting voice (the lowest filled slot) into the speaker conditionals. |
+| GET | /models | List the available TTS models and their languages. |
+| POST | /select-model | Swap the loaded model. Body: `{model}` (`chatterbox` or `chatterbox-multilingual`). |
+| POST | /transcribe | Transcribe a WAV under `{data_dir}/media` with faster-whisper. Body: `{wav_path}`. 503 when Whisper is disabled. |
+| GET, PUT | /runtime-config | Read or replace the runtime overrides for the memory, Whisper, timeout and logging settings. The app syncs these from Settings. |
+| POST | /maintenance/restart | Restart the process between jobs. 503 while an inference is running. |
 
 ## Reference voices
 
-Voices are slots-only (since 0.35.0): there is no separate `voice.wav`. The wrapper
+Voices live in five slots; there is no separate `voice.wav`. The wrapper
 conditions on `reference/voices/slot{1..5}.wav`, mounted from the host. It boots on its
 lowest filled slot and switches per job via `/select-voice`. Manage slots through the
 app's Settings UI or `POST /api/v1/reference/slots/{n}`; see
@@ -54,9 +59,9 @@ docker build -t audicle-tts:dev -f tts-wrapper/Dockerfile tts-wrapper/
 ```
 
 Then pin that tag in `docker-compose.yml` and `docker compose up tts-wrapper`.
-The GPU image uses CUDA 12.6 wheels. The host driver must expose CUDA 12.6 or
-newer, or the container refuses to start. Use the CPU image when that requirement
-cannot be met.
+The GPU image is amd64-only and uses CUDA 12.6 wheels with Python 3.14. The host
+driver must expose CUDA 12.6 or newer, or the container refuses to start. Use the
+CPU image when that requirement cannot be met.
 
 CPU-only hosts (5-10x slower):
 
@@ -64,41 +69,43 @@ CPU-only hosts (5-10x slower):
 docker build -t audicle-tts:cpu -f tts-wrapper/Dockerfile.cpu tts-wrapper/
 ```
 
-Then set `TTS_DEVICE=cpu` in `.env` and pin the image name in
-`docker-compose.yml` (or run the container manually).
+Or skip the build and add `docker-compose.cpu.yml` to the compose command; it uses
+the published `-cpu` image, sets `TTS_DEVICE=cpu` and drops the GPU reservation.
+For a local build, set `TTS_DEVICE=cpu` in `.env` and pin the image name.
 
 ## Model cache
 
 The Chatterbox weights download on first run. `HF_HOME` and `TTS_HOME` default
 to `/data/hf_cache` and `/data/tts_home`, so the weights persist on the mounted
 `/data` volume and subsequent restarts load from disk instantly. These paths are
-writable by a non-root container user (uid 1000); the old `/root/.cache`
-defaults were root-only and crashed the wrapper under `user: 1000:1000`.
-Throwaway compile caches (`NUMBA_CACHE_DIR`, `MPLCONFIGDIR`, `XDG_CACHE_HOME`,
-`HOME`) point at `/tmp`.
+writable by the non-root container user (uid 1000). Throwaway compile caches (`NUMBA_CACHE_DIR`, `MPLCONFIGDIR`,
+`XDG_CACHE_HOME`, `HOME`) point at `/tmp`.
 
 ## Tunable generation params
 
-Since 0.44.0 the generation knobs are not env vars. The backend sends them on
-every `/generate` request, sourced from its runtime settings, so they are tuned
-live in the app's Settings page (or `PUT /api/v1/settings`) with no wrapper
-restart. A request that omits a field falls back to these defaults:
+The generation knobs are not env vars. The backend sends them on every
+`/generate` request, so they are tuned live in the app's Settings page (or
+`PUT /api/v1/settings`) with no wrapper restart. A request that omits a field
+falls back to these defaults; out-of-range values return 422.
 
-| Request field | Default | Effect |
-|---|---|---|
-| `temperature` | 0.5 | Sampling temperature (down from Turbo's 0.8 to steady pronunciation). |
-| `repetition_penalty` | 1.2 | Raise if words repeat or loop. |
-| `top_p` | 0.95 | Nucleus sampling cap; lower = safer, less varied. |
-| `top_k` | 1000 | Top-k sampling cap; lower = safer, less varied. |
-| `seed` | 1234 | Makes a chunk reproducible. 0 disables seeding. |
-| `max_chars` | 300 | Per-piece char cap; the wrapper splits each chunk into pieces under this and concatenates the audio. |
+| Request field | Default | Allowed | Effect |
+|---|---|---|---|
+| `temperature` | 0.5 | >0 to 2.0 | Sampling temperature (down from Turbo's 0.8 to steady pronunciation). |
+| `repetition_penalty` | 1.2 | 1.0-2.0 | Raise if words repeat or loop. |
+| `top_p` | 0.95 | >0 to 1.0 | Nucleus sampling cap; lower = safer, less varied. |
+| `top_k` | 1000 | 1-10000 | Top-k sampling cap; lower = safer, less varied. |
+| `seed` | 1234 | 0 or more | Makes a chunk reproducible. 0 disables seeding. |
+| `max_chars` | 300 | 100-2000 | Per-piece char cap; the wrapper splits each chunk into pieces under this and concatenates the audio. |
 
-Exaggeration and CFG weight are not exposed: the Turbo model ignores both
-("CFG, min_p and exaggeration are not supported by Turbo version").
-Exaggeration is pinned to 0.0 (neutral read) when the reference voice is
-encoded. The only related env var left is structural: `TTS_SAMPLE_RATE`
-(default 24000) is a provisional output rate, replaced by the model's own rate
-at load.
+Exaggeration and CFG weight are not exposed: the Turbo model ignores both.
+Exaggeration is pinned to 0.0 (neutral read) when the reference voice is encoded.
+
+Structural env vars (`TTS_DEVICE`, `TTS_LANGUAGE`, `TTS_SAMPLE_RATE`, the
+`WHISPER_*` verification settings, `TTS_MEMORY_SOFT_LIMIT_MB` and
+`TTS_MEMORY_HARD_LIMIT_MB`, `TTS_IDLE_UNLOAD_SECONDS`) are listed with defaults in
+[TTS wrapper settings](../docs/environment-variables.md#tts-wrapper-settings). The
+memory limits are explained in
+[the memory ladder](../docs/how-it-works.md#the-wrappers-memory-ladder).
 
 ## GPU pinning
 

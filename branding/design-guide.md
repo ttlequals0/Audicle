@@ -37,6 +37,7 @@ Change a token in `tokens.json`, then run `node scripts/sync_design_tokens.mjs`.
 | `text_dim`, `text_mute` | `#9a9aaa` | Secondary text and help |
 | `control` | `#6b6b78` | Inactive switch thumb; never helper text |
 | `danger` | `#ff5252` | Errors and destructive actions |
+| `danger_hover` | `#ff7b7b` | Error text and hovered destructive actions |
 | `danger_surface` | `#4a1f1f` | Error tags and destructive borders |
 | `warning_text` / `warning_surface` | `#fcd67a` / `#3b2b0a` | Processing status and warning notices |
 
@@ -56,7 +57,7 @@ Normal text must meet the [WCAG minimum contrast ratio of 4.5:1](https://www.w3.
 
 Use `font-sans` for headings, navigation, labels, explanations, buttons and episode metadata. It resolves to Satoshi, then system fonts. Reserve `font-mono` for code editors and raw diagnostic values. Home, Feed, login, settings help, player controls and notices use Satoshi throughout. The wordmark uses Satoshi at weight 700 with `-0.02em` tracking.
 
-Load Satoshi through the single-family Fontshare URL in `frontend/index.html`. The combined Satoshi and JetBrains Mono request returned an empty stylesheet. A computed font-family does not prove the webfont loaded, so check for a loaded Satoshi face in `document.fonts`. If Fontshare is unreachable the system sans fallback is still readable. Font files are not committed to this repository.
+Satoshi loads from the single-family Fontshare URL in `frontend/index.html`; font files are not committed. A computed font-family does not prove the webfont loaded, so check for a loaded Satoshi face in `document.fonts`. If Fontshare is unreachable, the system sans fallback stays readable.
 
 The following scale uses the default root size of 16 px. Use rem units in CSS so browser text settings still apply.
 
@@ -104,6 +105,7 @@ Keep a single content column inside settings categories. On smaller screens, rep
 | `.toggle` | Use a button with `role="switch"`, `aria-checked` and a readable name. Retain the visible keyboard focus outline. |
 | `.section` | Show a short heading and a one-sentence summary before expansion. Avoid repeating long instructions in the collapsed header. |
 | `.card` | Use for feed or job content. Do not make a passive card look like a button. |
+| Home list headers | The Books and Articles sections share one muted, collapsible header: a small `text-mute` toggle with a count, `aria-expanded` and a rotating chevron. |
 | `.rule-card` | One bordered block per editable item in a list, such as a site override. Passive, with no hover state. Keep one rule per card and nest its details inside. |
 | `.tag` | Keep the status word visible. Processing and queued animation stops with reduced motion enabled. |
 | `.save-bar` | Appears for pending generic settings or save feedback. Remains available across categories; reports the total unsaved count. |
