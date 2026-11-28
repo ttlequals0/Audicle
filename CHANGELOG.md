@@ -31,7 +31,7 @@ work lives under `[Unreleased]`.
 - The iOS shortcut showed "Submit failed: " with no reason, because it read a `detail` field and the API returns `error`. The build script now reads `error`. `Audicle.shortcut` in the repository has to be rebuilt on macOS to pick this up.
 - Dependabot pull requests for `tts-wrapper` failed with a lockfile mismatch. The `resemble-perth` metadata override now declares the Python range the lockfile records.
 - Dependabot no longer proposes the Python 3.15 base image. onnxruntime and lxml have no 3.15 wheels yet.
-- Dependency review failed on torch 2.15.0 because its license expression includes Zlib. Zlib is now on the allowed list.
+- Dependency review failed on torch 2.15.0. Its license expression has `Apache-2.0 WITH LLVM-exception` and `Zlib` terms that the check cannot match against the allowed list. torch is now exempted by package.
 
 ## [0.63.4] - 2026-11-22
 
