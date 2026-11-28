@@ -101,6 +101,8 @@ def test_pin_url_to_ip_brackets_ipv6() -> None:
         "fc00::1",
         "fd12:3456::1",
         "::ffff:192.168.1.5",
+        "100.100.100.201",
+        "fd00:ec2::1",
     ],
 )
 async def test_allow_private_accepts_lan_ranges(host: str) -> None:
@@ -122,6 +124,9 @@ async def test_allow_private_accepts_lan_ranges(host: str) -> None:
         "192.0.2.1",
         "::ffff:127.0.0.1",
         "::ffff:169.254.169.254",
+        "100.100.100.200",
+        "fd00:ec2::254",
+        "::ffff:100.100.100.200",
     ],
 )
 async def test_allow_private_still_blocks_dangerous_ranges(host: str) -> None:
