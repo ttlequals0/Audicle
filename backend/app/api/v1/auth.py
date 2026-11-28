@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from slowapi import Limiter
 
-from app.api.deps import SESSION_KEY_USER, client_ip, get_conn, require_admin
+from app.api.deps import SESSION_KEY_USER, get_conn, limiter_key, require_admin
 from app.config import Settings, get_settings
 from app.services import auth, csrf, runtime_settings
 
@@ -28,7 +28,7 @@ def _client_id(request: Request) -> str:
     if settings is None:
         settings = runtime_settings.overlay(get_settings())
         request.state.effective_settings = settings
-    return client_ip(request, settings)
+    return limiter_key(request, settings)
 
 
 def _login_rate_limit() -> str:
