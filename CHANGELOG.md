@@ -6,6 +6,12 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.64.4] - 2026-11-28
+
+### Fixed
+
+- 0.64.3 wrote a urllib3 warning about missing SOCKS support to the log each time a process started. It came from trafilatura 2.4.0 and is now silenced. Audicle does not use SOCKS.
+
 ## [0.64.3] - 2026-11-28
 
 ### Changed
