@@ -1,6 +1,6 @@
 [project]
 name = "audicle-render"
-version = "0.64.2"
+version = "0.64.4"
 description = "Stealth headful-render sidecar for Audicle (Camoufox)."
 requires-python = ">=3.14,<3.15"
 # Camoufox and Playwright ship pure-Python wheels, so the browser stack follows
@@ -50,6 +50,7 @@ package = false
 pythonpath = ["."]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 addopts = "-ra -q"
 
 [tool.ruff]

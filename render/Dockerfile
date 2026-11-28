@@ -2,7 +2,7 @@
 
 # Slim Python base (no GPU -- the browser is CPU-only). Camoufox + a headful
 # Firefox run under xvfb.
-FROM ghcr.io/astral-sh/uv:0.13.9 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.10 AS uv
 
 # Empty stand-in for libcups2t64 (see the CUPS note below). Architecture: all, so one
 # .deb serves amd64 and arm64. Built here so equivs never reaches the final image.

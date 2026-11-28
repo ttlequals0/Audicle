@@ -1,6 +1,6 @@
 [project]
 name = "audicle"
-version = "0.64.2"
+version = "0.64.4"
 description = "Self-hosted service that turns article URLs into a Podcasting 2.0 feed."
 requires-python = ">=3.13"
 license = { text = "MIT" }
@@ -96,6 +96,7 @@ override-dependencies = ["opencv-python; sys_platform == 'never'"]
 pythonpath = ["backend"]
 testpaths = ["backend/tests"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 addopts = "-ra -q"
 
 [tool.ruff]

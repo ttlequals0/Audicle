@@ -570,9 +570,9 @@ def make_pdf(pages: int, outline: list, *, texts: dict[int, str] | None = None) 
     parent = None
     for entry in outline:
         if len(entry) == 3:
-            writer.add_outline_item(entry[0], entry[1], parent=parent)
+            writer.add_outline_item(title=entry[0], page_number=entry[1], parent=parent)
         else:
-            parent = writer.add_outline_item(entry[0], entry[1])
+            parent = writer.add_outline_item(title=entry[0], page_number=entry[1])
     buf = io.BytesIO()
     writer.write(buf)
     return buf.getvalue()
@@ -614,7 +614,7 @@ def test_pdf_unresolvable_and_out_of_order_items_skipped():
     for _ in range(8):
         writer.add_blank_page(100, 100)
     for title, page in [("One", 0), ("Gone", 2), ("Two", 4), ("Back", 2), ("Three", 6)]:
-        item = writer.add_outline_item(title, page)
+        item = writer.add_outline_item(title=title, page_number=page)
         if title == "Gone":
             del item.get_object()[NameObject("/A")]
     buf = io.BytesIO()
