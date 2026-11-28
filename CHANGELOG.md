@@ -2366,7 +2366,7 @@ Security and code-audit fixes.
   to the text it asked the wrapper to speak. A high word-level divergence (dropped
   content, a hallucinated run, a leaked preamble) regenerates the chunk on the same
   budget as the existing audio analysis. The transcription is blind: the expected
-  text is never used as a Whisper prompt, so the comparison stays honest. Off by
+  text is never used as a Whisper prompt, so the prompt cannot bias the comparison. Off by
   default; it takes both `WHISPER_ENABLED` on the wrapper (loads the model) and
   `WHISPER_VERIFY_ENABLED` on the backend, with `WHISPER_MODEL` and
   `WHISPER_DIVERGENCE_THRESHOLD` to tune the speed/strictness trade. faster-whisper
@@ -3495,7 +3495,7 @@ Findings surfaced and applied:
 - Pillow API hygiene: uses `Image.Resampling.LANCZOS` (the supported attribute on Pillow 10+) instead of the deprecated `Image.LANCZOS` alias. Wraps `Image.open` in a context manager so the underlying `BytesIO` and Pillow decoder are released on every path. Uses `rgba.getchannel("A")` instead of `rgba.split()[-1]` (three fewer band-image allocations per source). Adds mode `"PA"` (palette-with-alpha) to the alpha-flatten list so transparent regions composite onto black rather than show the palette color.
 - Atomic JPG write: re-uses `services/atomic_write.write_bytes_atomic` (Phase 4 helper, with `prefix=".artwork-"`). A crash mid-save can no longer leave a truncated cover that the Phase 7 RSS handler would serve.
 - Transcript timeline as integer ms: `cursor_ms` is incremented as `int` rather than `cursor_secs` as `float`, eliminating cumulative drift over hundreds of cues. Trailing silence is no longer added after the final cue (was a dead store and would have desynced any cumulative-end check). `_escape_cue` switched to `html.escape(text, quote=False)` and now also flattens internal whitespace runs via `" ".join(text.split())` so a chunk with an embedded blank line can't split a VTT cue. `math.isfinite` rejects NaN and +/-inf duration values (would have crashed `_format_ts`).
-- Pipeline integration: `core/paths.media_dir(settings)` is the single source of truth for `{DATA_DIR}/media`; `_stage_audio` and `_stage_artwork` both call it. `_stage_transcript` does an explicit `len(chunks) != len(chunk_results)` check so the resulting `jobs.error` reads "transcript stage: N chunks but M TTS results, pipeline state corrupted" instead of a stdlib zip message.
+- Pipeline integration: `core/paths.media_dir(settings)` is the single source of truth for `{DATA_DIR}/media`; `_stage_audio` and `_stage_artwork` both call it. `_stage_transcript` does an explicit `len(chunks) != len(chunk_results)` check so the resulting `jobs.error` reads "transcript stage: N chunks but M TTS results -- pipeline state corrupted" instead of a stdlib zip message.
 - CHANGELOG accuracy: previous draft listed `pillow_render_failed` (no longer emitted after the render path was folded into a single `_decode_and_render`) and was missing `download_too_large`, `decompression_bomb`, `atomic_write_failed`, `blocked_scheme`, `blocked_host`; now reflects the real reason set.
 - Module docstring on `pipeline.py`: was Phase-2 vintage and listed only the extract stage; updated to describe the Phase 6 chain.
 - Stale comment / dead branch in `_decode_and_render`: removed the `if oriented is None: oriented = opened` guard. `ImageOps.exif_transpose` does not return `None` on Pillow 10+; the comment was factually wrong about Pillow's contract.
@@ -3583,7 +3583,7 @@ Verification approach
 Findings surfaced and applied:
 
 - Path traversal blocked: `GenerateRequest.episode_id` now carries a `pattern=r"^[A-Za-z0-9_.-]+$"` and `chunk_index` an upper bound. The wrapper also runs a `Path.resolve().is_relative_to(out_dir)` belt-and-braces check before writing, so an episode_id that somehow slips through the validator still can't escape `data_dir/media/`.
-- Event loop unblocked: `XTTSEngine.synthesize` and `_compute_embeddings` now run via `asyncio.to_thread(...)`. The wrapper's `/health` route is genuinely responsive while a chunk is mid-inference, not just lock-free.
+- Event loop unblocked: `XTTSEngine.synthesize` and `_compute_embeddings` now run via `asyncio.to_thread(...)`. The wrapper's `/health` route stays responsive while a chunk is mid-inference, not just lock-free.
 - Per-request inference timeout: `/generate` wraps `engine.synthesize` in `asyncio.wait_for(timeout=TTS_REQUEST_TIMEOUT_SECONDS)` (default 120s, env-tunable) and returns 504 on timeout. Build-plan line 822's "Per-request timeout 120s" is now enforced; a wedged inference call can no longer hold the worker forever.
 - WAV writes are atomic: `_atomic_write_bytes` (tempfile + fsync + os.replace) replaces the bare `Path.write_bytes` so Phase 5+ stitching can't observe a partial chunk file.
 - Lifespan re-raises instead of `sys.exit(1)`: the original exception now propagates through Starlette's documented `lifespan.startup.failed` path, giving uvicorn a clean Exception-based exit and making the failure path safely testable via `TestClient.__enter__`.
