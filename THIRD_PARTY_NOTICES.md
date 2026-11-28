@@ -49,7 +49,7 @@ artifact (`backend/app/data/base_lexicon.jsonl.gz`) is built by
 
 ## pypdfium2
 
-- Project: https://pypi.org/project/pypdfium2/5.14.0/#licensing
+- Project: https://pypi.org/project/pypdfium2/5.15.2/#licensing
 - License: runtime code is Apache-2.0/BSD-3-Clause; CC-BY-4.0 applies to
   documentation and examples.
 - Use: PDF page rasterization. Bundled wheel license notices are retained.
