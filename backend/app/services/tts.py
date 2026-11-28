@@ -39,7 +39,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from app.config import Settings
+from app.config import Settings, parse_extra_body
 from app.core.paths import media_dir
 from app.services import tts_cache, tts_remote
 
@@ -148,7 +148,7 @@ def cache_identity(settings: Settings, slot: int | None) -> tuple[str, str, str]
         )
         if settings.TTS_API_EXTRA_BODY:
             extra = json.dumps(
-                json.loads(settings.TTS_API_EXTRA_BODY), sort_keys=True, separators=(",", ":")
+                parse_extra_body(settings.TTS_API_EXTRA_BODY), sort_keys=True, separators=(",", ":")
             )
             fingerprint = f"{fingerprint}:{extra}"
         return settings.TTS_BACKEND, settings.TTS_API_MODEL, fingerprint

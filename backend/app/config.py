@@ -43,11 +43,11 @@ EXTRA_BODY_RESERVED_KEYS = frozenset({"model", "input", "voice", "response_forma
 EXTRA_BODY_MAX_CHARS = 4096
 
 
-def check_extra_body(raw: str) -> str:
-    """Validate TTS_API_EXTRA_BODY: empty, or a JSON object without the core request fields."""
+def parse_extra_body(raw: str) -> dict:
+    """Parse TTS_API_EXTRA_BODY: empty gives {}, else a JSON object without the core request fields."""
 
     if not raw:
-        return raw
+        return {}
     if len(raw) > EXTRA_BODY_MAX_CHARS:
         raise ValueError(f"TTS_API_EXTRA_BODY must be at most {EXTRA_BODY_MAX_CHARS} characters")
     try:
@@ -59,6 +59,11 @@ def check_extra_body(raw: str) -> str:
     reserved = sorted(EXTRA_BODY_RESERVED_KEYS & parsed.keys())
     if reserved:
         raise ValueError(f"TTS_API_EXTRA_BODY cannot set {', '.join(reserved)}")
+    return parsed
+
+
+def check_extra_body(raw: str) -> str:
+    parse_extra_body(raw)
     return raw
 
 

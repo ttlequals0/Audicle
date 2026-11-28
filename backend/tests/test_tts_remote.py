@@ -469,11 +469,10 @@ async def test_extra_body_is_merged_and_core_fields_win(
     assert seen["input"] == "hello"
     assert seen["response_format"] == "wav"
 
-    # Validation already rejects reserved keys; the merge order is the backstop.
+    # Reserved keys never reach the request, even from unvalidated settings.
     forged = settings.model_copy(update={"TTS_API_EXTRA_BODY": '{"input": "x", "speed": 2}'})
-    await tts_remote.synthesize("hello", "ep1", 1, forged)
-    assert seen["input"] == "hello"
-    assert seen["speed"] == 2
+    with pytest.raises(ValueError, match="cannot set input"):
+        await tts_remote.synthesize("hello", "ep1", 1, forged)
 
 
 def test_extra_body_validation(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:

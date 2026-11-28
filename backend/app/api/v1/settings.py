@@ -390,8 +390,13 @@ def _validate_value(key: str, value: Any, settings: Settings) -> None:
             raise HTTPException(status_code=400, detail=f"{key} must be an absolute HTTP(S) URL")
         return
     if key == "TTS_API_EXTRA_BODY":
+        if not isinstance(value, str):
+            raise HTTPException(
+                status_code=400,
+                detail="TTS_API_EXTRA_BODY must be a JSON object encoded as a string",
+            )
         try:
-            check_extra_body(value if isinstance(value, str) else "[]")
+            check_extra_body(value)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return

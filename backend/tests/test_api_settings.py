@@ -576,4 +576,6 @@ def test_extra_body_rejects_bad_values(env: Path, bad) -> None:
         values = client.get("/api/v1/settings").json()["values"]
     assert response.status_code == 400
     assert isinstance(response.json()["error"], str)
+    if isinstance(bad, dict):
+        assert "encoded as a string" in response.json()["error"]
     assert "TTS_API_EXTRA_BODY" not in values

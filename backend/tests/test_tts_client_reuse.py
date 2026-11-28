@@ -38,8 +38,8 @@ async def test_guard_caches_verdict_per_host(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr(tts_remote.ssrf, "resolve_public_host", fake_resolve)
 
-    await tts_remote._guard("http://example.com/x", False)
-    await tts_remote._guard("http://example.com/x", False)
+    await tts_remote.guard_endpoint("http://example.com/x", False)
+    await tts_remote.guard_endpoint("http://example.com/x", False)
     assert calls["n"] == 1
 
 
@@ -53,9 +53,9 @@ async def test_guard_cache_clear_forces_revalidation(monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr(tts_remote.ssrf, "resolve_public_host", fake_resolve)
 
-    await tts_remote._guard("http://example.com/x", False)
+    await tts_remote.guard_endpoint("http://example.com/x", False)
     tts_remote._guard_cache.clear()
-    await tts_remote._guard("http://example.com/x", False)
+    await tts_remote.guard_endpoint("http://example.com/x", False)
     assert calls["n"] == 2
 
 
@@ -68,5 +68,5 @@ async def test_guard_failure_does_not_populate_cache(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(tts_remote.ssrf, "resolve_public_host", fake_resolve)
 
     with pytest.raises(tts_remote.ssrf.BlockedHostError):
-        await tts_remote._guard("http://example.com/x", False)
+        await tts_remote.guard_endpoint("http://example.com/x", False)
     assert "example.com" not in tts_remote._guard_cache
