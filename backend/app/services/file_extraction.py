@@ -234,15 +234,18 @@ async def extract_file(
 
     floor = settings.MIN_EXTRACTION_CHARS
     if len(markdown) < floor:
-        reason = (
-            "scanned pages require OCR_ENABLED; blank pages contain no readable text"
-            if ext == ".pdf"
-            else "the document has no extractable text"
-        )
-        raise ExtractionTooShortError(
+        message = (
             f"uploaded {ext or 'file'} yielded only {len(markdown)} characters of text "
-            f"(minimum {floor}); {reason}"
+            f"(minimum {floor})"
         )
+        if not markdown:
+            if ext != ".pdf":
+                message += "; the document has no extractable text"
+            elif settings.OCR_ENABLED:
+                message += "; no readable text was found"
+            else:
+                message += "; scanned pages need OCR_ENABLED"
+        raise ExtractionTooShortError(message)
 
     logger.info(
         "File extraction succeeded",

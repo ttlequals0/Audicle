@@ -386,8 +386,28 @@ async def test_extract_html_pulls_main_article(env: Path) -> None:
 
 
 async def test_extract_too_short_raises(env: Path) -> None:
-    with pytest.raises(ExtractionTooShortError):
+    with pytest.raises(ExtractionTooShortError) as exc:
         await _run(env, "tiny.txt", b"hello")
+    assert str(exc.value) == "uploaded .txt yielded only 5 characters of text (minimum 150)"
+
+
+@pytest.mark.parametrize(
+    ("filename", "ocr", "reason"),
+    [
+        ("blank.txt", "false", "the document has no extractable text"),
+        ("blank.pdf", "true", "no readable text was found"),
+        ("blank.pdf", "false", "scanned pages need OCR_ENABLED"),
+    ],
+)
+async def test_extract_empty_upload_names_the_cause(
+    env: Path, monkeypatch: pytest.MonkeyPatch, filename: str, ocr: str, reason: str
+) -> None:
+    monkeypatch.setenv("OCR_ENABLED", ocr)
+    get_settings.cache_clear()
+    monkeypatch.setattr(file_extraction, "_parse", lambda *_: ("", {}))
+    with pytest.raises(ExtractionTooShortError) as exc:
+        await _run(env, filename, b"x")
+    assert str(exc.value).endswith(f"(minimum 150); {reason}")
 
 
 async def test_extract_missing_file_raises_permanent(env: Path) -> None:

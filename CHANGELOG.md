@@ -6,6 +6,12 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.64.5] - 2026-11-28
+
+### Fixed
+
+- An upload with too little text failed with a message that also blamed OCR and blank pages, even when OCR was on and the file had readable text (#243). The message now stops after the character count and the minimum. A cause is added only when no text was found at all.
+
 ## [0.64.4] - 2026-11-28
 
 ### Fixed
