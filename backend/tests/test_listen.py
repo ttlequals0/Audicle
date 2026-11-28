@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import os
 import signal
 import socket
@@ -64,6 +65,20 @@ def test_listen_socket_falls_back_to_ipv4(monkeypatch: pytest.MonkeyPatch) -> No
         assert host == "0.0.0.0"
         assert sock.family == socket.AF_INET
         assert _connects("127.0.0.1", sock.getsockname()[1])
+
+
+def test_listen_socket_does_not_mask_a_busy_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    families: list[int] = []
+
+    def busy(family=-1, *args, **kwargs):
+        families.append(family)
+        raise OSError(errno.EADDRINUSE, "address already in use")
+
+    monkeypatch.setattr(socket, "socket", busy)
+    with pytest.raises(OSError) as excinfo:
+        listen_socket(8000)
+    assert excinfo.value.errno == errno.EADDRINUSE
+    assert families == [socket.AF_INET6]
 
 
 def test_serve_sets_tcp_nodelay_on_accepted_connections(monkeypatch: pytest.MonkeyPatch) -> None:

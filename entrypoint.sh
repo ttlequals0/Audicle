@@ -29,7 +29,7 @@ cleanup() {
 }
 trap cleanup TERM INT
 
-# app.listen opens the (dual-stack) socket and runs uvicorn in-process, so WEB_PID is uvicorn.
+# app.listen opens the dual-stack socket and runs uvicorn in-process: WEB_PID is the server, or its supervisor with more than one worker.
 python -m app.listen &
 WEB_PID=$!
 

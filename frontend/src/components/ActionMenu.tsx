@@ -31,7 +31,7 @@ export default function ActionMenu({
   context?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const [pos, setPos] = useState<{ left: string; top: number } | null>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const itemIndex = useRef(0);
@@ -47,12 +47,11 @@ export default function ActionMenu({
     const below = rect.bottom + 4;
     // Flip above the trigger when the panel would run off the bottom.
     const top = height && below + height > window.innerHeight - 8 ? rect.top - height - 4 : below;
-    const root = getComputedStyle(document.documentElement);
-    const safeLeft = parseFloat(root.getPropertyValue("--safe-left")) || 0;
-    const safeRight = parseFloat(root.getPropertyValue("--safe-right")) || 0;
-    const maxLeft = window.innerWidth - safeRight - width - 12;
-    const left = width ? Math.min(rect.left, maxLeft) : rect.left;
-    setPos({ left: Math.max(8 + safeLeft, left), top: Math.max(8, top) });
+    // CSS does the horizontal clamp so the safe-area insets resolve natively.
+    const left = width
+      ? `clamp(calc(8px + var(--safe-left)), ${rect.left}px, calc(100vw - var(--safe-right) - ${width + 12}px))`
+      : `${rect.left}px`;
+    setPos({ left, top: Math.max(8, top) });
   };
 
   useLayoutEffect(() => {
@@ -171,7 +170,7 @@ export default function ActionMenu({
             className="menu-panel"
             style={{
               position: "fixed",
-              left: pos?.left ?? -9999,
+              left: pos?.left ?? "-9999px",
               top: pos?.top ?? -9999,
               zIndex: 60,
             }}

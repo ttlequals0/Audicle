@@ -11,6 +11,7 @@ backend/ and render/ (separate Docker build contexts).
 
 from __future__ import annotations
 
+import errno
 import socket
 import sys
 
@@ -29,9 +30,11 @@ def listen_socket(port: int) -> tuple[socket.socket, str]:
         sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
         sock.bind(("::", port))
         return sock, "::"
-    except OSError:
+    except OSError as exc:
         if sock is not None:
             sock.close()
+        if exc.errno == errno.EADDRINUSE:
+            raise
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(("0.0.0.0", port))

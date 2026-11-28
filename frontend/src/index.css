@@ -3,7 +3,7 @@
 @config "../tailwind.config.cjs";
 
 @layer base {
-  /* Read by ActionMenu to keep the popup clear of side cutouts. */
+  /* Used by the action menu popup to stay clear of side cutouts. */
   :root {
     --safe-left: env(safe-area-inset-left, 0px);
     --safe-right: env(safe-area-inset-right, 0px);

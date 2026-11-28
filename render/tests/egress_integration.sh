@@ -119,8 +119,10 @@ for _ in $(seq 1 60); do
     sleep 1
 done
 test "$ready" -eq 1 || { echo "renderer not ready after 60s" >&2; exit 1; }
-# The listener is dual-stack: the IPv6 loopback answers too.
-renderer_req 4 http://[::1]:8000/health/live >/dev/null
+# When the listener came up dual-stack, the IPv6 loopback answers too.
+if docker logs "$renderer" 2>&1 | grep -q 'listening on ::'; then
+    renderer_req 4 http://[::1]:8000/health/live >/dev/null
+fi
 for url in http://11.77.0.10/redirect http://11.77.0.10/subresources http://rebound.test/; do
     renderer_req 30 http://127.0.0.1:8000/render "{\"url\":\"$url\",\"expand\":false}" >/dev/null
 done

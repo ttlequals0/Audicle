@@ -6,6 +6,14 @@ work lives under `[Unreleased]`.
 
 ## [Unreleased]
 
+## [0.64.1] - 2026-11-27
+
+### Fixed
+
+- Page content sat under a cutout on the left or right edge of the screen, such as the camera bump on a foldable phone's cover screen. The header, banners, page content and row action menus now stay clear of it.
+- When the listening port was already in use, the services tried again on IPv4 and reported that failure. They now stop at the first error, which names the busy port.
+- A `WEB_WORKERS` value below 1 starts one worker.
+
 ## [0.64.0] - 2026-11-27
 
 ### Added
@@ -33,7 +41,6 @@ work lives under `[Unreleased]`.
 
 ### Fixed
 
-- Page content sat under a cutout on the left or right edge of the screen, such as the camera bump on a foldable phone's cover screen. The header, banners, page content and row action menus now stay clear of it.
 - The iOS shortcut showed "Submit failed: " with no reason, because it read a `detail` field and the API returns `error`. The build script now reads `error`. `Audicle.shortcut` in the repository has to be rebuilt on macOS to pick this up.
 - Dependabot pull requests for `tts-wrapper` failed with a lockfile mismatch. The `resemble-perth` metadata override now declares the Python range the lockfile records.
 - Dependabot no longer proposes the Python 3.15 base image. onnxruntime and lxml have no 3.15 wheels yet.
